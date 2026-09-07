@@ -8,7 +8,13 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
 from sqlalchemy import select
 from app.agents.base import Agent
-from app.agents.llm import LLMCaller, LLMUnavailableError, estimate_tokens
+from app.agents.llm import (
+    LLMCaller,
+    LLMUnavailableError,
+    context_trim_notice,
+    estimate_tokens,
+    memory_search_tool,
+)
 from app.agents.personas import prepare_agents_for_turn
 from app.agents.pool import AgentPool, get_agent_pool
 from app.config import TOOL_ITERATION_CEILING, resolve_workspace_dir
@@ -195,6 +201,63 @@ class OrchestratorEngine:
 
         return arbiter
 
+    def _make_context_arbiter(
+        self,
+        state: DebateState,
+        agent: Agent,
+        control: Optional[TurnControl],
+        on_event: Optional[EventCallback],
+    ) -> Optional[Callable[[Dict[str, Any]], Coroutine[Any, Any, Dict[str, Any]]]]:
+        """컨텍스트 창이 넘쳤을 때 사람에게 물어보는 통로를 만듭니다.
+
+        도구 예산 쪽과 두 가지가 다릅니다.
+
+        1. **턴에 한 번만 묻습니다.** 컨텍스트는 라운드가 쌓이면 거의 모든 발언이
+           같은 벽에 부딪힙니다. 발언마다 물으면 토론을 진행할 수 없으므로, 첫
+           답(`state.context_grant`)을 그 턴의 나머지에 그대로 씁니다.
+        2. **모델의 실제 한도를 넘겨 늘리지 않습니다.** `context_headroom()` 이
+           조회한 여유가 상한입니다. 넘겨 올리면 깔끔한 트림이 400 으로 바뀝니다.
+        """
+        if control is None:
+            return None
+
+        async def arbiter(info: Dict[str, Any]) -> Dict[str, Any]:
+            # 이미 이번 턴에 답을 받았으면 다시 묻지 않습니다.
+            if state.context_grant is not None:
+                return {"granted": state.context_grant, "wrap_up": False}
+
+            async def _open(request) -> None:
+                if on_event:
+                    await on_event({"type": "context_window_exhausted", **request.describe()})
+
+            request = await control.ask_context_window(
+                agent_key=str(info.get("agent_key", "")),
+                agent_name=str(info.get("agent_name", "")),
+                window=int(info.get("window", 0)),
+                used=int(info.get("used", 0)),
+                headroom=info.get("headroom"),
+                tool_calls=int(info.get("tool_calls", 0)),
+                on_open=_open,
+            )
+            state.context_grant = request.granted
+            if on_event:
+                await on_event({
+                    "type": "context_window_resolved",
+                    "id": request.id,
+                    "agent_name": request.agent_name,
+                    "outcome": request.outcome,
+                    "granted": request.granted,
+                    "window": int(info.get("window", 0)) + request.granted,
+                })
+            # 시간이 지나 답을 못 받았으면 접지 않고 생략하며 진행합니다. 사람이
+            # 자리에 없다고 해서 토론을 접을 이유는 없습니다.
+            return {
+                "granted": request.granted,
+                "wrap_up": request.outcome == "wrap_up",
+            }
+
+        return arbiter
+
     async def _speak(
         self,
         *,
@@ -262,6 +325,13 @@ class OrchestratorEngine:
                     "tool_call": call_log,
                 })
 
+        # 컨텍스트 한도로 무언가 생략됐다는 사실. 예전에는 logger 에만 남아,
+        # 토론 기록이 사라지는 것을 보고 있는 사람이 알 방법이 없었습니다.
+        def _on_context_trim(dropped: int) -> None:
+            state.context_dropped += dropped
+            trimmed_here.append(dropped)
+
+        trimmed_here: List[int] = []
         streamed: List[str] = []
 
         async def _on_chunk(delta: str) -> None:
@@ -279,6 +349,8 @@ class OrchestratorEngine:
                 on_tool_call=_on_tool_call, on_chunk=_on_chunk,
                 session_id=state.session_id,
                 budget_arbiter=self._make_budget_arbiter(control, on_event),
+                context_arbiter=self._make_context_arbiter(state, agent, control, on_event),
+                on_context_trim=_on_context_trim,
             )
             # 확정본이 비었는데 화면에는 글이 흘러갔다면 그 글을 남깁니다.
             # 여기서 정하는 `content` 가 DB 에 들어가는 값이라, 비워 둔 채로
@@ -320,6 +392,16 @@ class OrchestratorEngine:
                     status=call_log.get("status", "success"),
                 ))
             await db.commit()
+
+        if trimmed_here and on_event:
+            await on_event({
+                "type": "context_trimmed",
+                "agent_key": agent.key,
+                "agent_name": agent.name,
+                "dropped": sum(trimmed_here),
+                "total_dropped": state.context_dropped,
+                "where": "speech",
+            })
 
         message = DebateMessage(
             id=msg_id,
@@ -670,7 +752,9 @@ class OrchestratorEngine:
                 db=db,
                 state=state,
                 agent=orchestrator_agent,
-                prompt_messages=self._build_synthesis_prompt(state, orchestrator_agent),
+                prompt_messages=await self._synthesis_prompt_with_notice(
+                    state, orchestrator_agent, on_event
+                ),
                 custom_instructions=custom_instructions,
                 round_number=state.current_round + 1,
                 msg_type="orchestrator",
@@ -1367,6 +1451,47 @@ class OrchestratorEngine:
         context.append({"role": "user", "content": turn_prompt})
         return context
 
+    async def _synthesis_prompt_with_notice(
+        self,
+        state: DebateState,
+        agent: Optional[Agent],
+        on_event: Optional[EventCallback],
+    ) -> List[Dict[str, Any]]:
+        """합성 프롬프트를 만들고, 전사가 잘렸으면 화면에 알립니다.
+
+        최종 보고서가 초반 논의를 못 보고 쓰였다는 사실은 사람이 알아야 합니다 —
+        예전에는 `logger.warning` 에만 남았습니다.
+        """
+        before = state.context_dropped
+        prompt = self._build_synthesis_prompt(state, agent)
+        dropped = state.context_dropped - before
+        if dropped and on_event:
+            await on_event({
+                "type": "context_trimmed",
+                "agent_key": agent.key if agent else "orchestrator",
+                "agent_name": agent.name if agent else "Orchestrator",
+                "dropped": dropped,
+                "total_dropped": state.context_dropped,
+                "where": "synthesis",
+            })
+        return prompt
+
+    def _memory_search_tool_for(self, agent: Optional[Agent]) -> Optional[str]:
+        """이 에이전트가 실제로 쓸 수 있는 메모리 검색 도구의 이름. 없으면 None.
+
+        서버 키가 아니라 **주어진 도구 목록**에서 찾습니다. 서버를 껐거나 연결에
+        실패했으면 없는 도구를 가리키게 되기 때문입니다.
+        """
+        if agent is None:
+            return None
+        try:
+            tools = self.llm_caller.mcp_manager.get_openai_tools_for_servers(
+                self.llm_caller.resolve_tool_servers(agent)
+            )
+        except Exception:  # noqa: BLE001 - 도구 목록을 못 구해도 합성은 진행합니다
+            return None
+        return memory_search_tool(tools)
+
     def _build_synthesis_prompt(
         self, state: DebateState, agent: Optional[Agent] = None
     ) -> List[Dict[str, Any]]:
@@ -1408,8 +1533,19 @@ class OrchestratorEngine:
                 f"Synthesis transcript trimmed: dropped {dropped} of {len(usable)} message(s) "
                 f"(max_context_window={agent.max_context_window})"
             )
-            kept.insert(0, f"[앞선 발언 {dropped}건은 컨텍스트 한도로 생략되었습니다. "
-                           f"생략된 내용을 지어내지 말고, 남은 기록만으로 종합하세요.]\n")
+            # 생략 건수를 상태에 누적합니다. 반환값을 바꾸는 대신 이 자리를 쓰는
+            # 것은, 이 메서드가 프롬프트 문자열을 돌려준다는 계약을 호출부와
+            # 테스트가 이미 쓰고 있기 때문입니다.
+            state.context_dropped += dropped
+            memory_tool = self._memory_search_tool_for(agent)
+            notice = context_trim_notice(dropped, memory_tool)
+            if memory_tool:
+                notice += (
+                    f"\n[생략된 초반 라운드가 결론에 필요하면 `{memory_tool}` 로 "
+                    f"이 대화의 그래프를 찾아보세요 — 토론 중에 에이전트들이 "
+                    f"핵심을 그곳에 남겼을 수 있습니다.]"
+                )
+            kept.insert(0, notice + "\n")
 
         full_transcript = "\n".join(kept)
 

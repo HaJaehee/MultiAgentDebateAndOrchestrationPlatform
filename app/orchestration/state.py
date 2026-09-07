@@ -38,6 +38,12 @@ class DebateState(BaseModel):
     stopped_early: bool = False
     # 토론 도중 끼어든 사용자 개입 발언의 수.
     interjection_count: int = 0
+    # 컨텍스트 창이 넘쳐 사람에게 물어본 결과. 한 턴에 한 번만 묻고 그 답을
+    # 나머지 발언에 그대로 씁니다 — 발언마다 물으면 토론을 진행할 수 없습니다.
+    # None 이면 아직 묻지 않은 것이고, 값이 있으면 넓혀 준 토큰 수입니다.
+    context_grant: Optional[int] = None
+    # 컨텍스트 한도로 생략된 기록의 누적 건수 (발언·도구 관측·합성 전사 전부).
+    context_dropped: int = 0
     # LLM 응답을 받지 못해 이번 턴에서 발언하지 못한 에이전트. 합성 프롬프트와
     # 요약 아티팩트가 "없는 의견"을 있는 것처럼 다루지 않도록 여기에 남깁니다.
     failed_agent_keys: List[str] = Field(default_factory=list)

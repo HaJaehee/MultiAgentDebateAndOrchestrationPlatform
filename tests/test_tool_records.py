@@ -104,7 +104,8 @@ async def test_tools_that_ran_before_a_failure_are_kept():
     class ToolThenDie(FakeLLMCaller):
         async def call_agent(self, agent, messages, custom_instructions="",
                              on_tool_call=None, on_chunk=None, session_id=None,
-                             budget_arbiter=None):
+                             budget_arbiter=None,
+                             context_arbiter=None, on_context_trim=None):
             if agent.key == "coder":
                 if on_tool_call:
                     await on_tool_call(dict(GIT_STATUS))

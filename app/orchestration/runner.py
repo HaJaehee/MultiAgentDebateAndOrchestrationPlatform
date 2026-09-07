@@ -72,10 +72,23 @@ class TurnRun:
         # 화면에 "이번 턴에는 반영되지 않는다" 고 정확히 알려야 합니다.
         self.phase: str = "planning"
 
-        # 도구 호출 상한에 닿아 사람의 답을 기다리는 쪽지. 스냅샷에 들어가므로
-        # 새로고침하거나 나중에 붙은 화면에서도 같은 물음이 보입니다 (기다리는
-        # 쪽은 엔진이고, 답할 수 있는 창이 3분뿐입니다).
-        self.budget_request: Optional[Dict[str, Any]] = None
+        # 한도에 닿아 사람의 답을 기다리는 쪽지 (도구 상한 또는 컨텍스트 창).
+        # 스냅샷에 들어가므로 새로고침하거나 나중에 붙은 화면에서도 같은 물음이
+        # 보입니다 (기다리는 쪽은 엔진이고, 답할 수 있는 창이 3분뿐입니다).
+        self.decision_request: Optional[Dict[str, Any]] = None
+
+        # 컨텍스트 한도로 생략된 기록의 누적 건수. 화면이 "얼마나 잃었는지" 를
+        # 계속 보여주기 위해 스냅샷에 남깁니다.
+        self.context_dropped: int = 0
+
+    @property
+    def budget_request(self) -> Optional[Dict[str, Any]]:
+        """예전 이름. 도구 예산 전용이던 시절의 호출부를 깨뜨리지 않습니다."""
+        return self.decision_request
+
+    @budget_request.setter
+    def budget_request(self, value: Optional[Dict[str, Any]]) -> None:
+        self.decision_request = value
 
     # -------------------------------------------------- 구독
 
@@ -136,26 +149,34 @@ class TurnRun:
         })
         return True
 
-    def resolve_tool_budget(self, extra: int, request_id: Optional[str] = None) -> bool:
-        """도구 상한 확장 요청에 답합니다. `extra` 가 0 이면 "지금 마무리하라".
+    def resolve_decision(self, extra: int, request_id: Optional[str] = None) -> bool:
+        """대기 중인 물음에 답합니다. `extra` 가 0 이면 "지금 마무리하라".
 
-        답을 받은 에이전트는 그 자리에서 이어서 돌거나(확장), 도구를 떼고 결론을
-        씁니다. 어느 쪽이든 지금까지의 발언은 그대로 남습니다.
+        도구 상한이든 컨텍스트 창이든 흐름은 같습니다 — 답을 받은 에이전트는 그
+        자리에서 이어서 돌거나(확장), 지금까지의 것으로 마무리합니다. 어느 쪽이든
+        지금까지의 발언은 그대로 남습니다. 어느 물음에 답하는지는 화면에 떠 있는
+        쪽지의 `kind` 가 정합니다.
         """
         if self.status != "running":
             return False
-        shown = self.budget_request or {}
-        if not self.control.resolve_tool_budget(extra, request_id):
+        shown = self.decision_request or {}
+        kind = shown.get("kind", "tool_budget")
+        if not self.control.resolve_decision(extra, request_id):
             return False
         self._emit({
-            "type": "tool_budget_resolved",
+            "type": f"{kind}_resolved",
             "id": request_id or shown.get("id"),
             "agent_name": shown.get("agent_name", ""),
             "outcome": "extended" if extra > 0 else "wrap_up",
             "granted": max(0, int(extra)),
+            "window": int(shown.get("limit", 0)) + max(0, int(extra)),
             "by_user": True,
         })
         return True
+
+    def resolve_tool_budget(self, extra: int, request_id: Optional[str] = None) -> bool:
+        """예전 이름. `resolve_decision` 과 같습니다."""
+        return self.resolve_decision(extra, request_id)
 
     # -------------------------------------------------- 상태 적용
 
@@ -233,7 +254,7 @@ class TurnRun:
             )
 
         elif etype == "tool_budget_exhausted":
-            self.budget_request = {k: v for k, v in event.items() if k != "type"}
+            self.decision_request = {k: v for k, v in event.items() if k != "type"}
             self.busy = True
             self.status_text = (
                 f"[{event.get('agent_name', '')}] 도구 호출 상한 {event.get('limit', 0)}회를 "
@@ -245,9 +266,9 @@ class TurnRun:
             # 답이 난 쪽지만 걷습니다. 병렬 라운드에서는 그 사이 다른 에이전트가
             # 낸 새 쪽지가 화면에 올라와 있을 수 있고, 그걸 같이 지우면 답할
             # 곳이 사라집니다.
-            shown_id = (self.budget_request or {}).get("id")
+            shown_id = (self.decision_request or {}).get("id")
             if not event.get("id") or event.get("id") == shown_id:
-                self.budget_request = None
+                self.decision_request = None
             granted = event.get("granted", 0)
             outcome = event.get("outcome")
             if granted:
@@ -264,13 +285,50 @@ class TurnRun:
                 )
             self.round_info = "Debating"
 
+        elif etype == "context_window_exhausted":
+            self.decision_request = {k: v for k, v in event.items() if k != "type"}
+            self.busy = True
+            self.status_text = (
+                f"[{event.get('agent_name', '')}] 컨텍스트 창이 가득 찼습니다 — "
+                f"한도를 넓힐지, 오래된 기록을 생략하고 진행할지 골라 주세요."
+            )
+            self.round_info = "Context full"
+
+        elif etype == "context_window_resolved":
+            shown_id = (self.decision_request or {}).get("id")
+            if not event.get("id") or event.get("id") == shown_id:
+                self.decision_request = None
+            granted = event.get("granted", 0)
+            if granted:
+                self.status_text = self._pending_prefix(
+                    f"컨텍스트 한도를 {granted:,} 토큰 넓혔습니다 "
+                    f"(총 {event.get('window', 0):,}). 앞선 기록이 그대로 남습니다."
+                )
+            elif event.get("outcome") == "timeout":
+                self.status_text = self._pending_prefix(
+                    "컨텍스트 확장 요청에 답이 없어, 오래된 기록부터 생략하며 진행합니다."
+                )
+            else:
+                self.status_text = self._pending_prefix(
+                    "컨텍스트를 넓히지 않고 지금까지의 기록으로 마무리하도록 했습니다."
+                )
+            self.round_info = "Debating"
+
+        elif etype == "context_trimmed":
+            self.context_dropped = int(event.get("total_dropped") or 0)
+            where = "최종 합성 전사" if event.get("where") == "synthesis" else "발언 맥락"
+            self.status_text = self._pending_prefix(
+                f"{where}에서 기록 {event.get('dropped', 0)}건이 컨텍스트 한도로 "
+                f"생략됐습니다 (누적 {self.context_dropped}건)."
+            )
+
         elif etype == "artifacts_synthesized":
             self.artifacts = list(event.get("artifacts", []))
 
         elif etype == "turn_completed":
             self.busy = False
             self.streaming_ids.clear()
-            self.budget_request = None
+            self.decision_request = None
             failed = event.get("failed_agents") or []
             if failed:
                 self.status_text = f"토론 완료 — 응답하지 못한 에이전트: {', '.join(failed)}"
@@ -310,7 +368,10 @@ class TurnRun:
             "artifacts": [dict(a) for a in self.artifacts],
             "stop_requested": self.control.stop_requested,
             "pending_notes": len(self.control.pending_notes),
-            "budget_request": dict(self.budget_request) if self.budget_request else None,
+            "decision_request": dict(self.decision_request) if self.decision_request else None,
+            # 예전 이름. 스냅샷을 읽는 오래된 코드가 있어도 깨지지 않게 둡니다.
+            "budget_request": dict(self.decision_request) if self.decision_request else None,
+            "context_dropped": self.context_dropped,
         }
 
 
@@ -446,11 +507,16 @@ class DebateRunner:
         run = self._runs.get(session_id)
         return run.interject(text) if run is not None else False
 
+    def resolve_decision(self, session_id: str, extra: int,
+                         request_id: Optional[str] = None) -> bool:
+        """한도에 닿은 에이전트에게 확장 여부를 알려 줍니다 (도구 상한·컨텍스트 공통)."""
+        run = self._runs.get(session_id)
+        return run.resolve_decision(extra, request_id) if run is not None else False
+
     def resolve_tool_budget(self, session_id: str, extra: int,
                             request_id: Optional[str] = None) -> bool:
-        """도구 호출 상한에 닿은 에이전트에게 확장 여부를 알려 줍니다."""
-        run = self._runs.get(session_id)
-        return run.resolve_tool_budget(extra, request_id) if run is not None else False
+        """예전 이름. `resolve_decision` 과 같습니다."""
+        return self.resolve_decision(session_id, extra, request_id)
 
     async def cancel(self, session_id: str) -> bool:
         run = self._runs.get(session_id)

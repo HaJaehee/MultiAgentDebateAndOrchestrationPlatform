@@ -167,6 +167,53 @@ def create_ui() -> None:
                         type="info",
                         position="bottom-right",
                     )
+            elif etype == "context_window_exhausted":
+                chat_feed.set_decision_request({k: v for k, v in event.items() if k != "type"})
+                chat_feed.set_busy(
+                    True,
+                    f"[{event.get('agent_name', '')}] 컨텍스트 창 가득 참 — "
+                    f"한도를 넓힐지 생략하고 진행할지 골라 주세요.",
+                    "Context full",
+                )
+                ui.notify(
+                    f"{event.get('agent_name', '에이전트')} 의 컨텍스트 창이 가득 찼습니다. "
+                    f"한도를 넓히거나, 오래된 기록을 생략하고 진행하도록 선택하세요.",
+                    type="warning",
+                    position="bottom-right",
+                )
+            elif etype == "context_window_resolved":
+                chat_feed.clear_budget_request(event.get("id"))
+                granted = event.get("granted", 0)
+                if granted:
+                    ui.notify(
+                        f"컨텍스트 한도를 {granted:,} 토큰 넓혔습니다 "
+                        f"(총 {event.get('window', 0):,}). 앞선 기록이 그대로 남습니다.",
+                        type="info",
+                        position="bottom-right",
+                    )
+                elif event.get("outcome") == "timeout":
+                    ui.notify(
+                        "컨텍스트 확장에 답이 없어, 오래된 기록부터 생략하며 진행합니다.",
+                        type="warning",
+                        position="bottom-right",
+                    )
+                else:
+                    ui.notify(
+                        "컨텍스트를 넓히지 않고 지금까지의 기록으로 마무리합니다.",
+                        type="info",
+                        position="bottom-right",
+                    )
+            elif etype == "context_trimmed":
+                # 답이 필요한 물음이 아니라 사후 통지입니다. 버튼 없는 알림으로만
+                # 띄웁니다 — 배너는 사람이 골라야 하는 자리에만 씁니다.
+                where = "최종 합성 전사" if event.get("where") == "synthesis" else "발언 맥락"
+                ui.notify(
+                    f"{where}에서 기록 {event.get('dropped', 0)}건이 컨텍스트 한도로 "
+                    f"생략됐습니다 (누적 {event.get('total_dropped', 0)}건). "
+                    f"로스터에서 해당 에이전트의 '컨텍스트 창' 을 올리면 줄일 수 있습니다.",
+                    type="warning",
+                    position="bottom-right",
+                )
             elif etype == "turn_completed":
                 failed = event.get("failed_agents") or []
                 if failed:
@@ -370,18 +417,18 @@ def create_ui() -> None:
             if run.status != "running":
                 chat_feed.set_busy(False, run.status_text, run.round_info)
 
-        async def on_tool_budget(extra: int, request_id: str) -> None:
-            """도구 상한에 닿은 에이전트에게 확장 여부를 알려 줍니다.
+        async def on_decision(extra: int, request_id: str) -> None:
+            """한도에 닿은 에이전트에게 확장 여부를 알려 줍니다 (도구 상한·컨텍스트 공통).
 
-            답이 늦어 이미 자동 마무리로 넘어갔을 수 있습니다. 그때는 조용히
+            답이 늦어 이미 자동 처리로 넘어갔을 수 있습니다. 그때는 조용히
             지나가지 않고, 무슨 일이 있었는지 알려 줍니다.
             """
-            if not current_session_id or not runner.resolve_tool_budget(
+            if not current_session_id or not runner.resolve_decision(
                 current_session_id, extra, request_id or None
             ):
                 chat_feed.clear_budget_request(request_id or None)
                 ui.notify(
-                    "이미 처리된 요청입니다 (시간이 지나 자동 마무리로 넘어갔거나 토론이 끝났습니다).",
+                    "이미 처리된 요청입니다 (시간이 지나 자동으로 넘어갔거나 토론이 끝났습니다).",
                     type="warning",
                     position="bottom-right",
                 )
@@ -467,7 +514,7 @@ def create_ui() -> None:
         roster_control = AgentRosterControl(on_config_changed, on_resync_agents)
         chat_feed = ChatFeed(
             on_send_message, on_interject=on_interject, on_stop=on_stop, on_abort=on_abort,
-            on_tool_budget=on_tool_budget,
+            on_decision=on_decision,
         )
         artifact_viewer = ArtifactViewer()
 
@@ -684,7 +731,7 @@ def create_ui() -> None:
                 # 답을 기다리는 물음은 화면이 아니라 토론이 들고 있습니다. 새로
                 # 붙은 화면에서도 같은 선택지가 보여야, 새로고침 한 번으로 답할
                 # 곳을 잃지 않습니다.
-                chat_feed.set_budget_request(snapshot.get("budget_request"))
+                chat_feed.set_decision_request(snapshot.get("decision_request"))
                 attach_to_run(run)
             else:
                 chat_feed.set_busy(False, "대기 중", "Ready")

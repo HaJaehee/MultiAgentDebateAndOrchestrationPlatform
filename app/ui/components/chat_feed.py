@@ -75,6 +75,43 @@ def is_clampable(content: str) -> bool:
     return len(body) > CLAMP_MIN_CHARS or body.count("\n") >= CLAMP_MIN_NEWLINES
 
 
+# 결정 요청 줄의 종류별 모양. 도구 상한(앰버)과 컨텍스트 창(주황)은 다른
+# 물음이므로, 문구를 읽기 전에 색으로 먼저 구분되어야 합니다.
+DECISION_STYLES = {
+    "tool_budget": {
+        "timeout_label": "자동 마무리",
+        "icon": "build_circle",
+        "bar": "bg-amber-950/50 border-amber-700/70",
+        "icon_color": "text-amber-300",
+        "label": "text-amber-100",
+        "countdown": "text-amber-300",
+        "extend": "unelevated dense no-caps color=amber-7 text-color=grey-10 size=sm",
+        "wrap_up": "flat dense no-caps color=amber-3 size=sm",
+    },
+    "context_window": {
+        # 컨텍스트의 무응답은 마무리가 아닙니다 — 오래된 것부터 생략하고 계속
+        # 돕니다. 사람이 자리에 없다고 토론을 접을 이유는 없습니다.
+        "timeout_label": "자동 생략",
+        "icon": "compress",
+        "bar": "bg-orange-950/50 border-orange-600/70",
+        "icon_color": "text-orange-300",
+        "label": "text-orange-100",
+        "countdown": "text-orange-300",
+        "extend": "unelevated dense no-caps color=orange-8 text-color=grey-10 size=sm",
+        "wrap_up": "flat dense no-caps color=orange-3 size=sm",
+    },
+}
+
+BAR_CLASSES = "w-full items-center gap-2 px-3 py-2 rounded-lg text-xs flex-nowrap"
+LABEL_CLASSES = "font-semibold min-w-0 flex-grow"
+COUNTDOWN_CLASSES = "font-mono flex-shrink-0 whitespace-nowrap"
+
+
+def _all_decision_classes(slot: str) -> str:
+    """모든 종류가 쓰는 색 클래스. 다시 칠하기 전에 통째로 걷어냅니다."""
+    return " ".join(style[slot] for style in DECISION_STYLES.values())
+
+
 def _card_classes(msg_type: str, sender_key: str) -> str:
     """말풍선 배경. 실패 안내는 발언과 확실히 구분되어야 합니다."""
     if msg_type == "error":
@@ -95,6 +132,7 @@ class ChatFeed:
         on_interject: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
         on_stop: Optional[Callable[[], Coroutine[None, None, None]]] = None,
         on_abort: Optional[Callable[[], Coroutine[None, None, None]]] = None,
+        on_decision: Optional[Callable[[int, str], Coroutine[None, None, None]]] = None,
         on_tool_budget: Optional[Callable[[int, str], Coroutine[None, None, None]]] = None,
     ):
         self.on_send_message = on_send_message
@@ -104,9 +142,11 @@ class ChatFeed:
         self.on_stop = on_stop
         # 요청 자체가 틀렸을 때. 정지와 달리 결과를 남기지 않고 되돌립니다.
         self.on_abort = on_abort
-        # 도구 호출 상한에 닿은 에이전트에게 보내는 답. (늘려 줄 횟수, 요청 id).
-        # 0 이면 "지금까지의 관측으로 마무리하라" 입니다.
-        self.on_tool_budget = on_tool_budget
+        # 한도에 닿은 에이전트에게 보내는 답. (늘려 줄 양, 요청 id).
+        # 0 이면 "지금까지의 것으로 마무리하라" 입니다. 도구 상한과 컨텍스트 창이
+        # 같은 통로를 씁니다 — 무엇에 답하는지는 쪽지의 `kind` 가 들고 있습니다.
+        self.on_decision = on_decision or on_tool_budget
+        self.on_tool_budget = self.on_decision
         self.scroll_area: Optional[ui.scroll_area] = None
         self.message_container: Optional[ui.column] = None
         self.status_bar: Optional[ui.row] = None
@@ -123,6 +163,9 @@ class ChatFeed:
         self.budget_label: Optional[ui.label] = None
         self.budget_countdown: Optional[ui.label] = None
         self.budget_extend_button: Optional[ui.button] = None
+        self.budget_icon: Optional[ui.icon] = None
+        self.budget_wrap_up_button: Optional[ui.button] = None
+        self.budget_buttons: Optional[ui.row] = None
         self._budget_request: Optional[Dict[str, Any]] = None
         self.is_busy: bool = False
         self._stop_pending: bool = False
@@ -223,16 +266,21 @@ class ChatFeed:
                 # 도구 호출 상한에 닿았을 때. 여기서 답하지 않으면 시간이 지나
                 # 에이전트가 스스로 마무리하므로, 남은 초를 함께 보여줍니다.
                 with ui.row().classes(
-                    "w-full items-center gap-2 px-3 py-2 rounded-lg text-xs "
-                    "bg-amber-950/50 border border-amber-700/70"
+                    f"{BAR_CLASSES} border {DECISION_STYLES['tool_budget']['bar']}"
                 ) as self.budget_bar:
-                    ui.icon("build_circle", size="sm").classes("text-amber-300 flex-shrink-0")
+                    self.budget_icon = ui.icon(
+                        DECISION_STYLES["tool_budget"]["icon"], size="sm"
+                    ).classes(f"{DECISION_STYLES['tool_budget']['icon_color']} flex-shrink-0")
                     self.budget_label = ui.label("").classes(
-                        "text-amber-100 font-semibold min-w-0 flex-grow"
+                        f"{LABEL_CLASSES} {DECISION_STYLES['tool_budget']['label']}"
                     )
                     self.budget_countdown = ui.label("").classes(
-                        "text-amber-300 font-mono flex-shrink-0"
+                        f"{COUNTDOWN_CLASSES} {DECISION_STYLES['tool_budget']['countdown']}"
                     )
+                    self.budget_buttons = ui.row().classes(
+                        "items-center gap-1 flex-shrink-0 flex-nowrap"
+                    )
+                with self.budget_buttons:
                     self.budget_extend_button = (
                         ui.button("상한 확장", icon="add_circle",
                                   on_click=self._handle_budget_extend)
@@ -241,11 +289,11 @@ class ChatFeed:
                         .props("unelevated dense no-caps color=amber-7 text-color=grey-10 size=sm")
                         .tooltip("이 발언에 한해 도구 호출 횟수를 늘려 줍니다. 토론은 그 자리에서 이어집니다.")
                     )
-                    (
+                    self.budget_wrap_up_button = (
                         ui.button("지금 마무리", icon="done_all",
                                   on_click=self._handle_budget_wrap_up)
                         .props("flat dense no-caps color=amber-3 size=sm")
-                        .tooltip("도구를 더 쓰지 않고, 지금까지 얻은 관측만으로 결론을 쓰게 합니다.")
+                        .tooltip("더 쓰지 않고, 지금까지 얻은 것만으로 결론을 쓰게 합니다.")
                     )
                 self.budget_bar.set_visibility(False)
 
@@ -407,10 +455,10 @@ class ChatFeed:
     async def _answer_budget(self, extra: int) -> None:
         """답은 한 번뿐입니다. 누르는 즉시 줄을 걷어 두 번 눌리지 않게 합니다."""
         request = self._budget_request
-        if request is None or self.on_tool_budget is None:
+        if request is None or self.on_decision is None:
             return
         self.set_budget_request(None)
-        await self.on_tool_budget(extra, str(request.get("id", "")))
+        await self.on_decision(extra, str(request.get("id", "")))
 
     def clear_budget_request(self, request_id: Optional[str] = None) -> None:
         """답이 난 물음을 걷습니다. id 를 주면 그 물음일 때만 걷습니다.
@@ -423,8 +471,16 @@ class ChatFeed:
             return
         self.set_budget_request(None)
 
+    def set_decision_request(self, request: Optional[Dict[str, Any]]) -> None:
+        """한도 안내 줄을 켜거나 끕니다 (`set_budget_request` 와 같습니다)."""
+        self.set_budget_request(request)
+
     def set_budget_request(self, request: Optional[Dict[str, Any]]) -> None:
-        """도구 상한 안내 줄을 켜거나 끕니다. `None` 이면 감춥니다."""
+        """한도 안내 줄을 켜거나 끕니다. `None` 이면 감춥니다.
+
+        도구 상한과 컨텍스트 창이 같은 줄을 씁니다. 둘은 동시에 뜨지 않습니다 —
+        한도에 닿은 발언은 답을 받기 전까지 다음 호출로 넘어가지 않으니까요.
+        """
         self._budget_request = dict(request) if request else None
         if not self.alive or self.budget_bar is None:
             return
@@ -436,19 +492,88 @@ class ChatFeed:
 
         info = self._budget_request
         step = self._extension_step()
-        if self.budget_label is not None and not self.budget_label.is_deleted:
-            self.budget_label.set_text(
-                f"{info.get('agent_name', '에이전트')} 가 도구 호출 상한 "
-                f"{info.get('limit', 0)}회를 모두 썼습니다 "
-                f"(도구 {info.get('tool_calls', 0)}건 실행). "
-                f"상한을 늘릴까요, 지금까지의 관측으로 마무리할까요?"
+        who = info.get("agent_name", "에이전트")
+        # 넓힐 여지가 없으면 (하드 상한 소진, 모델 실제 한도 도달) 확장 버튼이
+        # 사라집니다. 그때 문구까지 "늘릴까요?" 로 두면 없는 선택지를 제안하는
+        # 셈이고, 사람은 사라진 버튼을 찾게 됩니다.
+        can_widen = step > 0
+        if info.get("kind") == "context_window":
+            head = f"{who} 의 컨텍스트 창 {int(info.get('limit', 0)):,} 토큰이 가득 찼습니다."
+            if can_widen:
+                label = f"{head} 한도를 넓힐까요, 오래된 기록을 생략하고 진행할까요?"
+                if not info.get("headroom_known", True):
+                    # 모델의 실제 한도를 조회하지 못했습니다. 넓혀도 되는지는 자기
+                    # 엔드포인트를 아는 사람만 판단할 수 있으므로 그 사실을 밝힙니다.
+                    label += " (이 모델의 실제 한도는 확인하지 못했습니다)"
+            else:
+                label = (
+                    f"{head} 이 모델의 실제 한도까지 다 써서 더 넓힐 수 없습니다 — "
+                    f"오래된 기록을 생략하며 진행하거나, 지금 마무리할 수 있습니다."
+                )
+            extend_text = f"+{step:,} 토큰 넓히기"
+        else:
+            head = (
+                f"{who} 가 도구 호출 상한 {info.get('limit', 0)}회를 모두 썼습니다 "
+                f"(도구 {info.get('tool_calls', 0)}건 실행)."
             )
+            if can_widen:
+                label = f"{head} 상한을 늘릴까요, 지금까지의 관측으로 마무리할까요?"
+            else:
+                label = (
+                    f"{head} 하드 상한까지 다 써서 더 늘릴 수 없습니다 — "
+                    f"지금까지의 관측으로 마무리합니다."
+                )
+            extend_text = f"+{step}회 확장"
+
+        if self.budget_label is not None and not self.budget_label.is_deleted:
+            self.budget_label.set_text(label)
         if self.budget_extend_button is not None and not self.budget_extend_button.is_deleted:
-            self.budget_extend_button.set_text(f"+{step}회 확장")
-            # 하드 상한(TOOL_ITERATION_CEILING)까지 다 쓴 경우엔 늘릴 여지가 없습니다.
+            self.budget_extend_button.set_text(extend_text)
+            # 넓힐 여지가 없으면(하드 상한 소진, 모델 실제 한도 도달) 숨깁니다.
             self.budget_extend_button.set_visibility(step > 0)
+        if self.budget_wrap_up_button is not None and not self.budget_wrap_up_button.is_deleted:
+            if info.get("kind") == "context_window":
+                # 버튼은 "지금 마무리" 그대로입니다. 넓히지 않겠다고 **명시적으로**
+                # 답하는 것과, 답하지 않아 시간이 지나는 것은 다릅니다 — 전자는 이
+                # 발언을 여기서 접고, 후자는 생략하며 계속 돕니다.
+                self.budget_wrap_up_button.set_text("지금 마무리")
+                self.budget_wrap_up_button.tooltip(
+                    "한도를 넓히지 않고, 지금 남아 있는 기록만으로 이 발언의 결론을 "
+                    "쓰게 합니다. (답하지 않고 두면 대신 오래된 기록부터 생략하며 "
+                    "토론이 계속됩니다.)"
+                )
+            else:
+                self.budget_wrap_up_button.set_text("지금 마무리")
+                self.budget_wrap_up_button.tooltip(
+                    "도구를 더 쓰지 않고, 지금까지 얻은 관측만으로 결론을 쓰게 합니다."
+                )
+        self._paint_budget_bar(str(info.get("kind") or "tool_budget"))
         self.budget_bar.set_visibility(True)
         self._tick_budget_countdown()
+
+    def _paint_budget_bar(self, kind: str) -> None:
+        """안내 줄을 물음의 종류에 맞춰 칠합니다.
+
+        `classes(replace=...)` 를 쓰면 안 됩니다. NiceGUI 가 직접 붙이는 구조
+        클래스(`nicegui-row row` = `display: flex`)까지 지워져 줄이 통째로
+        세로로 쌓입니다. 색만 걷어내고 색만 다시 올립니다.
+        """
+        style = DECISION_STYLES.get(kind) or DECISION_STYLES["tool_budget"]
+        swaps = (
+            (self.budget_bar, "bar"),
+            (self.budget_label, "label"),
+            (self.budget_countdown, "countdown"),
+            (self.budget_icon, "icon_color"),
+        )
+        for element, slot in swaps:
+            if element is not None and not element.is_deleted:
+                element.classes(remove=_all_decision_classes(slot), add=style[slot])
+        if self.budget_icon is not None and not self.budget_icon.is_deleted:
+            self.budget_icon.props(f'name={style["icon"]}')
+        if self.budget_extend_button is not None and not self.budget_extend_button.is_deleted:
+            self.budget_extend_button.props(style["extend"])
+        if self.budget_wrap_up_button is not None and not self.budget_wrap_up_button.is_deleted:
+            self.budget_wrap_up_button.props(style["wrap_up"])
 
     def _tick_budget_countdown(self) -> None:
         """답하지 않으면 에이전트가 스스로 마무리하기까지 남은 시간."""
@@ -463,11 +588,13 @@ class ChatFeed:
         if not opened_at or wait_seconds <= 0:
             self.budget_countdown.set_text("")
             return
+        style = DECISION_STYLES.get(str(info.get("kind") or "")) or DECISION_STYLES["tool_budget"]
+        label = style["timeout_label"]
         remaining = int(opened_at + wait_seconds - time.time())
         if remaining <= 0:
-            self.budget_countdown.set_text("자동 마무리")
+            self.budget_countdown.set_text(label)
             return
-        self.budget_countdown.set_text(f"{remaining}초 후 자동 마무리")
+        self.budget_countdown.set_text(f"{remaining}초 후 {label}")
 
     def set_busy(self, busy: bool, status_text: str = "", round_info: str = "") -> None:
         if not self.alive:

@@ -138,7 +138,8 @@ class _DispatchingLLM(FakeLLMCaller):
 
     async def call_agent(self, agent, messages, custom_instructions="",
                          on_tool_call=None, on_chunk=None, session_id=None,
-                         budget_arbiter=None):
+                         budget_arbiter=None,
+                         context_arbiter=None, on_context_trim=None):
         if self._is_dispatch(messages):
             self.planner_agents.append(agent)
             self.calls.append(f"{agent.key}:dispatch")
@@ -276,7 +277,8 @@ async def test_the_recorded_order_follows_the_dispatch_not_the_finish_time():
 
         async def call_agent(self, agent, messages, custom_instructions="",
                              on_tool_call=None, on_chunk=None, session_id=None,
-                             budget_arbiter=None):
+                             budget_arbiter=None,
+                             context_arbiter=None, on_context_trim=None):
             if agent.key in self.DELAYS and not self._is_dispatch(messages):
                 self.hold = self.DELAYS[agent.key]
             return await super().call_agent(

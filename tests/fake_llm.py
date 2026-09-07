@@ -84,6 +84,8 @@ class FakeLLMCaller:
         on_chunk: Optional[Callable[[str], Any]] = None,
         session_id: Optional[str] = None,
         budget_arbiter: Optional[Callable[[Dict[str, Any]], Any]] = None,
+        context_arbiter: Optional[Callable[[Dict[str, Any]], Any]] = None,
+        on_context_trim: Optional[Callable[[int], Any]] = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         self.calls.append(agent.key)
         self.scopes.append(session_id)

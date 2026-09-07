@@ -239,7 +239,8 @@ async def test_partial_stream_is_kept_alongside_the_failure_notice():
     class HalfWayCaller(FakeLLMCaller):
         async def call_agent(self, agent, messages, custom_instructions="",
                              on_tool_call=None, on_chunk=None, session_id=None,
-                             budget_arbiter=None):
+                             budget_arbiter=None,
+                             context_arbiter=None, on_context_trim=None):
             if agent.key == "critic":
                 if on_chunk:
                     await on_chunk("검토를 시작하겠습니다")
@@ -305,7 +306,8 @@ async def test_real_debate_context_alternates_roles():
     # 다듬기 전에는 user 가 연달아 나옵니다 (이것이 400 의 원인이었습니다).
     assert max(len(list(g)) for _, g in groupby(m["role"] for m in raw)) > 1
 
-    sent = merge_consecutive_roles(fit_context_window(critic, raw))
+    fitted, _dropped = fit_context_window(critic, raw)
+    sent = merge_consecutive_roles(fitted)
     assert max(len(list(g)) for _, g in groupby(m["role"] for m in sent)) == 1
 
 
@@ -319,9 +321,10 @@ def test_context_window_drops_oldest_middle_messages():
     messages += [{"role": "user", "content": f"발언 {i} " + "가" * 400} for i in range(10)]
     messages += [{"role": "user", "content": "이번 차례입니다"}]
 
-    fitted = fit_context_window(agent, messages)
+    fitted, dropped = fit_context_window(agent, messages)
 
     assert len(fitted) < len(messages)
+    assert dropped > 0, "몇 건이 생략됐는지 밖으로 알려야 화면에 띄울 수 있습니다"
     assert fitted[0]["content"] == "sys"
     assert fitted[1]["content"] == "목표"
     assert fitted[-1]["content"] == "이번 차례입니다"
@@ -341,7 +344,7 @@ def test_context_window_leaves_short_conversations_untouched():
         {"role": "assistant", "content": "짧은 답"},
         {"role": "user", "content": "이번 차례"},
     ]
-    assert fit_context_window(agent, messages) == messages
+    assert fit_context_window(agent, messages) == (messages, 0)
 
 
 @pytest.mark.asyncio

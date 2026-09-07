@@ -80,7 +80,11 @@ def estimate_tokens(model: str, messages: List[Dict[str, Any]]) -> int:
         return chars // 2 + len(messages) * 4
 
 
-def fit_context_window(agent: Agent, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def fit_context_window(
+    agent: Agent,
+    messages: List[Dict[str, Any]],
+    memory_tool: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], int]:
     """`max_context_window` 안에 들어가도록 가운데 발언부터 덜어냅니다.
 
     라운드가 쌓이면 전사(transcript)가 그대로 길어져 컨텍스트 한도를 넘고,
@@ -90,12 +94,16 @@ def fit_context_window(agent: Agent, messages: List[Dict[str, Any]]) -> List[Dic
 
     맨 앞(목표)과 맨 뒤(이번 차례 지시)는 남깁니다. 그 사이를 오래된 것부터
     덜어내고, 무엇이 빠졌는지 모델에게 알려 줍니다.
+
+    `(messages, 생략된 발언 수)` 를 돌려줍니다. 생략 건수를 밖으로 내보내는 것은
+    화면에 알리기 위해서입니다 — 예전에는 `logger.warning` 만 남아, 토론 기록이
+    사라지는 것을 보고 있는 사람이 알 방법이 없었습니다.
     """
-    budget = agent.max_context_window - agent.max_tokens - 512  # 응답분 + 여유
+    budget = context_budget(agent)
     if budget <= 0 or len(messages) <= 3:
-        return messages
+        return messages, 0
     if estimate_tokens(agent.model, messages) <= budget:
-        return messages
+        return messages, 0
 
     head, tail = messages[:2], messages[-1:]      # system + 목표, 이번 차례 지시
     middle = messages[2:-1]
@@ -105,17 +113,13 @@ def fit_context_window(agent: Agent, messages: List[Dict[str, Any]]) -> List[Dic
         dropped += 1
 
     if dropped:
-        notice = {
-            "role": "user",
-            "content": f"[앞선 발언 {dropped}건은 컨텍스트 한도로 생략되었습니다. "
-                       f"남은 기록만으로 판단하고, 생략된 내용을 지어내지 마세요.]",
-        }
+        notice = {"role": "user", "content": context_trim_notice(dropped, memory_tool)}
         logger.warning(
             f"Context window trim for {agent.name}: dropped {dropped} message(s) "
             f"(max_context_window={agent.max_context_window})"
         )
-        return head + [notice] + middle + tail
-    return head + middle + tail
+        return head + [notice] + middle + tail, dropped
+    return head + middle + tail, 0
 
 
 class ToolCallLog(dict):
@@ -128,6 +132,13 @@ class ToolCallLog(dict):
 # 0 을 돌려주면 확장 없음 — 에이전트는 도구를 떼고 지금까지 얻은 것으로 결론을
 # 씁니다. 이 자리에 사람이 있습니다 (엔진이 화면에 물어보는 통로를 끼웁니다).
 BudgetArbiter = Callable[[Dict[str, Any]], Awaitable[int]]
+
+# 컨텍스트 창이 넘쳐 기록을 버려야 할 때 "얼마나 넓혀 줄지" 를 정해 주는 콜백.
+#
+# 0 을 돌려주면 넓히지 않음 — 오래된 것부터 생략하고 진행하거나(무응답), 도구를
+# 떼고 결론만 씁니다(명시적 마무리). 어느 쪽인지는 반환값과 함께 오는 `wrap_up`
+# 플래그가 정합니다. 도구 예산 쪽과 달리 답이 세 갈래라 dict 를 돌려받습니다.
+ContextArbiter = Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]
 
 
 # ---------------------------------------------------------------- 도구 예산 고지
@@ -202,6 +213,230 @@ BUDGET_EXTENDED_INSTRUCTION = (
 
 # 예산이 바닥나 도구 없이 마무리했다는 사실을 발언 끝에 남깁니다. 화면과 기록
 # 모두에서 "왜 여기서 멈췄는가" 가 보여야, 사람이 상한을 올릴지 판단할 수 있습니다.
+# ------------------------------------------------------------ 컨텍스트 창 포화
+
+# 사용률이 이 띠를 **처음 넘을 때만** 고지합니다. 매 판 떠들면 프롬프트만 늘어나고
+# (그것도 컨텍스트입니다) 모델은 곧 무시하기 시작합니다.
+CONTEXT_PRESSURE_BANDS = (0.5, 0.7, 0.85, 0.95)
+
+# 오프로딩을 권할 띠. 95% 에서는 권하지 않습니다 — 자리가 없는데 메시지를 더
+# 얹는 것은 역효과입니다.
+CONTEXT_OFFLOAD_BAND = 0.85
+
+# 상향의 하드 상한. 지금 나와 있는 가장 큰 모델을 넉넉히 덮습니다.
+CONTEXT_WINDOW_CEILING = 2_000_000
+
+# 메모리 MCP 의 도구 이름. 서버 키(`memory`)가 아니라 **도구 이름 꼬리**로 찾습니다.
+# 서버를 껐거나, 연결에 실패했거나, conf.json 에서 키 이름을 바꿨을 때 없는 도구를
+# 부르라고 시키지 않기 위해서입니다 (`memory__add_observations` 의 `__` 뒤).
+MEMORY_WRITE_TOOLS = ("add_observations", "create_entities")
+MEMORY_SEARCH_TOOLS = ("search_nodes", "open_nodes")
+
+
+def _tool_names(tools: Optional[List[Dict[str, Any]]]) -> List[str]:
+    """OpenAI 도구 스키마 목록에서 함수 이름만 뽑습니다."""
+    names = []
+    for tool in tools or []:
+        name = (tool.get("function") or {}).get("name")
+        if name:
+            names.append(str(name))
+    return names
+
+
+def _find_tool(tools: Optional[List[Dict[str, Any]]], suffixes: Tuple[str, ...]) -> Optional[str]:
+    """이름이 `suffixes` 중 하나로 끝나는 도구의 **전체 이름**을 돌려줍니다.
+
+    전체 이름이어야 지시문에 모델이 실제로 부를 이름을 그대로 적어 줄 수 있습니다.
+    """
+    for name in _tool_names(tools):
+        tail = name.split("__", 1)[-1]
+        if tail in suffixes:
+            return name
+    return None
+
+
+def memory_write_tool(tools: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+    """이 발언이 쓸 수 있는 메모리 기록 도구의 이름. 없으면 None."""
+    return _find_tool(tools, MEMORY_WRITE_TOOLS)
+
+
+def memory_search_tool(tools: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+    """이 발언이 쓸 수 있는 메모리 검색 도구의 이름. 없으면 None."""
+    return _find_tool(tools, MEMORY_SEARCH_TOOLS)
+
+
+def context_headroom(agent: Agent) -> Optional[int]:
+    """모델의 **실제** 입력 한도까지 남은 여유. 한도를 모르면 None.
+
+    컨텍스트 창은 도구 상한과 달리 우리가 정하는 숫자가 아닙니다. `max_context_window`
+    를 모델의 실제 한도 위로 올리면, 깔끔하던 트림이 엔드포인트 400 으로 바뀝니다.
+    그래서 올려도 되는 폭을 프로바이더 쪽 값으로 확인합니다.
+
+    매핑되지 않은 모델(사설 게이트웨이, vLLM, 일부 별칭)에서는 조회가 실패합니다.
+    그때는 None 을 돌려주고, 호출부가 사용자에게 판단을 넘깁니다 — 자기 엔드포인트는
+    사용자가 더 잘 압니다. 예외를 삼키는 것은 `estimate_tokens` 의 선례와 같습니다.
+    """
+    try:
+        info = litellm.get_model_info(agent.model)
+    except Exception:  # noqa: BLE001 - 한도를 몰라도 호출을 막지는 않습니다
+        return None
+    real = info.get("max_input_tokens") or info.get("max_tokens")
+    if not real:
+        return None
+    return max(0, int(real) - agent.max_context_window)
+
+
+def context_budget(agent: Agent, window: Optional[int] = None) -> int:
+    """전사가 쓸 수 있는 토큰. 응답 분량과 여유를 뺀 값입니다.
+
+    `fit_context_window` 가 쓰던 계산과 같습니다. 여러 곳에서 같은 식을 되풀이하면
+    한 곳만 고쳤을 때 서로 다른 기준으로 자르게 됩니다.
+    """
+    return (window or agent.max_context_window) - agent.max_tokens - 512
+
+
+def context_pressure_notice(
+    *,
+    used: int,
+    budget: int,
+    announced: set,
+    memory_tool: Optional[str] = None,
+    tool_calls_left: Optional[int] = None,
+) -> Optional[str]:
+    """컨텍스트 사용률 고지. 새로 넘은 띠가 없으면 None.
+
+    `announced` 는 이미 알린 띠의 집합이고, **이 함수가 직접 갱신합니다**. 호출부가
+    기억을 따로 들고 있으면 두 곳에서 같은 상태를 관리하게 됩니다.
+
+    `memory_tool` 이 있으면 85% 띠에서 "잘리기 전에 그래프로 옮겨 두라"를 덧붙입니다.
+    메모리에 쓴다고 컨텍스트가 그 자리에서 줄지는 않습니다 — 대화 메시지는 그대로
+    남습니다. 줄어드는 것은 **잘려도 잃지 않게 되는 것**이고, 문구도 그렇게 씁니다.
+    """
+    if budget <= 0:
+        return None
+    ratio = used / budget
+    crossed = [b for b in CONTEXT_PRESSURE_BANDS if ratio >= b and b not in announced]
+    if not crossed:
+        return None
+
+    band = max(crossed)
+    announced.update(crossed)
+    remaining = max(0, budget - used)
+    head = (
+        f"[컨텍스트] 이번 발언의 맥락이 한도의 **{int(ratio * 100)}%** 를 쓰고 있습니다 "
+        f"(남은 여유 약 {remaining:,} 토큰)."
+    )
+
+    if band >= 0.95:
+        return (
+            f"{head} **여유가 거의 없습니다.** 도구를 더 부르지 말고 지금 결론을 쓰세요. "
+            f"길게 쓰면 그만큼 앞선 기록이 잘려 나갑니다."
+        )
+    if band >= 0.85:
+        tail = (
+            "곧 앞선 발언과 도구 관측이 오래된 것부터 생략됩니다. 결론을 준비하세요."
+        )
+        if memory_tool and (tool_calls_left is None or tool_calls_left > TOOL_BUDGET_FINAL_COUNTDOWN):
+            tail += (
+                "\n\n생략되기 **전에** 지금까지의 핵심 결론·근거·미해결 쟁점을 "
+                f"`{memory_tool}` 로 그래프에 한 번에 압축해 남기세요 (호출은 한 번만). "
+                f"이 그래프는 이 대화의 다른 에이전트와 최종 합성도 함께 읽습니다. "
+                f"옮겨 두면 잘려도 잃지 않습니다."
+            )
+        return f"{head} {tail}"
+    if band >= 0.7:
+        return (
+            f"{head} 출력이 큰 도구 호출(파일 전체 읽기, 긴 목록)은 자제하고 "
+            f"필요한 범위만 요청하세요."
+        )
+    return f"{head} 요점 위주로 쓰고, 이미 나온 내용을 그대로 옮겨 적지 마세요."
+
+
+def context_trim_notice(dropped: int, memory_tool: Optional[str] = None) -> str:
+    """생략 안내문. 메모리가 있으면 어디서 찾을 수 있는지까지 알려 줍니다."""
+    text = (
+        f"[앞선 기록 {dropped}건은 컨텍스트 한도로 생략되었습니다. "
+        f"남은 기록만으로 판단하고, 생략된 내용을 지어내지 마세요.]"
+    )
+    if memory_tool:
+        text = text[:-1] + f" 필요하면 `{memory_tool}` 로 그래프에서 찾아보세요.]"
+    return text
+
+
+def _is_tool_result(msg: Dict[str, Any]) -> bool:
+    return msg.get("role") == "tool"
+
+
+def _opens_tool_calls(msg: Dict[str, Any]) -> bool:
+    return msg.get("role") == "assistant" and bool(msg.get("tool_calls"))
+
+
+def fit_tool_loop_context(
+    agent: Agent,
+    messages: List[Dict[str, Any]],
+    window: Optional[int] = None,
+    memory_tool: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], int]:
+    """도구 루프의 대화를 창 안에 맞춥니다. `(messages, 생략된 덩어리 수)`.
+
+    `fit_context_window` 는 발언 시작 전 **한 번만** 돕니다. 그런데 루프는 매 판
+    assistant + tool 메시지를 쌓고, 도구 출력은 수십 KB가 되기도 합니다. 그래서 긴
+    루프는 창을 넘기고 엔드포인트가 400 을 돌려주며, 그 발언이 통째로 사라졌습니다.
+
+    여기서 메시지를 함부로 버릴 수 없습니다. `tool` 메시지를 앞선
+    assistant(`tool_calls`) 없이 남기면 OpenAI 호환 엔드포인트가 400 을 돌려줍니다
+    ("messages with role 'tool' must be a response to a preceding message with
+    'tool_calls'"). 그래서 **assistant 와 거기 딸린 tool 결과들을 한 덩어리로**
+    덜어냅니다.
+
+    맨 앞(system + 목표)과 맨 뒤(가장 최근 덩어리)은 남깁니다. 최근 관측이 지금
+    판단의 근거라, 잘라야 한다면 앞쪽을 버리는 편이 낫습니다.
+    """
+    budget = context_budget(agent, window)
+    if budget <= 0 or len(messages) <= 3:
+        return messages, 0
+    if estimate_tokens(agent.model, messages) <= budget:
+        return messages, 0
+
+    head = messages[:2]                  # system + 최초 지시
+    rest = messages[2:]
+
+    # rest 를 덩어리로 묶습니다. 도구 호출을 여는 assistant 에서 새 덩어리가
+    # 시작되고, 뒤따르는 tool 결과들이 같은 덩어리에 붙습니다.
+    blocks: List[List[Dict[str, Any]]] = []
+    for msg in rest:
+        if _opens_tool_calls(msg) or not blocks:
+            blocks.append([msg])
+        elif _is_tool_result(msg) and blocks:
+            blocks[-1].append(msg)
+        else:
+            blocks.append([msg])
+
+    dropped = 0
+    # 마지막 덩어리는 남깁니다 — 그것이 지금 판단의 근거입니다.
+    while len(blocks) > 1:
+        probe = head + [m for b in blocks for m in b]
+        if estimate_tokens(agent.model, probe) <= budget:
+            break
+        blocks.pop(0)
+        dropped += 1
+
+    if not dropped:
+        return messages, 0
+
+    logger.warning(
+        f"Tool-loop context trim for {agent.name}: dropped {dropped} block(s) "
+        f"(max_context_window={window or agent.max_context_window})"
+    )
+    notice = {"role": "user", "content": context_trim_notice(dropped, memory_tool)}
+    return head + [notice] + [m for b in blocks for m in b], dropped
+
+
+CONTEXT_WIDENED_INSTRUCTION = (
+    "[컨텍스트 확장] 사용자가 이 발언의 컨텍스트 한도를 {extra:,} 토큰 늘려 "
+    "총 {window:,} 토큰이 되었습니다. 앞선 기록이 생략되지 않고 그대로 남았습니다."
+)
+
 BUDGET_WRAP_UP_FOOTER = (
     "> ⚠️ **도구 호출 상한({limit}회)에 도달**해 도구 없이 마무리한 발언입니다 "
     "(도구 {tool_calls}건 실행). 더 확인이 필요하면 에이전트 설정의 "
@@ -252,6 +487,8 @@ class LLMCaller:
         on_chunk: Optional[Callable[[str], Any]] = None,
         session_id: Optional[str] = None,
         budget_arbiter: Optional[BudgetArbiter] = None,
+        context_arbiter: Optional[ContextArbiter] = None,
+        on_context_trim: Optional[Callable[[int], Any]] = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Executes a turn for the given agent.
@@ -265,19 +502,30 @@ class LLMCaller:
         `budget_arbiter` 는 도구 호출 상한에 닿았을 때 사람에게 확장을 물어보는
         통로입니다. 주지 않으면 확장 없이, 도구를 떼고 결론만 받아 마무리합니다
         (`_run_litellm_loop`). 어느 쪽이든 발언이 통째로 버려지지는 않습니다.
+
+        `context_arbiter` 는 컨텍스트 창이 넘쳐 기록을 버려야 할 때의 같은 통로이고,
+        `on_context_trim` 은 실제로 생략이 일어났음을 화면에 알리는 콜백입니다.
         """
         formatted_messages: List[Dict[str, Any]] = [
             {"role": "system", "content": self.build_system_prompt(agent, custom_instructions)}
         ]
         formatted_messages.extend(messages)
 
+        # Retrieve available tools for this agent
+        #
+        # 자르기보다 먼저 구합니다. 무엇이 잘렸는지 알리는 문구가 "메모리 그래프에서
+        # 찾아보라" 로 바뀌려면, 이 에이전트가 그 도구를 실제로 갖고 있는지 알아야
+        # 합니다 (서버를 껐거나 연결에 실패했으면 없는 도구를 가리키게 됩니다).
+        tools = self.mcp_manager.get_openai_tools_for_servers(self.resolve_tool_servers(agent))
+
         # 순서 주의: 먼저 한도에 맞춰 자르고, 그 다음 role 을 합칩니다. 생략 안내가
         # user 로 들어가므로 합치기를 나중에 해야 교대가 보장됩니다.
-        formatted_messages = fit_context_window(agent, formatted_messages)
+        formatted_messages, trimmed = fit_context_window(
+            agent, formatted_messages, memory_search_tool(tools)
+        )
+        if trimmed and on_context_trim:
+            on_context_trim(trimmed)
         formatted_messages = merge_consecutive_roles(formatted_messages)
-
-        # Retrieve available tools for this agent
-        tools = self.mcp_manager.get_openai_tools_for_servers(self.resolve_tool_servers(agent))
 
         # Real endpoint if an API URL, an API key, or a keyless local runtime is configured
         if not agent.is_live:
@@ -291,6 +539,7 @@ class LLMCaller:
             content, logs = await self._run_litellm_loop(
                 agent, formatted_messages, tools, on_tool_call, on_chunk=on_chunk,
                 session_id=session_id, budget_arbiter=budget_arbiter,
+                context_arbiter=context_arbiter, on_context_trim=on_context_trim,
             )
         except LLMUnavailableError:
             raise
@@ -457,6 +706,34 @@ class LLMCaller:
             return
         messages.append({"role": "user", "content": text})
 
+    async def _ask_context(
+        self,
+        arbiter: "ContextArbiter",
+        agent: Agent,
+        window: int,
+        messages: List[Dict[str, Any]],
+        tool_calls: int,
+    ) -> Dict[str, Any]:
+        """컨텍스트가 넘쳤음을 사람에게 알리고 답을 받아 옵니다.
+
+        묻다가 실패해도 발언은 살립니다 — 답을 못 받은 것으로 보고 트림으로
+        넘어갑니다 (도구 예산 쪽 중재자와 같은 태도입니다).
+        """
+        try:
+            answer = await arbiter({
+                "agent_key": agent.key,
+                "agent_name": agent.name,
+                "window": window,
+                "used": estimate_tokens(agent.model, messages),
+                "budget": context_budget(agent, window),
+                "headroom": context_headroom(agent),
+                "tool_calls": tool_calls,
+            })
+            return answer or {}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Context arbiter failed for {agent.name}: {exc}")
+            return {}
+
     async def _wrap_up_without_tools(
         self,
         agent: Agent,
@@ -511,6 +788,8 @@ class LLMCaller:
         on_chunk: Optional[Callable[[str], Any]] = None,
         session_id: Optional[str] = None,
         budget_arbiter: Optional[BudgetArbiter] = None,
+        context_arbiter: Optional[ContextArbiter] = None,
+        on_context_trim: Optional[Callable[[int], Any]] = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """도구 루프. 상한은 두 겹의 안전장치와 함께 돕니다.
 
@@ -521,11 +800,24 @@ class LLMCaller:
            확장을 묻고, 확장을 받으면 이어서 돕니다. 못 받으면 도구를 떼고
            "지금까지 얻은 것으로 즉시 결론을 내라" 고 한 판 더 부릅니다. 어느
            쪽이든 그때까지의 발언과 도구 기록은 그대로 살아남습니다.
+
+        컨텍스트 창도 같은 두 겹으로 지킵니다. 매 판 직전에 `fit_tool_loop_context`
+        로 창 안에 맞추고(짝 단위로 덜어냅니다 — 고아 `tool` 메시지는 400 입니다),
+        사용률이 띠를 넘으면 `context_pressure_notice` 로 알립니다. 기록을 실제로
+        버려야 하는 첫 순간에는 `context_arbiter` 로 사람에게 묻습니다.
         """
         tool_logs: List[Dict[str, Any]] = []
         current_messages = list(messages)
         limit = max_tool_iterations or agent.max_tool_iterations
         used = 0
+
+        # 컨텍스트 쪽 상태. `window` 는 사람이 넓혀 줄 수 있으므로 에이전트 설정을
+        # 그대로 쓰지 않고 이 발언 동안의 유효값으로 들고 다닙니다.
+        window = agent.max_context_window
+        announced_bands: set = set()
+        memory_write = memory_write_tool(tools)
+        memory_search = memory_search_tool(tools)
+        context_asked = False
 
         # 이터레이션마다 나온 본문을 모읍니다.
         #
@@ -540,12 +832,63 @@ class LLMCaller:
 
         while True:
             while used < limit:
+                # --- 컨텍스트: 넘치면 짝 단위로 덜어내고, 버릴 것이 생기면 물어봅니다.
+                budget = context_budget(agent, window)
+                over = budget > 0 and estimate_tokens(agent.model, current_messages) > budget
+
+                if over and context_arbiter is not None and not context_asked:
+                    context_asked = True
+                    answer = await self._ask_context(
+                        context_arbiter, agent, window, current_messages, len(tool_logs)
+                    )
+                    granted = int(answer.get("granted") or 0)
+                    if granted > 0:
+                        window += granted
+                        logger.info(
+                            f"Context window for {agent.name} widened by {granted} to {window} "
+                            f"by the user"
+                        )
+                        self._append_budget_notice(
+                            current_messages,
+                            CONTEXT_WIDENED_INSTRUCTION.format(extra=granted, window=window),
+                        )
+                        budget = context_budget(agent, window)
+                        over = budget > 0 and estimate_tokens(agent.model, current_messages) > budget
+                    elif answer.get("wrap_up"):
+                        # 넓히지 않고 여기서 접겠다는 뜻입니다. 마무리 호출도 넘친
+                        # 메시지로 나가면 400 이므로 먼저 창 안에 맞춥니다.
+                        current_messages, dropped = fit_tool_loop_context(
+                            agent, current_messages, window, memory_search
+                        )
+                        if dropped and on_context_trim:
+                            on_context_trim(dropped)
+                        return await self._wrap_up_without_tools(
+                            agent, current_messages, segments, tool_logs, limit, on_chunk
+                        )
+
+                if over:
+                    current_messages, dropped = fit_tool_loop_context(
+                        agent, current_messages, window, memory_search
+                    )
+                    if dropped and on_context_trim:
+                        on_context_trim(dropped)
+
                 if tools:
                     notice = tool_budget_notice(
                         remaining=limit - used, limit=limit, used=used, tool_calls=len(tool_logs)
                     )
                     if notice:
                         self._append_budget_notice(current_messages, notice)
+
+                    pressure = context_pressure_notice(
+                        used=estimate_tokens(agent.model, current_messages),
+                        budget=context_budget(agent, window),
+                        announced=announced_bands,
+                        memory_tool=memory_write,
+                        tool_calls_left=limit - used,
+                    )
+                    if pressure:
+                        self._append_budget_notice(current_messages, pressure)
 
                 message = await self._complete_once(agent, current_messages, tools, on_chunk)
                 used += 1
