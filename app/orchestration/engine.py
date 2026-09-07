@@ -11,7 +11,7 @@ from app.agents.base import Agent
 from app.agents.llm import LLMCaller, LLMUnavailableError, estimate_tokens
 from app.agents.personas import prepare_agents_for_turn
 from app.agents.pool import AgentPool, get_agent_pool
-from app.config import resolve_workspace_dir
+from app.config import TOOL_ITERATION_CEILING, resolve_workspace_dir
 from app.mcp.manager import get_mcp_manager
 from app.database.models import (
     ArtifactModel,
@@ -148,6 +148,53 @@ class OrchestratorEngine:
             )
         return notice
 
+    def _make_budget_arbiter(
+        self,
+        control: Optional[TurnControl],
+        on_event: Optional[EventCallback],
+    ) -> Optional[Callable[[Dict[str, Any]], Coroutine[Any, Any, int]]]:
+        """도구 호출 상한에 닿았을 때 사람에게 물어보는 통로를 만듭니다.
+
+        `control` 이 없으면 (배치 실행, 테스트) None 을 돌려줍니다. 그러면
+        LLM 쪽은 아무도 묻지 않고 곧장 "도구 없이 마무리" 로 갑니다 — 물어볼
+        사람이 없는데 3분을 기다릴 이유가 없습니다.
+
+        상한은 `TOOL_ITERATION_CEILING` 을 넘길 수 없습니다. 확장은 폭주를
+        늦추는 것이지 푸는 것이 아닙니다.
+        """
+        if control is None:
+            return None
+
+        async def arbiter(info: Dict[str, Any]) -> int:
+            limit = int(info.get("limit", 0))
+            headroom = max(0, TOOL_ITERATION_CEILING - limit)
+
+            async def _open(request) -> None:
+                if on_event:
+                    await on_event({"type": "tool_budget_exhausted", **request.describe()})
+
+            request = await control.ask_tool_budget(
+                agent_key=str(info.get("agent_key", "")),
+                agent_name=str(info.get("agent_name", "")),
+                limit=limit,
+                used=int(info.get("used", 0)),
+                tool_calls=int(info.get("tool_calls", 0)),
+                max_extension=headroom,
+                on_open=_open,
+            )
+            if on_event:
+                await on_event({
+                    "type": "tool_budget_resolved",
+                    "id": request.id,
+                    "agent_name": request.agent_name,
+                    "outcome": request.outcome,
+                    "granted": request.granted,
+                    "limit": limit + request.granted,
+                })
+            return request.granted
+
+        return arbiter
+
     async def _speak(
         self,
         *,
@@ -159,6 +206,7 @@ class OrchestratorEngine:
         round_number: int,
         msg_type: str,
         on_event: Optional[EventCallback],
+        control: Optional[TurnControl] = None,
         db_lock: Optional[asyncio.Lock] = None,
         created_at: Optional[datetime] = None,
     ) -> DebateMessage:
@@ -230,6 +278,7 @@ class OrchestratorEngine:
                 agent, prompt_messages, custom_instructions,
                 on_tool_call=_on_tool_call, on_chunk=_on_chunk,
                 session_id=state.session_id,
+                budget_arbiter=self._make_budget_arbiter(control, on_event),
             )
             # 확정본이 비었는데 화면에는 글이 흘러갔다면 그 글을 남깁니다.
             # 여기서 정하는 `content` 가 DB 에 들어가는 값이라, 비워 둔 채로
@@ -498,6 +547,7 @@ class OrchestratorEngine:
                 round_number=0,
                 msg_type="orchestrator",
                 on_event=on_event,
+                control=control,
             )
 
             # 5. Phase 2: Multi-Round Specialist Debate Loop
@@ -587,6 +637,7 @@ class OrchestratorEngine:
                         round_number=round_num,
                         msg_type="agent",
                         on_event=on_event,
+                        control=control,
                     )
 
                 if stopped_early:
@@ -954,6 +1005,7 @@ class OrchestratorEngine:
                     round_number=round_num,
                     msg_type="agent",
                     on_event=on_event,
+                    control=control,
                     db_lock=db_lock,
                     created_at=base_time + timedelta(milliseconds=index),
                 )
@@ -1003,7 +1055,8 @@ class OrchestratorEngine:
 
         await self._merge_parallel_round(
             db=db, state=state, orchestrator=orchestrator, assignments=assignments,
-            round_num=round_num, custom_instructions=custom_instructions, on_event=on_event,
+            round_num=round_num, custom_instructions=custom_instructions,
+            control=control, on_event=on_event,
         )
         return False
 
@@ -1227,6 +1280,7 @@ class OrchestratorEngine:
         assignments: List[Tuple[Agent, str]],
         round_num: int,
         custom_instructions: str,
+        control: Optional[TurnControl],
         on_event: Optional[EventCallback],
     ) -> DebateMessage:
         """라운드 끝의 취합 발언. 병렬 결과를 붙이고 충돌과 남은 쟁점을 정리합니다.
@@ -1265,6 +1319,7 @@ class OrchestratorEngine:
             round_number=round_num,
             msg_type="orchestrator",
             on_event=on_event,
+            control=control,
         )
 
     def _build_context_for_agent(

@@ -128,6 +128,45 @@ def create_ui() -> None:
                     type="warning",
                     position="bottom-right",
                 )
+            elif etype == "tool_budget_exhausted":
+                # 에이전트는 지금 이 답을 기다리며 멈춰 있습니다. 알림은 지나가지만
+                # 안내 줄은 답할 때까지 남습니다.
+                chat_feed.set_budget_request({k: v for k, v in event.items() if k != "type"})
+                chat_feed.set_busy(
+                    True,
+                    f"[{event.get('agent_name', '')}] 도구 호출 상한 {event.get('limit', 0)}회 도달 — "
+                    f"상한을 늘릴지 마무리할지 골라 주세요.",
+                    "Tool limit",
+                )
+                ui.notify(
+                    f"{event.get('agent_name', '에이전트')} 가 도구 호출 상한에 도달했습니다. "
+                    f"상한을 늘리거나 지금까지의 관측으로 마무리하도록 선택하세요.",
+                    type="warning",
+                    position="bottom-right",
+                )
+            elif etype == "tool_budget_resolved":
+                chat_feed.clear_budget_request(event.get("id"))
+                granted = event.get("granted", 0)
+                if granted:
+                    ui.notify(
+                        f"도구 호출 상한을 {granted}회 늘렸습니다 (총 {event.get('limit', 0)}회). "
+                        f"토론을 이어갑니다.",
+                        type="info",
+                        position="bottom-right",
+                    )
+                elif event.get("outcome") == "timeout":
+                    ui.notify(
+                        "도구 상한 확장에 답이 없어, 지금까지의 관측만으로 마무리하도록 했습니다. "
+                        "발언과 도구 기록은 그대로 남습니다.",
+                        type="warning",
+                        position="bottom-right",
+                    )
+                else:
+                    ui.notify(
+                        "도구를 더 쓰지 않고 지금까지의 관측으로 마무리합니다.",
+                        type="info",
+                        position="bottom-right",
+                    )
             elif etype == "turn_completed":
                 failed = event.get("failed_agents") or []
                 if failed:
@@ -331,6 +370,22 @@ def create_ui() -> None:
             if run.status != "running":
                 chat_feed.set_busy(False, run.status_text, run.round_info)
 
+        async def on_tool_budget(extra: int, request_id: str) -> None:
+            """도구 상한에 닿은 에이전트에게 확장 여부를 알려 줍니다.
+
+            답이 늦어 이미 자동 마무리로 넘어갔을 수 있습니다. 그때는 조용히
+            지나가지 않고, 무슨 일이 있었는지 알려 줍니다.
+            """
+            if not current_session_id or not runner.resolve_tool_budget(
+                current_session_id, extra, request_id or None
+            ):
+                chat_feed.clear_budget_request(request_id or None)
+                ui.notify(
+                    "이미 처리된 요청입니다 (시간이 지나 자동 마무리로 넘어갔거나 토론이 끝났습니다).",
+                    type="warning",
+                    position="bottom-right",
+                )
+
         async def on_interject(text: str) -> None:
             """토론이 도는 중에 들어온 입력.
 
@@ -411,7 +466,8 @@ def create_ui() -> None:
 
         roster_control = AgentRosterControl(on_config_changed, on_resync_agents)
         chat_feed = ChatFeed(
-            on_send_message, on_interject=on_interject, on_stop=on_stop, on_abort=on_abort
+            on_send_message, on_interject=on_interject, on_stop=on_stop, on_abort=on_abort,
+            on_tool_budget=on_tool_budget,
         )
         artifact_viewer = ArtifactViewer()
 
@@ -625,9 +681,14 @@ def create_ui() -> None:
                 # 새로고침 뒤에도 "정지 중" 이라는 사실이 남아 있어야, 이미 접수된
                 # 요청을 다시 누르지 않습니다.
                 chat_feed.set_stop_pending(bool(snapshot["stop_requested"]))
+                # 답을 기다리는 물음은 화면이 아니라 토론이 들고 있습니다. 새로
+                # 붙은 화면에서도 같은 선택지가 보여야, 새로고침 한 번으로 답할
+                # 곳을 잃지 않습니다.
+                chat_feed.set_budget_request(snapshot.get("budget_request"))
                 attach_to_run(run)
             else:
                 chat_feed.set_busy(False, "대기 중", "Ready")
+                chat_feed.set_budget_request(None)
 
         # Initialize on initial load: select most recent session or create new
         async with session_factory() as db:

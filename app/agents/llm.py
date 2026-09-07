@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 import litellm
 from app.agents.base import Agent
 from app.mcp.manager import MCPManager, get_mcp_manager
@@ -123,6 +123,92 @@ class ToolCallLog(dict):
     pass
 
 
+# 도구 예산이 바닥났을 때 "얼마나 더 허용할지" 를 정해 주는 콜백.
+#
+# 0 을 돌려주면 확장 없음 — 에이전트는 도구를 떼고 지금까지 얻은 것으로 결론을
+# 씁니다. 이 자리에 사람이 있습니다 (엔진이 화면에 물어보는 통로를 끼웁니다).
+BudgetArbiter = Callable[[Dict[str, Any]], Awaitable[int]]
+
+
+# ---------------------------------------------------------------- 도구 예산 고지
+
+# 도구를 부를 수 있는 횟수가 이 값들에 닿을 때마다 에이전트에게 알립니다.
+# 상한보다 큰 값은 그냥 지나갑니다 (상한 30 인 에이전트에게 "100회 남음" 을
+# 알릴 일은 없습니다).
+TOOL_BUDGET_MILESTONES = (100, 80, 60, 50, 40, 30, 20, 10)
+
+# 여기서부터는 매 호출마다 알립니다. 5 → 4 → 3 → 2 → 1 → 불가.
+#
+# 사다리를 촘촘하게 만드는 이유는, 모델이 "아직 여유가 있다" 고 믿은 채로
+# 탐색을 이어가다 마지막 판에서 갑자기 끊기는 것을 막기 위해서입니다. 남은
+# 횟수를 알면 결론을 쓸 자리를 스스로 남겨 둡니다.
+TOOL_BUDGET_FINAL_COUNTDOWN = 5
+
+
+def tool_budget_notice(*, remaining: int, limit: int, used: int, tool_calls: int) -> Optional[str]:
+    """이번 판에 에이전트에게 붙일 예산 고지. 알릴 시점이 아니면 None.
+
+    첫 판에는 총량을, 그 뒤로는 사다리(`TOOL_BUDGET_MILESTONES`)에 닿을 때와
+    마지막 5회부터 매번 남은 횟수를 알립니다.
+    """
+    if remaining <= 0:
+        return None
+
+    if used == 0:
+        return (
+            f"[도구 호출 예산] 이번 발언에서 도구를 부를 수 있는 횟수는 **총 {limit}회**입니다. "
+            f"한 번에 여러 도구를 함께 불러도 그 묶음이 1회입니다. "
+            f"예산을 다 쓰면 도구 없이 결론만 써야 하므로, 꼭 필요한 호출부터 하고 "
+            f"결론을 쓸 여유를 남겨 두세요."
+        )
+
+    announce = remaining <= TOOL_BUDGET_FINAL_COUNTDOWN or (
+        remaining in TOOL_BUDGET_MILESTONES and remaining < limit
+    )
+    if not announce:
+        return None
+
+    head = (
+        f"[도구 호출 예산] 남은 호출 **{remaining}회** "
+        f"(총 {limit}회 중 {used}회 사용, 도구 {tool_calls}건 실행)."
+    )
+    if remaining == 1:
+        return (
+            f"{head} **마지막 기회입니다.** 이번 한 번을 쓰고 나면 도구를 전혀 쓸 수 없습니다. "
+            f"정말 결론에 필요한 것이 아니면 지금 바로 답을 작성하세요."
+        )
+    if remaining <= TOOL_BUDGET_FINAL_COUNTDOWN:
+        return (
+            f"{head} 마무리를 준비하세요 — 남은 호출은 결론에 반드시 필요한 것에만 쓰고, "
+            f"확인하지 못한 것은 확인하지 못했다고 적으세요."
+        )
+    return f"{head} 남은 횟수 안에서 결론까지 낼 수 있도록 계획을 조정하세요."
+
+
+BUDGET_EXHAUSTED_INSTRUCTION = (
+    "[도구 호출 예산 소진] 도구 호출 상한 {limit}회를 모두 썼습니다. "
+    "지금부터 도구는 사용할 수 없습니다.\n"
+    "새로 도구를 부르려 하지 말고, 지금까지 실행한 {tool_calls}건의 관측만으로 "
+    "이번 발언의 결론을 **지금 작성하세요**.\n"
+    "확인하지 못한 것은 확인하지 못했다고 적고, 무엇이 남았는지 다음 발언자에게 넘기세요. "
+    "없는 사실을 지어내지 마세요."
+)
+
+BUDGET_EXTENDED_INSTRUCTION = (
+    "[도구 호출 예산 확장] 사용자가 상한을 {extra}회 늘려 총 {limit}회가 되었습니다 "
+    "(남은 호출 {remaining}회). 늘어난 몫은 결론을 내는 데 꼭 필요한 확인에만 쓰고, "
+    "같은 탐색을 반복하지 마세요."
+)
+
+# 예산이 바닥나 도구 없이 마무리했다는 사실을 발언 끝에 남깁니다. 화면과 기록
+# 모두에서 "왜 여기서 멈췄는가" 가 보여야, 사람이 상한을 올릴지 판단할 수 있습니다.
+BUDGET_WRAP_UP_FOOTER = (
+    "> ⚠️ **도구 호출 상한({limit}회)에 도달**해 도구 없이 마무리한 발언입니다 "
+    "(도구 {tool_calls}건 실행). 더 확인이 필요하면 에이전트 설정의 "
+    "`max_tool_iterations` 를 올리거나, 다음 요청에서 범위를 좁혀 다시 물어보세요."
+)
+
+
 class LLMCaller:
     """Executes LLM completions with an MCP tool-calling loop.
 
@@ -165,6 +251,7 @@ class LLMCaller:
         on_tool_call: Optional[Callable[[Dict[str, Any]], Any]] = None,
         on_chunk: Optional[Callable[[str], Any]] = None,
         session_id: Optional[str] = None,
+        budget_arbiter: Optional[BudgetArbiter] = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Executes a turn for the given agent.
@@ -174,6 +261,10 @@ class LLMCaller:
         서버가 대화를 구분할 수 없어 다른 대화의 상태(지식 그래프 등)를 봅니다.
         발언자(`agent.key`)도 함께 실려서, 커널처럼 에이전트 단위로 나뉘어야 하는
         상태를 서버가 구분할 수 있습니다 (`MCPManager.compose_scope`).
+
+        `budget_arbiter` 는 도구 호출 상한에 닿았을 때 사람에게 확장을 물어보는
+        통로입니다. 주지 않으면 확장 없이, 도구를 떼고 결론만 받아 마무리합니다
+        (`_run_litellm_loop`). 어느 쪽이든 발언이 통째로 버려지지는 않습니다.
         """
         formatted_messages: List[Dict[str, Any]] = [
             {"role": "system", "content": self.build_system_prompt(agent, custom_instructions)}
@@ -199,7 +290,7 @@ class LLMCaller:
         try:
             content, logs = await self._run_litellm_loop(
                 agent, formatted_messages, tools, on_tool_call, on_chunk=on_chunk,
-                session_id=session_id,
+                session_id=session_id, budget_arbiter=budget_arbiter,
             )
         except LLMUnavailableError:
             raise
@@ -299,6 +390,117 @@ class LLMCaller:
 
         return content
 
+    # ------------------------------------------------------------ 한 판 호출
+
+    @staticmethod
+    async def _emit_chunk(on_chunk: Callable[[str], Any], text: str) -> None:
+        if asyncio.iscoroutinefunction(on_chunk):
+            await on_chunk(text)
+        else:
+            on_chunk(text)
+
+    async def _complete_once(
+        self,
+        agent: Agent,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]],
+        on_chunk: Optional[Callable[[str], Any]] = None,
+    ) -> Any:
+        """LLM 한 판. 스트리밍이 안 되는 엔드포인트면 한 번만 비스트리밍으로 되묻습니다."""
+        kwargs = self.build_completion_kwargs(agent, messages, tools)
+        streamed_any = False
+        try:
+            response = await litellm.acompletion(**kwargs, stream=True)
+            chunks = []
+            async for chunk in response:
+                chunks.append(chunk)
+                content_delta = (
+                    chunk.choices[0].delta.content
+                    if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content
+                    else None
+                )
+                if content_delta and on_chunk:
+                    streamed_any = True
+                    await self._emit_chunk(on_chunk, content_delta)
+            complete_response = litellm.stream_chunk_builder(chunks, messages=messages)
+            return complete_response.choices[0].message
+        except Exception as exc:
+            # 이미 화면에 흘려보낸 조각이 있으면 비스트리밍으로 다시 부르지 않습니다.
+            # 같은 답변이 두 번 붙어 버리고, 무엇보다 이 실패는 삼킬 것이 아니라
+            # 발언자에게 그대로 전달되어야 합니다 (LLMUnavailableError).
+            if streamed_any:
+                raise
+            logger.warning(
+                f"Streaming completion failed or not supported for {agent.name} ({exc}); "
+                f"retrying without stream"
+            )
+            response = await litellm.acompletion(**kwargs)
+            message = response.choices[0].message
+            if message.content and on_chunk:
+                await self._emit_chunk(on_chunk, message.content)
+            return message
+
+    # ------------------------------------------------------------ 도구 예산
+
+    @staticmethod
+    def _append_budget_notice(messages: List[Dict[str, Any]], text: str) -> None:
+        """예산 고지를 대화 끝에 붙입니다.
+
+        마지막 메시지가 user 면 그 안에 이어 붙입니다. 새 메시지로 넣으면 user 가
+        연달아 두 번이 되어 Anthropic·Gemini 와 여러 OpenAI 호환 셔임이 400 으로
+        거절합니다 (`merge_consecutive_roles` 의 사연과 같습니다). 도구 결과 뒤라면
+        role 이 tool 이므로 그냥 새로 붙입니다.
+        """
+        last = messages[-1] if messages else None
+        if last is not None and last.get("role") == "user" and isinstance(last.get("content"), str):
+            messages[-1] = {**last, "content": f"{last['content']}\n\n{text}"}
+            return
+        messages.append({"role": "user", "content": text})
+
+    async def _wrap_up_without_tools(
+        self,
+        agent: Agent,
+        current_messages: List[Dict[str, Any]],
+        segments: List[str],
+        tool_logs: List[Dict[str, Any]],
+        limit: int,
+        on_chunk: Optional[Callable[[str], Any]] = None,
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        """예산이 바닥난 자리에서 도구 없이 결론만 받아 냅니다.
+
+        예전에는 여기서 `LLMUnavailableError` 를 올렸습니다. 그러면 그때까지
+        스트리밍으로 흘러나온 글과 실행된 도구 관측이 전부 실패 안내로 덮여
+        사라졌습니다 — 도구를 많이 쓴 긴 발언일수록 잃는 것이 컸고, 정작 원인은
+        엔드포인트 장애가 아니라 우리가 정한 상한이었습니다. 상한은 폭주를
+        막으라고 있는 것이지, 한 일을 버리라고 있는 것이 아닙니다.
+        """
+        logger.warning(
+            f"Tool budget exhausted for {agent.name}: {limit} call(s), "
+            f"{len(tool_logs)} tool execution(s). Asking for a final answer without tools."
+        )
+        self._append_budget_notice(
+            current_messages,
+            BUDGET_EXHAUSTED_INSTRUCTION.format(limit=limit, tool_calls=len(tool_logs)),
+        )
+        try:
+            # tools 를 아예 넘기지 않습니다. 상한을 알려 주고도 도구 목록을 함께
+            # 주면 모델은 또 부르려 하고, 그 호출은 실행되지 않은 채 버려집니다.
+            message = await self._complete_once(agent, current_messages, None, on_chunk)
+            final = self._compose_content(agent, message).strip()
+            if final:
+                segments.append(final)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Final tool-free answer failed for {agent.name}: {exc}")
+            if not segments:
+                raise LLMUnavailableError(
+                    agent,
+                    f"도구 호출 상한 {limit}회를 모두 쓴 뒤의 마무리 호출도 실패했습니다: "
+                    f"{type(exc).__name__}: {exc}",
+                ) from exc
+
+        segments.append(BUDGET_WRAP_UP_FOOTER.format(limit=limit, tool_calls=len(tool_logs)))
+        return "\n\n".join(segments), tool_logs
+
     async def _run_litellm_loop(
         self,
         agent: Agent,
@@ -308,10 +510,22 @@ class LLMCaller:
         max_tool_iterations: Optional[int] = None,
         on_chunk: Optional[Callable[[str], Any]] = None,
         session_id: Optional[str] = None,
+        budget_arbiter: Optional[BudgetArbiter] = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
+        """도구 루프. 상한은 두 겹의 안전장치와 함께 돕니다.
+
+        1. **미리 고지** — 매 판이 시작되기 전에 남은 호출 횟수를 에이전트에게
+           알립니다. 한계에 가까워질수록 촘촘해집니다 (`tool_budget_notice`).
+           남은 예산을 알아야 모델이 결론을 쓸 자리를 스스로 남겨 둡니다.
+        2. **소진해도 버리지 않음** — 다 쓰면 `budget_arbiter` 로 사람에게 상한
+           확장을 묻고, 확장을 받으면 이어서 돕니다. 못 받으면 도구를 떼고
+           "지금까지 얻은 것으로 즉시 결론을 내라" 고 한 판 더 부릅니다. 어느
+           쪽이든 그때까지의 발언과 도구 기록은 그대로 살아남습니다.
+        """
         tool_logs: List[Dict[str, Any]] = []
         current_messages = list(messages)
-        iterations = max_tool_iterations or agent.max_tool_iterations
+        limit = max_tool_iterations or agent.max_tool_iterations
+        used = 0
 
         # 이터레이션마다 나온 본문을 모읍니다.
         #
@@ -324,93 +538,93 @@ class LLMCaller:
         # 마지막 판 == 전체였고, 그래서 이 손실이 오래 눈에 띄지 않았습니다).
         segments: List[str] = []
 
-        for iteration in range(iterations):
-            kwargs = self.build_completion_kwargs(agent, current_messages, tools)
-            streamed_any = False
-            try:
-                response = await litellm.acompletion(**kwargs, stream=True)
-                chunks = []
-                async for chunk in response:
-                    chunks.append(chunk)
-                    content_delta = (
-                        chunk.choices[0].delta.content
-                        if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content
-                        else None
+        while True:
+            while used < limit:
+                if tools:
+                    notice = tool_budget_notice(
+                        remaining=limit - used, limit=limit, used=used, tool_calls=len(tool_logs)
                     )
-                    if content_delta and on_chunk:
-                        streamed_any = True
-                        if asyncio.iscoroutinefunction(on_chunk):
-                            await on_chunk(content_delta)
+                    if notice:
+                        self._append_budget_notice(current_messages, notice)
+
+                message = await self._complete_once(agent, current_messages, tools, on_chunk)
+                used += 1
+
+                segment = self._compose_content(agent, message)
+                if segment.strip():
+                    segments.append(segment.strip())
+
+                # Check for tool calls
+                tool_calls = getattr(message, "tool_calls", None)
+                if not tool_calls:
+                    return "\n\n".join(segments), tool_logs
+
+                # Append assistant message with tool calls to context
+                current_messages.append(
+                    message.model_dump() if hasattr(message, "model_dump") else dict(message)
+                )
+
+                # Execute all requested tool calls
+                for tc in tool_calls:
+                    fn_name = tc.function.name
+                    fn_args_raw = tc.function.arguments
+                    try:
+                        fn_args = json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
+                    except Exception:
+                        fn_args = {"raw": fn_args_raw}
+
+                    output, status = await self.mcp_manager.execute_tool(
+                        fn_name, fn_args, scope=session_id, actor=agent.key
+                    )
+                    call_log = {
+                        "tool_name": fn_name,
+                        "arguments": fn_args,
+                        "output": output,
+                        "status": status,
+                    }
+                    tool_logs.append(call_log)
+                    if on_tool_call:
+                        if asyncio.iscoroutinefunction(on_tool_call):
+                            await on_tool_call(call_log)
                         else:
-                            on_chunk(content_delta)
-                complete_response = litellm.stream_chunk_builder(chunks, messages=current_messages)
-                choice = complete_response.choices[0]
-                message = choice.message
-            except Exception as exc:
-                # 이미 화면에 흘려보낸 조각이 있으면 비스트리밍으로 다시 부르지 않습니다.
-                # 같은 답변이 두 번 붙어 버리고, 무엇보다 이 실패는 삼킬 것이 아니라
-                # 발언자에게 그대로 전달되어야 합니다 (LLMUnavailableError).
-                if streamed_any:
-                    raise
-                logger.warning(
-                    f"Streaming completion failed or not supported for {agent.name} ({exc}); "
-                    f"retrying without stream"
-                )
-                response = await litellm.acompletion(**kwargs)
-                choice = response.choices[0]
-                message = choice.message
-                if message.content and on_chunk:
-                    if asyncio.iscoroutinefunction(on_chunk):
-                        await on_chunk(message.content)
-                    else:
-                        on_chunk(message.content)
+                            on_tool_call(call_log)
 
-            segment = self._compose_content(agent, message)
-            if segment.strip():
-                segments.append(segment.strip())
+                    current_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "name": fn_name,
+                        "content": output,
+                    })
 
-            # Check for tool calls
-            tool_calls = getattr(message, "tool_calls", None)
-            if not tool_calls:
-                return "\n\n".join(segments), tool_logs
-
-            # Append assistant message with tool calls to context
-            current_messages.append(message.model_dump() if hasattr(message, "model_dump") else dict(message))
-
-            # Execute all requested tool calls
-            for tc in tool_calls:
-                fn_name = tc.function.name
-                fn_args_raw = tc.function.arguments
+            # 예산 소진. 여기서 예외를 올리면 지금까지의 발언이 통째로 사라집니다.
+            # 사람에게 한 번 묻고, 답이 없으면 에이전트에게 즉시 끝내라고 합니다.
+            granted = 0
+            if budget_arbiter is not None:
                 try:
-                    fn_args = json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
-                except Exception:
-                    fn_args = {"raw": fn_args_raw}
+                    granted = int(await budget_arbiter({
+                        "agent_key": agent.key,
+                        "agent_name": agent.name,
+                        "limit": limit,
+                        "used": used,
+                        "tool_calls": len(tool_logs),
+                    }) or 0)
+                except Exception as exc:  # noqa: BLE001 - 묻다가 실패해도 발언은 살립니다
+                    logger.warning(f"Tool budget arbiter failed for {agent.name}: {exc}")
+                    granted = 0
 
-                output, status = await self.mcp_manager.execute_tool(
-                    fn_name, fn_args, scope=session_id, actor=agent.key
+            if granted > 0:
+                limit += granted
+                logger.info(
+                    f"Tool budget for {agent.name} extended by {granted} to {limit} by the user"
                 )
-                call_log = {
-                    "tool_name": fn_name,
-                    "arguments": fn_args,
-                    "output": output,
-                    "status": status,
-                }
-                tool_logs.append(call_log)
-                if on_tool_call:
-                    if asyncio.iscoroutinefunction(on_tool_call):
-                        await on_tool_call(call_log)
-                    else:
-                        on_tool_call(call_log)
+                self._append_budget_notice(
+                    current_messages,
+                    BUDGET_EXTENDED_INSTRUCTION.format(
+                        extra=granted, limit=limit, remaining=limit - used
+                    ),
+                )
+                continue
 
-                current_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "name": fn_name,
-                    "content": output,
-                })
-
-        raise LLMUnavailableError(
-            agent,
-            f"MCP 도구 호출을 {iterations}회 반복했는데도 최종 답변이 나오지 않았습니다 "
-            f"(max_tool_iterations).",
-        )
+            return await self._wrap_up_without_tools(
+                agent, current_messages, segments, tool_logs, limit, on_chunk
+            )

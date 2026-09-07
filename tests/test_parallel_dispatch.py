@@ -137,7 +137,8 @@ class _DispatchingLLM(FakeLLMCaller):
         return "겹치지 않게 과업을 나누세요" in (messages[-1]["content"] if messages else "")
 
     async def call_agent(self, agent, messages, custom_instructions="",
-                         on_tool_call=None, on_chunk=None, session_id=None):
+                         on_tool_call=None, on_chunk=None, session_id=None,
+                         budget_arbiter=None):
         if self._is_dispatch(messages):
             self.planner_agents.append(agent)
             self.calls.append(f"{agent.key}:dispatch")
@@ -274,7 +275,8 @@ async def test_the_recorded_order_follows_the_dispatch_not_the_finish_time():
         DELAYS = {"architect": 0.09, "coder": 0.05, "critic": 0.01}
 
         async def call_agent(self, agent, messages, custom_instructions="",
-                             on_tool_call=None, on_chunk=None, session_id=None):
+                             on_tool_call=None, on_chunk=None, session_id=None,
+                             budget_arbiter=None):
             if agent.key in self.DELAYS and not self._is_dispatch(messages):
                 self.hold = self.DELAYS[agent.key]
             return await super().call_agent(

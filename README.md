@@ -1,12 +1,12 @@
 # 🤖 MADO — Multi-Agent Debate & Orchestration Platform
 
-`v0.3.0` · `LGPL-3.0-or-later` · `Python 3.11+`
+`v0.4.0` · `LGPL-3.0-or-later` · `Python 3.11+`
 
 > **MCP 도구를 활용하는 반응형 멀티 에이전트 협업 & 토론 웹 애플리케이션**  
 > Dynamic Agent Profiling via `conf.json`, MCP Tool Integration, Multi-Model LLM Abstraction (LiteLLM), StateGraph Orchestration, and NiceGUI + FastAPI Reactive Web Interface.
 
 ```
-Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v0.3.0
+Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v0.4.0
 ```
 
 같은 내용을 웹 UI 우측 상단의 **ⓘ** 버튼으로도 볼 수 있습니다.
@@ -22,6 +22,7 @@ Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v0.3.0
    - Filesystem · Memory(지식 그래프) · Git · Python 코드 실행 샌드박스 MCP 서버와 JSON-RPC stdio 통신.
    - 공식 레퍼런스 서버(Node/Python)와 자체 샌드박스를 **번들로 동봉**하여 폐쇄망에서도 도구 사용 가능.
    - 도구 검색 및 Function Calling 스키마 자동 변환, 실행 결과(Observation) 피드백.
+   - **도구 호출 예산 안전가드**: 남은 호출 횟수를 에이전트에게 미리 알리고(한계에 가까울수록 촘촘하게), 상한에 닿으면 발언을 버리는 대신 **유저에게 상한 확장을 묻거나 즉시 마무리하도록** 합니다.
 3. **다양한 LLM 프로바이더 추상화 (LiteLLM)**:
    - OpenAI (`gpt-4o`), Anthropic (`claude-3-5-sonnet`), Google (`gemini-1.5-pro`), Ollama 등 통합 지원.
    - `llm` 전역 설정에서 **API URL(`api_base`), 모델 명, API 버전, provider, timeout/재시도, 커스텀 헤더**를 지정하고 모든 에이전트가 상속.
@@ -213,7 +214,7 @@ pytest -v tests/
 |------|-----|
 | Author | Ha, Jaehee |
 | Email | lovesm135@naver.com |
-| Version | **v0.3.0** |
+| Version | **v0.4.0** |
 | License | LGPL-3.0-or-later ([LICENSE.md](LICENSE.md)) |
 
 버전 문자열의 정본은 [`app/about.py`](app/about.py) 한 곳입니다. FastAPI 메타데이터,
@@ -227,7 +228,7 @@ curl -s localhost:8000/api/health | python -m json.tool
 ```json
 {
   "status": "healthy",
-  "version": "v0.3.0",
+  "version": "v0.4.0",
   "author": { "name": "Ha, Jaehee", "email": "lovesm135@naver.com" }
 }
 ```
@@ -566,6 +567,46 @@ MCP 는 두 종류의 실패를 구분합니다.
 > 예를 들어 `sandbox` 는 실행한 코드가 예외를 던져도 "도구 호출 자체는 성공했고
 > 그 결과가 ERROR" 로 보아 `isError = false` 로 응답하고 `execution_status: ERROR`
 > 를 본문에 담습니다. 이는 서버의 설계 선택이며 클라이언트가 교정할 수 없습니다.
+
+#### 도구 호출 예산 (안전가드)
+
+에이전트 하나가 한 번 발언하는 동안 부를 수 있는 도구 호출 횟수는
+`max_tool_iterations` (기본 30, 하드 상한 130) 로 정합니다. 이 상한은 두 겹의
+안전장치와 함께 동작합니다.
+
+**① 남은 횟수를 미리 알립니다.** 매 호출 직전에 남은 횟수가 프롬프트에 실립니다.
+한계에 가까워질수록 촘촘해집니다.
+
+| 남은 횟수 | 고지 |
+|---|---|
+| 시작 시 | 총량 (`총 30회`) 과 "결론 쓸 여유를 남기라"는 지시 |
+| 100 · 80 · 60 · 50 · 40 · 30 · 20 · 10 | 남은 횟수 + 계획 조정 요청 |
+| 5 · 4 · 3 · 2 | 남은 횟수 + 마무리 준비 요청 |
+| 1 | **마지막 기회입니다** 경고 |
+
+남은 예산을 알아야 모델이 결론을 쓸 자리를 스스로 남겨 둡니다. 사다리가 성기면
+"아직 여유가 있다" 고 믿은 채 탐색하다 마지막 판에서 갑자기 끊깁니다.
+
+**② 다 써도 발언을 버리지 않습니다.** 상한에 닿으면 채팅 상단에 안내 줄이 뜹니다.
+
+> 🔧 *Senior Python Engineer 가 도구 호출 상한 30회를 모두 썼습니다 (도구 44건 실행).
+> 상한을 늘릴까요, 지금까지의 관측으로 마무리할까요?*  `178초 후 자동 마무리`
+> **`+15회 확장`**  `지금 마무리`
+
+| | 확장 | 지금 마무리 | 무응답 (3분) |
+|---|---|---|---|
+| 진행 중인 발언 | 그 자리에서 이어 돎 | 도구 없이 결론만 | 도구 없이 결론만 |
+| 그때까지의 글 · 도구 기록 | 유지 | 유지 | 유지 |
+| 상한 | `+15회` (최대 130) | 그대로 | 그대로 |
+
+예전에는 상한을 다 쓰면 그 발언이 통째로 실패로 처리되어, 스트리밍으로 흘러나온
+글과 실행된 도구 관측이 전부 사라졌습니다. 원인이 엔드포인트 장애가 아니라 우리가
+정한 상한인데도요. 상한은 폭주를 막으라고 있는 것이지 한 일을 버리라고 있는 것이
+아닙니다. 지금은 어느 쪽을 고르든 발언과 도구 기록이 남고, 왜 거기서 멈췄는지가
+발언 끝에 함께 기록됩니다.
+
+정지 버튼을 누르면 대기 중인 물음은 모두 "확장 없음" 으로 답해집니다. 멈추라고 한
+사람에게 "도구를 더 부를까요?" 를 붙잡고 있을 이유가 없습니다.
 
 #### 연결 상태 확인
 

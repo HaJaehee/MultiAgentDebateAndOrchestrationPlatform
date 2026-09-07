@@ -103,7 +103,8 @@ class _SelectingLLM(FakeLLMCaller):
         return "발언 순서를 정하세요" in (messages[-1]["content"] if messages else "")
 
     async def call_agent(self, agent, messages, custom_instructions="",
-                         on_tool_call=None, on_chunk=None, session_id=None):
+                         on_tool_call=None, on_chunk=None, session_id=None,
+                         budget_arbiter=None):
         if self._is_selection(messages):
             self.selector_agents.append(agent)
             self.calls.append(f"{agent.key}:select")

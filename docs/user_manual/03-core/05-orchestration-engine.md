@@ -147,9 +147,11 @@ for round_num in 1..max_rounds:                     ← parallel_dispatch
 
 ```python
 class TurnControl:
-    def request_stop(self): ...      # 정지 요청
-    def add_note(self, text): ...    # 개입 메모
-    def drain_notes(self): ...       # 엔진이 꺼내 감
+    def request_stop(self): ...          # 정지 요청
+    def add_note(self, text): ...        # 개입 메모
+    def drain_notes(self): ...           # 엔진이 꺼내 감
+    async def ask_tool_budget(...): ...  # 도구 상한 확장을 사람에게 물음
+    def resolve_tool_budget(...): ...    # 화면이 답함
 ```
 
 | | 정지 요청 | 태스크 취소 (`cancel()`) |
@@ -163,6 +165,40 @@ class TurnControl:
 
 **개입 메모**는 다음 발언자의 맥락에 사용자 발언으로 끼어듭니다. 토론 방향을
 바꾸고 싶을 때 처음부터 다시 시작할 필요가 없습니다.
+
+### 도구 상한 확장 요청 — 방향이 반대인 통로
+
+정지와 개입은 사람이 엔진에게 보냅니다. 이것만 반대입니다: **도구 호출 상한을 다
+쓴 에이전트가 사람에게 묻고**, 답이 올 때까지 그 발언 하나가 기다립니다.
+
+```text
+LLM 도구 루프 (상한 소진)
+   │  budget_arbiter(info)
+   ▼
+_make_budget_arbiter()  ──▶ on_event: tool_budget_exhausted ──▶ 화면 (안내 줄)
+   │                                                                │
+   │  control.ask_tool_budget(timeout=180s)                         │
+   ▼                                                                ▼
+ 대기 ◀────────────── control.resolve_tool_budget(extra, id) ◀── 확장 / 마무리
+   │
+   ├─ extra > 0 → 상한을 늘려 그 발언을 이어 돌림
+   └─ extra = 0 또는 무응답 → 도구 없이 결론만 받아 마무리
+```
+
+| | 확장 | 지금 마무리 | 무응답 (3분) |
+| :--- | :--- | :--- | :--- |
+| 진행 중인 발언 | 이어서 돎 | 도구 없이 결론 | 도구 없이 결론 |
+| 그때까지의 글·도구 기록 | 유지 | 유지 | 유지 |
+| 상한 | `+extra` (최대 130) | 그대로 | 그대로 |
+
+`request_stop()` 은 대기 중인 물음을 **모두 "확장 없음" 으로 답합니다**. 멈추라고
+한 사람에게 "도구를 더 부를까요?" 를 붙잡고 있을 이유가 없습니다.
+
+쪽지는 id 로 구분해 여러 장을 동시에 들 수 있습니다. 병렬 지시 전략에서는 두
+에이전트가 같은 순간에 상한에 닿을 수 있고, 한 장만 들고 있으면 나머지는 답할
+방법이 없어 3분을 통째로 기다린 뒤에야 마무리로 갑니다.
+
+→ 도구 루프 쪽 동작: [LLM 통합](03-llm-integration.md#도구-루프)
 
 경계를 넘어 공유되는 상태는 이 객체 하나뿐이고, 같은 이벤트 루프 안에서만
 읽고 쓰므로 **락이 필요 없습니다.**

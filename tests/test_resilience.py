@@ -238,7 +238,8 @@ async def test_partial_stream_is_kept_alongside_the_failure_notice():
 
     class HalfWayCaller(FakeLLMCaller):
         async def call_agent(self, agent, messages, custom_instructions="",
-                             on_tool_call=None, on_chunk=None, session_id=None):
+                             on_tool_call=None, on_chunk=None, session_id=None,
+                             budget_arbiter=None):
             if agent.key == "critic":
                 if on_chunk:
                     await on_chunk("검토를 시작하겠습니다")
@@ -421,29 +422,37 @@ def test_tool_iteration_ceiling_admits_long_tool_runs():
 
 
 @pytest.mark.asyncio
-async def test_tool_loop_runs_to_the_limit_then_fails_honestly():
-    """한도를 다 쓰면 자리표시자 답변이 아니라 실패를 올려야 합니다."""
+async def test_tool_loop_stops_at_the_limit_and_wraps_up_without_tools():
+    """한도를 다 쓰면 발언을 버리지 않고, 도구를 뗀 채 결론만 받아 옵니다.
+
+    예전에는 여기서 `LLMUnavailableError` 를 올렸습니다. 그러면 그때까지
+    스트리밍으로 흘러나온 글과 실행된 도구 관측이 전부 실패 안내로 덮여
+    사라졌습니다 — 원인이 엔드포인트 장애가 아니라 우리가 정한 상한인데도요.
+    """
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, patch
 
     from app.agents.llm import LLMCaller
 
-    calls = {"n": 0}
+    seen_tools = []
 
-    def _message():
+    def _message(with_tools: bool):
         tc = SimpleNamespace(
             id="call_1",
             function=SimpleNamespace(name="read_file", arguments='{"path": "a.txt"}'),
         )
         return SimpleNamespace(
-            content="", tool_calls=[tc], model_dump=lambda: {"role": "assistant", "tool_calls": []}
+            content="파일을 확인합니다." if with_tools else "확인한 만큼만 정리하면 이렇습니다.",
+            tool_calls=[tc] if with_tools else None,
+            model_dump=lambda: {"role": "assistant", "tool_calls": []},
         )
 
     async def fake_acompletion(**kwargs):
         if kwargs.get("stream"):
             raise RuntimeError("streaming unsupported")   # 비스트리밍 경로로 떨어뜨립니다
-        calls["n"] += 1
-        return SimpleNamespace(choices=[SimpleNamespace(message=_message())])
+        seen_tools.append(kwargs.get("tools"))
+        # 도구를 주지 않은 판에서는 도구를 부를 수 없습니다.
+        return SimpleNamespace(choices=[SimpleNamespace(message=_message(bool(kwargs.get("tools"))))])
 
     agent = Agent(key="coder", name="Coder", role="Engineer",
                   model="fake/model", api_key="k", max_tool_iterations=4)
@@ -457,11 +466,122 @@ async def test_tool_loop_runs_to_the_limit_then_fails_honestly():
     )
 
     with patch("litellm.acompletion", side_effect=fake_acompletion):
-        with pytest.raises(LLMUnavailableError) as excinfo:
-            await caller.call_agent(agent, [{"role": "user", "content": "읽어줘"}])
+        content, logs = await caller.call_agent(agent, [{"role": "user", "content": "읽어줘"}])
 
-    assert calls["n"] == 4, "한도만큼 정확히 돌아야 합니다"
-    assert "max_tool_iterations" in str(excinfo.value)
+    assert len(seen_tools) == 5, "한도만큼 돌고, 마무리 한 판을 더 부릅니다"
+    assert all(seen_tools[:4]), "한도 안에서는 도구를 계속 줍니다"
+    assert seen_tools[4] is None, "마무리 판에는 도구를 주지 않아야 또 부르려 하지 않습니다"
+    assert len(logs) == 4, "실행된 도구 기록은 그대로 남습니다"
+    assert "확인한 만큼만 정리하면 이렇습니다." in content, "마무리 발언이 살아 있어야 합니다"
+    assert "파일을 확인합니다." in content, "도중의 발언도 버리지 않습니다"
+    assert "도구 호출 상한" in content, "왜 여기서 멈췄는지 기록에 남아야 합니다"
+
+
+@pytest.mark.asyncio
+async def test_the_agent_is_told_how_many_tool_calls_are_left():
+    """남은 호출 횟수를 미리, 한계에 가까워질수록 촘촘히 알려 줍니다."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from app.agents.llm import LLMCaller
+
+    prompts = []
+
+    def _message():
+        tc = SimpleNamespace(
+            id="call_1",
+            function=SimpleNamespace(name="read_file", arguments='{"path": "a.txt"}'),
+        )
+        return SimpleNamespace(
+            content="", tool_calls=[tc], model_dump=lambda: {"role": "assistant", "tool_calls": []}
+        )
+
+    async def fake_acompletion(**kwargs):
+        if kwargs.get("stream"):
+            raise RuntimeError("streaming unsupported")
+        prompts.append([dict(m) for m in kwargs["messages"]])
+        return SimpleNamespace(choices=[SimpleNamespace(message=_message())])
+
+    agent = Agent(key="coder", name="Coder", role="Engineer",
+                  model="fake/model", api_key="k", max_tool_iterations=6)
+
+    caller = LLMCaller()
+    caller.mcp_manager = SimpleNamespace(
+        get_openai_tools_for_servers=lambda servers: [
+            {"type": "function", "function": {"name": "read_file", "parameters": {}}}
+        ],
+        execute_tool=AsyncMock(return_value=("파일 내용", "success")),
+    )
+
+    with patch("litellm.acompletion", side_effect=fake_acompletion):
+        await caller.call_agent(agent, [{"role": "user", "content": "읽어줘"}])
+
+    def _texts(messages):
+        return "\n".join(str(m.get("content") or "") for m in messages)
+
+    first = _texts(prompts[0])
+    assert "총 6회" in first, "시작할 때 총량을 알려 줘야 합니다"
+
+    # 6회 상한이면 남은 횟수는 5,4,3,2,1 로 줄어들고 매번 고지됩니다.
+    for index, remaining in enumerate([5, 4, 3, 2, 1], start=1):
+        assert f"남은 호출 **{remaining}회**" in _texts(prompts[index]), (
+            f"{index}번째 판에서 남은 {remaining}회를 알려야 합니다"
+        )
+    assert "마지막 기회입니다" in _texts(prompts[5]), "1회 남았을 때는 분명히 경고해야 합니다"
+
+
+@pytest.mark.asyncio
+async def test_a_granted_extension_keeps_the_same_speech_going():
+    """상한을 늘려 주면 발언을 새로 시작하지 않고 그 자리에서 이어 돕니다."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from app.agents.llm import LLMCaller
+
+    seen_tools = []
+    asked = []
+
+    def _message(with_tools: bool):
+        tc = SimpleNamespace(
+            id="call_1",
+            function=SimpleNamespace(name="read_file", arguments="{}"),
+        )
+        return SimpleNamespace(
+            content="",
+            tool_calls=[tc] if with_tools else None,
+            model_dump=lambda: {"role": "assistant", "tool_calls": []},
+        )
+
+    async def fake_acompletion(**kwargs):
+        if kwargs.get("stream"):
+            raise RuntimeError("streaming unsupported")
+        seen_tools.append(kwargs.get("tools"))
+        return SimpleNamespace(choices=[SimpleNamespace(message=_message(bool(kwargs.get("tools"))))])
+
+    async def arbiter(info):
+        asked.append(dict(info))
+        return 2 if len(asked) == 1 else 0    # 한 번만 늘려 주고, 두 번째는 마무리
+
+    agent = Agent(key="coder", name="Coder", role="Engineer",
+                  model="fake/model", api_key="k", max_tool_iterations=2)
+
+    caller = LLMCaller()
+    caller.mcp_manager = SimpleNamespace(
+        get_openai_tools_for_servers=lambda servers: [
+            {"type": "function", "function": {"name": "read_file", "parameters": {}}}
+        ],
+        execute_tool=AsyncMock(return_value=("파일 내용", "success")),
+    )
+
+    with patch("litellm.acompletion", side_effect=fake_acompletion):
+        content, logs = await caller.call_agent(
+            agent, [{"role": "user", "content": "읽어줘"}], budget_arbiter=arbiter
+        )
+
+    assert len(asked) == 2, "상한에 닿을 때마다 물어봅니다"
+    assert asked[0]["limit"] == 2 and asked[1]["limit"] == 4, "확장된 상한이 다음 물음에 반영됩니다"
+    assert len(logs) == 4, "늘려 준 만큼 도구를 더 부를 수 있어야 합니다"
+    assert seen_tools[-1] is None, "확장을 거절당한 뒤에는 도구 없이 마무리합니다"
 
 
 # --------------------------------------------------------------- 7. 작업 공간

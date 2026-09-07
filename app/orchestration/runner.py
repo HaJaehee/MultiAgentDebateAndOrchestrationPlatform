@@ -72,6 +72,11 @@ class TurnRun:
         # 화면에 "이번 턴에는 반영되지 않는다" 고 정확히 알려야 합니다.
         self.phase: str = "planning"
 
+        # 도구 호출 상한에 닿아 사람의 답을 기다리는 쪽지. 스냅샷에 들어가므로
+        # 새로고침하거나 나중에 붙은 화면에서도 같은 물음이 보입니다 (기다리는
+        # 쪽은 엔진이고, 답할 수 있는 창이 3분뿐입니다).
+        self.budget_request: Optional[Dict[str, Any]] = None
+
     # -------------------------------------------------- 구독
 
     def subscribe(self) -> "asyncio.Queue[Dict[str, Any]]":
@@ -128,6 +133,27 @@ class TurnRun:
             # 합성 중에 들어온 것은 이번 턴의 발언에 실리지 못하고, 기록에만 남아
             # 다음 요청의 맥락이 됩니다.
             "deferred": self.phase == "synthesizing",
+        })
+        return True
+
+    def resolve_tool_budget(self, extra: int, request_id: Optional[str] = None) -> bool:
+        """도구 상한 확장 요청에 답합니다. `extra` 가 0 이면 "지금 마무리하라".
+
+        답을 받은 에이전트는 그 자리에서 이어서 돌거나(확장), 도구를 떼고 결론을
+        씁니다. 어느 쪽이든 지금까지의 발언은 그대로 남습니다.
+        """
+        if self.status != "running":
+            return False
+        shown = self.budget_request or {}
+        if not self.control.resolve_tool_budget(extra, request_id):
+            return False
+        self._emit({
+            "type": "tool_budget_resolved",
+            "id": request_id or shown.get("id"),
+            "agent_name": shown.get("agent_name", ""),
+            "outcome": "extended" if extra > 0 else "wrap_up",
+            "granted": max(0, int(extra)),
+            "by_user": True,
         })
         return True
 
@@ -206,12 +232,45 @@ class TurnRun:
                 f"개입 {count}건은 합성 이후에 도착해 기록에만 남았습니다 (다음 요청에 반영)."
             )
 
+        elif etype == "tool_budget_exhausted":
+            self.budget_request = {k: v for k, v in event.items() if k != "type"}
+            self.busy = True
+            self.status_text = (
+                f"[{event.get('agent_name', '')}] 도구 호출 상한 {event.get('limit', 0)}회를 "
+                f"모두 썼습니다 — 상한을 늘릴지, 지금까지의 관측으로 마무리할지 골라 주세요."
+            )
+            self.round_info = "Tool limit"
+
+        elif etype == "tool_budget_resolved":
+            # 답이 난 쪽지만 걷습니다. 병렬 라운드에서는 그 사이 다른 에이전트가
+            # 낸 새 쪽지가 화면에 올라와 있을 수 있고, 그걸 같이 지우면 답할
+            # 곳이 사라집니다.
+            shown_id = (self.budget_request or {}).get("id")
+            if not event.get("id") or event.get("id") == shown_id:
+                self.budget_request = None
+            granted = event.get("granted", 0)
+            outcome = event.get("outcome")
+            if granted:
+                self.status_text = self._pending_prefix(
+                    f"도구 호출 상한을 {granted}회 늘렸습니다 (총 {event.get('limit', 0)}회). 토론을 이어갑니다."
+                )
+            elif outcome == "timeout":
+                self.status_text = self._pending_prefix(
+                    "도구 상한 확장 요청에 답이 없어, 지금까지의 관측으로 마무리하도록 했습니다."
+                )
+            else:
+                self.status_text = self._pending_prefix(
+                    "도구를 더 쓰지 않고 지금까지의 관측으로 마무리하도록 했습니다."
+                )
+            self.round_info = "Debating"
+
         elif etype == "artifacts_synthesized":
             self.artifacts = list(event.get("artifacts", []))
 
         elif etype == "turn_completed":
             self.busy = False
             self.streaming_ids.clear()
+            self.budget_request = None
             failed = event.get("failed_agents") or []
             if failed:
                 self.status_text = f"토론 완료 — 응답하지 못한 에이전트: {', '.join(failed)}"
@@ -251,6 +310,7 @@ class TurnRun:
             "artifacts": [dict(a) for a in self.artifacts],
             "stop_requested": self.control.stop_requested,
             "pending_notes": len(self.control.pending_notes),
+            "budget_request": dict(self.budget_request) if self.budget_request else None,
         }
 
 
@@ -385,6 +445,12 @@ class DebateRunner:
         """진행 중인 토론에 사용자 메시지를 끼워 넣습니다."""
         run = self._runs.get(session_id)
         return run.interject(text) if run is not None else False
+
+    def resolve_tool_budget(self, session_id: str, extra: int,
+                            request_id: Optional[str] = None) -> bool:
+        """도구 호출 상한에 닿은 에이전트에게 확장 여부를 알려 줍니다."""
+        run = self._runs.get(session_id)
+        return run.resolve_tool_budget(extra, request_id) if run is not None else False
 
     async def cancel(self, session_id: str) -> bool:
         run = self._runs.get(session_id)

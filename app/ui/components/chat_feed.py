@@ -95,6 +95,7 @@ class ChatFeed:
         on_interject: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
         on_stop: Optional[Callable[[], Coroutine[None, None, None]]] = None,
         on_abort: Optional[Callable[[], Coroutine[None, None, None]]] = None,
+        on_tool_budget: Optional[Callable[[int, str], Coroutine[None, None, None]]] = None,
     ):
         self.on_send_message = on_send_message
         # 토론이 도는 중에 들어온 입력과 정지 버튼의 행선지. 주어지지 않으면
@@ -103,6 +104,9 @@ class ChatFeed:
         self.on_stop = on_stop
         # 요청 자체가 틀렸을 때. 정지와 달리 결과를 남기지 않고 되돌립니다.
         self.on_abort = on_abort
+        # 도구 호출 상한에 닿은 에이전트에게 보내는 답. (늘려 줄 횟수, 요청 id).
+        # 0 이면 "지금까지의 관측으로 마무리하라" 입니다.
+        self.on_tool_budget = on_tool_budget
         self.scroll_area: Optional[ui.scroll_area] = None
         self.message_container: Optional[ui.column] = None
         self.status_bar: Optional[ui.row] = None
@@ -114,6 +118,12 @@ class ChatFeed:
         self.abort_button: Optional[ui.button] = None
         self.abort_dialog: Optional[ui.dialog] = None
         self.round_badge: Optional[ui.badge] = None
+        # 도구 상한 안내 줄. 에이전트가 답을 기다리며 멈춰 있는 동안만 보입니다.
+        self.budget_bar: Optional[ui.row] = None
+        self.budget_label: Optional[ui.label] = None
+        self.budget_countdown: Optional[ui.label] = None
+        self.budget_extend_button: Optional[ui.button] = None
+        self._budget_request: Optional[Dict[str, Any]] = None
         self.is_busy: bool = False
         self._stop_pending: bool = False
         self._active_streams: Dict[str, Dict[str, Any]] = {}
@@ -209,6 +219,35 @@ class ChatFeed:
                         )
                         self.abort_button.set_visibility(False)
                         self.round_badge = ui.badge("Ready", color="slate-700").props("dense")
+
+                # 도구 호출 상한에 닿았을 때. 여기서 답하지 않으면 시간이 지나
+                # 에이전트가 스스로 마무리하므로, 남은 초를 함께 보여줍니다.
+                with ui.row().classes(
+                    "w-full items-center gap-2 px-3 py-2 rounded-lg text-xs "
+                    "bg-amber-950/50 border border-amber-700/70"
+                ) as self.budget_bar:
+                    ui.icon("build_circle", size="sm").classes("text-amber-300 flex-shrink-0")
+                    self.budget_label = ui.label("").classes(
+                        "text-amber-100 font-semibold min-w-0 flex-grow"
+                    )
+                    self.budget_countdown = ui.label("").classes(
+                        "text-amber-300 font-mono flex-shrink-0"
+                    )
+                    self.budget_extend_button = (
+                        ui.button("상한 확장", icon="add_circle",
+                                  on_click=self._handle_budget_extend)
+                        # 앰버 바탕에는 흰 글자가 묻힙니다. Quasar 기본값이
+                        # 흰색이라 글자색을 명시해야 합니다.
+                        .props("unelevated dense no-caps color=amber-7 text-color=grey-10 size=sm")
+                        .tooltip("이 발언에 한해 도구 호출 횟수를 늘려 줍니다. 토론은 그 자리에서 이어집니다.")
+                    )
+                    (
+                        ui.button("지금 마무리", icon="done_all",
+                                  on_click=self._handle_budget_wrap_up)
+                        .props("flat dense no-caps color=amber-3 size=sm")
+                        .tooltip("도구를 더 쓰지 않고, 지금까지 얻은 관측만으로 결론을 쓰게 합니다.")
+                    )
+                self.budget_bar.set_visibility(False)
 
                 # 쓸려 가는 막대. 글자가 한동안 오지 않아도 무언가 돌고 있다는
                 # 것을 한눈에 보여줍니다.
@@ -354,6 +393,82 @@ class ChatFeed:
             return
         await self.on_abort()
 
+    # ------------------------------------------------------------ 도구 상한
+
+    async def _handle_budget_extend(self) -> None:
+        await self._answer_budget(self._extension_step())
+
+    async def _handle_budget_wrap_up(self) -> None:
+        await self._answer_budget(0)
+
+    def _extension_step(self) -> int:
+        return int((self._budget_request or {}).get("extension_step", 0) or 0)
+
+    async def _answer_budget(self, extra: int) -> None:
+        """답은 한 번뿐입니다. 누르는 즉시 줄을 걷어 두 번 눌리지 않게 합니다."""
+        request = self._budget_request
+        if request is None or self.on_tool_budget is None:
+            return
+        self.set_budget_request(None)
+        await self.on_tool_budget(extra, str(request.get("id", "")))
+
+    def clear_budget_request(self, request_id: Optional[str] = None) -> None:
+        """답이 난 물음을 걷습니다. id 를 주면 그 물음일 때만 걷습니다.
+
+        병렬 라운드에서는 앞선 물음이 처리되는 사이에 다른 에이전트가 새 물음을
+        올려 두었을 수 있습니다. 무조건 걷으면 그 새 물음이 답할 곳을 잃습니다.
+        """
+        shown = (self._budget_request or {}).get("id")
+        if request_id and shown and request_id != shown:
+            return
+        self.set_budget_request(None)
+
+    def set_budget_request(self, request: Optional[Dict[str, Any]]) -> None:
+        """도구 상한 안내 줄을 켜거나 끕니다. `None` 이면 감춥니다."""
+        self._budget_request = dict(request) if request else None
+        if not self.alive or self.budget_bar is None:
+            return
+        if not self._budget_request:
+            self.budget_bar.set_visibility(False)
+            if self.budget_countdown is not None and not self.budget_countdown.is_deleted:
+                self.budget_countdown.set_text("")
+            return
+
+        info = self._budget_request
+        step = self._extension_step()
+        if self.budget_label is not None and not self.budget_label.is_deleted:
+            self.budget_label.set_text(
+                f"{info.get('agent_name', '에이전트')} 가 도구 호출 상한 "
+                f"{info.get('limit', 0)}회를 모두 썼습니다 "
+                f"(도구 {info.get('tool_calls', 0)}건 실행). "
+                f"상한을 늘릴까요, 지금까지의 관측으로 마무리할까요?"
+            )
+        if self.budget_extend_button is not None and not self.budget_extend_button.is_deleted:
+            self.budget_extend_button.set_text(f"+{step}회 확장")
+            # 하드 상한(TOOL_ITERATION_CEILING)까지 다 쓴 경우엔 늘릴 여지가 없습니다.
+            self.budget_extend_button.set_visibility(step > 0)
+        self.budget_bar.set_visibility(True)
+        self._tick_budget_countdown()
+
+    def _tick_budget_countdown(self) -> None:
+        """답하지 않으면 에이전트가 스스로 마무리하기까지 남은 시간."""
+        if not self.alive or self.budget_countdown is None or self.budget_countdown.is_deleted:
+            return
+        info = self._budget_request
+        if not info:
+            self.budget_countdown.set_text("")
+            return
+        opened_at = float(info.get("opened_at") or 0.0)
+        wait_seconds = float(info.get("wait_seconds") or 0.0)
+        if not opened_at or wait_seconds <= 0:
+            self.budget_countdown.set_text("")
+            return
+        remaining = int(opened_at + wait_seconds - time.time())
+        if remaining <= 0:
+            self.budget_countdown.set_text("자동 마무리")
+            return
+        self.budget_countdown.set_text(f"{remaining}초 후 자동 마무리")
+
     def set_busy(self, busy: bool, status_text: str = "", round_info: str = "") -> None:
         if not self.alive:
             return
@@ -387,6 +502,9 @@ class ChatFeed:
             self.abort_button.set_visibility(busy and self.on_abort is not None)
         if not busy:
             self.set_stop_pending(False)
+            # 끝난 토론에는 답할 곳이 없습니다. 눌러도 아무 일이 없는 버튼을
+            # 남겨 두면 사람은 무언가 고장 났다고 생각합니다.
+            self.set_budget_request(None)
         if self.status_spinner:
             self.status_spinner.set_visibility(busy)
         if self.status_label and status_text:
@@ -437,6 +555,7 @@ class ChatFeed:
         """
         if not self.alive:
             return
+        self._tick_budget_countdown()
         if self._busy_since is None:
             text = ""
         else:

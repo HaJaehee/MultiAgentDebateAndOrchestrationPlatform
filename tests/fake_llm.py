@@ -57,6 +57,11 @@ class FakeLLMCaller:
         # 실제 루프와 같은 방식으로, 같은 dict 를 콜백과 반환값에 함께 씁니다.
         self.tool_calls = tool_calls or {}
         self.calls: List[str] = []
+        # 도구 예산을 다 쓴 척할 에이전트 키. 그 발언에서 `budget_arbiter` 를
+        # 실제로 불러, 화면까지 이어지는 통로가 살아 있는지 확인합니다.
+        self.exhaust_budget_for: set = set()
+        self.budget_arbiters: List[Optional[Callable[[Dict[str, Any]], Any]]] = []
+        self.budget_grants: List[int] = []
         # 각 발언이 어떤 대화 스코프로 도구를 부를지 (MCP _meta 로 나가는 값)
         self.scopes: List[Optional[str]] = []
 
@@ -78,9 +83,22 @@ class FakeLLMCaller:
         on_tool_call: Optional[Callable[[Dict[str, Any]], Any]] = None,
         on_chunk: Optional[Callable[[str], Any]] = None,
         session_id: Optional[str] = None,
+        budget_arbiter: Optional[Callable[[Dict[str, Any]], Any]] = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         self.calls.append(agent.key)
         self.scopes.append(session_id)
+        # 도구 예산이 바닥났을 때 사람에게 물어보는 통로. 진짜 호출기는 상한에
+        # 닿았을 때만 씁니다. 대역은 "받았다" 는 사실만 기록하고, 예산 소진을
+        # 흉내 내야 하는 테스트가 직접 부릅니다.
+        self.budget_arbiters.append(budget_arbiter)
+        if self.exhaust_budget_for and agent.key in self.exhaust_budget_for and budget_arbiter:
+            self.budget_grants.append(await budget_arbiter({
+                "agent_key": agent.key,
+                "agent_name": agent.name,
+                "limit": agent.max_tool_iterations,
+                "used": agent.max_tool_iterations,
+                "tool_calls": agent.max_tool_iterations,
+            }))
         if agent.key in self.fail_keys:
             raise LLMUnavailableError(agent, "APIConnectionError: 500 Internal Server Error")
 
