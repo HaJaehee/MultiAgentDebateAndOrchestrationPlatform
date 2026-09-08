@@ -60,6 +60,14 @@ For each round $r \in [1, \text{max\_rounds}]$:
    - Once completed, the agent's full text response is finalized in the database (`MessageModel`) and emitted via `message_added`.
 
 ### Phase 3: Consensus & Synthesis
+
+`_speak()` accepts an optional `post_process` coroutine applied to the turn body **before** the
+database write and before `message_added`. The synthesis call uses it to run the Mermaid
+self-repair loop, so the streaming card is finalised with the corrected text and the artifacts
+are extracted from it. Failures inside `post_process` are logged and the original body is kept
+— post-processing must never cost a turn. See
+[Artifact Synthesis §3](file:///d:/MultiAgentOrchestrator/wiki/orchestration/artifact-generation.md).
+
 1. Once all debate rounds conclude, the engine transitions to `status = "synthesizing"`.
 2. The **Master Orchestrator** receives the complete transcript of the debate.
 3. The Orchestrator synthesizes the consensus, integrating architectural proposals, code revisions, and security audit recommendations.
@@ -87,6 +95,8 @@ async def on_event(event: Dict[str, Any]) -> None:
 | `message_stream_chunk` | `message_id`, `delta` | Appends streaming token chunks to the active markdown message card. |
 | `message_added` | `message` dictionary | Finalizes or appends color-coded message bubble to feed. |
 | `tool_executed` | `agent_key`, `agent_name`, `tool_call` | Appends collapsible accordion item showing input & output. |
+| `mermaid_repair_started` | `agent_name`, `broken`, `total`, `attempt`, `max_attempts` | Progress banner: a diagram failed the syntax check and is being redrawn. |
+| `mermaid_repair_finished` | `agent_name`, `resolved`, `attempts`, `remaining` | Positive toast when fixed; warning toast naming how many diagrams still fail. |
 | `artifacts_synthesized` | `artifacts` list | Populates code, markdown, and Mermaid tabs in Artifact Viewer. |
 | `turn_completed` | `status`, `failed_agents`, `error_message` | Re-enables user input and marks personas locked; names any agent that never answered. |
 | `run_finished` | `status` (`completed` / `failed` / `cancelled`), `error` | Emitted by `DebateRunner`, not the engine. Detaches the page's subscription. |

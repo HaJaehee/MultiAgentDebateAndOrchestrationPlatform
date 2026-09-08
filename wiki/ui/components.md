@@ -35,8 +35,14 @@ The web application workspace is organized into four primary UI components in [a
 ### 1.1. Session Sidebar ([app/ui/components/sidebar.py](file:///d:/MultiAgentOrchestrator/app/ui/components/sidebar.py))
 - **`+ New Chat` Button**: Instantiates a fresh debate session and clears the workspace.
 - **Session List**: Displays historical sessions ordered by `updated_at` descending.
-- **Badges & Metadata**: Displays creation timestamps and colored chips for participating agents.
-- **Session Management**: Allows inline renaming of session titles and deletion with confirmation dialogs.
+- **Badges & Metadata**: Displays the first user message time and colored chips for participating agents.
+- **Per-card actions**: ✏️ rename · 💾 export the whole conversation as Markdown ·
+  **⑂ continue in a fresh session** · 🗑 delete.
+- **⑂ Continue** (v0.5.0): creates a new conversation that inherits the workspace, the
+  knowledge graph, the agent roster and the previous conclusion — clearing only the
+  transcript. Disabled while that session's debate is running, because the conclusion does
+  not exist yet. See
+  [Session Handoff](file:///d:/MultiAgentOrchestrator/wiki/orchestration/session-handoff.md).
 
 ### 1.2. Agent Roster Control ([app/ui/components/roster.py](file:///d:/MultiAgentOrchestrator/app/ui/components/roster.py))
 
@@ -52,6 +58,13 @@ The web application workspace is organized into four primary UI components in [a
   one layer apart — side by side they are indistinguishable and the mistake is expensive.
 - **Reordering**: cards are dragged to set `debate_priority`; the lifted card fades and the drop edge
   is marked. See [roster-editing.md](../agents/roster-editing.md#5-speaking-order-by-drag).
+- **Speaking-order preview** (v0.5.0): a line under the cards showing the order this round will
+  actually run in, plus a note saying how much to trust it. Only Sequential Debate follows card
+  order; Adversarial interleaves the camps and the orchestrator-led/parallel strategies decide per
+  round. It refreshes on drag, stance change, participation toggle, strategy change, parallel-limit
+  change, and session switch — and it computes the order by calling the engine's own
+  `strategy.get_speakers_for_round()` rather than reimplementing it. See
+  [debate-strategies.md §1-b](../orchestration/debate-strategies.md).
 - **Card width**: `min-w-[270px] max-w-[340px]`. The name row also carries `min-w-0 overflow-hidden`
   so the *name* truncates when space runs out. Without it the row could not shrink below its content,
   `truncate` never engaged, and the stance badge overflowed onto the checkbox and ⋮ button.

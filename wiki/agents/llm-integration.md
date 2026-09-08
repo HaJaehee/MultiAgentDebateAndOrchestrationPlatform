@@ -61,6 +61,15 @@ sequenceDiagram
 1. **Observation Feedback**: The tool output is appended to the message context with `role: "tool"`. The LLM observes the real output (or error message) and refines its reasoning in the next iteration.
 2. **Incremental Token Streaming**: Using `acompletion(stream=True)` and `litellm.stream_chunk_builder`, partial word tokens are streamed to `on_chunk`, dynamically rendering in the UI while tools are accumulating.
 3. **Tool Execution Streaming**: As each tool executes, the `on_tool_call` asynchronous callback dispatches events to the UI, rendering an accordion widget in the chat feed before the agent's text response finishes generating.
+4. **Nothing in the loop may end the turn** (v0.5.0). Malformed `tool_calls` are absorbed by
+   [`_parse_tool_call()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) — object or dict
+   shape, broken argument JSON, and a missing `tool_call_id` (which would make the *next*
+   request a 400). Tool failures come back as `role: "tool"` observations via
+   [`_execute_tool_safely()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py), and a dead
+   UI callback cannot discard the observation of a tool that actually ran
+   ([`_notify_tool_call()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py)). Only
+   `CancelledError` propagates. See
+   [MCP Resilience §4](file:///d:/MultiAgentOrchestrator/wiki/mcp/error-handling-resilience.md).
 
 ---
 
@@ -74,8 +83,39 @@ Sequential Thinking enforces deliberate reasoning before answering. Configured i
 | `native` | Passes provider-native reasoning parameters (`reasoning_effort` for OpenAI o1/o3, or `thinking: {budget_tokens: N}` for Anthropic Claude 3.7 Sonnet). | Reasoning-capable cloud models. |
 | `mcp` | Forces the agent to call the `sequentialthinking` tool on `@modelcontextprotocol/server-sequential-thinking`. | Models equipped with MCP tool access. |
 
-### Hiding Reasoning Traces (`show_steps = false`)
-When `show_steps = false`, [`_apply_show_steps()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py#L112-L121) strips intermediate thought steps, displaying only content following `## 최종 결론` or `## Final Conclusion`.
+### `show_steps` decides what *people* see, not what models read
+
+When `show_steps = false`, [`_apply_show_steps()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py)
+strips intermediate thought steps from the recorded turn, keeping only the text after
+`## 최종 결론` / `## Final Conclusion`.
+
+**Reasoning traces never reach another agent's prompt, regardless of this setting** (v0.5.0).
+The two used to be the same switch: with `show_steps = true` the full `Thought 1..N` text
+*was* the turn body, and `_build_context_for_agent()` copied that body into every later
+speaker's context. Two things followed.
+
+- Within a few rounds most of the transcript was other agents' reasoning, and
+  `fit_context_window()` began discarding the goal and the early design discussion to make
+  room for it.
+- The planning, speaker-selection and task-dispatch prompts quote each turn at 250–300
+  characters. Those characters were all `Thought 1: ...` preamble, so **the conclusion never
+  made it in at all.**
+
+[`strip_reasoning_trace()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) removes the
+trace at every point where a turn body becomes part of a prompt — next-speaker context,
+synthesis transcript, planning prompt, speaker selection, task dispatch — while the database
+and the timeline keep the full text. It handles both shapes: the `## 최종 결론` marker used by
+`prompt`/`mcp` mode, and the `> **[Sequential Thinking]**` quote block that `native` mode
+prepends. If an answer legitimately opens with a blockquote, or if the trace is all there is,
+the original is left alone.
+
+An agent does not get its own trace back either. `show_steps` is a switch about people;
+keeping it a switch about people means enforcing the rule in exactly one place. Re-reading
+your own chain from the previous round also anchors you to it, when the point of the new
+round is that new evidence has arrived.
+
+Measured on a synthetic transcript (5 thoughts + conclusion, 3 specialists × 3 rounds):
+**5,556 → 1,848 tokens.**
 
 ---
 

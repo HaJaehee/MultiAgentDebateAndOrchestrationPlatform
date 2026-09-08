@@ -66,6 +66,18 @@ The packager automatically initializes `workspace/` as an empty Git repository (
 
 ## 3. Launcher Automation (`run_mado.bat` / `.ps1`)
 
+> **Source of truth** (v0.5.0): both launchers are *generated* by
+> `write_launchers()` in [package_offline.py](file:///d:/MultiAgentOrchestrator/package_offline.py).
+> A byte-identical snapshot is now committed at the repository root so a source-only checkout
+> has something to run and so the shipped launcher is reviewable in diffs — but the generator
+> remains authoritative. To change them, edit the generator and re-emit the copy:
+>
+> ```bash
+> python package_offline.py --launchers-only .
+> ```
+>
+> Editing the committed copy alone does **not** change what the bundle ships.
+
 When deployed to an air-gapped target machine, users run `run_mado.bat` or `run_mado.ps1`. The launcher automatically computes absolute paths and injects the following environment variables before starting the server:
 
 ```bat
@@ -189,3 +201,13 @@ equirements.txt) (Get-Content requirements.txt)
 ```
 
 Any difference means the full bundle has to be rebuilt and re-transferred.
+
+Everything else — new modules, new UI, changed prompts — travels fine in the source package.
+`SOURCE_DIRS = ["app", ...]` copies the tree wholesale, so a new file such as
+`app/mermaid_lint.py` is picked up without touching the packaging script.
+
+**v0.5.0 example.** That release added a new module, session handoff, the diagram repair loop,
+and the roster preview. Its imports are `re`, `dataclasses`, `typing`, `uuid`, `shutil` — all
+standard library — and `requirements.txt` was untouched. So the portable Python runtime,
+`wheels/`, `node_runtime/`, `mcp_node/` and `mcp_sandbox/` all stay as they are, and the whole
+update ships as a **391 KB** source package instead of a several-hundred-megabyte bundle.

@@ -9,6 +9,7 @@ Welcome to the **MADO: Multi-Agent Debate & Orchestration Platform** technical d
 ```text
 wiki/
 ├── README.md                              # Main wiki index, roadmap & system summary
+├── release-notes.md                       # Change history by version, linked to the topic pages
 ├── architecture/
 │   ├── overview.md                        # High-level architecture, technology stack & data flow
 │   └── database-schema.md                 # SQLite + SQLAlchemy async ORM data models & relationships
@@ -26,8 +27,9 @@ wiki/
 │   └── error-handling-resilience.md       # Tool failure handling, Stderr streaming tee & auto-reconnect
 ├── orchestration/
 │   ├── engine-lifecycle.md                # 3-phase execution: Planning, Debate Loop & Synthesis
-│   ├── debate-strategies.md               # Sequential Debate, Adversarial Debate & Orchestrator-Led
-│   └── artifact-generation.md             # Markdown reports, Mermaid diagrams, code & JSON summaries
+│   ├── debate-strategies.md               # Sequential, Adversarial, Orchestrator-Led & Parallel Dispatch
+│   ├── session-handoff.md                 # Continuing a debate in a fresh context, carrying the knowledge graph
+│   └── artifact-generation.md             # Markdown reports, Mermaid diagrams & diagram self-repair
 ├── ui/
 │   ├── nicegui-fastapi.md                 # NiceGUI + FastAPI reactive SPA architecture & themes
 │   └── components.md                      # Sidebar, Roster Control, Chat Feed, Artifact Viewer & Personas UI
@@ -46,9 +48,10 @@ wiki/
 | **Configuration** | [conf.json Reference](file:///d:/MultiAgentOrchestrator/wiki/configuration/conf-json-reference.md)<br>[Environment Variables](file:///d:/MultiAgentOrchestrator/wiki/configuration/environment-variables.md) | JSON parsing, `//` comment keys, global `llm` inheritance, per-agent overrides, `${VAR:-default}` substitution |
 | **Agents & Personas** | [Agent Pool & Roles](file:///d:/MultiAgentOrchestrator/wiki/agents/agent-pool-and-roles.md)<br>[Roster Editing](file:///d:/MultiAgentOrchestrator/wiki/agents/roster-editing.md)<br>[Session Personas](file:///d:/MultiAgentOrchestrator/wiki/agents/session-personas.md)<br>[LLM Integration](file:///d:/MultiAgentOrchestrator/wiki/agents/llm-integration.md) | Master Orchestrator, System Architect, Senior Coder, Security Critic, adding/removing agents from the UI, `debate_priority` / `debate_stance`, session freeze and config snapshot |
 | **MCP Tool Protocol** | [Overview & Protocol](file:///d:/MultiAgentOrchestrator/wiki/mcp/overview-and-protocol.md)<br>[Bundled Servers](file:///d:/MultiAgentOrchestrator/wiki/mcp/bundled-servers.md)<br>[Resilience & Errors](file:///d:/MultiAgentOrchestrator/wiki/mcp/error-handling-resilience.md) | Stdio client lifecycle, long-lived server processes, tool dispatch, `isError: true` feedback, stderr tee |
-| **Orchestration** | [Engine Lifecycle](file:///d:/MultiAgentOrchestrator/wiki/orchestration/engine-lifecycle.md)<br>[Debate Strategies](file:///d:/MultiAgentOrchestrator/wiki/orchestration/debate-strategies.md)<br>[Artifact Synthesis](file:///d:/MultiAgentOrchestrator/wiki/orchestration/artifact-generation.md) | Round-based debate, speaker order from agent fields, orchestrator-led turn assignment, consensus criteria, multi-artifact parsing (Code, Markdown, Mermaid) |
+| **Orchestration** | [Engine Lifecycle](file:///d:/MultiAgentOrchestrator/wiki/orchestration/engine-lifecycle.md)<br>[Debate Strategies](file:///d:/MultiAgentOrchestrator/wiki/orchestration/debate-strategies.md)<br>[Session Handoff](file:///d:/MultiAgentOrchestrator/wiki/orchestration/session-handoff.md)<br>[Artifact Synthesis](file:///d:/MultiAgentOrchestrator/wiki/orchestration/artifact-generation.md) | Round-based debate, speaker order from agent fields, speaking-order preview, orchestrator-led turn assignment, consensus criteria, continuing a session with its knowledge graph, multi-artifact parsing and Mermaid self-repair |
 | **User Interface** | [NiceGUI & FastAPI](file:///d:/MultiAgentOrchestrator/wiki/ui/nicegui-fastapi.md)<br>[UI Components](file:///d:/MultiAgentOrchestrator/wiki/ui/components.md) | Single Uvicorn process, Quasar dark mode, real-time WebSocket updates, folding tool call logs |
-| **Operations** | [Getting Started](file:///d:/MultiAgentOrchestrator/wiki/operations/getting-started.md)<br>[Air-gap Packaging](file:///d:/MultiAgentOrchestrator/wiki/operations/airgap-packaging.md) | `setup_mcp.py`, `package_offline.py`, zero-dependency air-gapped bundles, version pinning |
+| **Operations** | [Getting Started](file:///d:/MultiAgentOrchestrator/wiki/operations/getting-started.md)<br>[Air-gap Packaging](file:///d:/MultiAgentOrchestrator/wiki/operations/airgap-packaging.md) | `setup_mcp.py`, `package_offline.py`, `package_source.py` incremental updates, zero-dependency air-gapped bundles, version pinning |
+| **Release History** | [Release Notes](file:///d:/MultiAgentOrchestrator/wiki/release-notes.md) | What changed in each version, why, and which topic page covers it |
 
 ---
 
@@ -89,3 +92,4 @@ graph TD
 2. **Self-Contained Sessions**: Personas and prompts can be customized per debate session. At the first user message the full `AgentConfig` of every agent — persona, model, endpoint, credentials, tool permissions, debate placement — is snapshot into the database and locked. Afterwards the conversation no longer reads `conf.json`: agents can be deleted or re-pointed globally and that conversation keeps running exactly as it started.
 3. **Robust Tool Calling via MCP**: Agents can inspect real files, maintain persistent knowledge graphs across token truncations, commit diffs to a Git repository, and execute Python code in an isolated IPython kernel sandbox.
 4. **Air-Gap First Design**: The platform bundles offline runtimes (Node.js, CPython), reference MCP servers, and pinned wheels for zero-internet intranet deployment.
+5. **Failures Stay Local**: A tool error is an observation the agent reads and corrects — it does not end a turn, a debate, or the process. An agent that cannot be reached is recorded as unreachable rather than simulated. A diagram that does not parse is sent back to its author before it becomes an artifact. See [Release Notes v0.5.0](file:///d:/MultiAgentOrchestrator/wiki/release-notes.md).
