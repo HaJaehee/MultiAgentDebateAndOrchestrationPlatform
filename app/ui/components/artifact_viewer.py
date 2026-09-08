@@ -10,6 +10,11 @@ from app.ui.clipboard import copy_to_clipboard
 logger = logging.getLogger(__name__)
 
 
+# 화면에서 SVG 를 걷어 오기를 기다리는 한도(초). 브라우저가 답하지 않아도
+# 다운로드 자체는 나가야 하므로 짧게 잡습니다.
+SVG_GRAB_TIMEOUT = 5.0
+
+
 def _clean_title_for_filename(title: str, default: str = "artifact") -> str:
     cleaned = "".join(c for c in title if c.isalnum() or c in ("-", "_", " ")).strip().replace(" ", "_")
     return cleaned or default
@@ -138,8 +143,8 @@ class ArtifactViewer:
                         ui.button(
                             "HTML",
                             icon="code",
-                            on_click=lambda _, t=title, c=content: self._download_mermaid_html(t, c),
-                        ).props("flat dense size=sm color=amber-4").tooltip("줌/패닝 및 소스 보기가 가능한 독립 실행형 HTML (</>) 문서 다운로드")
+                            on_click=lambda _, wid=wrapper_id, t=title, c=content: self._download_mermaid_html(wid, t, c),
+                        ).props("flat dense size=sm color=amber-4").tooltip("줌/패닝 및 소스 보기가 가능한 독립 실행형 HTML (</>) 문서 다운로드 (렌더링된 그림을 함께 담아 오프라인에서도 열립니다)")
 
                         ui.button(
                             "StarUML",
@@ -241,12 +246,50 @@ class ArtifactViewer:
         clean_title = _clean_title_for_filename(title, default="architecture_diagram")
         ui.run_javascript(f"window.MadoMermaid && window.MadoMermaid.downloadSvg('{wrapper_id}', {json.dumps(clean_title)})")
 
-    def _download_mermaid_html(self, title: str, content: str) -> None:
+    async def _grab_rendered_svg(self, wrapper_id: str) -> Optional[str]:
+        """화면에 이미 그려져 있는 SVG 를 브라우저에서 가져옵니다.
+
+        실패해도 다운로드는 계속되어야 하므로 어떤 오류든 None 으로 흡수합니다
+        (그때는 CDN 을 쓰는 예전 방식의 문서가 만들어집니다).
+        """
+        try:
+            # `return` 을 쓰지 않고 식으로 둡니다. NiceGUI 는 이 코드를 먼저
+            # eval 로 돌리는데, 최상위 return 은 SyntaxError 를 낸 뒤에야 async
+            # 래퍼로 다시 시도됩니다 (한 번 헛돕니다).
+            svg = await ui.run_javascript(
+                f"window.MadoMermaid"
+                f" ? window.MadoMermaid.getStandaloneSvg({json.dumps(wrapper_id)})"
+                f" : null",
+                timeout=SVG_GRAB_TIMEOUT,
+            )
+        except Exception as exc:  # noqa: BLE001 - 브라우저가 답하지 않아도 파일은 나가야 합니다
+            logger.warning(f"Could not read the rendered SVG for '{wrapper_id}': {exc}")
+            return None
+        return svg if isinstance(svg, str) and svg.strip() else None
+
+    async def _download_mermaid_html(self, wrapper_id: str, title: str, content: str) -> None:
+        """독립 실행형 HTML 다운로드.
+
+        화면에 그려진 SVG 를 먼저 걷어 문서에 심습니다. 그러지 않으면 파일은
+        열릴 때마다 CDN 에서 Mermaid 렌더러를 받아 와야 하고, 인터넷이 없는
+        곳에서는 흰 화면만 나옵니다 — "독립 실행형" 이라는 이름과 달리.
+        """
         clean_title = _clean_title_for_filename(title, default="architecture_diagram")
-        html_str = generate_mermaid_standalone_html(title, content)
+        svg = await self._grab_rendered_svg(wrapper_id)
+        html_str = generate_mermaid_standalone_html(title, content, svg_content=svg)
         filename = f"{clean_title}.html"
         ui.download(html_str.encode("utf-8"), filename)
-        ui.notify(f"'{filename}' 독립 실행형 HTML 다운로드가 시작되었습니다.", type="info", position="top")
+        if svg:
+            ui.notify(
+                f"'{filename}' 다운로드가 시작되었습니다. (그림이 파일에 포함되어 오프라인에서도 열립니다)",
+                type="positive", position="top",
+            )
+        else:
+            ui.notify(
+                f"'{filename}' 다운로드가 시작되었습니다. 렌더링된 그림을 가져오지 못해, "
+                f"이 파일은 열 때 인터넷으로 Mermaid 렌더러를 받아옵니다.",
+                type="warning", position="top",
+            )
 
     def _download_mermaid_staruml(self, title: str, content: str) -> None:
         clean_title = _clean_title_for_filename(title, default="architecture_model")

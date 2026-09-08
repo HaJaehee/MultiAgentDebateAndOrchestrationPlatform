@@ -940,20 +940,62 @@ def convert_mermaid_to_staruml_mdj(title: str, mermaid_code: str) -> str:
     return converter.convert(mermaid_code)
 
 
+def _clean_title_for_export(title: str, default: str = "architecture_diagram") -> str:
+    """제목을 파일 이름으로 쓸 수 있게 다듬습니다 (HTML 안의 저장 버튼용)."""
+    cleaned = "".join(
+        c for c in (title or "") if c.isalnum() or c in ("-", "_", " ")
+    ).strip().replace(" ", "_")
+    return cleaned or default
+
+
+# Mermaid 렌더러를 내려받는 곳. 여기에 닿지 못하면 다이어그램을 그릴 수 없으므로,
+# 가능하면 브라우저가 이미 그려 둔 SVG 를 함께 실어 보내 이 주소를 아예 쓰지
+# 않게 합니다 (`svg_content`).
+MERMAID_CDN_URL = "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"
+
+
 def generate_mermaid_standalone_html(
     title: str,
     mermaid_code: str,
     svg_content: Optional[str] = None,
 ) -> str:
-    """줌/패닝, 테마 토글, 다운로드 컨트롤이 포함된 단일 독립형 HTML 문서를 생성합니다."""
+    """줌/패닝, 테마 토글, 다운로드 컨트롤이 포함된 단일 독립형 HTML 문서를 생성합니다.
+
+    `svg_content` 에 **이미 렌더링된 SVG** 를 주면 그것을 문서에 그대로 심고
+    CDN 스크립트를 아예 넣지 않습니다. 그래야 이름값을 합니다 — 예전에는
+    파일 하나에 담겼을 뿐 열 때마다 인터넷으로 렌더러를 받아 와야 했고,
+    폐쇄망이나 비행기 안에서 열면 흰 화면만 나왔습니다.
+
+    SVG 를 못 구하면 CDN 을 쓰는 예전 방식으로 돌아가되, 렌더러가 없을 때
+    **원본 소스를 읽을 수 있게** 남깁니다.
+    """
     safe_title = html.escape(title or "Architecture Diagram")
     raw_mermaid = (mermaid_code or "").strip()
     escaped_mermaid = html.escape(raw_mermaid)
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # SVG 가 이미 있으면 오프라인에서도 즉시 표시되도록 직접 임베딩합니다.
-    # Mermaid 태그 내부에는 인코딩되지 않은 원본 문법(raw_mermaid)을 넣어야 파서가 오류를 내지 않습니다.
-    svg_container = svg_content or f'<div class="mermaid">{raw_mermaid}</div>'
+    # 파일명은 JS 문자열 리터럴 안으로 들어갑니다. HTML 이스케이프한 제목을 그대로
+    # 쓰면 따옴표가 `&#x27;` 로 남아 파일 이름에 그대로 찍힙니다.
+    js_filename = json.dumps(_clean_title_for_export(title))
+
+    embedded_svg = (svg_content or "").strip()
+    has_embedded_svg = bool(embedded_svg)
+
+    # 렌더러가 필요 없으면 부르지 않습니다. 없는 주소를 붙들고 있을 이유가 없고,
+    # 폐쇄망에서는 그 요청이 타임아웃까지 문서를 붙잡습니다.
+    mermaid_script_tag = (
+        ""
+        if has_embedded_svg
+        else f'    <!-- Mermaid CDN (SVG 를 심지 못했을 때만 씁니다) -->\n'
+             f'    <script src="{MERMAID_CDN_URL}"></script>'
+    )
+
+    # Mermaid 태그 안의 원본은 **이스케이프해서** 넣습니다. Mermaid 는 요소의
+    # textContent 를 읽으므로 실체는 그대로 복원되고, 그동안 `<`, `&` 가 들어간
+    # 다이어그램(클래스 다이어그램의 제네릭, 라벨 안의 태그)이 HTML 파서에
+    # 먹혀 통째로 사라지던 것이 막힙니다.
+    svg_container = embedded_svg or f'<div class="mermaid">{escaped_mermaid}</div>'
+    js_has_svg = "true" if has_embedded_svg else "false"
 
     html_template = f"""<!DOCTYPE html>
 <html lang="ko">
@@ -961,8 +1003,7 @@ def generate_mermaid_standalone_html(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{safe_title} - MADO Diagram Export</title>
-    <!-- Mermaid CDN (Fallback and Dynamic Rendering) -->
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+{mermaid_script_tag}
     <style>
         :root {{
             --bg-color: #0f172a;
@@ -1107,6 +1148,31 @@ def generate_mermaid_standalone_html(
             justify-content: center;
             align-items: center;
             will-change: transform;
+            /* 이 판은 테마와 상관없이 늘 밝습니다. 색을 물려받게 두면 다크 테마의
+               흰 글자가 흰 배경에 얹혀, 렌더링이 실패했을 때 아무것도 안 보입니다
+               (증상: "흰 백지만 나온다"). */
+            color: #0f172a;
+        }}
+        #diagram-content .mermaid {{
+            /* 렌더러가 없을 때 이 자리에 남는 것은 원본 Mermaid 소스입니다.
+               읽을 수 있게 둡니다. */
+            white-space: pre-wrap;
+            text-align: left;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.8rem;
+            line-height: 1.55;
+        }}
+        #render-warning {{
+            display: none;
+            margin: 0 12px 12px;
+            padding: 10px 14px;
+            border: 1px solid #f59e0b;
+            border-left-width: 4px;
+            border-radius: 8px;
+            background-color: rgba(245, 158, 11, 0.12);
+            color: #fbbf24;
+            font-size: 0.78rem;
+            line-height: 1.5;
         }}
         #diagram-content svg {{
             display: block;
@@ -1197,6 +1263,7 @@ def generate_mermaid_standalone_html(
     </header>
 
     <main>
+        <div id="render-warning"></div>
         <div class="view-container">
             <div id="diagram-view">
                 <div id="diagram-content">
@@ -1221,7 +1288,33 @@ def generate_mermaid_standalone_html(
     </footer>
 
     <script>
-        mermaid.initialize({{ startOnLoad: true, theme: 'default', securityLevel: 'loose' }});
+        // 렌더러 준비. **여기서 예외가 새면 아래의 툴바·줌·저장이 전부 죽습니다**
+        // (예전에는 CDN 에 닿지 못하면 `mermaid is not defined` 한 줄로 스크립트가
+        // 통째로 멈춰, 화면도 버튼도 아무것도 동작하지 않았습니다).
+        const HAS_EMBEDDED_SVG = {js_has_svg};
+
+        function showRenderWarning(msg) {{
+            const box = document.getElementById('render-warning');
+            if (!box) return;
+            box.textContent = msg;
+            box.style.display = 'block';
+        }}
+
+        if (!HAS_EMBEDDED_SVG) {{
+            if (typeof mermaid === 'undefined') {{
+                showRenderWarning(
+                    '⚠️ Mermaid 렌더러를 불러오지 못했습니다 (인터넷 연결이 없거나 CDN 이 차단된 환경). '
+                    + '아래에는 다이어그램 대신 원본 소스를 그대로 표시합니다. '
+                    + '그림이 필요하면 인터넷이 되는 곳에서 다시 열거나, 앱에서 PNG/SVG 로 내려받으세요.'
+                );
+            }} else {{
+                try {{
+                    mermaid.initialize({{ startOnLoad: true, theme: 'default', securityLevel: 'loose' }});
+                }} catch (err) {{
+                    showRenderWarning('⚠️ Mermaid 초기화에 실패했습니다: ' + err);
+                }}
+            }}
+        }}
 
         let currentScale = 1.0;
         let translateX = 0;
@@ -1477,7 +1570,10 @@ def generate_mermaid_standalone_html(
         // Download PNG
         document.getElementById('btn-download-png').addEventListener('click', async () => {{
             const svgData = getSvgData();
-            if (!svgData) return;
+            if (!svgData) {{
+                showToast('다이어그램이 그려지지 않아 PNG 로 저장할 수 없습니다.');
+                return;
+            }}
             try {{
                 const canvas = await svgToCanvas(svgData);
                 canvas.toBlob((blob) => {{
@@ -1485,7 +1581,7 @@ def generate_mermaid_standalone_html(
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = '{safe_title}.png';
+                    a.download = {js_filename} + '.png';
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
@@ -1500,12 +1596,15 @@ def generate_mermaid_standalone_html(
         // Download SVG
         document.getElementById('btn-download-svg').addEventListener('click', () => {{
             const svgData = getSvgData();
-            if (!svgData) return;
+            if (!svgData) {{
+                showToast('다이어그램이 그려지지 않아 SVG 로 저장할 수 없습니다.');
+                return;
+            }}
             const blob = new Blob([svgData.rawSvgString || svgData.svgString], {{ type: 'image/svg+xml;charset=utf-8' }});
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = '{safe_title}.svg';
+            a.download = {js_filename} + '.svg';
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);

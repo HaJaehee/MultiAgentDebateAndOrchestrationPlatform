@@ -254,3 +254,77 @@ def test_generate_mermaid_standalone_html_with_svg():
 
     assert "<circle cx=\"50\" cy=\"50\" r=\"40\"" in html_content
     assert "Custom SVG Test" in html_content
+
+
+# ------------------------------------------------- 독립 실행형 HTML 이 정말 독립적인가
+#
+# 증상: 내려받은 다이어그램 HTML 을 열면 흰 백지만 나왔습니다.
+#
+# 원인은 두 가지가 겹친 것이었습니다.
+#   1. 문서가 열릴 때마다 CDN 에서 Mermaid 렌더러를 받아 와야 했습니다. 폐쇄망·
+#      비행기·사내망에서는 못 받습니다. 이 프로젝트는 폐쇄망 배포를 전제로
+#      하는데도 "독립 실행형" 문서가 인터넷을 요구했습니다.
+#   2. 못 받으면 스크립트 첫 줄 `mermaid.initialize(...)` 가 ReferenceError 로
+#      죽어 툴바·줌·저장까지 전부 멈췄고, 그 자리에 남은 원본 소스는 다크 테마의
+#      흰 글자라 흰 판 위에서 보이지 않았습니다 — 그래서 "흰 백지".
+
+
+def test_embedded_svg_makes_the_document_offline_capable():
+    """렌더링된 SVG 를 심으면 CDN 을 아예 부르지 않습니다."""
+    html_content = generate_mermaid_standalone_html(
+        "Architecture",
+        "graph TD\n    A --> B",
+        svg_content='<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>',
+    )
+
+    assert "cdn.jsdelivr.net" not in html_content
+    assert "<script src=" not in html_content
+    assert "const HAS_EMBEDDED_SVG = true" in html_content
+    assert "<rect width=\"10\" height=\"10\"/>" in html_content
+
+
+def test_missing_renderer_does_not_kill_the_rest_of_the_script():
+    """SVG 가 없어 CDN 에 기대야 할 때도, 렌더러가 없으면 안내를 띄우고 나머지는 삽니다."""
+    html_content = generate_mermaid_standalone_html("Architecture", "graph TD\n    A --> B")
+
+    assert "cdn.jsdelivr.net" in html_content
+    assert "const HAS_EMBEDDED_SVG = false" in html_content
+    # 렌더러 유무를 확인한 뒤에 초기화합니다 (예전에는 무조건 불렀습니다).
+    assert "typeof mermaid === 'undefined'" in html_content
+    assert "showRenderWarning" in html_content
+    assert "render-warning" in html_content
+    # 초기화 실패가 툴바를 끌고 가지 않도록 try 로 감쌉니다.
+    init_at = html_content.index("mermaid.initialize(")
+    assert "try {" in html_content[init_at - 200:init_at]
+
+
+def test_fallback_source_is_readable_on_the_light_panel():
+    """렌더링이 안 됐을 때 남는 원본이 흰 글자라 안 보이던 것을 막습니다."""
+    html_content = generate_mermaid_standalone_html("Architecture", "graph TD\n    A --> B")
+
+    panel = html_content[html_content.index("#diagram-content {"):]
+    panel = panel[:panel.index("}")]
+    assert "color: #0f172a" in panel
+
+
+def test_angle_brackets_in_the_source_survive_html_parsing():
+    """`<` 가 든 다이어그램이 HTML 파서에 먹혀 통째로 사라지지 않아야 합니다.
+
+    Mermaid 는 요소의 textContent 를 읽으므로 이스케이프해도 문법은 그대로입니다.
+    """
+    mermaid_code = 'graph TD\n    A["List<Event>"] --> B["a & b"]'
+    html_content = generate_mermaid_standalone_html("Generics", mermaid_code)
+
+    assert "List&lt;Event&gt;" in html_content
+    assert '<div class="mermaid">graph TD' in html_content
+    # 살아 있는 태그로 새어 들어가면 안 됩니다.
+    assert "<Event>" not in html_content
+
+
+def test_download_filename_is_a_valid_js_string():
+    """따옴표가 든 제목이 JS 리터럴을 깨거나 파일명에 실체 참조로 남지 않아야 합니다."""
+    html_content = generate_mermaid_standalone_html("Bob's \"Big\" Diagram", "graph TD\n    A --> B")
+
+    assert '"Bobs_Big_Diagram" + \'.png\'' in html_content
+    assert '"Bobs_Big_Diagram" + \'.svg\'' in html_content
+    assert "&#x27;.png" not in html_content

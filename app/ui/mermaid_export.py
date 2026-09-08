@@ -278,6 +278,24 @@ MERMAID_EXPORT_JS = """
             }
         },
 
+        // 내려받을 독립 실행형 HTML 안에 심을 SVG 문자열.
+        //
+        // 화면에는 이미 다이어그램이 그려져 있습니다. 그 결과를 파일에 함께
+        // 실어 보내면 문서가 정말로 독립적이 됩니다 — 열 때 CDN 에서 렌더러를
+        // 받아 올 필요가 없으니 폐쇄망에서도 그림이 그대로 나옵니다.
+        // 아직 렌더링 전이거나 문법 오류로 SVG 가 없으면 null 을 돌려주고,
+        // 파이썬 쪽은 예전처럼 CDN 을 쓰는 문서를 만듭니다.
+        getStandaloneSvg: function(wrapperId) {
+            try {
+                const svgData = this.getSvgData(wrapperId);
+                if (!svgData) return null;
+                return svgData.rawSvgString || svgData.svgString || null;
+            } catch (err) {
+                console.warn('[MadoMermaid] Could not extract SVG for HTML export:', err);
+                return null;
+            }
+        },
+
         copySvgToClipboard: function(wrapperId) {
             const svgData = this.getSvgData(wrapperId);
             if (!svgData) return false;
