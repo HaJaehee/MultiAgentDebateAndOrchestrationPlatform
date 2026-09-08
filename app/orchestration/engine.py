@@ -14,6 +14,7 @@ from app.agents.llm import (
     context_trim_notice,
     estimate_tokens,
     memory_search_tool,
+    strip_reasoning_trace,
 )
 from app.agents.personas import prepare_agents_for_turn
 from app.agents.pool import AgentPool, get_agent_pool
@@ -661,7 +662,13 @@ class OrchestratorEngine:
                 for m in state.messages[:-1]:
                     if m.msg_type == "error":
                         continue
-                    history_snippets.append(f"{m.sender_name}({m.sender_role}): {m.content[:250]}")
+                    # 자르기 **전에** 사고 과정을 뗍니다. 그러지 않으면 250자가
+                    # 통째로 "Thought 1: ..." 머리말로 채워져, 정작 결론은 한 글자도
+                    # 안 실립니다.
+                    history_snippets.append(
+                        f"{m.sender_name}({m.sender_role}): "
+                        f"{strip_reasoning_trace(m.content)[:250]}"
+                    )
                 history_text = "\n".join(history_snippets[-6:])
                 orch_plan_prompt = [
                     {"role": "user", "content": (
@@ -1011,7 +1018,8 @@ class OrchestratorEngine:
 
         roster = "\n".join(f"- {a.key}: {a.name} ({a.role})" for a in candidates)
         recent = [
-            f"{m.sender_name}({m.sender_role}): {m.content[:300]}"
+            # 자르기 전에 사고 과정을 뗍니다 (계획 프롬프트와 같은 이유).
+            f"{m.sender_name}({m.sender_role}): {strip_reasoning_trace(m.content)[:300]}"
             for m in state.messages if m.msg_type != "error"
         ][-8:]
 
@@ -1303,7 +1311,8 @@ class OrchestratorEngine:
 
         roster = "\n".join(f"- {a.key}: {a.name} ({a.role})" for a in candidates)
         recent = [
-            f"{m.sender_name}({m.sender_role}): {m.content[:300]}"
+            # 자르기 전에 사고 과정을 뗍니다 (계획 프롬프트와 같은 이유).
+            f"{m.sender_name}({m.sender_role}): {strip_reasoning_trace(m.content)[:300]}"
             for m in state.messages if m.msg_type != "error"
         ][-8:]
 
@@ -1495,7 +1504,10 @@ class OrchestratorEngine:
                 role_label = f"[{msg.sender_name} ({msg.sender_role})]"
                 context.append({
                     "role": "assistant" if msg.sender_key == agent.key else "user",
-                    "content": f"{role_label}:\n{msg.content}"
+                    # 사고 과정은 기록과 화면에만 남기고 프롬프트에는 싣지 않습니다.
+                    # 자기 발언도 같습니다 — `show_steps` 는 사람이 무엇을 볼지를
+                    # 정하는 스위치이지, 모델이 무엇을 읽을지를 정하는 것이 아닙니다.
+                    "content": f"{role_label}:\n{strip_reasoning_trace(msg.content)}"
                 })
 
         turn_prompt = (
@@ -1566,7 +1578,8 @@ class OrchestratorEngine:
 
         def render(msg: DebateMessage) -> str:
             prefix = "### [User]" if msg.sender_key == "user" else f"### {msg.sender_name} ({msg.sender_role})"
-            return f"{prefix}:\n{msg.content}\n"
+            body = msg.content if msg.sender_key == "user" else strip_reasoning_trace(msg.content)
+            return f"{prefix}:\n{body}\n"
 
         if agent is None:
             kept, dropped = [render(m) for m in usable], 0
