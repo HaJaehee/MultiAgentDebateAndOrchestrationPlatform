@@ -87,6 +87,28 @@ def create_ui() -> None:
                 chat_feed.append_stream_chunk(event.get("message_id", ""), event.get("delta", ""))
             elif etype == "message_added":
                 chat_feed.append_message(event.get("message", {}))
+            elif etype == "mermaid_repair_started":
+                chat_feed.set_busy(
+                    True,
+                    f"[{event.get('agent_name', '')}] 다이어그램 {event.get('broken', 0)}개의 "
+                    f"문법 오류를 발견해 다시 그리는 중입니다 "
+                    f"({event.get('attempt', 1)}/{event.get('max_attempts', 1)}회차)...",
+                    "Fixing diagram",
+                )
+            elif etype == "mermaid_repair_finished":
+                if event.get("resolved"):
+                    ui.notify(
+                        f"다이어그램 문법 오류를 {event.get('attempts', 1)}회 만에 고쳤습니다.",
+                        type="positive", position="bottom-right",
+                    )
+                else:
+                    # 고치지 못한 것을 조용히 넘기면, 사람은 아티팩트 탭에서
+                    # 빈 화면을 보고 나서야 알게 됩니다.
+                    ui.notify(
+                        f"다이어그램 {event.get('remaining', 0)}개는 문법 오류가 남았습니다. "
+                        f"원본을 그대로 두었으니 아티팩트 탭에서 확인하세요.",
+                        type="warning", position="bottom-right", close_button="확인",
+                    )
             elif etype == "artifacts_synthesized":
                 artifact_viewer.render_artifacts(event.get("artifacts", []))
             elif etype == "stop_requested":

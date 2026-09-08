@@ -321,6 +321,28 @@ class TurnRun:
                 )
             self.round_info = "Debating"
 
+        elif etype == "mermaid_repair_started":
+            self.busy = True
+            self.status_text = (
+                f"[{event.get('agent_name', '')}] 다이어그램 {event.get('broken', 0)}개의 "
+                f"문법 오류를 발견해 다시 그리는 중입니다 "
+                f"({event.get('attempt', 1)}/{event.get('max_attempts', 1)}회차)."
+            )
+            self.round_info = "Fixing diagram"
+
+        elif etype == "mermaid_repair_finished":
+            if event.get("resolved"):
+                self.status_text = (
+                    f"다이어그램 문법 오류를 {event.get('attempts', 1)}회 만에 고쳤습니다."
+                )
+            else:
+                self.status_text = (
+                    f"다이어그램 {event.get('remaining', 0)}개는 {event.get('attempts', 0)}번 "
+                    f"고쳐 봐도 문법 오류가 남았습니다. 원본을 그대로 두었으니 "
+                    f"아티팩트 탭에서 직접 확인하세요."
+                )
+            self.round_info = "Synthesizing"
+
         elif etype == "context_trimmed":
             self.context_dropped = int(event.get("total_dropped") or 0)
             where = "최종 합성 전사" if event.get("where") == "synthesis" else "발언 맥락"

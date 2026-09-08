@@ -20,6 +20,7 @@ from app.agents.personas import prepare_agents_for_turn
 from app.agents.pool import AgentPool, get_agent_pool
 from app.config import TOOL_ITERATION_CEILING, resolve_workspace_dir
 from app.mcp.manager import get_mcp_manager
+from app.mermaid_lint import format_issues, lint_mermaid
 from app.database.models import (
     ArtifactModel,
     MessageModel,
@@ -54,6 +55,13 @@ MERMAID_HEADERS = (
 )
 
 CODE_LANGUAGES = ("python", "py", "typescript", "javascript", "bash", "shell", "json", "toml", "sql")
+
+# 다이어그램 문법이 틀렸을 때 오케스트레이터에게 다시 물어보는 횟수.
+#
+# 두 번이면 충분합니다. 오류 메시지를 정확히 받은 모델은 대개 한 번에 고치고,
+# 두 번째에도 못 고치면 세 번째라고 달라지지 않습니다 — 그때는 사람이 볼 수
+# 있도록 원문을 그대로 두고 무엇이 틀렸는지 알리는 편이 낫습니다.
+MERMAID_REPAIR_ATTEMPTS = 2
 
 # `A[결제 서비스 (Payment)]` 처럼 대괄호 라벨 안에 괄호가 들어간 형태. LLM 이 가장 자주
 # 만드는 Mermaid 파싱 오류이고, 따옴표로 감싸면 그대로 통과합니다.
@@ -91,6 +99,34 @@ def normalize_mermaid(content: str) -> str:
 
         out.append(_PAREN_LABEL_RE.sub(_quote, line))
     return "\n".join(out).strip()
+
+
+def find_mermaid_blocks(text: str) -> List[Dict[str, Any]]:
+    """본문 속 Mermaid 코드 블록을 **위치와 함께** 찾습니다.
+
+    `extract_code_blocks()` 는 코드만 돌려주는데, 고친 다이어그램을 제자리에
+    끼워 넣으려면 원문의 어디였는지를 알아야 합니다. 문자열 치환으로 하면
+    같은 코드가 두 번 나올 때 엉뚱한 곳을 바꿉니다.
+    """
+    blocks: List[Dict[str, Any]] = []
+    for match in CODE_FENCE_RE.finditer(text or ""):
+        lang = match.group(1).strip().lower() or "text"
+        code = match.group(2).strip()
+        if not code:
+            continue
+        if lang == "text":
+            first = code.split("\n", 1)[0].strip().lower()
+            if not any(first.startswith(h) for h in MERMAID_HEADERS):
+                continue
+        elif lang != "mermaid":
+            continue
+        # 범위는 **다듬은 코드**의 것이어야 합니다. 원본 그대로의 범위를 쓰면
+        # 끝의 줄바꿈까지 포함되고, 그 자리를 줄바꿈 없는 코드로 갈아 끼우는
+        # 순간 닫는 ``` 가 마지막 코드 줄에 붙어 펜스가 깨집니다.
+        raw = match.group(2)
+        start = match.start(2) + (len(raw) - len(raw.lstrip()))
+        blocks.append({"code": code, "start": start, "end": start + len(code)})
+    return blocks
 
 
 def extract_code_blocks(text: str) -> List[Dict[str, str]]:
@@ -299,6 +335,7 @@ class OrchestratorEngine:
         control: Optional[TurnControl] = None,
         db_lock: Optional[asyncio.Lock] = None,
         created_at: Optional[datetime] = None,
+        post_process: Optional[Callable[[str], Coroutine[Any, Any, str]]] = None,
     ) -> DebateMessage:
         """한 에이전트의 발언을 스트리밍하고, DB 에 기록하고, 상태에 반영합니다.
 
@@ -387,6 +424,20 @@ class OrchestratorEngine:
             if not content.strip():
                 content = "".join(streamed)
             final_type = msg_type
+            if post_process is not None:
+                # 기록과 화면에 남을 본문을 확정하기 **전에** 손봅니다. 스트리밍
+                # 카드는 `message_added` 가 올 때 최종본으로 덮이므로, 여기서
+                # 고치면 사람이 보는 것도 고쳐진 쪽입니다.
+                try:
+                    content = await post_process(content)
+                except asyncio.CancelledError:
+                    raise
+                except BaseException as exc:  # noqa: BLE001 - 후처리 실패로 발언을 잃지 않습니다
+                    logger.error(
+                        f"Post-processing {agent.name}'s message failed: "
+                        f"{type(exc).__name__}: {exc}",
+                        exc_info=True,
+                    )
         except LLMUnavailableError as exc:
             logger.warning(f"Agent '{agent.key}' produced no response: {exc}")
             content = self._unavailable_notice(agent, exc, "".join(streamed))
@@ -811,6 +862,15 @@ class OrchestratorEngine:
                     "speaker": orchestrator_agent.name,
                 })
 
+            async def _fix_diagrams(text: str) -> str:
+                return await self._repair_mermaid_blocks(
+                    text,
+                    agent=orchestrator_agent,
+                    custom_instructions=custom_instructions,
+                    state=state,
+                    on_event=on_event,
+                )
+
             synth_message = await self._speak(
                 db=db,
                 state=state,
@@ -822,6 +882,7 @@ class OrchestratorEngine:
                 round_number=state.current_round + 1,
                 msg_type="orchestrator",
                 on_event=on_event,
+                post_process=_fix_diagrams,
             )
             synthesis_failed = synth_message.msg_type == "error"
 
@@ -1652,6 +1713,190 @@ class OrchestratorEngine:
             f"4. **품질/보안 점검표 및 엣지 케이스 대응 전략**"
         )
         return [{"role": "user", "content": prompt}]
+
+    # ------------------------------------------------- 다이어그램 문법 되돌리기
+
+    async def _repair_mermaid_blocks(
+        self,
+        text: str,
+        *,
+        agent: Agent,
+        custom_instructions: str,
+        state: DebateState,
+        on_event: Optional[EventCallback],
+    ) -> str:
+        """합성 본문의 Mermaid 다이어그램을 검사하고, 틀렸으면 고쳐 받습니다.
+
+        예전에는 문법이 어긋난 다이어그램이 그대로 아티팩트가 되었고, 사람이 탭을
+        열었을 때 비로소 "Mermaid 문법 오류" 를 보았습니다. 그때는 토론이 이미
+        끝나 고칠 사람이 없습니다 — 다시 물어보려면 새 턴을 돌려야 하고, 그러면
+        라운드를 통째로 다시 씁니다.
+
+        여기서는 **쓴 사람에게 그 자리에서 돌려줍니다.** 오류 메시지와 문제가 된
+        줄을 그대로 주고 고쳐 달라고 하며, `MERMAID_REPAIR_ATTEMPTS` 번까지
+        반복합니다. 끝내 못 고치면 원문을 그대로 둡니다 — 지어낸 다이어그램으로
+        바꾸느니, 틀린 채로 두고 무엇이 틀렸는지 알리는 편이 낫습니다.
+
+        검사는 `lint_mermaid` 가 합니다. 확실한 오류만 잡도록 만들어져 있어,
+        멀쩡한 그림을 두고 모델을 다시 부르는 일은 없습니다.
+        """
+        blocks = find_mermaid_blocks(text)
+        if not blocks:
+            return text
+
+        broken = [
+            (i, b, issues)
+            for i, b in enumerate(blocks)
+            if (issues := lint_mermaid(normalize_mermaid(b["code"])))
+        ]
+        if not broken:
+            return text
+
+        logger.warning(
+            f"{len(broken)} of {len(blocks)} mermaid diagram(s) in {agent.name}'s synthesis "
+            f"failed the syntax check: "
+            + "; ".join(f"#{i + 1} {[x.rule for x in issues]}" for i, _b, issues in broken)
+        )
+
+        fixer = agent.model_copy(update={
+            "allowed_mcp_servers": [],
+            "sequential_thinking": agent.sequential_thinking.model_copy(update={"enabled": False}),
+        })
+
+        current = text
+        for attempt in range(1, MERMAID_REPAIR_ATTEMPTS + 1):
+            if on_event:
+                await on_event({
+                    "type": "mermaid_repair_started",
+                    "agent_name": agent.name,
+                    "broken": len(broken),
+                    "total": len(blocks),
+                    "attempt": attempt,
+                    "max_attempts": MERMAID_REPAIR_ATTEMPTS,
+                })
+
+            try:
+                fixed = await self._ask_for_fixed_diagrams(
+                    fixer, broken, state, custom_instructions, attempt
+                )
+            except LLMUnavailableError as exc:
+                logger.warning(f"Mermaid repair call failed: {exc}")
+                break
+
+            if not fixed:
+                logger.warning("The repair answer contained no mermaid block; giving up on this pass.")
+                break
+
+            current = self._splice_blocks(current, broken, fixed)
+
+            blocks = find_mermaid_blocks(current)
+            broken = [
+                (i, b, issues)
+                for i, b in enumerate(blocks)
+                if (issues := lint_mermaid(normalize_mermaid(b["code"])))
+            ]
+            if not broken:
+                logger.info(f"Mermaid diagrams fixed on attempt {attempt}.")
+                if on_event:
+                    await on_event({
+                        "type": "mermaid_repair_finished",
+                        "agent_name": agent.name,
+                        "resolved": True,
+                        "attempts": attempt,
+                        "remaining": 0,
+                    })
+                return current
+
+        if on_event:
+            await on_event({
+                "type": "mermaid_repair_finished",
+                "agent_name": agent.name,
+                "resolved": False,
+                "attempts": MERMAID_REPAIR_ATTEMPTS,
+                "remaining": len(broken),
+            })
+        logger.warning(
+            f"{len(broken)} mermaid diagram(s) still fail the syntax check after "
+            f"{MERMAID_REPAIR_ATTEMPTS} attempt(s); keeping the original."
+        )
+        return current
+
+    async def _ask_for_fixed_diagrams(
+        self,
+        fixer: Agent,
+        broken: List[Tuple[int, Dict[str, Any], List[Any]]],
+        state: DebateState,
+        custom_instructions: str,
+        attempt: int,
+    ) -> List[str]:
+        """틀린 다이어그램만 모아 고쳐 달라고 하고, 받은 블록을 순서대로 돌려줍니다.
+
+        보고서 전체를 다시 쓰게 하지 않습니다. 다시 쓰면 결론이 흔들리고 길이도
+        감당할 수 없습니다 — 고쳐야 하는 것은 문법이지 내용이 아닙니다.
+        """
+        parts = [
+            "방금 작성한 보고서의 Mermaid 다이어그램이 문법 오류로 렌더링되지 않습니다.",
+            "",
+            f"아래 {len(broken)}개를 고쳐서 다시 주세요. **다이어그램만** 주면 됩니다 — "
+            "보고서 본문은 다시 쓰지 마세요.",
+            "",
+        ]
+        for order, (_index, block, issues) in enumerate(broken, start=1):
+            parts += [
+                f"### 다이어그램 {order}",
+                "",
+                "렌더러가 지적한 곳:",
+                format_issues(issues),
+                "",
+                "원본:",
+                "```mermaid",
+                block["code"],
+                "```",
+                "",
+            ]
+        parts += [
+            "---",
+            "",
+            f"고친 다이어그램 {len(broken)}개를 **같은 순서로**, 각각 ```mermaid 코드 블록"
+            " 하나씩으로 출력하세요. 다른 설명은 붙이지 마세요.",
+            "",
+            "지킬 것:",
+            "- 라벨에 괄호·따옴표·특수문자가 있으면 큰따옴표로 감싸세요: `A[\"결제 (PG)\"]`",
+            "- `end` 는 예약어입니다. 노드 이름으로 쓰지 마세요 (`END` 는 됩니다).",
+            "- `subgraph` 는 반드시 `end` 로 닫으세요.",
+            "- 첫 줄은 `graph TD` 처럼 다이어그램 종류 선언이어야 합니다.",
+            "- **의미는 바꾸지 마세요.** 노드와 관계는 그대로 두고 문법만 고치세요.",
+        ]
+        if attempt > 1:
+            parts.append(
+                f"- 이번이 {attempt}번째 시도입니다. 앞서 고친 것도 같은 이유로 실패했으니, "
+                f"의심스러운 라벨은 전부 큰따옴표로 감싸세요."
+            )
+
+        content, _ = await self.llm_caller.call_agent(
+            fixer, [{"role": "user", "content": "\n".join(parts)}],
+            custom_instructions, session_id=state.session_id,
+        )
+        return [b["code"] for b in find_mermaid_blocks(content or "")]
+
+    @staticmethod
+    def _splice_blocks(
+        text: str,
+        broken: List[Tuple[int, Dict[str, Any], List[Any]]],
+        replacements: List[str],
+    ) -> str:
+        """고친 다이어그램을 원문의 제자리에 끼워 넣습니다.
+
+        뒤에서부터 바꿉니다. 앞에서부터 바꾸면 길이가 달라지면서 뒤쪽 블록의
+        위치가 어긋납니다.
+
+        받은 개수가 모자라면 받은 만큼만 바꿉니다 — 모델이 다이어그램 하나를
+        빠뜨렸다고 나머지 고친 것까지 버릴 이유는 없습니다.
+        """
+        pairs = list(zip(broken, replacements))
+        for (_index, block, _issues), fixed in sorted(pairs, key=lambda x: -x[0][1]["start"]):
+            text = text[:block["start"]] + fixed + text[block["end"]:]
+        return text
 
     def _extract_artifacts_from_synthesis(
         self,
