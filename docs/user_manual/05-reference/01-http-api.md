@@ -16,7 +16,7 @@ FastAPI 엔드포인트는 **조회 전용**입니다. 토론 진행과 설정 �
 ```json
 {
   "status": "healthy",
-  "version": "v0.4.2",
+  "version": "v0.5.0",
   "author": { "name": "Ha, Jaehee", "email": "lovesm135@naver.com" },
   "app": { "host": "127.0.0.1", "port": 8000, "debug": true },
   "registered_agents": ["orchestrator", "architect", "coder", "critic"]

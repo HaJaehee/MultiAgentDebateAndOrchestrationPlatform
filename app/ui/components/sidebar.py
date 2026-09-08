@@ -4,10 +4,12 @@ from datetime import datetime
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 from nicegui import ui
 from sqlalchemy import desc, func, select, delete
+from app.agents.pool import get_agent_pool
 from app.database.models import ArtifactModel, MessageModel, SessionModel, ToolCallRecordModel
 from app.database.session import get_session_factory
 from app.export import build_session_markdown, safe_filename, to_local
 from app.orchestration.runner import get_debate_runner
+from app.session_ops import continue_session
 
 logger = logging.getLogger(__name__)
 
@@ -188,10 +190,70 @@ class SessionSidebar:
                                 "이 대화 전체를 마크다운 파일로 저장"
                             )
 
+                            continue_btn = ui.button(
+                                icon="fork_right",
+                                on_click=lambda _, sid=s.id: self._continue_session(sid),
+                            ).props("flat round dense size=xs color=amber-4")
+                            if is_running:
+                                # 돌고 있는 토론의 결론은 아직 없습니다. 지금
+                                # 이어받으면 인수인계 쪽지가 반쪽짜리가 됩니다.
+                                continue_btn.disable()
+                                continue_btn.tooltip(
+                                    "토론이 진행 중입니다. 끝난 뒤에 이어받으세요"
+                                )
+                            else:
+                                continue_btn.tooltip(
+                                    "이어서 새 세션 — 작업 공간·지식 그래프·에이전트 구성과 "
+                                    "이전 결론을 물려받고 컨텍스트만 비웁니다"
+                                )
+
                             ui.button(
                                 icon="delete",
                                 on_click=lambda _, sid=s.id: self._show_delete_dialog(sid),
                             ).props("flat round dense size=xs color=red-4").tooltip("삭제")
+
+    async def _continue_session(self, session_id: str) -> None:
+        """컨텍스트만 비운 새 대화로 이어갑니다.
+
+        라운드가 쌓여 에이전트들이 헛돌기 시작할 때 쓰는 길입니다. 작업 공간과
+        지식 그래프, 에이전트 구성, 이전 결론은 따라오고 발언 기록만 새로
+        시작합니다.
+
+        지식 그래프를 못 옮긴 경우를 **반드시 알립니다.** 조용히 빈 그래프로
+        시작하면 에이전트는 없는 기억을 조회하다 빈손으로 돌아와 지어내기
+        시작합니다.
+        """
+        try:
+            orchestrator = get_agent_pool().get_orchestrator()
+            async with self.session_factory() as db:
+                result = await continue_session(
+                    db, session_id,
+                    orchestrator_name=orchestrator.name,
+                    orchestrator_role=orchestrator.role,
+                )
+        except Exception as e:  # noqa: BLE001 - 실패해도 사이드바는 살아야 합니다
+            logger.error(f"Could not continue session {session_id}: {e}", exc_info=True)
+            ui.notify(f"세션을 이어받지 못했습니다: {e}", type="negative", position="bottom-right")
+            return
+
+        if result is None:
+            ui.notify("세션을 찾을 수 없습니다.", type="warning", position="bottom-right")
+            return
+
+        await self._select_session(result["session_id"])
+
+        if result["memory_carried"]:
+            ui.notify(
+                f"'{result['title']}' 로 이어갑니다. 작업 공간과 지식 그래프를 물려받았습니다.",
+                type="positive", position="top", close_button="확인",
+            )
+        else:
+            ui.notify(
+                f"'{result['title']}' 로 이어갑니다. 작업 공간은 물려받았지만 "
+                f"지식 그래프는 옮기지 못했습니다 (이전 대화가 기록한 것이 없거나 "
+                f"memory 서버가 꺼져 있습니다).",
+                type="warning", position="top", close_button="확인",
+            )
 
     async def _select_session(self, session_id: str) -> None:
         self.current_session_id = session_id

@@ -178,6 +178,101 @@ def ensure_workspace(path: str) -> None:
 
 
 
+# ---------------------------------------------------------------------------
+# 지식 그래프 이어받기
+# ---------------------------------------------------------------------------
+# memory 서버는 대화마다 파일 하나(`<MEMORY_GRAPH_DIR>/<대화 id>.jsonl`)를 씁니다.
+# 그 경계는 호스트가 `_meta.conversationId` 로 정하고, 서버는 메타를 인자보다
+# 우선합니다 — 모델이 `graph_id` 에 아무 값이나 적어 남의 그래프를 여는 것을
+# 막기 위해서입니다.
+#
+# 그래서 새 대화는 빈 그래프로 시작하고, "이전 대화의 그래프를 읽어라" 고
+# 지시해도 닿지 않습니다. 컨텍스트가 가득 차 새 대화로 넘어가야 할 때 그동안
+# 쌓은 사실이 통째로 사라진다는 뜻입니다.
+#
+# 경계를 정하는 것이 호스트이므로, 옮기는 것도 호스트가 합니다. 파일 하나를
+# 복사하면 새 대화가 그 그래프를 자기 것으로 이어받습니다.
+
+# memory 서버가 그래프 폴더를 받는 환경변수 이름.
+MEMORY_GRAPH_DIR_ENV = "MEMORY_GRAPH_DIR"
+
+
+def memory_graph_dir(workspace: Path) -> Optional[Path]:
+    """이 작업 공간에서 memory 서버가 그래프를 두는 폴더. 없으면 None.
+
+    서버 이름을 박아 두지 않고 `MEMORY_GRAPH_DIR` 를 쓰는 서버를 찾습니다.
+    사용자가 서버 키를 'memory' 가 아닌 다른 이름으로 등록해도 따라갑니다.
+
+    `mcp_servers_for_workspace()` 는 `WORKSPACE_DIR` 환경변수를 실제로 바꿉니다
+    (자식 프로세스가 물려받아야 하므로 의도된 부작용입니다). 여기서는 읽기만
+    하려는 것이라, 부르고 나서 원래 값으로 되돌립니다 — 그러지 않으면 지금
+    떠 있는 서버들과 다른 폴더를 가리키게 됩니다.
+    """
+    previous = os.environ.get("WORKSPACE_DIR")
+    try:
+        servers = get_config().mcp_servers_for_workspace(workspace)
+    except Exception as e:  # noqa: BLE001 - 설정을 못 읽어도 이어받기는 계속됩니다
+        logger.warning(f"Could not resolve MCP servers for '{workspace}': {e}")
+        return None
+    finally:
+        if previous is not None:
+            os.environ["WORKSPACE_DIR"] = previous
+
+    for cfg in servers.values():
+        configured = (cfg.env or {}).get(MEMORY_GRAPH_DIR_ENV, "").strip()
+        if configured:
+            path = Path(configured).expanduser()
+            return path if path.is_absolute() else (PROJECT_ROOT / path).resolve()
+    return None
+
+
+def carry_over_memory_graph(
+    source_session_id: str,
+    target_session_id: str,
+    workspace: str | Path,
+) -> bool:
+    """이전 대화의 지식 그래프를 새 대화의 것으로 복사합니다.
+
+    복사입니다 — 옮기는 것이 아닙니다. 원본 대화를 나중에 다시 열어도 그때
+    쌓아 둔 사실이 그대로 있어야 합니다.
+
+    이미 내용이 있는 대상은 덮지 않습니다. 실패는 전부 흡수하고 False 를
+    돌려줍니다: 그래프를 못 옮겼다고 새 대화를 못 만들 이유는 없고, 대신
+    **옮겼는지 여부를 호출자가 사람에게 알려야** 합니다. 조용히 빈 그래프로
+    시작하는 것이 제일 나쁩니다.
+    """
+    if not source_session_id or not target_session_id:
+        return False
+    if source_session_id == target_session_id:
+        return False
+
+    graph_dir = memory_graph_dir(resolve_workspace_dir(str(workspace) or None))
+    if graph_dir is None:
+        logger.info("No MCP server declares MEMORY_GRAPH_DIR; nothing to carry over.")
+        return False
+
+    source = graph_dir / f"{source_session_id}.jsonl"
+    target = graph_dir / f"{target_session_id}.jsonl"
+    try:
+        if not source.is_file() or source.stat().st_size == 0:
+            logger.info(f"Source conversation has no knowledge graph yet: {source}")
+            return False
+        if target.exists() and target.stat().st_size > 0:
+            logger.warning(f"Target knowledge graph already has content; leaving it alone: {target}")
+            return False
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+    except OSError as e:
+        logger.warning(f"Could not carry the knowledge graph over to '{target}': {e}")
+        return False
+
+    logger.info(
+        f"Carried the knowledge graph from {source_session_id} to {target_session_id} "
+        f"({source.stat().st_size:,} bytes)"
+    )
+    return True
+
+
 # 서버마다 상태의 경계가 다릅니다. 어디까지 공유하고 어디부터 나눌지는 호스트가
 # 정합니다 — 서버는 자기가 무엇에 묶여 있는지 알 수 없고, 모델에게 맡기면 잊습니다.
 #
