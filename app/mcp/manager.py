@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -6,7 +7,12 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from app.config import MCPServerConfig, PROJECT_ROOT, get_config, resolve_workspace_dir
-from app.mcp.client import MCPClientConnection, MCPToolDefinition, MCPToolError
+from app.mcp.client import (
+    MCPClientConnection,
+    MCPToolDefinition,
+    MCPToolError,
+    clip_tool_output,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -281,8 +287,10 @@ class MCPManager:
         for name, client in list(self.clients.items()):
             try:
                 await client.close()
-            except Exception as e:  # noqa: BLE001 - 종료 경로의 오류는 무시
-                logger.warning(f"Error closing MCP server '{name}': {e}")
+            except asyncio.CancelledError:
+                raise
+            except BaseException as e:  # noqa: BLE001 - 종료 경로의 오류는 무시
+                logger.warning(f"Error closing MCP server '{name}': {type(e).__name__}: {e}")
         self.clients.clear()
         self._initialized = False
 
@@ -302,8 +310,13 @@ class MCPManager:
         self.clients[name] = client
         try:
             await client.discover_tools()
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Failed to discover tools for MCP server '{name}': {e}")
+        except asyncio.CancelledError:
+            raise
+        except BaseException as e:  # noqa: BLE001 - 한 서버 때문에 앱이 못 뜨면 안 됩니다
+            logger.error(
+                f"Failed to discover tools for MCP server '{name}': {type(e).__name__}: {e}",
+                exc_info=True,
+            )
 
     def _rebuild_tool_lookup(self) -> None:
         """모든 클라이언트의 도구로 조회 인덱스를 다시 만듭니다."""
@@ -384,6 +397,12 @@ class MCPManager:
 
         `scope` 는 이 호출이 속한 대화(세션)의, `actor` 는 지금 발언 중인 에이전트의
         식별자입니다. 둘을 어떻게 조합해 서버에 보낼지는 `compose_scope()` 가 정합니다.
+
+        **여기가 도구 실패의 경계선입니다.** 어떤 서버가 어떻게 터지든 이 함수는
+        `(설명, "error")` 를 돌려줄 뿐 예외를 올리지 않습니다. 도구 하나가 실패한
+        것은 에이전트가 읽고 고칠 관측이지, 발언·토론·프로세스를 끝낼 이유가
+        아니기 때문입니다. 유일한 예외는 `CancelledError` 입니다 — 그건 실패가
+        아니라 "그만두라" 는 지시여서, 삼키면 취소도 서버 종료도 먹지 않습니다.
         """
         # Ensure arguments are dict
         if isinstance(arguments, str):
@@ -394,37 +413,46 @@ class MCPManager:
         elif not isinstance(arguments, dict):
             arguments = {}
 
+        client: Optional[MCPClientConnection] = None
+        actual_tool_name = tool_name
+
         if tool_name in self._tool_lookup:
             client, actual_tool_name = self._tool_lookup[tool_name]
-            try:
-                result = await client.execute_tool(
-                    actual_tool_name, arguments,
-                    scope=compose_scope(client.server_name, scope, actor),
-                )
-                return result, "success"
-            except MCPToolError as e:
-                # 서버가 보고한 실패 메시지를 그대로 전달합니다 (모델이 읽고 교정).
-                return e.message, "error"
-            except (Exception, BaseException) as e:
-                return f"Tool execution failed ({type(e).__name__}): {e}", "error"
-
-        # Check if qualified name split works e.g. server__tool
-        if "__" in tool_name:
-            server_name, actual_tool_name = tool_name.split("__", 1)
+        elif "__" in tool_name:
+            # Check if qualified name split works e.g. server__tool
+            server_name, split_tool_name = tool_name.split("__", 1)
             if server_name in self.clients:
-                try:
-                    result = await self.clients[server_name].execute_tool(
-                        actual_tool_name, arguments,
-                        scope=compose_scope(server_name, scope, actor),
-                    )
-                    return result, "success"
-                except MCPToolError as e:
-                    # 서버가 보고한 실패 메시지를 그대로 전달합니다 (모델이 읽고 교정).
-                    return e.message, "error"
-                except (Exception, BaseException) as e:
-                    return f"Tool execution failed ({type(e).__name__}): {e}", "error"
+                client, actual_tool_name = self.clients[server_name], split_tool_name
 
-        return f"Unknown tool: '{tool_name}'. Available tools: {list(self._tool_lookup.keys())}", "error"
+        if client is None:
+            known = sorted({name for name in self._tool_lookup})
+            return (
+                f"Unknown tool: '{tool_name}'. Available tools: {known}",
+                "error",
+            )
+
+        try:
+            result = await client.execute_tool(
+                actual_tool_name, arguments,
+                scope=compose_scope(client.server_name, scope, actor),
+            )
+            return clip_tool_output(result if isinstance(result, str) else str(result)), "success"
+        except MCPToolError as e:
+            # 서버가 보고한 실패 메시지를 그대로 전달합니다 (모델이 읽고 교정).
+            return clip_tool_output(e.message), "error"
+        except asyncio.CancelledError:
+            raise
+        except BaseException as e:  # noqa: BLE001 - 위 docstring 참고
+            logger.warning(
+                f"Tool '{tool_name}' on '{client.server_name}' failed: {type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            return (
+                f"Tool execution failed ({type(e).__name__}): {e}\n"
+                f"이 도구는 지금 쓸 수 없습니다. 다른 방법을 쓰거나, 이미 확보한 "
+                f"정보만으로 결론을 내세요.",
+                "error",
+            )
 
 
 # Global singleton instance

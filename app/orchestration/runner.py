@@ -33,6 +33,13 @@ logger = logging.getLogger(__name__)
 # 무한히 쌓이지는 않게 합니다. 넘치면 그 화면은 스냅샷으로 다시 맞춥니다.
 MAX_QUEUED_EVENTS = 2000
 
+# 취소를 요청한 뒤 태스크가 실제로 멈추기를 기다리는 한도(초).
+#
+# 무한정 기다리면 안 됩니다. 도구 호출 하나가 취소에 반응하지 않는 순간
+# 서버 종료가 통째로 멈추고, uvicorn 이 강제로 내려가면서 "백엔드가 죽었다" 로
+# 보입니다. 정리하지 못한 태스크는 데몬처럼 남겨 두고 넘어갑니다.
+CANCEL_TIMEOUT = 20.0
+
 
 class WorkspaceConflictError(RuntimeError):
     """다른 대화가 다른 작업 공간에서 토론 중일 때.
@@ -440,8 +447,17 @@ class DebateRunner:
                 run.status = "cancelled"
                 run.error = "토론이 취소되었습니다."
                 raise
-            except Exception as exc:  # noqa: BLE001 - 어떤 실패든 화면에 알려야 합니다
-                logger.error(f"Debate turn failed for session {session_id}: {exc}", exc_info=True)
+            except BaseException as exc:  # noqa: BLE001 - 어떤 실패든 화면에 알려야 합니다
+                # `Exception` 이 아니라 `BaseException` 입니다. anyio 로 도구
+                # 서버를 다루는 경로는 `BaseExceptionGroup` 을 올리는데, 그건
+                # Exception 이 아니라서 예전에는 여기를 그냥 지나갔습니다. 그러면
+                # 태스크가 아무 흔적 없이 죽고 화면은 "토론 중..." 에 영원히
+                # 멈춰 있었습니다.
+                logger.error(
+                    f"Debate turn failed for session {session_id}: "
+                    f"{type(exc).__name__}: {exc}",
+                    exc_info=True,
+                )
                 run.status = "failed"
                 run.error = f"{type(exc).__name__}: {exc}"
             finally:
@@ -453,11 +469,17 @@ class DebateRunner:
                 elif run.status == "cancelled":
                     run.status_text = "토론이 취소되었습니다."
                     run.round_info = "Cancelled"
-                run._fanout({  # noqa: SLF001
-                    "type": "run_finished",
-                    "status": run.status,
-                    "error": run.error,
-                })
+                try:
+                    run._fanout({  # noqa: SLF001
+                        "type": "run_finished",
+                        "status": run.status,
+                        "error": run.error,
+                    })
+                except BaseException:  # noqa: BLE001 - 알리다 실패해도 태스크는 조용히 끝냅니다
+                    logger.warning(
+                        "Could not announce the end of the debate for session %s",
+                        session_id, exc_info=True,
+                    )
 
         # asyncio.create_task 로 띄운 태스크는 NiceGUI 슬롯 스택을 물려받지 않습니다.
         # 즉 이 안에서는 UI 엘리먼트를 만들 수 없고, 만들 일도 없습니다.
@@ -522,11 +544,31 @@ class DebateRunner:
         run = self._runs.get(session_id)
         if run is None or run.task is None or run.task.done():
             return False
-        run.task.cancel()
-        try:
-            await run.task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
-            pass
+        task = run.task
+        task.cancel()
+        # `await task` 가 아니라 `asyncio.wait` 입니다. 전자는 취소된 태스크의
+        # CancelledError 를 이 코루틴 쪽으로 다시 올려서, 정작 취소되지 않은
+        # 호출자(서버 종료 경로)까지 취소된 것처럼 보이게 만듭니다. 후자는
+        # 무엇으로 끝났든 예외를 올리지 않습니다.
+        done, _pending = await asyncio.wait({task}, timeout=CANCEL_TIMEOUT)
+        if not done:
+            # 취소를 흡수하고 놓아주지 않는 코드가 어딘가 있다는 뜻입니다.
+            # 여기서 계속 기다리면 서버 종료(lifespan)가 그 자리에서 멈추고,
+            # uvicorn 이 강제로 내려가면서 "백엔드가 죽었다" 로 보입니다.
+            logger.warning(
+                "Debate task for session %s did not stop within %.0fs; leaving it behind",
+                session_id, CANCEL_TIMEOUT,
+            )
+            return True
+        if not task.cancelled():
+            # 예외를 한 번은 읽어 두어야 "Task exception was never retrieved" 가
+            # 로그를 어지럽히지 않습니다.
+            exc = task.exception()
+            if exc is not None:
+                logger.debug(
+                    "Cancelled debate task for session %s ended with %s",
+                    session_id, type(exc).__name__,
+                )
         return True
 
     async def shutdown(self) -> None:

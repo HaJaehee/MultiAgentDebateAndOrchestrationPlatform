@@ -1,6 +1,8 @@
+import asyncio
 import contextlib
 import logging
-from typing import AsyncGenerator
+import threading
+from typing import Any, AsyncGenerator
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from nicegui import app as nicegui_app, ui
@@ -28,10 +30,45 @@ logging.basicConfig(
 logger = logging.getLogger("multiagent")
 
 
+def _install_process_guards() -> None:
+    """프로세스를 끝낼 수 있는 두 갈래를 로그로 돌려놓습니다.
+
+    토론과 MCP 도구는 백그라운드 태스크와 보조 스레드에서 돕니다. 거기서 아무도
+    잡지 않은 예외가 나면, 파이썬은 그것을 알릴 뿐 프로세스를 세우지는 않습니다 —
+    다만 아무 흔적 없이 지나가거나(태스크), 콘솔만 어지럽히고(스레드) 정작 무슨
+    일이 있었는지는 남지 않습니다. 여기서 로거로 모아 두면 "에이전트가 죽었는데
+    이유를 모르겠다" 가 되지 않습니다.
+
+    앱의 다른 부분은 이미 각자 자리에서 실패를 흡수합니다 (도구 호출은
+    MCPManager, 발언은 engine._speak, 토론은 DebateRunner). 이건 그 밖으로 새어
+    나온 것을 붙잡는 마지막 그물입니다.
+    """
+    def _on_loop_exception(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+        exc = context.get("exception")
+        message = context.get("message") or "unhandled exception in the event loop"
+        logger.error(
+            "Unhandled error in a background task: %s", message,
+            exc_info=exc if isinstance(exc, BaseException) else None,
+        )
+
+    def _on_thread_exception(args: Any) -> None:
+        logger.error(
+            "Unhandled error in thread '%s'", getattr(args, "thread", None),
+            exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+        )
+
+    try:
+        asyncio.get_running_loop().set_exception_handler(_on_loop_exception)
+    except RuntimeError:  # pragma: no cover - 루프 밖에서 부른 경우
+        pass
+    threading.excepthook = _on_thread_exception
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """FastAPI & NiceGUI application lifecycle manager."""
     logger.info("Starting MADO: Multi-Agent Debate & Orchestration Platform...")
+    _install_process_guards()
 
     # 1. Load configuration
     cfg = get_config()
@@ -43,9 +80,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("SQLite database tables initialized.")
 
     # 3. Initialize MCP Manager & Tool Discovery
+    #
+    # 서버 하나가 기동에 실패해도 앱은 떠야 합니다. 도구 없이 토론하는 것과
+    # 화면조차 열리지 않는 것은 전혀 다른 이야기입니다 (설정을 고치려면 그
+    # 화면이 필요합니다).
     mcp_mgr = get_mcp_manager()
-    await mcp_mgr.initialize()
-    logger.info("MCP Manager initialized.")
+    try:
+        await mcp_mgr.initialize()
+        logger.info("MCP Manager initialized.")
+    except asyncio.CancelledError:
+        raise
+    except BaseException as exc:  # noqa: BLE001
+        logger.error(
+            "MCP Manager could not be initialized (%s: %s); starting without MCP tools. "
+            "설정 화면에서 서버를 고친 뒤 재연결하세요.",
+            type(exc).__name__, exc, exc_info=True,
+        )
 
     # 4. Initialize Agent Pool
     agent_pool = get_agent_pool()
@@ -56,12 +106,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Shutting down MADO: Multi-Agent Debate & Orchestration Platform...")
 
     # 백그라운드로 돌고 있는 토론 태스크를 먼저 세웁니다.
-    await get_debate_runner().shutdown()
-    logger.info("Background debate tasks cancelled.")
+    #
+    # 두 정리 단계는 서로를 막지 않아야 합니다. 앞이 실패했다고 MCP 서버
+    # 프로세스를 남겨 두면, 다음 기동 때 같은 작업 공간을 두 프로세스가 붙듭니다.
+    try:
+        await get_debate_runner().shutdown()
+        logger.info("Background debate tasks cancelled.")
+    except BaseException as exc:  # noqa: BLE001
+        logger.warning("Could not cancel every debate task: %s: %s", type(exc).__name__, exc)
 
     # 유지 중인 MCP 세션과 서버 프로세스를 정리합니다.
-    await mcp_mgr.shutdown()
-    logger.info("MCP sessions closed.")
+    try:
+        await mcp_mgr.shutdown()
+        logger.info("MCP sessions closed.")
+    except BaseException as exc:  # noqa: BLE001
+        logger.warning("Could not close every MCP session: %s: %s", type(exc).__name__, exc)
 
 
 # 1. Create FastAPI Application

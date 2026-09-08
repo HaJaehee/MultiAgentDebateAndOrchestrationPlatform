@@ -69,6 +69,46 @@ STARTUP_TIMEOUT = 60.0
 SHUTDOWN_TIMEOUT = 10.0
 
 
+def _positive_float_env(name: str, default: float) -> float:
+    """환경 변수를 양수 실수로 읽습니다. 비었거나 이상하면 기본값."""
+    try:
+        value = float(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+# 도구 한 번에 허용하는 시간(초). 이게 없으면 응답하지 않는 서버(무한 루프에 빠진
+# 스크립트, 끊긴 원격, 입력을 기다리는 CLI) 하나가 토론 전체를 영원히 붙잡습니다.
+# 태스크가 멈춰 있으면 취소도 종료도 먹지 않아서, 겉보기에는 서버가 죽은 것과
+# 구분되지 않습니다.
+TOOL_CALL_TIMEOUT = _positive_float_env("MCP_TOOL_TIMEOUT", 180.0)
+
+# 도구 결과 한 건의 상한(문자). 서버가 수십 MB를 돌려주는 일이 실제로 있습니다
+# (큰 파일 읽기, 재귀 디렉터리 목록). 그대로 두면 컨텍스트 계산·DB 기록·화면
+# 렌더링이 차례로 무너지고, 그 무게가 프로세스 전체를 끌고 갑니다.
+MAX_TOOL_OUTPUT_CHARS = int(_positive_float_env("MCP_TOOL_MAX_CHARS", 200_000))
+
+
+def clip_tool_output(text: str, limit: int = MAX_TOOL_OUTPUT_CHARS) -> str:
+    """지나치게 긴 도구 결과를 앞뒤만 남기고 줄입니다.
+
+    가운데를 버리는 이유: 원인은 대개 첫머리(무엇을 읽었는가)와 끝(오류 메시지,
+    종료 코드)에 있습니다.
+    """
+    if limit <= 0 or len(text) <= limit:
+        return text
+    head = text[: limit * 2 // 3]
+    tail = text[-(limit // 3):]
+    dropped = len(text) - len(head) - len(tail)
+    return (
+        f"{head}\n\n"
+        f"... [출력이 너무 길어 중간 {dropped:,}자를 생략했습니다 "
+        f"(전체 {len(text):,}자)] ...\n\n"
+        + tail
+    )
+
+
 class _StderrTee:
     """서버 stderr 를 콘솔로 흘려보내면서 마지막 몇 줄을 보관합니다.
 
@@ -238,6 +278,12 @@ class MCPClientConnection:
         self._shutdown: Optional[asyncio.Event] = None
         self._connect_error: Optional[BaseException] = None
         self._stderr_tail: str = ""
+        # 자식 프로세스 자체를 들고 있습니다. pid 만 남겨 두고 나중에 os.kill 을
+        # 부르면, 그 사이 자식이 이미 끝나 있을 때 운영체제가 재사용한 **다른**
+        # 프로세스를 죽입니다 (윈도우는 pid 를 빠르게 돌려씁니다). 실제로 그
+        # 자리에 있을 수 있는 것이 uvicorn 리로더의 워커라, 도구 하나 정리하다
+        # 서버가 통째로 사라지는 경로가 됩니다.
+        self._process: Any = None
         self._process_pid: Optional[int] = None
         # connect / teardown 직렬화 (도구 호출 자체는 동시 실행 가능)
         self._lock = asyncio.Lock()
@@ -323,7 +369,12 @@ class MCPClientConnection:
             try:
                 await self._serve_once(transport)
                 return
-            except (Exception, BaseException) as exc:  # noqa: BLE001 - 기동 실패는 폴백으로 흡수
+            except asyncio.CancelledError:
+                # 종료 중입니다. 다른 전송 방식으로 다시 붙어 볼 일이 아닙니다.
+                if self._ready is not None:
+                    self._ready.set()
+                raise
+            except BaseException as exc:  # noqa: BLE001 - 기동 실패는 폴백으로 흡수
                 self._connect_error = exc
                 # 이미 한 번 붙었던 세션이 끊긴 것이라면 다른 규격을 시도할 일이
                 # 아닙니다. 그건 서버가 죽은 것이지 규격이 틀린 것이 아닙니다
@@ -390,6 +441,7 @@ class MCPClientConnection:
                 gen = getattr(cm, "gen", None)
                 frame = gen.ag_frame if gen else None
                 proc = frame.f_locals.get("process") if frame else None
+                self._process = proc
                 self._process_pid = getattr(proc, "pid", None)
                 async with ClientSession(
                     read_stream,
@@ -452,18 +504,14 @@ class MCPClientConnection:
     async def _teardown_locked(self) -> None:
         """호출자가 `self._lock` 을 들고 있어야 합니다."""
         task, self._owner_task = self._owner_task, None
-        proc_pid = self._process_pid
-        self._process_pid = None
+        proc, self._process = self._process, None
+        proc_pid, self._process_pid = self._process_pid, None
 
         if self._shutdown is not None:
             self._shutdown.set()
 
         # 자식 프로세스를 먼저 종료하여 I/O 파이프와 task 가 즉시 정리되도록 합니다.
-        if proc_pid is not None:
-            try:
-                os.kill(proc_pid, getattr(signal, "SIGKILL", signal.SIGTERM))
-            except OSError:
-                pass
+        self._terminate_process(proc, proc_pid)
 
         if task is not None:
             try:
@@ -477,6 +525,39 @@ class MCPClientConnection:
         self._session = None
         self._ready = None
         self._shutdown = None
+
+    @staticmethod
+    def _terminate_process(proc: Any, proc_pid: Optional[int]) -> None:
+        """서버 프로세스를 끝냅니다. 확실히 우리 자식일 때만 신호를 보냅니다.
+
+        프로세스 객체가 있으면 그것만 씁니다 (`returncode` 로 이미 끝났는지 볼 수
+        있으므로 pid 재사용에 걸리지 않습니다). 객체를 못 잡았을 때만 pid 로
+        갑니다 — 그 경로도 실패는 전부 삼킵니다. 정리하다 올라온 예외가 종료
+        경로를 타고 나가면, 도구 하나가 실패했을 뿐인데 앱이 함께 내려갑니다.
+        """
+        if proc is not None:
+            if getattr(proc, "returncode", None) is not None:
+                return  # 이미 끝났습니다. 신호를 보낼 대상이 없습니다.
+            for method in ("kill", "terminate"):
+                fn = getattr(proc, method, None)
+                if fn is None:
+                    continue
+                try:
+                    fn()
+                    return
+                except (ProcessLookupError, OSError, ValueError, RuntimeError):
+                    continue
+                except BaseException:  # noqa: BLE001 - 정리 경로는 절대 터지지 않습니다
+                    logger.debug("Ignoring an error while terminating an MCP server", exc_info=True)
+                    return
+            return
+
+        if proc_pid is None:
+            return
+        try:
+            os.kill(proc_pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+        except BaseException:  # noqa: BLE001
+            pass
 
     def _is_session_dead(self, exc: BaseException) -> bool:
         """예외가 '세션이 끊겼다'는 신호인지 판정합니다.
@@ -504,7 +585,7 @@ class MCPClientConnection:
 
         session = self._session
         try:
-            result = await session.list_tools()
+            result = await asyncio.wait_for(session.list_tools(), timeout=STARTUP_TIMEOUT)
             discovered: List[MCPToolDefinition] = []
             for t in result.tools:
                 input_schema = getattr(t, "inputSchema", getattr(t, "input_schema", {}))
@@ -525,8 +606,13 @@ class MCPClientConnection:
             self._is_available = True
             logger.info(f"Discovered {len(discovered)} tools from MCP server '{self.server_name}'")
             return self._tools
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"Tool discovery failed for MCP server '{self.server_name}': {e}")
+        except asyncio.CancelledError:
+            raise
+        except BaseException as e:  # noqa: BLE001 - 한 서버의 실패가 나머지를 막지 않습니다
+            logger.warning(
+                f"Tool discovery failed for MCP server '{self.server_name}': "
+                f"{_describe_exception(e)}"
+            )
             await self.close()
             self._is_available = False
             self._tools = self._get_fallback_mock_tools()
@@ -609,10 +695,13 @@ class MCPClientConnection:
             try:
                 meta = build_scope_meta(scope)
                 if meta and _session_supports_meta():
-                    res = await session.call_tool(tool_name, arguments=arguments, meta=meta)
+                    call = session.call_tool(tool_name, arguments=arguments, meta=meta)
                 else:
-                    res = await session.call_tool(tool_name, arguments=arguments)
-                text = self._extract_result_text(res)
+                    call = session.call_tool(tool_name, arguments=arguments)
+                # 한도를 두지 않으면 응답하지 않는 서버 하나가 이 발언을,
+                # 나아가 토론 전체를 영원히 붙잡습니다.
+                res = await asyncio.wait_for(call, timeout=TOOL_CALL_TIMEOUT)
+                text = clip_tool_output(self._extract_result_text(res))
                 if getattr(res, "isError", False):
                     # 도구는 실행됐지만 실패했다. 서버 메시지를 그대로 올려
                     # 모델이 보고 스스로 고칠 수 있게 한다.
@@ -620,7 +709,27 @@ class MCPClientConnection:
                 return text
             except MCPToolError:
                 raise
-            except (Exception, BaseException) as e:  # noqa: BLE001
+            except asyncio.CancelledError:
+                # 취소는 실패가 아니라 "이 토론은 그만" 이라는 지시입니다.
+                # 여기서 삼키면 사용자의 취소도 서버 종료도 먹지 않고,
+                # lifespan 이 끝나지 않는 태스크를 기다리다 멈춥니다.
+                raise
+            except asyncio.TimeoutError as e:
+                # 세션은 살아 있을지 몰라도 이 호출은 버려졌습니다. 서버가 뒤늦게
+                # 응답하면 다음 호출의 답과 뒤섞이므로 세션을 접고 다시 엽니다.
+                logger.error(
+                    f"Tool '{tool_name}' on '{self.server_name}' did not answer within "
+                    f"{TOOL_CALL_TIMEOUT:.0f}s; dropping the call and reconnecting"
+                )
+                await self.close()
+                raise MCPToolError(
+                    self.server_name,
+                    tool_name,
+                    f"도구 '{tool_name}' 이(가) {TOOL_CALL_TIMEOUT:.0f}초 안에 응답하지 "
+                    f"않아 호출을 중단했습니다. 더 작은 범위로 나누어 다시 시도하거나 "
+                    f"다른 방법을 쓰세요.",
+                ) from e
+            except BaseException as e:  # noqa: BLE001
                 # 세션이 죽은 경우에만 재시도합니다. 도구 자체가 실패한 것이라면
                 # 재실행이 부작용(파일 쓰기 등)을 두 번 일으킬 수 있습니다.
                 if attempt == 1 and self._is_session_dead(e):

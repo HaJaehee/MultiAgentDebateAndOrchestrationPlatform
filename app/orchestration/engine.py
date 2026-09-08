@@ -154,6 +154,32 @@ class OrchestratorEngine:
             )
         return notice
 
+    @staticmethod
+    def _crashed_notice(agent: Agent, exc: BaseException, streamed: str) -> str:
+        """발언이 예기치 못한 오류로 끊겼을 때 화면과 기록에 남는 문구.
+
+        `LLMUnavailableError` 는 "엔드포인트에 닿지 못했다" 는 알려진 실패이고,
+        이쪽은 우리가 예상하지 못한 실패입니다 — 도구 서버가 이상한 것을 돌려
+        주었거나, 프로바이더 응답 모양이 달랐거나, 우리 코드가 틀렸거나.
+        어느 쪽이든 **한 에이전트의 사고가 토론 전체를 끝낼 이유는 없습니다.**
+        나머지 에이전트는 아직 말할 수 있고, 지금까지의 발언으로 합성도 됩니다.
+        """
+        notice = (
+            f"> ⚠️ **발언 중단 — {agent.name} 의 발언이 오류로 끊겼습니다.**\n"
+            f">\n"
+            f"> - 모델: `{agent.model}`\n"
+            f"> - 오류: `{type(exc).__name__}: {exc}`\n"
+            f">\n"
+            f"> 이 자리에 들어갈 내용을 대신 지어내지 않았습니다. "
+            f"토론은 나머지 에이전트로 계속됩니다 (자세한 원인은 서버 로그를 보세요)."
+        )
+        if streamed.strip():
+            return (
+                f"{streamed.rstrip()}\n\n---\n\n{notice}\n>\n"
+                f"> (위 본문은 오류가 나기 전까지 도착한 부분입니다.)"
+            )
+        return notice
+
     def _make_budget_arbiter(
         self,
         control: Optional[TurnControl],
@@ -367,6 +393,20 @@ class OrchestratorEngine:
             final_type = "error"
             if agent.key not in state.failed_agent_keys:
                 state.failed_agent_keys.append(agent.key)
+        except asyncio.CancelledError:
+            # 사용자가 토론을 끊었거나 서버가 내려가는 중입니다. 실패로 적지 않고
+            # 그대로 올려 보냅니다 — 여기서 삼키면 취소가 먹지 않습니다.
+            raise
+        except BaseException as exc:  # noqa: BLE001 - 한 발언의 사고로 토론을 끝내지 않습니다
+            logger.error(
+                f"Agent '{agent.key}' crashed while speaking: {type(exc).__name__}: {exc}",
+                exc_info=True,
+            )
+            content = self._crashed_notice(agent, exc, "".join(streamed))
+            tool_logs = []
+            final_type = "error"
+            if agent.key not in state.failed_agent_keys:
+                state.failed_agent_keys.append(agent.key)
 
         async with (db_lock or nullcontext()):
             db.add(MessageModel(
@@ -391,7 +431,23 @@ class OrchestratorEngine:
                     output=call_log.get("output", ""),
                     status=call_log.get("status", "success"),
                 ))
-            await db.commit()
+            try:
+                await db.commit()
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001
+                # 기록에 실패했다고 발언을 잃을 수는 없습니다. 화면에는 이미
+                # 흘러갔고, 이 세션의 나머지 발언도 계속 기록되어야 합니다.
+                # 롤백하지 않으면 세션이 깨진 채로 남아 다음 커밋이 전부 실패합니다.
+                logger.error(
+                    f"Could not persist {agent.name}'s message: {type(exc).__name__}: {exc}",
+                    exc_info=True,
+                )
+                try:
+                    await db.rollback()
+                except BaseException:  # noqa: BLE001
+                    logger.debug("Rollback after a failed message commit also failed",
+                                 exc_info=True)
 
         if trimmed_here and on_event:
             await on_event({

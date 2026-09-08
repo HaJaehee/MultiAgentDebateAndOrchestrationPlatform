@@ -778,6 +778,109 @@ class LLMCaller:
         segments.append(BUDGET_WRAP_UP_FOOTER.format(limit=limit, tool_calls=len(tool_logs)))
         return "\n\n".join(segments), tool_logs
 
+    # ------------------------------------------------------------ 도구 실행 방어
+
+    @staticmethod
+    def _parse_tool_call(tc: Any) -> Tuple[str, Dict[str, Any], str]:
+        """모델이 돌려준 tool_call 하나를 (이름, 인자, id) 로 풉니다.
+
+        프로바이더마다 모양이 다르고(객체/딕셔너리), 인자는 모델이 만든
+        문자열이라 깨져 있을 수 있습니다. 여기서 터지면 발언 전체가 날아가므로
+        어떤 모양이 와도 읽을 수 있는 만큼만 읽고 나머지는 비웁니다.
+        """
+        def _get(obj: Any, key: str, default: Any = None) -> Any:
+            if isinstance(obj, dict):
+                return obj.get(key, default)
+            return getattr(obj, key, default)
+
+        try:
+            function = _get(tc, "function") or {}
+            fn_name = _get(function, "name") or ""
+            fn_args_raw = _get(function, "arguments")
+            call_id = _get(tc, "id") or ""
+        except Exception:  # noqa: BLE001 - 알 수 없는 모양이면 통째로 포기합니다
+            return "", {}, ""
+
+        if isinstance(fn_args_raw, dict):
+            fn_args: Dict[str, Any] = fn_args_raw
+        elif isinstance(fn_args_raw, str):
+            try:
+                parsed = json.loads(fn_args_raw or "{}")
+                fn_args = parsed if isinstance(parsed, dict) else {"input": parsed}
+            except Exception:  # noqa: BLE001 - 모델이 만든 JSON 은 자주 깨집니다
+                fn_args = {"raw": fn_args_raw}
+        elif fn_args_raw is None:
+            fn_args = {}
+        else:
+            fn_args = {"input": fn_args_raw}
+
+        # tool_call_id 가 비면 OpenAI 호환 엔드포인트가 다음 요청을 거절합니다.
+        return str(fn_name), fn_args, str(call_id) or f"call_{abs(hash((fn_name, id(tc)))):x}"
+
+    async def _execute_tool_safely(
+        self,
+        agent: Agent,
+        fn_name: str,
+        fn_args: Dict[str, Any],
+        session_id: Optional[str],
+    ) -> Tuple[str, str]:
+        """MCP 도구를 부르고, 결과를 항상 (문자열, 상태) 로 돌려줍니다.
+
+        `MCPManager.execute_tool` 이 이미 대부분을 흡수하지만, 매니저 자체가
+        교체되거나(테스트 더블) 도구 이름 조회 중에 터질 수도 있습니다. 도구
+        실패는 발언을 끝낼 이유가 아니라는 규칙을 이 자리에서 한 번 더 지킵니다.
+        취소만은 그대로 올려 보냅니다.
+        """
+        try:
+            output, status = await self.mcp_manager.execute_tool(
+                fn_name, fn_args, scope=session_id, actor=agent.key
+            )
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - 도구 실패로 발언을 죽이지 않습니다
+            logger.error(
+                f"Tool '{fn_name}' raised out of the MCP manager for {agent.name}: "
+                f"{type(exc).__name__}: {exc}",
+                exc_info=True,
+            )
+            return (
+                f"도구 '{fn_name}' 실행이 실패했습니다 ({type(exc).__name__}: {exc}). "
+                f"다른 방법을 쓰거나, 이미 확보한 정보만으로 결론을 내세요.",
+                "error",
+            )
+
+        if not isinstance(output, str):
+            output = str(output)
+        return output, (status or "error")
+
+    @staticmethod
+    async def _notify_tool_call(
+        agent: Agent,
+        on_tool_call: Optional[Callable[[Dict[str, Any]], Any]],
+        call_log: Dict[str, Any],
+    ) -> None:
+        """도구 실행을 화면·기록 쪽에 알립니다. 알리다 실패해도 발언은 계속됩니다.
+
+        콜백은 UI 이벤트를 타고 나갑니다. 브라우저가 닫혔거나 큐가 막혔을 때
+        여기서 올라온 예외가 발언을 끝내면, 실제로 실행된 도구의 관측을 잃습니다.
+        """
+        if not on_tool_call:
+            return
+        try:
+            if asyncio.iscoroutinefunction(on_tool_call):
+                await on_tool_call(call_log)
+            else:
+                result = on_tool_call(call_log)
+                if asyncio.iscoroutine(result):
+                    await result
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001
+            logger.warning(
+                f"Tool-call notification failed for {agent.name} "
+                f"({call_log.get('tool_name')}): {type(exc).__name__}: {exc}"
+            )
+
     async def _run_litellm_loop(
         self,
         agent: Agent,
@@ -908,34 +1011,41 @@ class LLMCaller:
                 )
 
                 # Execute all requested tool calls
+                #
+                # 이 구간은 무슨 일이 있어도 예외를 올리지 않습니다. 도구가
+                # 실패하면 그 사실을 `role="tool"` 결과로 되돌려 주어야 모델이
+                # 읽고 스스로 고칩니다. 여기서 예외를 올리면 발언 전체가
+                # LLMUnavailableError 로 덮여, 이미 흘러간 글과 성공한 도구
+                # 관측까지 통째로 사라집니다.
                 for tc in tool_calls:
-                    fn_name = tc.function.name
-                    fn_args_raw = tc.function.arguments
-                    try:
-                        fn_args = json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
-                    except Exception:
-                        fn_args = {"raw": fn_args_raw}
+                    fn_name, fn_args, call_id = self._parse_tool_call(tc)
+                    if not fn_name:
+                        # 도구 이름조차 못 읽었습니다. 모델에게 그대로 알리고
+                        # 다음 판으로 넘깁니다 (고아 tool_call 을 남기면 다음
+                        # 요청이 400 으로 거절됩니다).
+                        output, status = (
+                            "이 도구 호출은 이름을 읽을 수 없어 실행하지 못했습니다. "
+                            "도구 이름과 인자를 다시 정확히 지정해 호출하세요.",
+                            "error",
+                        )
+                    else:
+                        output, status = await self._execute_tool_safely(
+                            agent, fn_name, fn_args, session_id
+                        )
 
-                    output, status = await self.mcp_manager.execute_tool(
-                        fn_name, fn_args, scope=session_id, actor=agent.key
-                    )
                     call_log = {
-                        "tool_name": fn_name,
+                        "tool_name": fn_name or "(unknown)",
                         "arguments": fn_args,
                         "output": output,
                         "status": status,
                     }
                     tool_logs.append(call_log)
-                    if on_tool_call:
-                        if asyncio.iscoroutinefunction(on_tool_call):
-                            await on_tool_call(call_log)
-                        else:
-                            on_tool_call(call_log)
+                    await self._notify_tool_call(agent, on_tool_call, call_log)
 
                     current_messages.append({
                         "role": "tool",
-                        "tool_call_id": tc.id,
-                        "name": fn_name,
+                        "tool_call_id": call_id,
+                        "name": fn_name or "unknown_tool",
                         "content": output,
                     })
 

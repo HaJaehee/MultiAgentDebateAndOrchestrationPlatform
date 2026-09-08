@@ -95,9 +95,18 @@ By defaulting `PYTHON_BIN` to `sys.executable`, the child MCP process inherits t
 | `SANDBOX_EXEC_TIMEOUT` | `60` | Execution timeout in seconds for code evaluation. |
 | `SANDBOX_MAX_NAMESPACES`| `16` | Maximum concurrent isolated kernel sessions in the sandbox. Namespaces are scoped per conversation **and per speaker**, so budget `concurrent debates x agents holding sandbox access` (two by default: coder and critic). Above the cap the least recently used kernel is shut down and its variables are gone. |
 
+### 3.5. Tool-Call Safety Limits
+
+Read once at import time by [app/mcp/client.py](file:///d:/MultiAgentOrchestrator/app/mcp/client.py). Both exist so that a single misbehaving server cannot take the whole backend with it; leave them alone unless a specific server legitimately needs more room.
+
+| Environment Variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `MCP_TOOL_TIMEOUT` | `180` | Seconds a single `call_tool` may take. On expiry the call is abandoned, the session is closed and reopened, and the agent is told the tool did not answer. Without a limit an unresponsive server (a runaway script, a dropped remote, a CLI waiting on stdin) holds the debate — and the shutdown path — forever. |
+| `MCP_TOOL_MAX_CHARS` | `200000` | Maximum characters kept from one tool result. Longer output keeps its head and tail with the middle elided. Servers do return tens of megabytes (a large file read, a recursive listing), and passing that on breaks token counting, the DB write and the browser in turn. |
+
 ---
 
-### 3.5. Windows Console & Process Encoding
+### 3.6. Windows Console & Process Encoding
 | Environment Variable | Default | Purpose |
 | :--- | :--- | :--- |
 | `PYTHONIOENCODING` | `utf-8` | Prevents Windows CP949 encoding crashes on console/stdio pipes. |
