@@ -26,6 +26,7 @@ from app.config import (
 )
 from app.mcp.manager import get_mcp_manager
 from app.orchestration.runner import get_debate_runner
+from app.orchestration.state import DebateState
 from app.orchestration.strategies import (
     DEFAULT_STRATEGY,
     ORCHESTRATOR_KEY,
@@ -35,6 +36,14 @@ from app.orchestration.strategies import (
 )
 
 logger = logging.getLogger(__name__)
+
+# 미리보기 칩의 색. 디베이트에서만 진영별로 갈라 칠합니다 — 다른 전략에서는
+# 진영이 읽히지 않으므로 색을 주면 없는 규칙을 있다고 말하는 셈입니다.
+STANCE_PREVIEW_CLASSES = {
+    "proponent": "bg-emerald-500/15 text-emerald-300",
+    "critic": "bg-rose-500/15 text-rose-300",
+    "neutral": "bg-slate-700/60 text-slate-300",
+}
 
 # 진행 토스트가 스스로 사라지는 시간(초). 서버 재기동은 보통 2~6초면 끝나므로
 # 그 뒤에는 결과 토스트가 대신 말해 줍니다. 사라지는 것을 보장하는 것은 이 값이고,
@@ -152,6 +161,7 @@ class AgentRosterControl:
         self.mcp_locked: bool = False
         self.mcp_lock_reason: str = ""
         self.cards_row: Optional[ui.row] = None
+        self.order_preview: Optional[ui.row] = None
         # 에이전트 구성 변경(추가·삭제·진영·발언 순서·도구)은 "이 대화가 아직
         # 시작되지 않았고, 아무 대화도 토론
         # 중이 아닐 때" 만 열립니다 (`_agent_admin_lock_reason`).
@@ -257,6 +267,15 @@ class AgentRosterControl:
                 with self.cards_row:
                     for ag in self._roster_agents():
                         self._build_agent_card(ag)
+
+                # 카드가 놓인 순서가 곧 발언 순서인 전략은 순차 토론뿐입니다.
+                # 디베이트는 진영끼리 교차시키고, 지명·병렬은 매 라운드
+                # 오케스트레이터가 정합니다. 그 차이가 화면에 없으면 사람은
+                # 카드 순서대로 돌 것이라 믿게 됩니다.
+                self.order_preview = ui.row().classes(
+                    "w-full items-center gap-1.5 flex-wrap -mt-1"
+                )
+                self._refresh_order_preview()
 
                 self.disabled_row = ui.row().classes("w-full gap-2 flex-wrap items-center")
                 self._refresh_disabled_agents()
@@ -414,6 +433,95 @@ class AgentRosterControl:
                 self._build_agent_card(ag, persona=p)
         self._refresh_disabled_agents()
         self._refresh_agent_admin_controls()
+        self._refresh_order_preview()
+
+    def _speaking_order(self) -> List[Agent]:
+        """지금 설정으로 한 라운드를 돌면 나올 발언 순서.
+
+        엔진과 **같은 함수**를 부릅니다 (`strategy.get_speakers_for_round`).
+        여기서 순서를 다시 구현하면 화면과 실제가 언젠가 갈라지고, 그때
+        사람이 믿는 쪽은 화면입니다.
+
+        오케스트레이터를 목록에 넣어 넘기는 것도 엔진과 같습니다 — 전략이
+        `specialists_of()` 로 직접 빼냅니다.
+        """
+        agents = [
+            a for a in self._roster_agents()
+            if a.key == ORCHESTRATOR_KEY or self.selected_agents.get(a.key, True)
+        ]
+        strategy = STRATEGY_MAP.get(resolve_strategy_name(self.strategy_name))
+        if strategy is None:
+            return []
+        probe = DebateState(
+            session_id=self.session_id or "preview",
+            user_prompt="",
+            strategy=strategy.name,
+            max_rounds=self.max_rounds,
+            current_round=1,
+        )
+        try:
+            return strategy.get_speakers_for_round(agents, 1, probe)
+        except Exception:  # noqa: BLE001 - 미리보기가 로스터를 깨뜨리면 안 됩니다
+            logger.warning("Could not compute the speaking-order preview", exc_info=True)
+            return []
+
+    def _order_preview_note(self, strategy, speakers: List[Agent]) -> str:
+        """순서 옆에 붙는 한 줄. 이 순서를 얼마나 믿어도 되는지 말합니다."""
+        if strategy.orchestrator_dispatches_parallel:
+            over = len(speakers) > self.parallel_limit
+            note = f"동시 실행 (한 번에 최대 {self.parallel_limit}명"
+            note += ", 나머지는 순차로 밀림)" if over else ")"
+            return note + " · 과업은 매 라운드 오케스트레이터가 나눕니다"
+        if strategy.orchestrator_selects_speakers:
+            return "매 라운드 오케스트레이터가 지명합니다 · 아래는 지명 실패 시의 순서"
+        if strategy.name == "adversarial_debate":
+            stances = {a.debate_stance for a in speakers}
+            if not ({"proponent", "critic"} <= stances):
+                return "한쪽 진영이 비어 대립이 성립하지 않습니다 · 우선순위 순으로 진행"
+            return "제안 ↔ 비판 교차 · 중립은 맨 뒤 (카드 순서와 다를 수 있습니다)"
+        return "카드 순서 그대로 · 각자 앞사람의 결론을 이어받습니다"
+
+    def _refresh_order_preview(self) -> None:
+        """발언 순서 미리보기를 지금 설정으로 다시 그립니다."""
+        if self.order_preview is None or self.order_preview.is_deleted:
+            return
+
+        strategy = STRATEGY_MAP.get(resolve_strategy_name(self.strategy_name))
+        speakers = self._speaking_order()
+        self.order_preview.clear()
+
+        with self.order_preview:
+            ui.icon("format_list_numbered", size="xs").classes("text-slate-500 flex-shrink-0")
+            ui.label("발언 순서:").classes(
+                "text-[11px] font-semibold text-slate-400 flex-shrink-0"
+            )
+            if strategy is None or not speakers:
+                ui.label("참여할 전문가 에이전트가 없습니다").classes(
+                    "text-[11px] text-amber-400"
+                )
+                return
+
+            parallel = strategy.orchestrator_dispatches_parallel
+            for index, agent in enumerate(speakers):
+                if index:
+                    # 병렬은 순서가 없습니다. 화살표를 쓰면 없는 차례를 만듭니다.
+                    ui.label("·" if parallel else "→").classes(
+                        "text-[11px] text-slate-600 flex-shrink-0"
+                    )
+                chip = ui.label(
+                    agent.name if parallel else f"{index + 1}. {agent.name}"
+                ).classes(
+                    "text-[11px] px-1.5 py-0.5 rounded flex-shrink-0 "
+                    + STANCE_PREVIEW_CLASSES.get(
+                        agent.debate_stance if strategy.name == "adversarial_debate" else "neutral",
+                        STANCE_PREVIEW_CLASSES["neutral"],
+                    )
+                )
+                chip.tooltip(f"{agent.role} · 우선순위 {agent.debate_priority}")
+
+            ui.label(self._order_preview_note(strategy, speakers)).classes(
+                "text-[10px] text-slate-500 w-full leading-snug"
+            )
 
     def _build_agent_card(self, agent: Agent, persona: Optional[Any] = None) -> None:
         is_orchestrator = (agent.key == "orchestrator")
@@ -1846,6 +1954,7 @@ class AgentRosterControl:
                     add="bg-slate-900/60 border-slate-800 opacity-50",
                 )
         self._update_summary_badge()
+        self._refresh_order_preview()
         if self.on_config_changed:
             ui.timer(0.01, self.on_config_changed, once=True)
 
@@ -1857,6 +1966,7 @@ class AgentRosterControl:
     def _on_strategy_change(self, e) -> None:
         self.strategy_name = e.value
         self._sync_parallel_visibility()
+        self._refresh_order_preview()
         if self.on_config_changed:
             ui.timer(0.01, self.on_config_changed, once=True)
 
@@ -1875,6 +1985,7 @@ class AgentRosterControl:
         if e.value is None:
             return
         self.parallel_limit = max(1, int(e.value))
+        self._refresh_order_preview()
         if self.on_config_changed:
             ui.timer(0.01, self.on_config_changed, once=True)
 
