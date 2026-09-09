@@ -6,7 +6,7 @@ changed*, not a second copy of the documentation.
 
 ---
 
-## Unreleased — per-workspace MCP runtimes
+## v0.6.0
 
 Until now the platform held one `MCPManager` for the whole process. An MCP server is told which
 folder it may touch **at spawn time** — `filesystem` takes it as `argv`, `sandbox` as an

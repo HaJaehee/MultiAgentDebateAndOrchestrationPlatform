@@ -2,7 +2,7 @@
 
 Implementation: [app/mcp/pool.py](file:///d:/MultiAgentOrchestrator/app/mcp/pool.py)
 
-Until v0.5.3 the platform held **one** `MCPManager` for the whole process. Because an
+Until v0.6.0 the platform held **one** `MCPManager` for the whole process. Because an
 MCP server receives the folder it may touch **at spawn time** — `filesystem` takes it as
 `argv`, `sandbox` as the `SANDBOX_WORKSPACE` environment variable — a single manager
 could only ever look at one workspace. Two debates in different workspaces could not run
