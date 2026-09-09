@@ -153,8 +153,24 @@ empty one, and previously only the `tool` result carried the invented id while t
 kept the empty one — a mismatched pair, which is a 400 in its own right.
 
 Finally the agent is *told*, in words, via `TRUNCATED_TOOL_CALL_NOTICE`: which limit it hit, that
-the call did not really run, and to split the write across several calls rather than resend it. The
-`-32602` alone does not say any of that.
+the call did not really run, and what to do instead. The `-32602` alone says none of that.
+
+**What to do instead depends on the tools that agent actually holds**, which is why
+`truncation_advice()` resolves them by name tail — the same rule as `memory_write_tool()`, so a
+renamed server key or a server that failed to start never produces advice to call a tool that is
+not there. "Split the write across several calls" is good advice only if something can *append*:
+
+| The agent has | It is told |
+| :--- | :--- |
+| an append tool (`edit_file`, `append_file`, …) | write the first part, then append with `<that tool>` by name — and *not* to continue with the overwriting tool, named too |
+| only an overwriting tool (`write_file`) | splitting will not help; write several smaller **files** instead, or shorten the content |
+| no file tool | just shorten the arguments |
+
+The middle row is the one worth having. The official `@modelcontextprotocol/server-filesystem`
+`write_file` *completely overwrites*, so a model that follows a naive "split it up" would resend
+everything written so far on every call — 5k, then 10k, then 15k characters — growing quadratically
+and hitting the same `max_tokens` again, only later. Naming the tool that can append, and the one
+that cannot, is the difference between advice that works and advice that loops.
 
 > If this happens often, the setting to change is the agent's `max_tokens` — 4096 is narrow for an
 > agent that writes whole documents through a tool.

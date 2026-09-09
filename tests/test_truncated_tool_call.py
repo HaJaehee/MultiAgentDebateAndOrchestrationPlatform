@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.agents.base import Agent
-from app.agents.llm import LLMCaller
+from app.agents.llm import LLMCaller, truncation_advice
 
 # 실제로 끊긴 자리를 그대로 옮긴 인자입니다. 닫히지 않은 문자열이라 파싱되지 않습니다.
 TRUNCATED = '{"path": "app/util.py", "content": "def load(path):\n    if path:'
@@ -162,6 +162,81 @@ async def test_a_clean_tool_call_gets_no_truncation_notice():
 
     told = "\n".join(str(m.get("content")) for m in sent[-1]["messages"])
     assert "출력 잘림" not in told
+
+
+# ------------------------------------------------------------------ 무엇을 하라고 할지
+
+
+def _tools(*names):
+    return [{"type": "function", "function": {"name": n, "parameters": {}}} for n in names]
+
+
+def test_with_an_append_tool_it_says_to_append_by_name():
+    """`edit_file` 이 있으면 그것을 이름으로 짚어 줍니다."""
+    advice = truncation_advice(_tools(
+        "filesystem__read_text_file", "filesystem__write_file", "filesystem__edit_file"))
+    assert "`filesystem__edit_file` 로 **뒤에 덧붙이세요**" in advice
+    # 쓰지 말아야 할 쪽도 이름으로 짚습니다 — 모델이 손에 잡히는 것을 다시 잡습니다.
+    assert "`filesystem__write_file` 로 이어쓰려 하면" in advice
+
+
+def test_with_only_an_overwriting_tool_it_does_not_say_to_split_the_write():
+    """이것이 이번 구체화의 핵심입니다.
+
+    공식 filesystem 서버의 `write_file` 은 덮어쓰기입니다. 그걸로 "나누어 쓰라"
+    고 하면 앞부분을 매번 다시 써야 해서 호출이 제곱으로 커지고, 나눈 보람도
+    없이 같은 한도에 다시 걸립니다.
+    """
+    advice = truncation_advice(_tools("filesystem__write_file"))
+    assert "덮어쓰기" in advice
+    assert "여러 파일로 쪼개" in advice
+    assert "덧붙이세요" not in advice, "덧붙일 도구가 없는데 덧붙이라고 하면 안 됩니다"
+
+
+def test_without_file_tools_it_just_says_to_shorten():
+    advice = truncation_advice(_tools("memory__search_nodes"))
+    assert "짧게" in advice
+    assert "파일" not in advice, "가지지도 않은 도구 이야기를 할 이유가 없습니다"
+
+
+def test_no_tools_at_all_is_not_an_error():
+    assert truncation_advice(None)
+    assert truncation_advice([])
+
+
+def test_the_tool_is_found_by_its_name_tail_not_the_server_key():
+    """서버 키를 바꿔도 찾아야 합니다 (`memory_write_tool` 과 같은 규칙)."""
+    advice = truncation_advice(_tools("myfs__edit_file"))
+    assert "`myfs__edit_file`" in advice
+
+
+@pytest.mark.asyncio
+async def test_the_notice_carries_the_advice_for_the_agents_own_tools():
+    """고지문에 붙는 조언은 그 발언이 실제로 가진 도구에서 나와야 합니다."""
+    sent = []
+
+    async def fake_acompletion(**kwargs):
+        if kwargs.get("stream"):
+            raise RuntimeError("streaming unsupported")
+        sent.append(kwargs)
+        first = len(sent) == 1
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(
+                content="", tool_calls=[_tool_call(TRUNCATED)] if first else None,
+                model_dump=lambda: {"role": "assistant", "content": "", "tool_calls": []},
+            ),
+            finish_reason="length" if first else "stop",
+        )])
+
+    caller = _caller()
+    caller.mcp_manager.get_openai_tools_for_servers = lambda servers: _tools(
+        "filesystem__write_file", "filesystem__edit_file")
+
+    with patch("litellm.acompletion", side_effect=fake_acompletion):
+        await caller.call_agent(_agent(), [{"role": "user", "content": "써줘"}])
+
+    told = "\n".join(str(m.get("content")) for m in sent[-1]["messages"])
+    assert "filesystem__edit_file" in told
 
 
 # ------------------------------------------------------------------ 파서

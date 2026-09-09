@@ -288,6 +288,16 @@ CONTEXT_WINDOW_CEILING = 2_000_000
 MEMORY_WRITE_TOOLS = ("add_observations", "create_entities")
 MEMORY_SEARCH_TOOLS = ("search_nodes", "open_nodes")
 
+# 파일 **뒤에 덧붙일 수 있는** 도구와, **통째로 덮어쓰는** 도구.
+#
+# 둘을 가르는 이유는 잘린 도구 호출을 어떻게 만회하라고 말할지가 달라지기
+# 때문입니다. 공식 filesystem 서버의 `write_file` 은 "completely overwrite" 라,
+# 그걸로 이어쓰려 하면 앞부분을 매번 통째로 다시 써야 합니다 — 나눌수록 호출이
+# 커지고 같은 자리에서 또 잘립니다. 나누기가 뜻을 가지려면 덧붙이는 도구가
+# 있어야 하고, 없으면 아예 다른 조언을 해야 합니다.
+APPEND_TOOLS = ("edit_file", "edit_text_file", "append_file", "patch_file", "str_replace")
+FILE_WRITE_TOOLS = ("write_file", "write_text_file", "create_file")
+
 
 def _tool_names(tools: Optional[List[Dict[str, Any]]]) -> List[str]:
     """OpenAI 도구 스키마 목록에서 함수 이름만 뽑습니다."""
@@ -319,6 +329,16 @@ def memory_write_tool(tools: Optional[List[Dict[str, Any]]]) -> Optional[str]:
 def memory_search_tool(tools: Optional[List[Dict[str, Any]]]) -> Optional[str]:
     """이 발언이 쓸 수 있는 메모리 검색 도구의 이름. 없으면 None."""
     return _find_tool(tools, MEMORY_SEARCH_TOOLS)
+
+
+def append_tool(tools: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+    """파일 뒤에 덧붙일 수 있는 도구의 이름. 없으면 None."""
+    return _find_tool(tools, APPEND_TOOLS)
+
+
+def file_write_tool(tools: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+    """파일을 통째로 쓰는(덮어쓰는) 도구의 이름. 없으면 None."""
+    return _find_tool(tools, FILE_WRITE_TOOLS)
 
 
 def context_headroom(agent: Agent) -> Optional[int]:
@@ -504,10 +524,51 @@ TRUNCATED_TOOL_CALL_NOTICE = (
     "[출력 잘림] 직전 도구 호출은 응답 한도(max_tokens={max_tokens:,})에 걸려 "
     "**인자를 끝까지 쓰지 못한 채 잘렸습니다.** 그래서 그 호출은 의도한 대로 "
     "실행되지 않았습니다 (도구 서버가 인자를 읽지 못했다고 답했을 것입니다).\n"
-    "같은 내용을 그대로 다시 보내지 마세요 — 또 같은 자리에서 잘립니다. "
-    "파일을 쓰는 중이었다면 **여러 번에 나누어** 쓰고(먼저 앞부분을 쓰고 다음 "
-    "호출에서 이어붙이기), 그 밖의 호출이라면 인자를 더 짧게 만드세요."
+    "같은 내용을 그대로 다시 보내지 마세요 — 또 같은 자리에서 잘립니다.{advice}"
 )
+
+
+def truncation_advice(tools: Optional[List[Dict[str, Any]]] = None) -> str:
+    """잘린 뒤에 무엇을 하라고 할지. **이 발언이 실제로 가진 도구**에 따라 다릅니다.
+
+    "나누어 쓰세요" 만으로는 부족합니다. 덮어쓰기 도구로 나누면 이렇게 됩니다.
+
+        1회차  write_file(1부)              5,000자
+        2회차  write_file(1부+2부)         10,000자   ← 앞부분을 다시 다 씀
+        3회차  write_file(1부+2부+3부)     15,000자   ← 여기서 또 잘림
+
+    호출이 커지면서 제곱으로 늘고, 나눈 보람도 없이 같은 한도에 다시 걸립니다.
+    그러니 **덧붙이는 도구가 있는지 확인하고 그 이름을 짚어 주어야** 합니다.
+    없으면 나누라는 말 자체가 해로우므로 다른 길(파일을 여러 개로 쪼개기)을
+    안내합니다.
+
+    도구를 이름 꼬리로 찾는 것은 메모리 쪽(`memory_write_tool`)과 같은 방식입니다 —
+    서버 키가 무엇이든, 꺼져 있든, 없는 도구를 부르라고 시키지 않기 위해서입니다.
+    """
+    append, write = append_tool(tools), file_write_tool(tools)
+    tail = "\n그 밖의 호출이라면 인자를 더 짧게 만들어 다시 호출하세요."
+
+    if append:
+        text = (
+            f"\n파일을 쓰는 중이었다면 **나누어** 쓰세요 — 첫 호출로 앞부분만 쓰고, "
+            f"그 다음부터는 `{append}` 로 **뒤에 덧붙이세요**."
+        )
+        if write:
+            text += (
+                f" `{write}` 로 이어쓰려 하면 앞부분까지 매번 통째로 다시 써야 해서, "
+                f"호출이 점점 커지다 같은 자리에서 또 잘립니다."
+            )
+        return text + tail
+
+    if write:
+        return (
+            f"\n지금 쓸 수 있는 파일 도구는 `{write}` 뿐이고 이것은 **덮어쓰기**입니다. "
+            f"나누어 써도 앞부분을 매번 다시 써야 하므로 소용이 없습니다. 대신 내용을 "
+            f"**여러 파일로 쪼개** 각각 한 번에 쓰거나(예: 1부/2부), 내용 자체를 줄이세요."
+            + tail
+        )
+
+    return "\n인자를 더 짧게 만들어 다시 호출하세요."
 
 BUDGET_WRAP_UP_FOOTER = (
     "> ⚠️ **도구 호출 상한({limit}회)에 도달**해 도구 없이 마무리한 발언입니다 "
@@ -1335,7 +1396,10 @@ class LLMCaller:
                 if truncated:
                     self._append_budget_notice(
                         current_messages,
-                        TRUNCATED_TOOL_CALL_NOTICE.format(max_tokens=agent.max_tokens),
+                        TRUNCATED_TOOL_CALL_NOTICE.format(
+                            max_tokens=agent.max_tokens,
+                            advice=truncation_advice(tools),
+                        ),
                     )
 
             # 예산 소진. 여기서 예외를 올리면 지금까지의 발언이 통째로 사라집니다.

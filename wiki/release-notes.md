@@ -27,7 +27,10 @@ request in that turn. `finish_reason` was never inspected, so nothing noticed.
 
 Tool calls are now re-serialised from the arguments actually executed (unreadable ones collapse to
 a short marker), which also fixes a mismatched `tool_call_id` when the provider sends an empty one,
-and the agent is told it was truncated and to split the write instead of repeating it.
+and the agent is told it was truncated and what to do instead — resolved from the tools it
+actually holds, because "split the write across several calls" only works when something can
+*append*. With an overwriting `write_file` alone, splitting resends everything written so far
+on every call and hits the same limit again, so that case is told to write several files.
 
 → [LLM Integration §2.1, §2.2](agents/llm-integration.md)
 
