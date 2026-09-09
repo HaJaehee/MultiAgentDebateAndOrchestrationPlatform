@@ -172,8 +172,31 @@ everything written so far on every call — 5k, then 10k, then 15k characters �
 and hitting the same `max_tokens` again, only later. Naming the tool that can append, and the one
 that cannot, is the difference between advice that works and advice that loops.
 
-> If this happens often, the setting to change is the agent's `max_tokens` — 4096 is narrow for an
-> agent that writes whole documents through a tool.
+### 2.3. …and a plain answer that was cut off (v0.5.3)
+
+A truncated *tool call* is caught by the MCP server, which refuses the arguments. A truncated
+*answer* has no such objection: the turn simply ends mid-sentence, is stored that way, and the
+reader cannot tell whether it was cut off or genuinely finished. Neither can the next speaker, nor
+the final synthesis — and the synthesis is itself a long report from the same 4096-token budget.
+The repo has quietly known this for a while: `test_unterminated_fence_is_still_extracted()` exists
+because a Mermaid block in a synthesis report arrived without its closing fence.
+
+`finish_reason` was only being consulted on the tool-calling path. Now the tool-free return — the
+ordinary end of every turn — appends `TRUNCATED_ANSWER_FOOTER` when the endpoint says `length`:
+
+```
+> ⚠️ **응답 한도(max_tokens=8,192)에 걸려 이 발언은 여기서 잘렸습니다.** …
+```
+
+The two notices address different readers. `TRUNCATED_TOOL_CALL_NOTICE` goes to the *model*, in the
+conversation, so it can recover on the next iteration. This footer goes to the *person*, in the
+transcript, because there is nothing for the model to recover — the turn is over. The wrap-up call
+can carry both this footer and `BUDGET_WRAP_UP_FOOTER`: two different limits were hit, and the knob
+to raise is different for each (`max_tokens` versus `max_tool_iterations`).
+
+> The setting to change is `max_tokens`. 4096 is roughly 16,000 characters — narrow for an agent
+> that writes whole documents through a tool, and narrow for the synthesis report. `conf.example.json`
+> now says so next to the value.
 
 ---
 

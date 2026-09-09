@@ -239,6 +239,55 @@ async def test_the_notice_carries_the_advice_for_the_agents_own_tools():
     assert "filesystem__edit_file" in told
 
 
+# ------------------------------------------------------------------ 사람에게 알리기
+
+
+async def _plain_turn(finish_reason: str, tools=None):
+    """도구를 부르지 않는 발언 한 번. 돌아온 본문을 돌려줍니다."""
+    async def fake_acompletion(**kwargs):
+        if kwargs.get("stream"):
+            raise RuntimeError("streaming unsupported")
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(
+                content="## 아키텍처 제안\n\n세 계층으로 나눕니다. 첫째로 게이트웨이가",
+                tool_calls=None,
+                model_dump=lambda: {"role": "assistant", "content": ""},
+            ),
+            finish_reason=finish_reason,
+        )])
+
+    caller = _caller()
+    caller.mcp_manager.get_openai_tools_for_servers = lambda servers: tools or []
+    with patch("litellm.acompletion", side_effect=fake_acompletion):
+        content, _logs = await caller.call_agent(
+            _agent(), [{"role": "user", "content": "설계해줘"}])
+    return content
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_answer_is_marked_for_the_reader():
+    """도구 호출이 잘리면 도구 서버가 거절해 주지만, 그냥 긴 글은 아무도 이의를
+    제기하지 않습니다. 문장 중간에서 끝난 발언이 그대로 저장되고, 읽는 사람은
+    그것이 잘린 것인지 원래 그렇게 끝난 것인지 알 수 없습니다."""
+    content = await _plain_turn("length")
+
+    assert "첫째로 게이트웨이가" in content, "받은 만큼은 그대로 남아야 합니다"
+    assert "응답 한도" in content and "4,096" in content
+    assert "max_tokens" in content, "어느 손잡이를 올려야 하는지 적혀 있어야 합니다"
+
+
+@pytest.mark.asyncio
+async def test_a_complete_answer_gets_no_footer():
+    content = await _plain_turn("stop")
+    assert "응답 한도" not in content
+
+
+@pytest.mark.asyncio
+async def test_the_footer_does_not_need_tools_to_appear():
+    """도구가 아예 없는 에이전트(critic 처럼)도 잘립니다."""
+    assert "응답 한도" in await _plain_turn("length", tools=[])
+
+
 # ------------------------------------------------------------------ 파서
 
 

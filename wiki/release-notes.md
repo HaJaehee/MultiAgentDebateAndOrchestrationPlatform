@@ -32,7 +32,11 @@ actually holds, because "split the write across several calls" only works when s
 *append*. With an overwriting `write_file` alone, splitting resends everything written so far
 on every call and hits the same limit again, so that case is told to write several files.
 
-→ [LLM Integration §2.1, §2.2](agents/llm-integration.md)
+The same `finish_reason` closes the other half: a plain answer cut off at `max_tokens` used to end
+mid-sentence with nothing to say so. It now carries a footer — addressed to the reader, not the
+model, because by then the turn is over and there is nothing left to recover.
+
+→ [LLM Integration §2.1, §2.2, §2.3](agents/llm-integration.md)
 
 The order matters more than either change: the fingerprint was built first, the next failure
 produced one, and the fingerprint named the culprit in a single line. Diagnosis before repair, and

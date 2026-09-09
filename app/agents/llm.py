@@ -570,6 +570,19 @@ def truncation_advice(tools: Optional[List[Dict[str, Any]]] = None) -> str:
 
     return "\n인자를 더 짧게 만들어 다시 호출하세요."
 
+# 발언이 응답 한도에서 끊겼음을 기록과 화면에 남깁니다.
+#
+# `TRUNCATED_TOOL_CALL_NOTICE` 는 **모델에게** 하는 말이고(다음 판에서 만회하라),
+# 이쪽은 **사람에게** 하는 말입니다. 도구 호출이 잘리면 도구 서버가 거절해 주지만,
+# 그냥 긴 글이 잘리면 아무도 이의를 제기하지 않습니다 — 문장 중간에서 끝난 발언이
+# 그대로 저장되고, 읽는 사람은 그것이 잘린 것인지 원래 그렇게 끝난 것인지 알 수
+# 없습니다. 다음 발언자와 최종 합성도 마찬가지고요.
+TRUNCATED_ANSWER_FOOTER = (
+    "> ⚠️ **응답 한도(max_tokens={max_tokens:,})에 걸려 이 발언은 여기서 잘렸습니다.** "
+    "끝맺지 못한 문장이나 닫히지 않은 코드 블록이 있을 수 있습니다. "
+    "이어서 받으려면 남은 부분을 다시 요청하거나, 에이전트 설정의 `max_tokens` 를 올리세요."
+)
+
 BUDGET_WRAP_UP_FOOTER = (
     "> ⚠️ **도구 호출 상한({limit}회)에 도달**해 도구 없이 마무리한 발언입니다 "
     "(도구 {tool_calls}건 실행). 더 확인이 필요하면 에이전트 설정의 "
@@ -1035,13 +1048,21 @@ class LLMCaller:
             #
             # `tool_choice="none"` 은 두 요구를 모두 만족시킵니다 — 도구는 정의되어
             # 있고, 모델은 그것을 부를 수 없습니다.
-            message, _ = await self._complete_once(
+            message, finish_reason = await self._complete_once(
                 agent, current_messages, tools, on_chunk,
                 tool_choice="none" if tools else "auto",
             )
             final = self._compose_content(agent, message).strip()
             if final:
                 segments.append(final)
+            # 마무리 발언도 한도에 걸릴 수 있습니다. 예산 소진 꼬리표와 둘 다 붙는
+            # 것이 맞습니다 — 서로 다른 두 한도에 걸린 것이고, 사람이 올릴 손잡이도
+            # 각각 다릅니다 (`max_tool_iterations` 와 `max_tokens`).
+            if finish_reason == "length":
+                logger.warning(
+                    f"Truncated wrap-up answer from {agent.name}: max_tokens={agent.max_tokens}"
+                )
+                segments.append(TRUNCATED_ANSWER_FOOTER.format(max_tokens=agent.max_tokens))
         except Exception as exc:  # noqa: BLE001
             logger.error(f"Final tool-free answer failed for {agent.name}: {exc}")
             if not segments:
@@ -1334,6 +1355,16 @@ class LLMCaller:
                 # Check for tool calls
                 tool_calls = getattr(message, "tool_calls", None)
                 if not tool_calls:
+                    # 도구를 부르지 않고 끝난 판입니다. 여기서 잘렸다면 이의를
+                    # 제기해 줄 도구 서버가 없으므로 우리가 표시를 남깁니다.
+                    if finish_reason == "length":
+                        logger.warning(
+                            f"Truncated answer from {agent.name}: finish_reason='length', "
+                            f"max_tokens={agent.max_tokens}"
+                        )
+                        segments.append(
+                            TRUNCATED_ANSWER_FOOTER.format(max_tokens=agent.max_tokens)
+                        )
                     return "\n\n".join(segments), tool_logs
 
                 # 실행하기 전에 먼저 다 풀어 둡니다. 되돌려 보낼 발언이 **실제로
