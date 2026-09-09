@@ -200,7 +200,12 @@ A footer is enough when the truncated thing is one turn of a debate — the next
 around it. It is not enough for the **synthesis report**, which *is* the deliverable: a report that
 stops mid-sentence has to be regenerated, marker or no marker.
 
-So a turn that ends with `finish_reason: "length"` is continued.
+So a turn that ends with `finish_reason: "length"` is continued — **every turn, not only the
+report.** The hook sits on the tool-free return, which is the ordinary end of every turn, so a
+debate turn that used tools first is continued the same way; the piece is concatenated onto the
+*truncated* segment, not onto the text from an earlier tool iteration, which stays a separate
+paragraph. Synthesis, speaker selection, diagram repair and specialist turns all reach it through
+the one `call_agent()` path.
 [`_finish_truncated_answer()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) appends what was
 written so far as an `assistant` turn, adds `CONTINUE_ANSWER_INSTRUCTION`, and calls again — up to
 `max_continuations` times (default 2, ceiling 10, `0` disables it).

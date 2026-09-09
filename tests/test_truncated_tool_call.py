@@ -419,3 +419,50 @@ async def test_an_empty_continuation_stops_instead_of_looping():
 
     assert len(sent) == 2, "빈 답을 받으면 더 조르지 않습니다"
     assert "앞부분" in content
+
+
+@pytest.mark.asyncio
+async def test_a_debate_turn_that_used_tools_is_continued_too():
+    """이어받기는 최종 보고서 전용이 아닙니다.
+
+    `_finish_truncated_answer` 는 **도구 없이 끝나는 판** — 즉 모든 발언의 평범한
+    종료점 — 에 걸려 있습니다. 그래서 도구를 쓴 토론 발언도 같은 길로 이어받습니다.
+
+    여기서 확인하는 것은 **어느 조각에 이어 붙는가** 입니다. `segments` 에는 도구를
+    부르던 판의 글("파일을 확인합니다.")이 먼저 들어 있고, 잘린 것은 그 다음
+    조각입니다. 앞의 것에 붙이면 문단이 뒤섞입니다.
+    """
+    sent = []
+
+    async def fake_acompletion(**kwargs):
+        if kwargs.get("stream"):
+            raise RuntimeError("streaming unsupported")
+        sent.append(kwargs)
+        n = len(sent)
+        if n == 1:      # 도구를 부르는 판
+            return SimpleNamespace(choices=[SimpleNamespace(
+                message=SimpleNamespace(
+                    content="파일을 확인합니다.",
+                    tool_calls=[_tool_call(GOOD)],
+                    model_dump=lambda: {"role": "assistant", "content": ""},
+                ),
+                finish_reason="tool_calls")])
+        piece = "관측 결과 이 모듈은 세 갈래로 나뉘어" if n == 2 else " 있습니다. 이상입니다."
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(
+                content=piece, tool_calls=None,
+                model_dump=lambda: {"role": "assistant", "content": piece}),
+            finish_reason="length" if n == 2 else "stop")])
+
+    caller = _caller()
+    caller.mcp_manager.execute_tool = AsyncMock(return_value=("파일 내용", "success"))
+    with patch("litellm.acompletion", side_effect=fake_acompletion):
+        content, logs = await caller.call_agent(
+            _agent(max_continuations=2), [{"role": "user", "content": "검토해줘"}])
+
+    assert len(sent) == 3, "도구 판 + 잘린 판 + 이어받기 한 판"
+    assert len(logs) == 1, "도구 기록은 그대로 남습니다"
+    # 잘린 조각에 이어 붙어야 합니다. 도구 판의 글에 붙으면 문단이 뒤섞입니다.
+    assert "세 갈래로 나뉘어 있습니다. 이상입니다." in content
+    assert "파일을 확인합니다.\n\n관측 결과" in content, "도구 판의 글과는 빈 줄로 갈립니다"
+    assert "응답 한도" not in content

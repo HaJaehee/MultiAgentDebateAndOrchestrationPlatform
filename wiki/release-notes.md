@@ -15,7 +15,9 @@ it had been cut. That is enough for one speaker's turn in a debate — the next 
 it. It is not enough for the **synthesis report**, which *is* the deliverable: a report that stops
 mid-sentence has to be regenerated whether or not it carries a marker.
 
-So the turn is continued. What was written so far goes back as an `assistant` turn, an instruction
+So the turn is continued — and every turn, not only the report: the hook sits on the tool-free
+return, the ordinary end of any turn, so a specialist turn that used tools first is repaired the
+same way. What was written so far goes back as an `assistant` turn, an instruction
 says to resume from the last character with no preamble and no re-summarising, and the returned
 piece is concatenated **with no separator** — other segments are joined by a blank line, but this
 one resumes a sentence that was cut in half. Up to `max_continuations` times (default 2, `0`
