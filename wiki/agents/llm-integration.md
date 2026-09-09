@@ -72,7 +72,7 @@ sequenceDiagram
    [MCP Resilience §4](file:///d:/MultiAgentOrchestrator/wiki/mcp/error-handling-resilience.md).
 
 
-### 2.1. When a call fails, record what we sent (v0.5.2)
+### 2.1. When a call fails, record what we sent (v0.5.3)
 
 An endpoint does not always say why it refused. A gateway in front of vLLM was seen returning
 
@@ -116,7 +116,7 @@ Building the fingerprint can never fail the call — any error inside it becomes
 `Request fingerprint unavailable ...` and the original exception propagates untouched.
 
 
-### 2.2. A tool call that was cut off mid-argument (v0.5.2)
+### 2.2. A tool call that was cut off mid-argument (v0.5.3)
 
 `max_tokens` bounds the *generation*, and a tool call is generated text. When an agent writes a
 large file through `filesystem__write_file`, the arguments JSON is the output — and it can hit the

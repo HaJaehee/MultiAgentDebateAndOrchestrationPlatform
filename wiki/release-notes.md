@@ -6,6 +6,37 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.5.3
+
+v0.5.2 fixed two request-shaping bugs by reading the code. This release is about the case where
+reading the code is not enough — when the endpoint refuses and *will not say why*.
+
+**A failed LLM call now records what we sent.** An endpoint does not always
+say why it refused — a gateway in front of vLLM was seen turning an upstream 400 into its own 500
+and discarding the reason, which also made LiteLLM retry a deterministic error twice. When the
+endpoint will not explain, the remaining evidence is our own request: message count, run-length
+encoded roles, estimated tokens against the budget, tools and `tool_choice`, and the largest
+messages by name and size. Sizes only — never content.
+
+That fingerprint immediately paid for itself. It showed a request nowhere near its context budget
+whose largest message was an `assistant(tool_calls*1)` of 14,546 characters — a
+`filesystem__write_file` whose arguments JSON had been **cut off by `max_tokens` mid-string**. We
+parsed what we could, the MCP server refused the fragment, and then we appended the assistant turn
+to the context *verbatim* — resending JSON we had ourselves failed to read, on every following
+request in that turn. `finish_reason` was never inspected, so nothing noticed.
+
+Tool calls are now re-serialised from the arguments actually executed (unreadable ones collapse to
+a short marker), which also fixes a mismatched `tool_call_id` when the provider sends an empty one,
+and the agent is told it was truncated and to split the write instead of repeating it.
+
+→ [LLM Integration §2.1, §2.2](agents/llm-integration.md)
+
+The order matters more than either change: the fingerprint was built first, the next failure
+produced one, and the fingerprint named the culprit in a single line. Diagnosis before repair, and
+the diagnosis was worth shipping on its own.
+
+---
+
 ## v0.5.2
 
 Two request-shaping bugs that made agents fail with a **400 Bad Request** for no visible reason.
@@ -37,25 +68,7 @@ deleted (`Client has been deleted but is still being used`). Nothing broke, but 
 once per process, so a benign one hides the next real bug. `refresh_list()` now reads first and
 draws second, re-checking in between.
 
-And a diagnostic one: **a failed LLM call now records what we sent.** An endpoint does not always
-say why it refused — a gateway in front of vLLM was seen turning an upstream 400 into its own 500
-and discarding the reason, which also made LiteLLM retry a deterministic error twice. When the
-endpoint will not explain, the remaining evidence is our own request: message count, run-length
-encoded roles, estimated tokens against the budget, tools and `tool_choice`, and the largest
-messages by name and size. Sizes only — never content.
-
-That fingerprint immediately paid for itself. It showed a request nowhere near its context budget
-whose largest message was an `assistant(tool_calls*1)` of 14,546 characters — a
-`filesystem__write_file` whose arguments JSON had been **cut off by `max_tokens` mid-string**. We
-parsed what we could, the MCP server refused the fragment, and then we appended the assistant turn
-to the context *verbatim* — resending JSON we had ourselves failed to read, on every following
-request in that turn. `finish_reason` was never inspected, so nothing noticed.
-
-Tool calls are now re-serialised from the arguments actually executed (unreadable ones collapse to
-a short marker), which also fixes a mismatched `tool_call_id` when the provider sends an empty one,
-and the agent is told it was truncated and to split the write instead of repeating it.
-
-→ [LLM Integration §2.1, §2.2, §5.3](agents/llm-integration.md) · [UI Components §1](ui/components.md)
+→ [LLM Integration §5.3](agents/llm-integration.md) · [UI Components §1](ui/components.md)
 
 ---
 
