@@ -12,7 +12,10 @@ MCP 서버 설치본까지 들고 있어 수백 MB 입니다. 그 런타임은 �
         ├── app/                      애플리케이션 소스 (통째로 교체)
         ├── mcp_servers/              포크한 MCP 서버 원본
         ├── mcp_node/memory-scoped.mjs  그 실행 사본 (설치본의 것을 바로 갈아끼움)
-        ├── docs/                     사용 설명서 (마크다운 원본 + HTML 렌더러)
+        ├── docs/
+        │   ├── user_manual/          사용 설명서 마크다운 원본
+        │   ├── user_manual_html/     그것을 패키징 시점에 렌더링한 HTML (바로 열람)
+        │   └── render_user_manual.py 렌더러 (대상에서 다시 돌릴 수 있게)
         ├── conf.example.json         설정 템플릿
         ├── .env.example
         ├── requirements.txt
@@ -24,6 +27,7 @@ MCP 서버 설치본까지 들고 있어 수백 MB 입니다. 그 런타임은 �
 
 사용법:
     python package_source.py [--out-dir dist] [--max-file-mb 2] [--allow-secrets]
+                             [--skip-manual-html]
 
 포함 목록은 **허용 목록(allow-list)** 입니다. 제외 목록으로 짜면 새 디렉터리가
 생겼을 때 조용히 딸려 들어갑니다. 여기서는 새 디렉터리가 생기면 그냥 빠지고,
@@ -37,6 +41,7 @@ import fnmatch
 import hashlib
 import re
 import shutil
+import subprocess
 import sys
 import zipfile
 from datetime import datetime
@@ -60,10 +65,11 @@ PACKAGE_NAME = "MultiAgentOrchestrator_source"
 
 # mcp_servers/ 는 포크한 MCP 서버 원본입니다 (실행 사본은 앱이 mcp_node 에 놓습니다).
 #
-# docs/ 는 사용 설명서입니다. 마크다운 원본과 렌더러만 담고 HTML 산출물
-# (docs/user_manual_html/)은 뺍니다 — 생성물이고, 대상에서 렌더러를 한 번 돌리면
-# 나옵니다. 폐쇄망에서는 위키나 저장소를 열 수 없으므로 설명서가 설치본과 같이
-# 다녀야 합니다.
+# docs/ 는 사용 설명서입니다. 폐쇄망에서는 위키나 저장소를 열 수 없으므로 설명서가
+# 설치본과 같이 다녀야 하고, 받는 쪽이 아무것도 실행하지 않아도 읽을 수 있어야
+# 합니다. 그래서 마크다운 원본·렌더러와 함께 **패키징 시점에 렌더링한 HTML** 을
+# 담습니다 (`render_manual_html`). 전체 번들(`package_offline.py`)이 이미 그렇게
+# 하고 있고, 소스 갱신 패키지만 예외였습니다.
 SOURCE_DIRS = ["app", "mcp_servers", "docs"]
 
 # (원본 경로, 패키지 안에서의 경로). 대부분 루트 파일이지만, 설치본의 같은
@@ -100,8 +106,10 @@ FORBIDDEN_NAMES = {
     "python_runtime", "node_runtime", "wheels", "wheelhouse", "vendor",
     "mcp_node", "mcp_sandbox", "workspace", "dist", "build",
     ".git", ".venv", "venv", "env", "node_modules",
-    # 설명서 HTML 은 렌더러가 만드는 산출물입니다. 원본과 함께 담으면 같은 내용을
-    # 두 번 반입 심사받게 되고, 둘이 어긋나면 어느 쪽이 정본인지 알 수 없습니다.
+    # **작업 트리의** docs/user_manual_html/ 입니다. 패키지에 담기는 HTML 은 여기서
+    # 긁어 오지 않고 `render_manual_html` 이 매번 새로 만듭니다 — 이 폴더는 언제
+    # 만들어진 것인지 알 수 없어서, 마크다운을 고치고 렌더러를 돌리지 않았으면 낡은
+    # HTML 이 원본과 어긋난 채로 반입됩니다. 매번 새로 만들면 어긋날 수가 없습니다.
     "user_manual_html",
 }
 
@@ -116,8 +124,10 @@ SECRET_PATTERNS = [
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "개인 키"),
 ]
 
+# 렌더링한 설명서(.html)도 봅니다. 마크다운과 같은 글이 들어 있으므로 원본만
+# 검사하고 넘어가면 같은 값이 HTML 로 새어 나갑니다.
 TEXT_SUFFIXES = {".py", ".toml", ".md", ".txt", ".ps1", ".bat", ".json", ".yml", ".yaml", ".example", ".svg",
-                 ".js", ".mjs"}
+                 ".js", ".mjs", ".html"}
 
 
 def log(message: str) -> None:
@@ -141,6 +151,46 @@ def collect_dir(src: Path, rel_root: str) -> list[tuple[Path, str]]:
             continue
         collected.append((path, f"{rel_root}/{path.relative_to(src).as_posix()}"))
     return collected
+
+
+def render_manual_html(build_dir: Path) -> list[tuple[Path, str]]:
+    """설명서를 `build_dir` 에 **새로** 렌더링하고 담을 파일 목록을 돌려줍니다.
+
+    작업 트리의 `docs/user_manual_html/` 을 그대로 쓰지 않습니다. 그 폴더는 언제
+    만들어진 것인지 알 수 없습니다 — 마크다운을 고치고 렌더러를 돌리지 않았다면
+    낡은 HTML 이 그대로 들어가고, **한 패키지 안에서 원본과 산출물이 서로 다른 말을
+    합니다.** 받는 쪽은 어느 쪽이 정본인지 알 방법이 없습니다. 매번 새로 만들면
+    그런 일이 생길 수 없습니다.
+
+    렌더링에 실패해도 패키지 생성을 막지는 않습니다. 설명서는 앱이 도는 데 필요한
+    것이 아니고 마크다운 원본은 이미 담겨 있으므로, 대상에서 렌더러를 한 번 돌리면
+    됩니다 (`package_offline.py` 와 같은 태도입니다). 다만 조용히 빠지면 안 되므로
+    경고는 남깁니다.
+    """
+    src_manual = ROOT_DIR / "docs" / "user_manual"
+    renderer = ROOT_DIR / "docs" / "render_user_manual.py"
+    if not src_manual.is_dir() or not renderer.is_file():
+        log("  [건너뜀] 설명서 원본이나 렌더러가 없어 HTML 을 만들지 않습니다.")
+        return []
+
+    if build_dir.exists():
+        shutil.rmtree(build_dir)
+    try:
+        subprocess.run(
+            [sys.executable, str(renderer),
+             "--src", str(src_manual), "--out", str(build_dir), "--clean"],
+            check=True, capture_output=True,
+        )
+    except (subprocess.CalledProcessError, OSError) as exc:
+        detail = getattr(exc, "stderr", b"") or b""
+        log(f"  [경고] 설명서 HTML 렌더링 실패 (마크다운 원본은 담습니다): {exc}")
+        if detail:
+            log(f"          {detail.decode('utf-8', 'replace').strip().splitlines()[-1]}")
+        return []
+
+    found = collect_dir(build_dir, "docs/user_manual_html")
+    log(f"  docs/user_manual_html/  {len(found)}개 (이번에 렌더링)")
+    return found
 
 
 def scan_for_secrets(items: list[tuple[Path, str]]) -> list[str]:
@@ -185,6 +235,8 @@ def main() -> None:
                         help="이보다 큰 파일이 있으면 중단 (런타임 혼입 방지, 기본: 2MB)")
     parser.add_argument("--allow-secrets", action="store_true",
                         help="키처럼 보이는 값이 있어도 강행")
+    parser.add_argument("--skip-manual-html", action="store_true",
+                        help="설명서 HTML 렌더링을 건너뜁니다 (마크다운 원본은 그대로 담깁니다)")
     args = parser.parse_args()
 
     dist_dir = (ROOT_DIR / args.out_dir).resolve() if not Path(args.out_dir).is_absolute() \
@@ -212,6 +264,16 @@ def main() -> None:
         items.append((src, dest_name))
         single_files += 1
     log(f"  개별 파일  {single_files}개")
+
+    # 설명서 HTML 은 여기서 만들어 함께 담습니다. 나머지와 같은 목록에 넣어야
+    # 크기 검사·비밀값 검사·MANIFEST 를 똑같이 거칩니다 — 반입 심사용 목록에
+    # 빠진 파일이 패키지 안에 들어 있으면 안 됩니다.
+    manual_build = dist_dir / f".{PACKAGE_NAME}_manual_html"
+    if args.skip_manual_html:
+        log("  [건너뜀] --skip-manual-html")
+    else:
+        dist_dir.mkdir(parents=True, exist_ok=True)
+        items.extend(render_manual_html(manual_build))
 
     if not items:
         sys.exit("담을 파일이 없습니다. 프로젝트 루트에서 실행하고 있습니까?")
@@ -257,6 +319,9 @@ def main() -> None:
                 zf.write(path, f"{PACKAGE_NAME}/{path.relative_to(staging).as_posix()}")
 
     total = sum(src.stat().st_size for src, _ in items)
+    if manual_build.exists():
+        shutil.rmtree(manual_build, ignore_errors=True)
+
     log("")
     log(f"  스테이징 : {staging}")
     log(f"  압축     : {zip_path}")
@@ -265,6 +330,8 @@ def main() -> None:
     log("")
     log("  런타임(python_runtime, node_runtime, wheels, mcp_sandbox)과")
     log("  운영 데이터(workspace, multiagent.db, conf.json)는 들어 있지 않습니다.")
+    log("  설명서는 docs/user_manual_html/index.html 을 브라우저로 열면 됩니다")
+    log("  (이번 패키징 시점에 마크다운 원본에서 새로 렌더링했습니다).")
     log("  대상 장비에서는 압축을 푼 내용을 설치본 위에 덮어쓰세요.")
     log("  app/ 은 파일 단위로 덮지 말고 통째로 교체해야 합니다 —")
     log("  이번 갱신에서 삭제된 모듈이 남아 계속 import 됩니다.")

@@ -142,7 +142,7 @@ the pip wheel archive, and the installed MCP servers. None of that changes when 
 bug in `app/`. Re-transferring it means re-doing the transfer review from scratch every time.
 
 [`package_source.py`](file:///d:/MultiAgentOrchestrator/package_source.py) packages **only
-source and configuration** — roughly 200 KB — to be applied on top of an already-transferred
+source and configuration** — roughly 600 KB — to be applied on top of an already-transferred
 bundle.
 
 ```powershell
@@ -158,6 +158,7 @@ Only what a running installation needs in order to be updated.
 | `app/`, `mcp_servers/` | `python_runtime/`, `node_runtime/`, `wheels/`, `mcp_sandbox/` |
 | `mcp_node/memory-scoped.mjs` (the forked server's runnable copy) | `workspace/`, `multiagent.db`, `conf.json` |
 | `conf.example.json`, `.env.example`, `requirements.txt` | `tests/`, `wiki/`, `CLAUDE.md` |
+| `docs/user_manual/` and `docs/user_manual_html/` (rendered at packaging time) | the working tree's own `docs/user_manual_html/` |
 | `setup_mcp.py`, `open_browser.py`, `README.md` | the packaging scripts themselves |
 
 The include list is an **allow-list**, not a deny-list. With a deny-list, a directory added

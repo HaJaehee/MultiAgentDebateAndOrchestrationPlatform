@@ -133,6 +133,7 @@ mcp 2.x 를 끌어옵니다. mcp 2.x 는 `mcp.server.fastmcp` 를 제거했으�
 
 ```bash
 python package_source.py [--out-dir dist] [--max-file-mb 2] [--allow-secrets]
+                         [--skip-manual-html]
 ```
 
 ```text
@@ -159,11 +160,19 @@ MultiAgentOrchestrator_source/
 | | 마크다운 원본 | 렌더링된 HTML |
 | :--- | :--- | :--- |
 | 전체 번들 | 담김 | **미리 렌더링해서 담김** |
-| 소스 갱신 패키지 | 담김 | 담기지 않음 (대상에서 렌더러 실행) |
+| 소스 갱신 패키지 | 담김 | **미리 렌더링해서 담김** |
 
-전체 번들은 받는 쪽이 아무것도 실행하지 않아도 읽을 수 있어야 하므로
-`docs/user_manual_html/index.html` 을 패키징 시점에 만들어 둡니다. 소스 갱신
-패키지에는 원본만 담고, 필요하면 대상에서 한 번 돌립니다.
+두 패키지 모두 받는 쪽이 아무것도 실행하지 않아도 읽을 수 있어야 하므로
+`docs/user_manual_html/index.html` 을 패키징 시점에 만들어 둡니다. 렌더러와
+마크다운 원본도 함께 담기므로 대상에서 다시 돌릴 수도 있습니다.
+
+**작업 트리의 `docs/user_manual_html/` 을 긁어 담지는 않습니다.** 그 폴더는 언제
+만들어진 것인지 알 수 없어서, 마크다운을 고치고 렌더러를 돌리지 않았다면 한
+패키지 안에서 원본과 산출물이 서로 다른 말을 하게 됩니다. 매번 임시 폴더에 새로
+렌더링해 담으므로 둘이 어긋날 수가 없고, 담긴 HTML 도 다른 파일과 똑같이 크기
+검사·비밀값 검사를 거쳐 `MANIFEST.txt` 에 해시가 남습니다.
+
+렌더링을 건너뛰려면 `--skip-manual-html` 을 씁니다 (마크다운 원본은 그대로 담깁니다).
 
 ```bash
 python docs/render_user_manual.py
