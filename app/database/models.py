@@ -130,6 +130,11 @@ class SessionAgentModel(Base):
     name: Mapped[str] = mapped_column(String(100), default="")
     role: Mapped[str] = mapped_column(String(150), default="")
     system_prompt: Mapped[str] = mapped_column(Text, default="")
+    # 이 대화에서 이 에이전트가 갖는 겉모습. `config_snapshot` 안에도 같은 값이
+    # 들어 있지만, 카드를 그리는 데 필요한 두 값만은 컬럼으로 따로 둡니다 —
+    # 스냅샷이 없던 옛 대화에도 붙고, JSON 을 풀지 않고도 읽힙니다.
+    card_color: Mapped[str] = mapped_column(String(40), default="", nullable=False)
+    icon_path: Mapped[str] = mapped_column(Text, default="", nullable=False)
     # 잠글 때 굳힌 `AgentConfig` 전체. None 이면 이 컬럼이 생기기 전에 잠긴 대화라
     # 살아 있는 conf.json 을 그대로 씁니다 (지금까지 그래 왔던 대로).
     config_snapshot: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True, default=None)

@@ -1,12 +1,12 @@
 # 🤖 MADO — Multi-Agent Debate & Orchestration Platform
 
-`v0.5.0` · `LGPL-3.0-or-later` · `Python 3.11+`
+`v0.5.1` · `LGPL-3.0-or-later` · `Python 3.11+`
 
 > **MCP 도구를 활용하는 반응형 멀티 에이전트 협업 & 토론 웹 애플리케이션**  
 > Dynamic Agent Profiling via `conf.json`, MCP Tool Integration, Multi-Model LLM Abstraction (LiteLLM), StateGraph Orchestration, and NiceGUI + FastAPI Reactive Web Interface.
 
 ```
-Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v0.5.0
+Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v0.5.1
 ```
 
 같은 내용을 웹 UI 우측 상단의 **ⓘ** 버튼으로도 볼 수 있습니다.
@@ -39,6 +39,7 @@ Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v0.5.0
    - `/personas/{session_id}` 편집 페이지에서 에이전트의 이름·역할·시스템 프롬프트를 세션마다 다르게 지정.
    - 첫 유저 메시지가 기록되는 순간 전 에이전트의 페르소나가 DB 에 스냅샷되고 잠깁니다.
    - 세션을 나중에 다시 열면 그때 저장된 페르소나로 이어서 토론합니다 (`conf.json` 이 바뀌었어도 유지).
+   - **카드 색과 아이콘**도 여기서 고릅니다. 아이콘은 머티리얼 아이콘을 고르거나 **그림을 올릴 수 있고**, 올린 그림은 `data/agent_icons/` 로 복사되어 `conf.json` 에는 그 경로만 적힙니다. 그림을 찾지 못하면 기본 아이콘으로 안전하게 물러섭니다.
 6. **멀티 에이전트 토론 & 상태 머신 오케스트레이션**:
    - **Master Orchestrator**: 목표 분해, 발언자 선정, 토론 중재, 합의 검증 및 최종 산출물 합성.
    - **4가지 토론 전략**: 순차 토론 (`sequential_debate`), 디베이트 (`adversarial_debate`), 오케스트레이터 지명 (`orchestrator_led`), 병렬 지시 (`parallel_dispatch`).
@@ -47,7 +48,7 @@ Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v0.5.0
 7. **반응형 모던 Web GUI (FastAPI + NiceGUI)**:
    - **좌측 사이드바**: 세션 히스토리, 신규 생성(`+ New Chat`), 이름 변경, 삭제, 그리고 대화 전체를 마크다운 파일로 저장(💾).
    - **상단 제어 패널**: 에이전트 온/오프 토글, 라운드 제한 슬라이더, 전략 선택, 동시 실행 상한(병렬 지시 전략에서만), 세션별 커스텀 지침, 그리고 앱 재기동 없이 `conf.json` 을 다시 읽어 에이전트 목록을 갱신하는 버튼.
-   - **메인 토론 피드**: 에이전트별 색상/아바타 구분 대화창, 접이식(Accordion) MCP 도구 호출 로그.
+   - **메인 토론 피드**: 에이전트별 색상/아바타 구분 대화창, 접이식(Accordion) MCP 도구 호출 로그. 색을 직접 정한 에이전트는 카드 테두리까지 그 색으로 칠해집니다.
    - **우측 산출물 뷰어**: 최종 종합 보고서(Markdown), 소스코드(Code), Mermaid 아키텍처 다이어그램 탭 및 원클릭 복사/다운로드.
 8. **SQLite 영구 저장소 (SQLAlchemy Async)**:
    - 세션, 메시지, 도구 호출 기록, 최종 아티팩트 영구 보존.
@@ -100,6 +101,8 @@ MultiAgentOrchestrator/
 ├── mcp_node/                 # 공식 Node MCP 서버 (npm install 로 생성, .gitignore 대상)
 ├── mcp_sandbox/              # AirgappedPySandbox (git clone 으로 생성, .gitignore 대상)
 ├── workspace/                # 에이전트 공용 작업 공간 (.gitignore 대상)
+├── data/                     # 화면에서 올린 파일 (에이전트 아이콘 등, .gitignore 대상)
+│   └── agent_icons/          # 업로드한 에이전트 아이콘 이미지
 ├── app/
 │   ├── main.py               # FastAPI + NiceGUI 실행 엔트리포인트
 │   ├── about.py              # 앱 이름·버전·저작자 (단일 출처)
@@ -111,7 +114,7 @@ MultiAgentOrchestrator/
 │   │   ├── client.py         # Stdio MCP Client 프로세스 관리자
 │   │   └── manager.py        # 도구 검색 및 Function Calling 디스패치
 │   ├── agents/               # 에이전트 및 LLM 계층
-│   │   ├── base.py           # Agent 모델 및 UI 스타일 매핑
+│   │   ├── base.py           # Agent 모델, 카드 색·아이콘 해석 및 폴백
 │   │   ├── personas.py       # 세션별 페르소나 해석·저장·고정
 │   │   ├── llm.py            # LiteLLM 호출기, Tool 루프, LLMUnavailableError
 │   │   └── pool.py           # 동적 에이전트 풀 레지스트리
@@ -128,10 +131,12 @@ MultiAgentOrchestrator/
 │           ├── sidebar.py    # 세션 히스토리 사이드바
 │           ├── roster.py     # 에이전트 로스터 및 토론 제어판
 │           ├── chat_feed.py  # 대화 타임라인 & MCP 도구 아코디언
+│           ├── agent_appearance.py # 카드 색·아이콘 편집기 (추가 다이얼로그 / 페르소나 편집 공용)
 │           └── artifact_viewer.py # 탭형 산출물 뷰어 (Code, Markdown, Mermaid)
 └── tests/                    # 자동화 테스트 스위트
     ├── test_config.py
     ├── test_personas.py       # 페르소나 편집 → 고정 → 재개 수명주기
+    ├── test_agent_appearance.py # 카드 색·아이콘 (업로드 → conf.json → 화면 → 스냅샷, 폴백)
     ├── test_agent_admin.py    # 에이전트 추가/비활성화/삭제 → conf.json 편집과 잠금 규칙
     ├── test_session_snapshot.py # 시작한 대화의 구성 스냅샷 (삭제·키 교체에도 자기완결)
     ├── test_speaker_selection.py # 오케스트레이터 지명 전략 (지명·해석·실패 시 물러서기)
@@ -215,7 +220,7 @@ pytest -v tests/
 |------|-----|
 | Author | Ha, Jaehee |
 | Email | lovesm135@naver.com |
-| Version | **v0.5.0** |
+| Version | **v0.5.1** |
 | License | LGPL-3.0-or-later ([LICENSE.md](LICENSE.md)) |
 
 버전 문자열의 정본은 [`app/about.py`](app/about.py) 한 곳입니다. FastAPI 메타데이터,
@@ -229,7 +234,7 @@ curl -s localhost:8000/api/health | python -m json.tool
 ```json
 {
   "status": "healthy",
-  "version": "v0.5.0",
+  "version": "v0.5.1",
   "author": { "name": "Ha, Jaehee", "email": "lovesm135@naver.com" }
 }
 ```
@@ -367,14 +372,16 @@ python docs/render_user_manual.py
 ### 시작한 대화는 자기완결적입니다
 
 첫 메시지가 굳히는 것은 인격만이 아닙니다. `AgentConfig` **전체** — 모델 · 엔드포인트 ·
-API 키 · 샘플링 값 · 도구 권한 · 단계적 사고 설정 — 가 `session_agents.config_snapshot`
-(JSON) 에 함께 기록됩니다. 그래서 대화는 이 순간부터 `conf.json` 에 의존하지 않습니다.
+API 키 · 샘플링 값 · 도구 권한 · 단계적 사고 설정 · 카드 색과 아이콘 — 가
+`session_agents.config_snapshot` (JSON) 에 함께 기록됩니다. 그래서 대화는 이 순간부터
+`conf.json` 에 의존하지 않습니다.
 
 | `conf.json` 에 한 일 | 시작한 대화 | 아직 시작하지 않은 대화 |
 |----------------------|-------------|--------------------------|
 | 에이전트 추가 | 영향 없음 (꺼진 채로 보이며, 원하면 직접 켤 수 있음) | 켜진 채로 참여 |
 | 에이전트 삭제 · 비활성화 | **영향 없음** — 그 에이전트는 굳은 구성으로 계속 발언하고, 로스터에 `이 대화 전용` 뱃지로 표시 | 풀에서 빠짐 |
 | 모델 · 엔드포인트 · 키 변경 | 영향 없음 | 즉시 반영 |
+| 카드 색 · 아이콘 변경 | 영향 없음 — 지난 발언 카드도 그때의 색 그대로 | 즉시 반영 |
 | 도구(`allowed_mcp_servers`) 변경 | 영향 없음 | 즉시 반영 |
 | MCP 서버 on/off · 삭제 | **영향 있음** — 서버 프로세스는 앱 전체가 공유합니다 | 영향 있음 |
 
@@ -480,6 +487,7 @@ API 키 · 샘플링 값 · 도구 권한 · 단계적 사고 설정 — 가 `se
 | 조작 | 어디서 | 저장되는 값 |
 |------|--------|-------------|
 | 에이전트 추가 | 헤더의 **에이전트 추가** 버튼 | `agents` 에 새 `<key>` 항목 |
+| 카드 색 · 아이콘 | **에이전트 추가** 다이얼로그 / **페르소나 편집** 화면 | `card_color` / `icon` |
 | 발언 순서 | 카드를 **끌어서** 배치 | `debate_priority` |
 | 디베이트 진영 | 카드의 **⋮ 메뉴** | `debate_stance` |
 | 비활성화 · 삭제 | 카드의 **⋮ 메뉴** | `enabled` / 섹션 제거 |
@@ -920,6 +928,8 @@ Get-Content MANIFEST.txt | Where-Object { $_ -notmatch '^#' } | ForEach-Object {
   "model": "openai/gpt-4o",
   "api_key": "${OPENAI_API_KEY}",
   "temperature": 0.2,
+  "card_color": "#0097a7",
+  "icon": "query_stats",
   "allowed_mcp_servers": ["filesystem"],
   "system_prompt": "데이터 파이프라인 설계 및 머신러닝 모델 아키텍처 검토를 전담합니다.",
   "sequential_thinking": {
@@ -930,3 +940,24 @@ Get-Content MANIFEST.txt | Where-Object { $_ -notmatch '^#' } | ForEach-Object {
 ```
 
 현재 각 에이전트가 어떤 모델/엔드포인트로 잡혔는지는 `GET /api/agents` 또는 UI 로스터 카드의 툴팁에서 확인할 수 있습니다.
+
+#### 카드 색과 아이콘 (`card_color` · `icon`)
+
+화면에 보이는 겉모습입니다. 둘 다 **적지 않아도 됩니다** — 그러면 예전처럼 에이전트 키에서
+자동으로 정해집니다 (`orchestrator`·`architect`·`coder`·`critic` 은 고정색, 그 밖의 키는
+키에서 결정되는 팔레트 색이라 언제 어느 PC 에서 열어도 같은 색입니다).
+
+| 항목 | 값 | 쓰이는 곳 |
+|---|---|---|
+| `card_color` | `"#0097a7"` 또는 Quasar 색 이름(`"teal-8"`) | 아바타 배경, 역할 뱃지, **로스터·채팅 카드 테두리** |
+| `icon` | 머티리얼 아이콘 이름(`"query_stats"`) 또는 이미지 경로 | 아바타 |
+
+- 두 값 모두 **에이전트 추가** 다이얼로그와 **페르소나 편집** 화면에서 고를 수 있고, 고른 값이
+  이 파일로 되돌아옵니다. 색은 견본 12색 중에서 고르거나 색상 선택기로 직접 지정합니다.
+- **이미지 업로드**를 쓰면 그림이 프로젝트 루트의 `data/agent_icons/` 로 복사되고(폴더가 없으면
+  생성), `icon` 에는 `data/agent_icons/<키>-<내용해시>.png` 같은 **상대 경로**만 적힙니다.
+  폴더째 다른 PC 로 옮겨도 그대로 맞습니다. png·jpg·gif·webp·svg·bmp·ico, 2MB 까지.
+- 그림을 찾을 수 없으면(지웠거나, 경로를 잘못 적었거나, 설정만 들고 옮겼거나) **기본 아이콘으로
+  조용히 물러섭니다.** 아바타가 깨진 이미지로 남지 않습니다.
+- 이 값들도 **대화를 시작하는 순간 함께 고정됩니다.** 나중에 색을 바꿔도 이미 시작한 대화의
+  카드는 그때의 색과 아이콘 그대로입니다 (`session_agents.card_color` / `icon_path`).

@@ -23,7 +23,8 @@ Agent.from_config(key, cfg)   # AgentConfig + 스타일 → Agent
 | 도구 | `allowed_mcp_servers`, `max_tool_iterations` |
 | 토론 | `debate_priority`, `debate_stance` |
 | 사고 | `sequential_thinking` |
-| UI | `avatar`, `color`, `badge_color` |
+| 겉모습 (설정값) | `card_color`, `icon` |
+| 겉모습 (해석된 값) | `avatar`, `color`, `badge_color` |
 
 ### 두 개의 파생 속성
 
@@ -41,18 +42,39 @@ def is_live(self) -> bool:
 없습니다.** `endpoint_label` 은 화면에 뜨는 요약이고, 미설정 시
 `"no endpoint configured"` 를 돌려줍니다.
 
-### 색이 키에서 결정되는 이유
+### 카드 색과 아이콘
 
-기본 4종(orchestrator / architect / coder / critic)은 고정 스타일 표가 있지만,
-화면에서 추가한 에이전트는 그 표에 없습니다. 전부 같은 회색 로봇으로 나오면
-피드에서 누가 말하는지 구분할 수 없으므로 팔레트에서 하나를 고릅니다.
+`style_for_agent(key, card_color, icon)` 하나가 화면에 나가는 세 값
+(`avatar` · `color` · `badge_color`)을 정합니다. 순서는 이렇습니다.
 
-```python
-CUSTOM_STYLE_PALETTE[zlib.crc32(key.encode("utf-8")) % len(CUSTOM_STYLE_PALETTE)]
-```
+1. **키에서 기본값을 정합니다.** 기본 4종(orchestrator / architect / coder / critic)은
+   고정 스타일 표가 있고, 그 밖의 키는 팔레트에서 하나를 고릅니다.
 
-**`crc32` 를 쓴 이유**: 파이썬의 문자열 `hash()` 는 실행마다 값이 달라집니다
-(해시 무작위화). 키가 같으면 언제 어느 프로세스에서 보든 같은 색이어야 합니다.
+   ```python
+   CUSTOM_STYLE_PALETTE[zlib.crc32(key.encode("utf-8")) % len(CUSTOM_STYLE_PALETTE)]
+   ```
+
+   **`crc32` 를 쓴 이유**: 파이썬의 문자열 `hash()` 는 실행마다 값이 달라집니다
+   (해시 무작위화). 키가 같으면 언제 어느 프로세스에서 보든 같은 색이어야 합니다.
+   화면에서 추가한 에이전트가 전부 같은 회색 로봇으로 나오면 피드에서 누가
+   말하는지 구분할 수 없기 때문에, 아무것도 고르지 않아도 색은 갈립니다.
+
+2. **`conf.json` 에 적힌 값이 그것을 덮습니다.** `card_color` 는 `#rrggbb` 이거나
+   Quasar 색 이름이고, `icon` 은 머티리얼 아이콘 이름이거나 이미지 경로입니다.
+   `badge_color` 는 그것을 CSS 로 쓸 수 있는 실제 색으로 푼 값입니다 — 테두리처럼
+   Quasar 클래스를 쓸 수 없는 자리에 필요합니다.
+
+### 아이콘 그림과 폴백
+
+`icon` 이 이미지 경로면 `resolve_agent_icon()` 이 프로젝트 루트 기준으로 풀고,
+파일이 실제로 있을 때만 `avatar` 가 `"img:/agent-icon?src=..."` 가 됩니다.
+그 밖의 모든 경우 — 파일이 없거나, 확장자가 이미지가 아니거나, 프로젝트 폴더
+바깥을 가리키거나 — 는 **1단계에서 정해진 아이콘으로 물러섭니다** (경고 로그).
+
+폴백이 한 자리(`_avatar_value`)에 모여 있는 이유는, 아바타가 빈 칸이나 깨진
+이미지로 남는 것이 설정 오류보다 훨씬 나쁘기 때문입니다. `/agent-icon` 라우트도
+같은 검사를 다시 하고, 실패하면 404 대신 기본 로봇 SVG 를 200 으로 내려줍니다 —
+화면이 이미 그려진 뒤에 파일이 지워지는 경우를 위해서입니다.
 
 ---
 

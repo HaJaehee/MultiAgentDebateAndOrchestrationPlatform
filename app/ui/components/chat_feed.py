@@ -164,6 +164,10 @@ class ChatFeed:
         self.budget_countdown: Optional[ui.label] = None
         self.budget_extend_button: Optional[ui.button] = None
         self.budget_icon: Optional[ui.icon] = None
+        # 이 대화의 에이전트별 색·아이콘. 잠긴 대화는 conf.json 이 아니라 그때
+        # 굳은 스냅샷의 겉모습으로 그려야, 나중에 색을 바꿔도 지난 기록이 그대로
+        # 남습니다. 비어 있으면 예전처럼 키에서 정해집니다.
+        self._agent_styles: Dict[str, Dict[str, Any]] = {}
         self.budget_wrap_up_button: Optional[ui.button] = None
         self.budget_buttons: Optional[ui.row] = None
         self._budget_request: Optional[Dict[str, Any]] = None
@@ -955,6 +959,27 @@ class ChatFeed:
         self._refresh_follow_button()
         self._scroll_to_bottom(force=True)
 
+    def set_agent_styles(self, agents: Optional[List[Any]]) -> None:
+        """이 대화의 에이전트 목록으로 카드 겉모습을 맞춥니다.
+
+        `Agent` 는 이미 conf.json 값(또는 잠긴 대화의 스냅샷)으로 색과 아이콘이
+        풀려 있으므로, 여기서는 키로 찾을 수 있게 옮겨 담기만 합니다.
+        """
+        self._agent_styles = {
+            a.key: {"avatar": a.avatar, "color": a.color, "badge_color": a.badge_color,
+                    "custom": bool(a.has_custom_appearance)}
+            for a in (agents or [])
+        }
+
+    def _style_for(self, sender_key: str) -> Dict[str, Any]:
+        """발언자 카드의 색·아이콘. 이 대화의 값이 있으면 그것을 먼저 씁니다."""
+        known = self._agent_styles.get(sender_key)
+        if known is not None:
+            return known
+        # conf.json 에 새로 추가한 에이전트는 이 표에 없습니다. 예전에는 그때
+        # 사용자 스타일로 떨어져, 에이전트 발언이 사용자 말풍선처럼 보였습니다.
+        return {**style_for_agent(sender_key), "custom": False}
+
     def _render_card(self, msg: Dict[str, Any], streaming: bool = False) -> Dict[str, Any]:
         """발언 카드 하나. 스트리밍 중이든 확정된 것이든 같은 모양입니다.
 
@@ -969,17 +994,21 @@ class ChatFeed:
         round_num = msg.get("round_number", 0)
         tool_calls = msg.get("tool_calls", [])
 
-        # conf.json 에 새로 추가한 에이전트는 이 표에 없습니다. 예전에는 그때
-        # 사용자 스타일로 떨어져, 에이전트 발언이 사용자 말풍선처럼 보였습니다.
-        style = style_for_agent(sender_key)
+        style = self._style_for(sender_key)
 
         # 버튼 핸들러가 이 딕셔너리를 통해 카드 상태를 봅니다. 카드를 다 그린 뒤에
         # 채우지만, 핸들러는 클릭될 때 읽으므로 지금 비어 있어도 됩니다.
         info: Dict[str, Any] = {}
 
-        with ui.card().classes(
+        card = ui.card().classes(
             f"w-full p-3.5 rounded-xl border {_card_classes(msg_type, sender_key)} shadow-md"
-        ) as card:
+        )
+        # 색을 직접 정한 에이전트는 말풍선 테두리도 그 색으로 칠합니다. 실패
+        # 안내(붉은 테두리)만은 덮지 않습니다 — 그 색이 곧 내용이기 때문입니다.
+        if style.get("custom") and msg_type != "error":
+            card.style(f"border-color: {style['badge_color']}")
+
+        with card:
             with ui.row().classes("w-full items-center justify-between mb-1.5"):
                 with ui.row().classes("items-center gap-2"):
                     ui.avatar(style["avatar"], color=style["color"], text_color="white", size="sm")

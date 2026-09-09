@@ -34,6 +34,7 @@ from app.orchestration.strategies import (
     order_by_priority,
     resolve_strategy_name,
 )
+from app.ui.components.agent_appearance import AgentAppearanceEditor
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,10 @@ class AgentRosterControl:
         self.workspace_hint: Optional[ui.label] = None
         self.workspace_apply_btn: Optional[ui.button] = None
         self.current_personas: Optional[Dict[str, Any]] = None
+        # 카드를 다시 그릴 때마다 불립니다. 채팅 피드가 같은 겉모습(색·아이콘)으로
+        # 발언을 그리게 하는 통로입니다 — 두 화면이 각자 conf.json 을 읽으면
+        # 잠긴 대화에서 갈라집니다.
+        self.on_roster_changed: Optional[Callable[[List[Agent]], None]] = None
 
     @property
     def alive(self) -> bool:
@@ -415,6 +420,10 @@ class AgentRosterControl:
             + [a for a in ordered if a.key != ORCHESTRATOR_KEY]
         )
 
+    def roster_agents(self) -> List[Agent]:
+        """이 대화의 로스터에 보이는 에이전트 (발언 순서대로)."""
+        return self._roster_agents()
+
     def set_session_agents(self, agents: Optional[List[Agent]]) -> None:
         """이 대화가 실제로 쓰는 에이전트 목록을 갈아 끼웁니다 (잠긴 대화의 스냅샷)."""
         self.session_agents = list(agents) if agents else None
@@ -426,14 +435,17 @@ class AgentRosterControl:
         if personas is not None:
             self.current_personas = personas
         self.agent_pool = get_agent_pool()
+        agents = self._roster_agents()
         self.cards_row.clear()
         with self.cards_row:
-            for ag in self._roster_agents():
+            for ag in agents:
                 p = self.current_personas.get(ag.key) if self.current_personas else None
                 self._build_agent_card(ag, persona=p)
         self._refresh_disabled_agents()
         self._refresh_agent_admin_controls()
         self._refresh_order_preview()
+        if self.on_roster_changed is not None:
+            self.on_roster_changed(agents)
 
     def _speaking_order(self) -> List[Agent]:
         """지금 설정으로 한 라운드를 돌면 나올 발언 순서.
@@ -543,6 +555,11 @@ class AgentRosterControl:
             card_cls += " cursor-grab"
 
         card = ui.card().classes(card_cls)
+        # 색을 직접 정한 에이전트는 테두리도 그 색으로 칠합니다. 정하지 않았으면
+        # 예전 그대로 (켜짐=인디고 / 꺼짐=회색) 둡니다 — 로스터에서 활성 여부를
+        # 읽는 것이 먼저이고, 색은 그 위에 얹는 표시입니다.
+        if is_active and (agent.card_color or "").strip():
+            card.style(f"border-color: {agent.badge_color}")
         if reorderable:
             card.props('draggable="true"')
             # 서버로 가는 것은 드래그 한 번에 세 번뿐입니다 (시작·놓기·끝).
@@ -1229,6 +1246,15 @@ class AgentRosterControl:
                     "발언 순서는 목록의 맨 뒤에 붙습니다. 추가한 뒤 카드를 끌어서 바꾸세요."
                 ).classes("text-[10px] text-slate-500 -mt-1 leading-snug")
 
+                ui.label("카드 색 & 아이콘").classes(
+                    "text-[11px] font-semibold text-slate-400 mt-1"
+                )
+                # 키를 함수로 넘깁니다. 그림을 올리는 시점의 키가 파일 이름이 되는데,
+                # 이 다이얼로그에서는 그 키를 지금 입력하는 중입니다.
+                appearance = AgentAppearanceEditor(
+                    lambda: (key_in.value or "").strip()
+                )
+
                 ui.label("페르소나 (시스템 프롬프트)").classes(
                     "text-[11px] font-semibold text-slate-400 mt-1"
                 )
@@ -1377,6 +1403,8 @@ class AgentRosterControl:
                         overrides=overrides,
                         sequential_thinking=thinking,
                         debate_stance=stance_in.value or "neutral",
+                        card_color=appearance.card_color,
+                        icon=appearance.icon,
                         config_path=self._conf_path(),
                     ),
                     f"'{name}' 에이전트를 추가했습니다."

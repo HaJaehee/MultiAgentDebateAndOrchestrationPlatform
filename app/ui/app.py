@@ -540,6 +540,15 @@ def create_ui() -> None:
         )
         artifact_viewer = ArtifactViewer()
 
+        # 로스터가 카드를 다시 그릴 때마다 채팅 피드도 같은 겉모습을 받습니다.
+        # 잠긴 대화에서는 이 값이 conf.json 이 아니라 그때 굳은 스냅샷에서 오므로,
+        # 나중에 색이나 아이콘을 바꿔도 지난 발언은 그대로 남습니다.
+        roster_control.on_roster_changed = chat_feed.set_agent_styles
+        # 첫 화면은 카드를 곧바로 그리므로 (`build_ui`) 위 콜백을 거치지 않습니다.
+        # 여기서 한 번 맞춰 두지 않으면 대화를 하나 열기 전까지 발언 카드만
+        # 기본 색으로 나옵니다.
+        chat_feed.set_agent_styles(roster_control.roster_agents())
+
         # ------------------------------------------------------------ 정보 창
 
         # 다이얼로그는 페이지를 만들 때 **한 번만** 짓고, 버튼은 열기만 합니다.

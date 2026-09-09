@@ -16,7 +16,7 @@ FastAPI 엔드포인트는 **조회 전용**입니다. 토론 진행과 설정 �
 ```json
 {
   "status": "healthy",
-  "version": "v0.5.0",
+  "version": "v0.5.1",
   "author": { "name": "Ha, Jaehee", "email": "lovesm135@naver.com" },
   "app": { "host": "127.0.0.1", "port": 8000, "debug": true },
   "registered_agents": ["orchestrator", "architect", "coder", "critic"]
@@ -48,7 +48,9 @@ FastAPI 메타데이터, 화면 헤더 뱃지, 정보 모달(우측 상단 **ⓘ
     "temperature": 0.5,
     "max_tokens": 4096,
     "sequential_thinking": { "enabled": true, "mode": "prompt", "max_steps": 5, "show_steps": true },
-    "allowed_mcp_servers": ["filesystem", "memory", "fetch"]
+    "allowed_mcp_servers": ["filesystem", "memory", "fetch"],
+    "card_color": "#009688",
+    "icon": "account_tree"
   }
 ]
 ```
@@ -58,11 +60,29 @@ FastAPI 메타데이터, 화면 헤더 뱃지, 정보 모달(우측 상단 **ⓘ
 | `mode` | `live` = 실제 호출 가능 / `unconfigured` = 발언 차례에 실패 |
 | `has_api_key` | 키가 설정되어 있는지 (값은 아님) |
 | `sequential_thinking` | `prompt_template` 은 제외 (길어서) |
+| `card_color` · `icon` | 화면 카드의 색과 아이콘. `null` 이면 에이전트 키에서 자동 |
 
 **설정이 제대로 먹었는지 확인하는 가장 빠른 방법**입니다.
 
 ```bash
 curl -s localhost:8000/api/agents | python -m json.tool | grep -E '"key"|"mode"|"model"'
+```
+
+---
+
+## `GET /agent-icon?src=<경로>`
+
+에이전트 아이콘 이미지. `src` 는 `conf.json` 의 `agents.<키>.icon` 에 적힌
+경로입니다 (보통 `data/agent_icons/<키>-<해시>.png`).
+
+- 내려주는 것은 **프로젝트 폴더 안의 이미지 파일** 뿐입니다. 경로가 설정에서
+  오는 값이라, 그 밖(`../..`, 절대 경로)이나 이미지가 아닌 파일을 가리키면
+  파일을 읽어 주지 않습니다.
+- 못 찾아도 **404 가 아니라 기본 로봇 SVG 를 200 으로** 돌려줍니다. 화면은 이미
+  그려진 뒤이고, 여기서 실패하면 아바타 자리가 깨진 이미지로 남습니다.
+
+```bash
+curl -si 'localhost:8000/agent-icon?src=data/agent_icons/critic-0491a7c46f.png' | head -3
 ```
 
 ---

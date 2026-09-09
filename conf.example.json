@@ -342,10 +342,21 @@
       ]
     },
 
-    "// critic": "4. 크리티컬 리뷰어 에이전트",
+    "// critic": [
+      "4. 크리티컬 리뷰어 에이전트",
+      "card_color / icon 은 화면의 에이전트 카드 겉모습입니다. 적지 않으면 에이전트 키에서",
+      "자동으로 정해집니다. 두 값 모두 '에이전트 추가' 와 '페르소나 편집' 화면에서 고를 수",
+      "있고, 고른 값이 이 파일로 되돌아옵니다.",
+      "  card_color: '#rrggbb' 또는 Quasar 색 이름('teal-8'). 아바타와 카드 테두리에 쓰입니다.",
+      "  icon: 머티리얼 아이콘 이름('security') 또는 그림 경로. 화면에서 올린 그림은",
+      "        루트의 data/agent_icons/ 로 복사되고 그 상대 경로가 여기 적힙니다.",
+      "        그림을 찾을 수 없으면 기본 아이콘으로 안전하게 물러섭니다."
+    ],
     "critic": {
       "name": "Security & Quality Critic",
       "role": "Code Review & Edge Case Analysis",
+      "card_color": "#ff8f00",
+      "icon": "security",
       "model": "${CRITIC_MODEL:-${LLM_MODEL:-google/gemini-1.5-pro}}",
       "api_base": "${CRITIC_API_BASE}",
       "api_key": "${GEMINI_API_KEY}",

@@ -9,7 +9,7 @@
 ```text
 MultiAgentOrchestrator/
 ├── app/                      애플리케이션 소스
-├── tests/                    테스트 (249개)
+├── tests/                    테스트 (528개)
 ├── wiki/                     영문 기술 위키
 ├── docs/
 │   ├── user_manual/          이 문서 모음 (마크다운)
@@ -33,8 +33,8 @@ MultiAgentOrchestrator/
 └── CLAUDE.md                 프로젝트 명세서
 ```
 
-생성물 (gitignore): `workspace/`, `multiagent.db`, `mcp_node/`, `mcp_sandbox/`,
-`dist/`, `docs/user_manual_html/`
+생성물 (gitignore): `workspace/`, `data/`(올린 에이전트 아이콘), `multiagent.db`,
+`mcp_node/`, `mcp_sandbox/`, `dist/`, `docs/user_manual_html/`
 
 ---
 
@@ -42,45 +42,50 @@ MultiAgentOrchestrator/
 
 ```text
 app/
-├── about.py                    ~25   앱 이름·버전·저작자 (단일 출처)
-├── main.py                   195   FastAPI 앱, lifespan, /api/*, CLI 진입점
-├── config.py               1,035   conf.json 로더·기록기, 환경변수 치환, Pydantic
-├── export.py                 201   대화 → 마크다운 문서
+├── about.py                   22   앱 이름·버전·저작자 (단일 출처)
+├── main.py                   303   FastAPI 앱, lifespan, /api/*, /agent-icon, CLI 진입점
+├── config.py               1,285   conf.json 로더·기록기, 환경변수 치환, 아이콘 저장소, Pydantic
+├── session_ops.py            335   세션 생성·삭제·이어받기
+├── export.py                 206   대화 → 마크다운 문서
+├── export_mermaid.py       1,618   Mermaid → SVG/PNG 렌더러 (외부 의존 없음)
+├── mermaid_lint.py           323   다이어그램 문법 검사·복구
 │
 ├── agents/
-│   ├── base.py                94   Agent 모델, 스타일 배정
+│   ├── base.py               207   Agent 모델, 카드 색·아이콘 해석과 폴백
 │   ├── pool.py                78   AgentPool 레지스트리
-│   ├── llm.py                401   LiteLLM 호출, 도구 루프, 컨텍스트 관리
-│   └── personas.py           382   세션별 인격, 구성 스냅샷
+│   ├── llm.py              1,140   LiteLLM 호출, 도구 루프, 컨텍스트 관리
+│   └── personas.py           415   세션별 인격·겉모습, 구성 스냅샷
 │
 ├── mcp/
-│   ├── manager.py            431   서버 수명, 도구 색인, 작업 공간 전환
-│   └── client.py             561   stdio 세션, 도구 검색·실행, stderr 갈무리
+│   ├── manager.py            563   서버 수명, 도구 색인, 작업 공간 전환
+│   └── client.py             780   stdio 세션, 도구 검색·실행, stderr 갈무리
 │
 ├── orchestration/
-│   ├── engine.py           1,060   계획 → 라운드 → 합성 상태 머신
-│   ├── runner.py             386   백그라운드 태스크, 이벤트 팬아웃
-│   ├── strategies.py         231   토론 전략 3종
-│   ├── state.py               47   DebateState, DebateMessage, ArtifactItem
-│   └── control.py             59   정지 요청 / 개입 메모 우편함
+│   ├── engine.py           2,004   계획 → 라운드 → 합성 상태 머신
+│   ├── runner.py             615   백그라운드 태스크, 이벤트 팬아웃
+│   ├── strategies.py         281   토론 전략 4종
+│   ├── control.py            332   정지·개입·예산 물음 우편함
+│   └── state.py               53   DebateState, DebateMessage, ArtifactItem
 │
 ├── database/
-│   ├── models.py             132   SQLAlchemy ORM (5개 테이블)
-│   └── session.py             79   비동기 엔진·세션 팩토리, init_db
+│   ├── models.py             144   SQLAlchemy ORM (5개 테이블)
+│   └── session.py             85   비동기 엔진·세션 팩토리, init_db, 컬럼 이관
 │
 └── ui/
-    ├── app.py                516   메인 페이지 조립
-    ├── personas_page.py      293   /personas/{id}
-    ├── theme.py              170   색·아이콘·파비콘
+    ├── app.py                784   메인 페이지 조립
+    ├── personas_page.py      347   /personas/{id}
+    ├── theme.py              246   색·아이콘·파비콘
+    ├── mermaid_export.py     333   다이어그램 내려받기
     ├── clipboard.py           43   클립보드 복사
     └── components/
-        ├── roster.py       1,851   에이전트 카드, MCP 칩, 전역 설정 편집
-        ├── chat_feed.py      530   토론 피드, 발언 카드, 도구 아코디언
-        ├── sidebar.py        344   세션 목록, 생성/이름변경/삭제
-        └── artifact_viewer.py 180  산출물 탭, 복사/다운로드
+        ├── roster.py       2,128   에이전트 카드, MCP 칩, 전역 설정 편집
+        ├── chat_feed.py    1,157   토론 피드, 발언 카드, 도구 아코디언
+        ├── sidebar.py        429   세션 목록, 생성/이름변경/삭제
+        ├── artifact_viewer.py 313  산출물 탭, 복사/다운로드
+        └── agent_appearance.py 257 카드 색·아이콘 편집기 (추가 / 페르소나 편집 공용)
 ```
 
-총 9,373줄.
+총 16,902줄.
 
 ---
 
@@ -94,6 +99,7 @@ app/
 | LLM 호출 파라미터 | `agents/llm.py` (`build_completion_kwargs`) |
 | MCP 서버 다루는 방식 | `mcp/manager.py` |
 | 발언 카드 모양 | `ui/components/chat_feed.py` |
+| 에이전트 카드 색·아이콘 | `agents/base.py` (해석·폴백) · `ui/components/agent_appearance.py` (편집기) |
 | 로스터 컨트롤 | `ui/components/roster.py` |
 | 산출물 렌더링 | `ui/components/artifact_viewer.py` |
 | 내보내기 형식 | `export.py` |
@@ -105,12 +111,12 @@ app/
 
 ## 큰 파일 두 개
 
-**`roster.py` (1,851줄)** — 로스터 패널 하나가 이 시스템에서 가장 많은 것을
+**`roster.py` (2,128줄)** — 로스터 패널 하나가 이 시스템에서 가장 많은 것을
 합니다. 대화 설정(참여 토글, 전략, 라운드, 작업 공간)과 전역 설정(에이전트
-추가·삭제·순서·진영·도구, MCP 서버)을 한 화면에서 다루고, 그 둘의 잠금 규칙이
-서로 다릅니다.
+추가·삭제·순서·진영·도구·겉모습, MCP 서버)을 한 화면에서 다루고, 그 둘의 잠금
+규칙이 서로 다릅니다.
 
-**`engine.py` (1,060줄)** — 토론 한 턴의 전 과정. 계획, 발언자 선정, 라운드
+**`engine.py` (2,004줄)** — 토론 한 턴의 전 과정. 계획, 발언자 선정, 라운드
 루프, 도구 실행 기록, 합성, 아티팩트 추출.
 
 ---

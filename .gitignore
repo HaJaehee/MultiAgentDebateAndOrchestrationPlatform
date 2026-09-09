@@ -40,6 +40,8 @@ htmlcov/
 *.sqlite3
 *.log
 workspace/
+# 화면에서 올린 에이전트 아이콘. 사람마다 다른 로컬 자료입니다.
+data/
 # MCP 서버 설치본 (npm install / git clone 으로 로컬에 생성)
 mcp_node/
 mcp_sandbox/

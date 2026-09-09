@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.base import Agent
+from app.agents.base import Agent, style_for_agent
 from app.agents.pool import AgentPool
 from app.config import AgentConfig
 from app.database.models import SessionAgentModel, SessionModel
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 # 세션별로 편집할 수 있는 항목. 나머지 운영 설정은 conf.json 이 정본이되, 대화를
 # 잠그는 순간 `config_snapshot` 으로 함께 굳습니다.
-EDITABLE_FIELDS = ("name", "role", "system_prompt")
+EDITABLE_FIELDS = ("name", "role", "system_prompt", "card_color", "icon")
 
 
 class PersonasLockedError(RuntimeError):
@@ -63,6 +63,10 @@ class AgentPersona(BaseModel):
     name: str
     role: str
     system_prompt: str = ""
+    # 카드 색과 아이콘. 인격과 같은 수명을 갖습니다 — 대화가 잠기면 함께 굳고,
+    # 그 뒤 conf.json 에서 색을 바꿔도 이 대화의 기록은 그대로입니다.
+    card_color: str = ""
+    icon: str = ""
     # conf.json 기본값과 다른지 여부 (UI 표시용).
     # "저장된 행이 있는가" 가 아니라 "값이 실제로 다른가" 입니다. 세션을 잠글 때
     # 손대지 않은 에이전트까지 전부 스냅샷되므로, 행의 존재만으로는 판단할 수 없습니다.
@@ -81,6 +85,8 @@ def persona_from_agent(agent: Agent) -> AgentPersona:
         name=agent.name,
         role=agent.role,
         system_prompt=agent.system_prompt or "",
+        card_color=agent.card_color or "",
+        icon=agent.icon or "",
     )
 
 
@@ -105,6 +111,8 @@ def _persona_from_row(row: SessionAgentModel) -> AgentPersona:
         name=row.name,
         role=row.role,
         system_prompt=row.system_prompt or "",
+        card_color=row.card_color or "",
+        icon=row.icon_path or "",
     )
 
 
@@ -138,6 +146,8 @@ async def save_persona(
     name: str,
     role: str,
     system_prompt: str,
+    card_color: str = "",
+    icon: str = "",
 ) -> AgentPersona:
     """페르소나 초안을 저장합니다. 잠긴 세션이면 거부합니다."""
     if session_model.personas_locked:
@@ -157,13 +167,19 @@ async def save_persona(
     row.name = name.strip()
     row.role = role.strip()
     row.system_prompt = system_prompt.strip()
+    row.card_color = (card_color or "").strip()
+    row.icon_path = (icon or "").strip()
     await db.commit()
 
     logger.info(f"Persona saved for session={session_model.id} agent={agent_key}")
-    saved = AgentPersona(
-        agent_key=agent_key, name=row.name, role=row.role, system_prompt=row.system_prompt
+    return AgentPersona(
+        agent_key=agent_key,
+        name=row.name,
+        role=row.role,
+        system_prompt=row.system_prompt,
+        card_color=row.card_color,
+        icon=row.icon_path,
     )
-    return saved
 
 
 async def reset_persona(db: AsyncSession, session_model: SessionModel, agent_key: str) -> None:
@@ -209,12 +225,19 @@ async def freeze_personas(
                 name=persona.name,
                 role=persona.role,
                 system_prompt=persona.system_prompt,
+                card_color=persona.card_color,
+                icon_path=persona.icon,
             )
             db.add(row)
         # 초안이 이미 있으면 인격은 그대로 두고 운영 설정만 굳힙니다.
         agent = live.get(key)
         if agent is not None:
-            row.config_snapshot = config_snapshot_of(_with_persona(agent, persona))
+            merged = _with_persona(agent, persona)
+            row.config_snapshot = config_snapshot_of(merged)
+            # 카드 색·아이콘은 컬럼에도 함께 굳힙니다. 손대지 않은 에이전트는
+            # 지금 conf.json 값이 그대로 이 대화의 겉모습이 됩니다.
+            row.card_color = merged.card_color or ""
+            row.icon_path = merged.icon or ""
 
     session_model.personas_locked = True
     await db.commit()
@@ -228,11 +251,18 @@ def _with_persona(agent: Agent, persona: Optional[AgentPersona]) -> Agent:
     """에이전트에 페르소나를 입힌 사본 (원본은 건드리지 않습니다)."""
     if persona is None:
         return agent
+    card_color = persona.card_color or agent.card_color or ""
+    icon = persona.icon or agent.icon or ""
+    # 색·아이콘을 바꿨으면 그것을 푼 값(`avatar` / `color` / `badge_color`)도 함께
+    # 바꿔야 합니다. 이 사본이 그대로 화면으로 나가기 때문입니다.
     return agent.model_copy(
         update={
             "name": persona.name or agent.name,
             "role": persona.role or agent.role,
             "system_prompt": persona.system_prompt or agent.system_prompt,
+            "card_color": card_color or None,
+            "icon": icon or None,
+            **style_for_agent(agent.key, card_color, icon),
         }
     )
 
@@ -248,7 +278,10 @@ def apply_personas(agents: List[Agent], personas: Dict[str, AgentPersona]) -> Li
 def config_snapshot_of(agent: Agent) -> Dict[str, Any]:
     """`Agent` 에서 `AgentConfig` 로 되돌릴 수 있는 값만 JSON 으로 뽑습니다.
 
-    아바타·색 같은 화면용 값은 키에서 다시 만들 수 있으므로 담지 않습니다.
+    사람이 정한 카드 색(`card_color`)과 아이콘(`icon`)은 여기 담깁니다 — 이 대화가
+    그 겉모습으로 기록되었기 때문입니다. 반면 그것을 화면용으로 푼 값
+    (`avatar` / `color` / `badge_color`)은 담지 않습니다. 앞의 둘에서 언제든 다시
+    만들 수 있고, 오히려 파일 경로가 두 군데에 적히는 편이 위험합니다.
     """
     config = AgentConfig.model_validate(
         {field: getattr(agent, field) for field in AgentConfig.model_fields}

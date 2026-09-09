@@ -5,7 +5,7 @@
 """
 
 import logging
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from nicegui import ui
 from sqlalchemy import func, select
@@ -22,10 +22,14 @@ from app.agents.personas import (
     session_roster_agents,
 )
 from app.agents.pool import get_agent_pool
-from app.config import update_agent_persona_in_conf_file
+from app.config import (
+    update_agent_appearance_in_conf_file,
+    update_agent_persona_in_conf_file,
+)
 from app.database.models import MessageModel, SessionModel
 from app.database.session import get_session_factory
 from app.orchestration.runner import get_debate_runner
+from app.ui.components.agent_appearance import AgentAppearanceEditor
 from app.ui.theme import CUSTOM_CSS, FAVICON_SVG
 
 logger = logging.getLogger(__name__)
@@ -60,7 +64,7 @@ def create_personas_page() -> None:
             )
 
         defaults = default_personas(pool)
-        inputs: Dict[str, Dict[str, ui.element]] = {}
+        inputs: Dict[str, Dict[str, Any]] = {}
 
         # ---------------- 헤더 ----------------
         with ui.header().classes(
@@ -163,6 +167,7 @@ def create_personas_page() -> None:
             name = (fields["name"].value or "").strip()
             role = (fields["role"].value or "").strip()
             prompt = (fields["system_prompt"].value or "").strip()
+            look: AgentAppearanceEditor = fields["appearance"]
 
             if not name:
                 ui.notify("이름은 비울 수 없습니다.", type="warning", position="bottom-right")
@@ -174,7 +179,10 @@ def create_personas_page() -> None:
                     ui.notify("세션을 찾을 수 없습니다.", type="negative", position="bottom-right")
                     return
                 try:
-                    await save_persona(db, current, agent_key, name, role, prompt)
+                    await save_persona(
+                        db, current, agent_key, name, role, prompt,
+                        card_color=look.card_color, icon=look.icon,
+                    )
                 except PersonasLockedError:
                     ui.notify(
                         "토론이 이미 시작되어 저장할 수 없습니다. 페이지를 새로고침하세요.",
@@ -184,7 +192,10 @@ def create_personas_page() -> None:
                     return
 
             try:
+                # 인격을 먼저 적습니다. 이 대화에만 있던 에이전트라면 그때
+                # `agents.<키>` 블록이 만들어지고, 겉모습은 그 위에 얹힙니다.
                 update_agent_persona_in_conf_file(agent_key, name, role, prompt)
+                update_agent_appearance_in_conf_file(agent_key, look.card_color, look.icon)
                 pool.reload()
             except Exception as exc:
                 logger.warning(f"conf.json 업데이트 실패: {exc}")
@@ -213,6 +224,7 @@ def create_personas_page() -> None:
             fields["name"].value = base.name
             fields["role"].value = base.role
             fields["system_prompt"].value = base.system_prompt
+            fields["appearance"].set_values(base.card_color, base.icon)
             fields["badge"].set_visibility(False)
             ui.notify("conf.json 기본값으로 되돌렸습니다.", type="info", position="bottom-right")
 
@@ -226,16 +238,24 @@ def _build_agent_card(
     locked: bool,
     on_save,
     on_reset,
-) -> Dict[str, ui.element]:
-    style = style_for_agent(agent_key)
-    fields: Dict[str, ui.element] = {}
+) -> Dict[str, Any]:
+    style = style_for_agent(agent_key, persona.card_color, persona.icon)
+    fields: Dict[str, Any] = {}
 
-    with ui.card().classes(
+    card = ui.card().classes(
         "w-full bg-slate-900 border border-slate-800 p-4 rounded-xl shadow-md gap-3"
-    ):
+    )
+    # 목록에서 어느 카드가 어느 에이전트인지 색으로 바로 읽히게, 사람이 색을
+    # 정한 에이전트는 테두리도 그 색으로 칠합니다.
+    if (persona.card_color or "").strip():
+        card.style(f"border-color: {style['badge_color']}")
+
+    with card:
         with ui.row().classes("w-full items-center justify-between no-wrap"):
             with ui.row().classes("items-center gap-2.5 min-w-0"):
-                ui.avatar(style["avatar"], color=style["color"], text_color="white", size="sm")
+                header_avatar = ui.element("div").classes("flex-shrink-0")
+                with header_avatar:
+                    ui.avatar(style["avatar"], color=style["color"], text_color="white", size="sm")
                 with ui.column().classes("gap-0 min-w-0"):
                     ui.label(agent_key).classes("text-xs font-mono text-slate-500")
                     ui.label(model_label).classes("text-[10px] text-slate-500 truncate")
@@ -267,6 +287,22 @@ def _build_agent_card(
             .classes("w-full text-xs font-mono")
         )
 
+        with ui.row().classes("w-full items-center gap-1.5 mt-1"):
+            ui.icon("palette", size="xs").classes("text-slate-500")
+            ui.label("카드 색 & 아이콘").classes(
+                "text-[11px] font-semibold text-slate-400"
+            )
+        appearance = AgentAppearanceEditor(
+            agent_key,
+            card_color=persona.card_color,
+            icon=persona.icon,
+            enabled=not locked,
+            # 머리글의 아바타와 카드 테두리도 고르는 즉시 따라갑니다. 저장하기
+            # 전에 결과를 볼 수 없으면 색을 고르는 일이 시행착오가 됩니다.
+            on_change=lambda: _repaint_card_header(card, header_avatar, agent_key, appearance),
+        )
+        fields["appearance"] = appearance
+
         with ui.row().classes("w-full items-center justify-between"):
             ui.label(f"엔드포인트: {endpoint_label}").classes("text-[10px] text-slate-500 truncate")
             if not locked:
@@ -281,6 +317,24 @@ def _build_agent_card(
                     ).classes("text-xs px-3")
 
     return fields
+
+
+def _repaint_card_header(
+    card: ui.card,
+    avatar_slot: ui.element,
+    agent_key: str,
+    appearance: "AgentAppearanceEditor",
+) -> None:
+    """편집기에서 고른 값으로 카드 머리글의 아바타와 테두리를 다시 칠합니다."""
+    style = style_for_agent(agent_key, appearance.card_color, appearance.icon)
+    if not avatar_slot.is_deleted:
+        avatar_slot.clear()
+        with avatar_slot:
+            ui.avatar(style["avatar"], color=style["color"], text_color="white", size="sm")
+    if not card.is_deleted:
+        card.style(
+            replace=f"border-color: {style['badge_color']}" if appearance.card_color else ""
+        )
 
 
 def _render_missing_session(session_id: str) -> None:

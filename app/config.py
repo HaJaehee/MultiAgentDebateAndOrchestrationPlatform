@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 import os
 import re
@@ -66,6 +67,84 @@ def resolve_workspace_dir(value: Optional[str] = None) -> Path:
 
 
 os.environ["WORKSPACE_DIR"] = str(resolve_workspace_dir(os.environ.get("WORKSPACE_DIR")))
+
+
+# ---------------------------------------------------------------------------
+# data/ — 화면에서 올린 파일이 놓이는 곳
+# ---------------------------------------------------------------------------
+#
+# 작업 공간과 달리 이 폴더는 앱이 소유합니다. 에이전트가 만든 산출물이 아니라,
+# 사람이 설정으로 올린 것(지금은 에이전트 아이콘)만 들어갑니다. cwd 가 아니라
+# run_mado 가 있는 프로젝트 루트를 기준으로 삼아, 어디서 띄우든 같은 곳입니다.
+DATA_DIR = PROJECT_ROOT / "data"
+AGENT_ICON_DIR = DATA_DIR / "agent_icons"
+
+# 올릴 수 있는 아이콘. 브라우저가 아바타에 그릴 수 있는 것만 받습니다.
+ICON_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico"}
+MAX_ICON_BYTES = 2 * 1024 * 1024
+
+# 파일 이름은 우리가 짓습니다 (`<키>-<내용해시>.<확장자>`). 올린 쪽 이름을 그대로
+# 쓰면 경로 조작과 이름 충돌을 각각 따로 막아야 하는데, 지어 주면 둘 다 없습니다.
+SAFE_ICON_NAME = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def agent_icon_dir(create: bool = True) -> Path:
+    """올린 에이전트 아이콘이 놓이는 폴더. 없으면 만듭니다."""
+    if create:
+        AGENT_ICON_DIR.mkdir(parents=True, exist_ok=True)
+    return AGENT_ICON_DIR
+
+
+def store_agent_icon(agent_key: str, filename: str, content: bytes) -> str:
+    """올린 이미지를 `data/agent_icons/` 에 복사하고 conf.json 에 적을 경로를 돌려줍니다.
+
+    돌려주는 값은 **프로젝트 루트 기준 상대 경로**입니다. 폴더를 통째로 옮기거나
+    다른 PC 에 풀어도 설정이 그대로 맞습니다.
+
+    이름은 내용 해시로 짓습니다. 같은 그림을 두 번 올리면 같은 파일이 되고, 다른
+    그림이 같은 이름으로 덮어써지는 일도 없습니다.
+    """
+    if not content:
+        raise ValueError("빈 파일입니다.")
+    if len(content) > MAX_ICON_BYTES:
+        raise ValueError(
+            f"아이콘은 {MAX_ICON_BYTES // (1024 * 1024)}MB 까지만 올릴 수 있습니다 "
+            f"(올린 파일: {len(content) / (1024 * 1024):.1f}MB)."
+        )
+
+    suffix = Path(filename or "").suffix.lower()
+    if suffix not in ICON_EXTENSIONS:
+        raise ValueError(
+            f"'{suffix or filename}' 은 쓸 수 없는 형식입니다. "
+            f"{', '.join(sorted(ICON_EXTENSIONS))} 중 하나를 올리세요."
+        )
+
+    stem = "".join(SAFE_ICON_NAME.findall(agent_key or "")) or "agent"
+    digest = hashlib.sha1(content).hexdigest()[:10]
+    target = agent_icon_dir() / f"{stem}-{digest}{suffix}"
+    target.write_bytes(content)
+    return target.relative_to(PROJECT_ROOT).as_posix()
+
+
+def resolve_agent_icon(value: Optional[str]) -> Optional[Path]:
+    """conf.json 에 적힌 아이콘 경로를 실제 파일로 풉니다. 없으면 None.
+
+    None 이 곧 폴백 신호입니다 — 파일이 지워졌거나 경로가 틀렸거나 애초에 그림이
+    아닌 (머티리얼 아이콘 이름) 값이면, 부르는 쪽이 기본 아이콘으로 물러섭니다.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    try:
+        path = path.resolve()
+    except OSError:
+        return None
+    if path.suffix.lower() not in ICON_EXTENSIONS:
+        return None
+    return path if path.is_file() else None
 
 
 def _substitute_env(text: str) -> str:
@@ -408,13 +487,28 @@ class AgentConfig(BaseModel):
     )
     sequential_thinking: SequentialThinkingConfig = Field(default_factory=SequentialThinkingConfig)
     system_prompt: str = Field(default="", description="Base system instructions")
+    # 화면에서 고르는 겉모습. 비어 있으면 에이전트 키에서 색과 아이콘을 정하던
+    # 예전 규칙 (`style_for_agent`) 이 그대로 적용됩니다.
+    card_color: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("card_color", "color"),
+        description="Agent card accent colour: '#rrggbb' or a Quasar palette name",
+    )
+    # 머티리얼 아이콘 이름 ('psychology') 이거나, 올린 그림의 경로
+    # ('data/agent_icons/coder-1a2b3c4d5e.png'). 경로는 프로젝트 루트 기준입니다.
+    icon: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("icon", "avatar", "icon_path"),
+        description="Material icon name, or path to an uploaded icon image",
+    )
 
     @field_validator("system_prompt", mode="before")
     @classmethod
     def _join_prompt_lines(cls, v: Any) -> Any:
         return join_text_lines(v)
 
-    @field_validator("api_key", "api_base", "api_version", "provider", mode="before")
+    @field_validator("api_key", "api_base", "api_version", "provider", "card_color", "icon",
+                     mode="before")
     @classmethod
     def _blank_to_none(cls, v: Any) -> Any:
         """Unresolved env vars ('${LLM_API_BASE}' with no value) resolve to '' -> treat as unset."""
@@ -757,6 +851,45 @@ def update_agent_persona_in_conf_file(
     reload_config_if_active(path)
 
 
+def update_agent_appearance_in_conf_file(
+    agent_key: str,
+    card_color: Optional[str],
+    icon: Optional[str],
+    config_path: str | Path = DEFAULT_CONFIG_PATH,
+) -> None:
+    """`agents.<agent_key>` 의 card_color / icon 을 갱신합니다.
+
+    빈 값은 항목을 지웁니다 — "기본값으로 되돌린다" 는 뜻이고, 그러면 다시
+    에이전트 키에서 색과 아이콘이 정해집니다 (`style_for_agent`).
+
+    파일에 없는 에이전트면 새로 만들지 않습니다. 겉모습만으로 에이전트를
+    만들어 두면 이름도 역할도 없는 껍데기가 `agents` 에 남습니다.
+    """
+    path = Path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Configuration file not found: {path.resolve()}")
+
+    data = read_conf_file(path)
+    agents = _section(data, "agents")
+
+    agent = agents.get(agent_key)
+    if not isinstance(agent, dict):
+        raise KeyError(f"{path.name} 에 agents.{agent_key} 가 없습니다.")
+
+    for field, value in (("card_color", card_color), ("icon", icon)):
+        text = (value or "").strip()
+        if text:
+            agent[field] = text
+        else:
+            agent.pop(field, None)
+            # 옛 표기(`color` / `avatar`)로 적혀 있던 값도 함께 걷어냅니다.
+            # 남겨 두면 지웠는데도 그 값이 계속 읽힙니다.
+            agent.pop({"card_color": "color", "icon": "avatar"}[field], None)
+
+    write_conf_file(path, data)
+    reload_config_if_active(path)
+
+
 # ---------------------------------------------------------------------------
 # mcp_servers.* 편집
 # ---------------------------------------------------------------------------
@@ -916,6 +1049,10 @@ AGENT_OVERRIDE_FIELDS = (
 
 SEQUENTIAL_THINKING_FIELDS = ("enabled", "mode", "max_steps", "show_steps")
 
+# 겉모습은 llm 에서 상속되지 않습니다 (에이전트마다 달라야 의미가 있습니다).
+# 그래서 `AGENT_OVERRIDE_FIELDS` 와 섞지 않고 따로 둡니다.
+AGENT_APPEARANCE_FIELDS = ("card_color", "icon")
+
 
 def agent_defaults_from_llm(llm: Optional[LLMConfig] = None) -> Dict[str, Any]:
     """새 에이전트 폼에 미리 채울 값.
@@ -974,6 +1111,8 @@ def add_agent_to_conf_file(
     overrides: Optional[Dict[str, Any]] = None,
     sequential_thinking: Optional[Dict[str, Any]] = None,
     debate_stance: str = "neutral",
+    card_color: Optional[str] = None,
+    icon: Optional[str] = None,
     enabled: bool = True,
     config_path: str | Path = DEFAULT_CONFIG_PATH,
 ) -> None:
@@ -1022,6 +1161,10 @@ def add_agent_to_conf_file(
     block: Dict[str, Any] = {"name": name, "role": role}
     if not enabled:
         block["enabled"] = False
+    for field, value in (("card_color", card_color), ("icon", icon)):
+        text = (value or "").strip()
+        if text:
+            block[field] = text
     for field in AGENT_OVERRIDE_FIELDS:
         if field in overrides:
             block[field] = _scalar_value(field, overrides[field])

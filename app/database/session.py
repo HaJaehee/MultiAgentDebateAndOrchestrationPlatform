@@ -23,6 +23,10 @@ _ADDED_COLUMNS = {
         # 살아 있는 conf.json 을 그대로 씁니다. 빈 JSON 을 기본값으로 넣으면 그
         # 구분이 사라지므로 nullable 로 둡니다.
         "config_snapshot": "TEXT",
+        # 카드 색과 아이콘. 빈 문자열이면 "정하지 않음" 이고, 그때는 에이전트
+        # 키에서 자동으로 정해집니다 (`style_for_agent`).
+        "card_color": "VARCHAR(40) NOT NULL DEFAULT ''",
+        "icon_path": "TEXT NOT NULL DEFAULT ''",
     },
 }
 

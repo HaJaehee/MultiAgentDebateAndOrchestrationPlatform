@@ -89,8 +89,14 @@ class SessionAgentModel(Base):
     name: str                       # 세션별 페르소나
     role: str
     system_prompt: str
+    card_color: str                 # 이 대화에서의 카드 색 (빈 문자열 = 키에서 자동)
+    icon_path: str                  # 이 대화에서의 아이콘 (이름 또는 이미지 경로)
     config_snapshot: Optional[Any]  # 잠글 때 굳힌 AgentConfig 전체
 ```
+
+겉모습 두 값은 `config_snapshot` 안에도 들어 있지만 컬럼으로 한 번 더 둡니다.
+카드를 그리는 데 반드시 필요한 값이라 JSON 을 풀지 않고 읽을 수 있어야 하고,
+스냅샷이 없던 옛 대화에도 붙어야 하기 때문입니다.
 
 `config_snapshot` 에는 **그 시점의 `AgentConfig` 전체**가 들어갑니다 — 모델,
 엔드포인트, API 키, 샘플링 값, 도구 권한까지. 이것이 있어야 시작한 대화가
@@ -122,6 +128,7 @@ class SessionAgentModel(Base):
 | 에이전트 비활성화 | 영향 없음 | 참여 안 함 |
 | 모델·엔드포인트 변경 | 영향 없음 | 새 값 적용 |
 | 도구 권한 변경 | 영향 없음 | 새 값 적용 |
+| 카드 색·아이콘 변경 | 영향 없음 | 새 값 적용 |
 | 에이전트 추가 | 참여 안 함 | 참여 |
 
 이것이 없으면 **어제 끝난 대화를 오늘 다시 열었을 때 다른 시스템이 됩니다.**
@@ -154,6 +161,14 @@ await init_db(db_url)                          # 테이블 생성 (없으면)
 
 시각은 전부 **UTC 로 저장**하고(`utc_now()`), 화면에 뿌릴 때 로컬로 옮깁니다
 (`export.to_local()`). 저장과 표시를 섞으면 반드시 어긋납니다.
+
+### 나중에 생긴 컬럼
+
+`create_all` 은 이미 있는 테이블에 컬럼을 더하지 않습니다. 그래서 기동할 때
+`_ADDED_COLUMNS` 에 적힌 컬럼만 `PRAGMA table_info` 로 확인하고 없으면
+`ALTER TABLE ... ADD COLUMN` 합니다 (멱등). 이미 쓰던 DB 를 그대로 들고 새
+버전으로 올려도 됩니다 — `session_agents.card_color` · `icon_path` 도 이 길로
+들어옵니다.
 
 ---
 

@@ -3,7 +3,7 @@
 > 상위: [레퍼런스 개관](README.md) · 이전: [프로젝트 구조](02-project-layout.md)
 
 ```bash
-pytest -q               # 전체 (318개, 약 26초)
+pytest -q               # 전체 (528개, 약 30초)
 pytest -v tests/test_config.py
 pytest -k "snapshot"
 ```
@@ -24,10 +24,20 @@ pytest -k "snapshot"
 | `test_speaker_selection.py` | 오케스트레이터 지명, 실패 시 물러서기 |
 | `test_parallel_dispatch.py` | 병렬 지시: 동시 실행, 과업 분배, 라운드 취합, 동시 실행 상한 |
 | `test_personas.py` | 페르소나 수명주기: 편집 → 잠금 → 재개 |
+| `test_agent_appearance.py` | 카드 색·아이콘: 업로드 → `conf.json` → 화면 → 스냅샷, 그리고 폴백 |
 | `test_session_snapshot.py` | **시작한 대화는 자기완결적이다** |
 | `test_roster_lock.py` | 토론 중 MCP 구성 잠금 |
 | `test_roster_selection.py` | 에이전트 추가 시 기존 대화의 로스터 |
 | `test_interaction.py` | 정지 요청과 개입 메모 |
+| `test_session_handoff.py` | 세션 이어받기: 컨텍스트만 비우고 작업 공간·지식 그래프는 물려받기 |
+| `test_order_preview.py` | 로스터의 발언 순서 미리보기가 실제 순서와 같은가 |
+| `test_tool_budget.py` | 도구 호출 상한에 걸린 에이전트를 어떻게 다루는가 |
+| `test_context_window.py` | 컨텍스트 창이 찼을 때 무엇을 잃고 무엇을 지키는가 |
+| `test_tool_failure_safety.py` | 도구 호출이 실패해도 발언과 프로세스가 살아남는가 |
+| `test_tool_loop_content.py` | 도구를 여러 번 부른 발언의 본문이 온전히 남는가 |
+| `test_reasoning_isolation.py` | 사고 과정은 기록에 남고 프롬프트에는 실리지 않는다 |
+| `test_mermaid_repair.py` | 다이어그램 문법 오류를 오케스트레이터가 그 자리에서 고치는가 |
+| `test_export_mermaid.py` | Mermaid → SVG/PNG 렌더러 |
 | `test_abort_turn.py` | 긴급 종료: 그 턴만 지우기, 시작 전으로 되돌리기 |
 | `test_resilience.py` | 새로고침, 연결 끊김, 컨텍스트 한도, 도구 루프 한도 |
 | `test_tool_records.py` | 도구 실행 기록이 그 발언에 붙는가 |

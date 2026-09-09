@@ -4,7 +4,7 @@ import logging
 import threading
 from typing import Any, AsyncGenerator
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from nicegui import app as nicegui_app, ui
 import uvicorn
 from app.agents.pool import get_agent_pool
@@ -15,7 +15,7 @@ from app.about import (
     AUTHOR,
     AUTHOR_EMAIL,
 )
-from app.config import DEFAULT_CONFIG_PATH, get_config
+from app.config import DEFAULT_CONFIG_PATH, PROJECT_ROOT, get_config, resolve_agent_icon
 from app.database.session import init_db
 from app.mcp.manager import get_mcp_manager
 from app.orchestration.runner import get_debate_runner
@@ -145,6 +145,44 @@ async def health_check():
     }
 
 
+# 아이콘 파일을 못 찾았을 때 대신 내려주는 그림. 아바타가 깨진 이미지로 남는
+# 것보다, 아무 말 없이 기본 로봇이 서 있는 편이 낫습니다.
+FALLBACK_ICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#94a3b8">'
+    '<path d="M20 9V7a2 2 0 0 0-2-2h-3V3.5a1.5 1.5 0 0 0-3 0V5H9a2 2 0 0 0-2 2v2H5.5a1.5 1.5 0 0 0 0 3H7v5'
+    'a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-5h1.5a1.5 1.5 0 0 0 0-3H20zm-8.5 2.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z'
+    'm7 0a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zM9 16h9v1.5H9V16z"/></svg>'
+)
+
+
+@server.get("/agent-icon")
+async def agent_icon(src: str = ""):
+    """에이전트 아이콘 이미지. `src` 는 conf.json 에 적힌 경로입니다.
+
+    내려주는 것은 **프로젝트 폴더 안의 이미지 파일** 뿐입니다. 경로가 설정에서
+    오는 값이라, 그 밖을 가리키면 (`../..`, 절대 경로) 파일을 읽어 주지 않습니다.
+
+    못 찾으면 404 가 아니라 기본 그림을 200 으로 돌려줍니다. 화면은 이미 그려진
+    뒤이고, 여기서 실패하면 아바타 자리가 깨진 이미지로 남습니다.
+    """
+    path = resolve_agent_icon(src)
+    if path is not None:
+        try:
+            path.relative_to(PROJECT_ROOT)
+        except ValueError:
+            path = None
+
+    if path is None:
+        return Response(
+            content=FALLBACK_ICON_SVG,
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "no-store"},
+        )
+    # 파일 이름에 내용 해시가 들어가므로 오래 캐시해도 안전합니다. 손으로 적은
+    # 경로까지 그렇지는 않아 하루로 둡니다.
+    return FileResponse(path, headers={"Cache-Control": "public, max-age=86400"})
+
+
 @server.get("/api/agents")
 async def list_agents():
     pool = get_agent_pool()
@@ -163,6 +201,8 @@ async def list_agents():
             "max_tokens": a.max_tokens,
             "sequential_thinking": a.sequential_thinking.model_dump(exclude={"prompt_template"}),
             "allowed_mcp_servers": a.allowed_mcp_servers,
+            "card_color": a.card_color,
+            "icon": a.icon,
         }
         for a in pool.list_all()
     ]
