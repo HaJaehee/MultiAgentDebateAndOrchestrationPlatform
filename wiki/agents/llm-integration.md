@@ -115,6 +115,50 @@ characters, and their ratio varies with the content.
 Building the fingerprint can never fail the call — any error inside it becomes a one-line
 `Request fingerprint unavailable ...` and the original exception propagates untouched.
 
+
+### 2.2. A tool call that was cut off mid-argument (v0.5.2)
+
+`max_tokens` bounds the *generation*, and a tool call is generated text. When an agent writes a
+large file through `filesystem__write_file`, the arguments JSON is the output — and it can hit the
+cap in the middle of a string:
+
+```
+{"path": "app/util.py", "content": "def load(path):
+    if path:
+```
+
+Three things then went wrong in sequence, and only the first was handled.
+
+1. `_parse_tool_call()` could not read the JSON, so it fell back to `{"raw": <the fragment>}` —
+   correct: a malformed tool call must not end the turn.
+2. The MCP server refused those arguments (`MCP error -32602: Input validation error`). Also fine
+   as an observation — except the agent has no way to learn *why*, so it retries the same oversized
+   write and is cut off at the same place, burning its tool budget.
+3. The assistant turn was appended to the context as `message.model_dump()` — **the original,
+   unrepaired arguments string.** From then on every request in that turn carried JSON we had
+   ourselves failed to parse. vLLM rendered it through the model's chat template and answered
+   **400**; the gateway in front of it wrapped that in a 500 and discarded the reason.
+
+**What changed.** `_complete_once()` now returns `(message, finish_reason)` — `finish_reason` was
+never inspected before, so being cut off was invisible. A turn is treated as truncated when the
+endpoint says `length` *or* when any tool call's arguments would not parse.
+
+[`_assistant_turn()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) replaces the verbatim
+`model_dump()`: every tool call is re-serialised from the arguments **we actually executed**, so
+what leaves the process is always valid JSON. Unreadable arguments become a short
+`{"_unreadable": "인자 N자를 읽지 못해 생략했습니다"}` — sending 14KB of truncated JSON back tells
+the model nothing, costs tokens, and invites the same generation again. That normalisation also
+closes a latent orphan: `_parse_tool_call()` invents a `tool_call_id` when the provider sends an
+empty one, and previously only the `tool` result carried the invented id while the assistant turn
+kept the empty one — a mismatched pair, which is a 400 in its own right.
+
+Finally the agent is *told*, in words, via `TRUNCATED_TOOL_CALL_NOTICE`: which limit it hit, that
+the call did not really run, and to split the write across several calls rather than resend it. The
+`-32602` alone does not say any of that.
+
+> If this happens often, the setting to change is the agent's `max_tokens` — 4096 is narrow for an
+> agent that writes whole documents through a tool.
+
 ---
 
 ## 3. Sequential Thinking (Step-by-Step Reasoning)

@@ -500,6 +500,15 @@ CONTEXT_WIDENED_INSTRUCTION = (
     "총 {window:,} 토큰이 되었습니다. 앞선 기록이 생략되지 않고 그대로 남았습니다."
 )
 
+TRUNCATED_TOOL_CALL_NOTICE = (
+    "[출력 잘림] 직전 도구 호출은 응답 한도(max_tokens={max_tokens:,})에 걸려 "
+    "**인자를 끝까지 쓰지 못한 채 잘렸습니다.** 그래서 그 호출은 의도한 대로 "
+    "실행되지 않았습니다 (도구 서버가 인자를 읽지 못했다고 답했을 것입니다).\n"
+    "같은 내용을 그대로 다시 보내지 마세요 — 또 같은 자리에서 잘립니다. "
+    "파일을 쓰는 중이었다면 **여러 번에 나누어** 쓰고(먼저 앞부분을 쓰고 다음 "
+    "호출에서 이어붙이기), 그 밖의 호출이라면 인자를 더 짧게 만드세요."
+)
+
 BUDGET_WRAP_UP_FOOTER = (
     "> ⚠️ **도구 호출 상한({limit}회)에 도달**해 도구 없이 마무리한 발언입니다 "
     "(도구 {tool_calls}건 실행). 더 확인이 필요하면 에이전트 설정의 "
@@ -820,8 +829,16 @@ class LLMCaller:
         tools: Optional[List[Dict[str, Any]]],
         on_chunk: Optional[Callable[[str], Any]] = None,
         tool_choice: str = "auto",
-    ) -> Any:
-        """LLM 한 판. 스트리밍이 안 되는 엔드포인트면 한 번만 비스트리밍으로 되묻습니다."""
+    ) -> Tuple[Any, str]:
+        """LLM 한 판. `(message, finish_reason)`.
+
+        `finish_reason` 을 함께 돌려주는 이유: `"length"` 는 **모델이 하던 말을
+        끝내지 못하고 잘렸다**는 뜻입니다. 그 판이 도구 호출이었다면 인자 JSON 이
+        중간에서 끊기고, 도구는 인자를 읽지 못해 실패합니다. 그 사실을 모르면
+        모델은 같은 호출을 그대로 다시 시도하다 예산만 태웁니다.
+
+        스트리밍이 안 되는 엔드포인트면 한 번만 비스트리밍으로 되묻습니다.
+        """
         kwargs = self.build_completion_kwargs(agent, messages, tools, tool_choice)
         streamed_any = False
         try:
@@ -838,7 +855,7 @@ class LLMCaller:
                     streamed_any = True
                     await self._emit_chunk(on_chunk, content_delta)
             complete_response = litellm.stream_chunk_builder(chunks, messages=messages)
-            return complete_response.choices[0].message
+            return complete_response.choices[0].message, self._finish_reason(complete_response)
         except Exception as exc:
             # 이미 화면에 흘려보낸 조각이 있으면 비스트리밍으로 다시 부르지 않습니다.
             # 같은 답변이 두 번 붙어 버리고, 무엇보다 이 실패는 삼킬 것이 아니라
@@ -861,7 +878,15 @@ class LLMCaller:
             message = response.choices[0].message
             if message.content and on_chunk:
                 await self._emit_chunk(on_chunk, message.content)
-            return message
+            return message, self._finish_reason(response)
+
+    @staticmethod
+    def _finish_reason(response: Any) -> str:
+        """응답이 왜 끝났는지. 모르면 빈 문자열 — 판단을 막지는 않습니다."""
+        try:
+            return str(getattr(response.choices[0], "finish_reason", "") or "")
+        except Exception:  # noqa: BLE001
+            return ""
 
     # ------------------------------------------------------------ 도구 예산
 
@@ -949,7 +974,7 @@ class LLMCaller:
             #
             # `tool_choice="none"` 은 두 요구를 모두 만족시킵니다 — 도구는 정의되어
             # 있고, 모델은 그것을 부를 수 없습니다.
-            message = await self._complete_once(
+            message, _ = await self._complete_once(
                 agent, current_messages, tools, on_chunk,
                 tool_choice="none" if tools else "auto",
             )
@@ -971,12 +996,17 @@ class LLMCaller:
     # ------------------------------------------------------------ 도구 실행 방어
 
     @staticmethod
-    def _parse_tool_call(tc: Any) -> Tuple[str, Dict[str, Any], str]:
-        """모델이 돌려준 tool_call 하나를 (이름, 인자, id) 로 풉니다.
+    def _parse_tool_call(tc: Any) -> Tuple[str, Dict[str, Any], str, bool]:
+        """모델이 돌려준 tool_call 하나를 `(이름, 인자, id, 읽었는가)` 로 풉니다.
 
         프로바이더마다 모양이 다르고(객체/딕셔너리), 인자는 모델이 만든
         문자열이라 깨져 있을 수 있습니다. 여기서 터지면 발언 전체가 날아가므로
         어떤 모양이 와도 읽을 수 있는 만큼만 읽고 나머지는 비웁니다.
+
+        네 번째 값은 **인자를 온전히 읽었는가**입니다. 못 읽었다는 사실은 도구
+        실행뿐 아니라 그 발언을 되돌려 보낼 때도 필요합니다 — 우리가 읽지 못한
+        JSON 을 엔드포인트라고 읽을 수 있는 것은 아니기 때문입니다
+        (`_assistant_turn` 참고).
         """
         def _get(obj: Any, key: str, default: Any = None) -> Any:
             if isinstance(obj, dict):
@@ -989,8 +1019,9 @@ class LLMCaller:
             fn_args_raw = _get(function, "arguments")
             call_id = _get(tc, "id") or ""
         except Exception:  # noqa: BLE001 - 알 수 없는 모양이면 통째로 포기합니다
-            return "", {}, ""
+            return "", {}, "", False
 
+        parsed_ok = True
         if isinstance(fn_args_raw, dict):
             fn_args: Dict[str, Any] = fn_args_raw
         elif isinstance(fn_args_raw, str):
@@ -999,13 +1030,59 @@ class LLMCaller:
                 fn_args = parsed if isinstance(parsed, dict) else {"input": parsed}
             except Exception:  # noqa: BLE001 - 모델이 만든 JSON 은 자주 깨집니다
                 fn_args = {"raw": fn_args_raw}
+                parsed_ok = False
         elif fn_args_raw is None:
             fn_args = {}
         else:
             fn_args = {"input": fn_args_raw}
 
         # tool_call_id 가 비면 OpenAI 호환 엔드포인트가 다음 요청을 거절합니다.
-        return str(fn_name), fn_args, str(call_id) or f"call_{abs(hash((fn_name, id(tc)))):x}"
+        return (
+            str(fn_name),
+            fn_args,
+            str(call_id) or f"call_{abs(hash((fn_name, id(tc)))):x}",
+            parsed_ok,
+        )
+
+    @staticmethod
+    def _assistant_turn(message: Any, parsed: List[Tuple[str, Dict[str, Any], str, bool]]) -> Dict[str, Any]:
+        """도구를 부른 발언을 **우리가 실제로 실행한 모양으로** 정규화해 되돌립니다.
+
+        예전에는 `message.model_dump()` 를 그대로 다시 넣었습니다. 그러면 모델이
+        만든 인자 문자열이 손대지 않은 채 다음 요청마다 계속 실려 나갑니다.
+        `max_tokens` 에 걸려 JSON 이 중간에서 잘린 경우 — 실제로 겪었습니다,
+        `filesystem__write_file` 이 `... if path:` 에서 끊겼습니다 — **우리가
+        읽지 못했다고 인정한 그 JSON 을 엔드포인트에 다시 보내는 셈**이고,
+        vLLM 은 그것을 채팅 템플릿에 렌더링하다 400 으로 거절했습니다.
+
+        두 가지를 바로잡습니다.
+
+        1. 인자는 항상 `json.dumps` 로 다시 씁니다. 나가는 요청에는 언제나 온전한
+           JSON 만 실립니다. 덤으로 **id 도 맞춰집니다** — `_parse_tool_call` 은
+           id 가 비면 하나 지어내는데, 예전에는 `tool` 결과만 그 지어낸 id 를 쓰고
+           assistant 쪽은 빈 id 그대로여서 짝이 어긋났습니다 (그 자체로 400 입니다).
+        2. 못 읽은 인자는 짧은 표시로 바꿉니다. 잘린 14KB 를 되돌려 보내 봐야
+           모델에게는 아무 정보도 아니고, 토큰만 먹고, 같은 생성을 다시 유도합니다.
+           무슨 일이 있었는지는 `TRUNCATED_TOOL_CALL_NOTICE` 가 말로 설명합니다.
+        """
+        turn = message.model_dump() if hasattr(message, "model_dump") else dict(message)
+        calls = []
+        for fn_name, fn_args, call_id, parsed_ok in parsed:
+            if parsed_ok:
+                arguments = json.dumps(fn_args, ensure_ascii=False)
+            else:
+                dropped = len(str(fn_args.get("raw", "")))
+                arguments = json.dumps(
+                    {"_unreadable": f"인자 {dropped:,}자를 읽지 못해 생략했습니다"},
+                    ensure_ascii=False,
+                )
+            calls.append({
+                "id": call_id,
+                "type": "function",
+                "function": {"name": fn_name or "unknown_tool", "arguments": arguments},
+            })
+        turn["tool_calls"] = calls
+        return turn
 
     async def _execute_tool_safely(
         self,
@@ -1184,7 +1261,9 @@ class LLMCaller:
                     if pressure:
                         self._append_budget_notice(current_messages, pressure)
 
-                message = await self._complete_once(agent, current_messages, tools, on_chunk)
+                message, finish_reason = await self._complete_once(
+                    agent, current_messages, tools, on_chunk
+                )
                 used += 1
 
                 segment = self._compose_content(agent, message)
@@ -1196,10 +1275,21 @@ class LLMCaller:
                 if not tool_calls:
                     return "\n\n".join(segments), tool_logs
 
-                # Append assistant message with tool calls to context
-                current_messages.append(
-                    message.model_dump() if hasattr(message, "model_dump") else dict(message)
+                # 실행하기 전에 먼저 다 풀어 둡니다. 되돌려 보낼 발언이 **실제로
+                # 실행한 인자와 같은 모양**이어야 하기 때문입니다 (`_assistant_turn`).
+                parsed = [self._parse_tool_call(tc) for tc in tool_calls]
+                truncated = finish_reason == "length" or any(
+                    not parsed_ok for _n, _a, _i, parsed_ok in parsed
                 )
+                if truncated:
+                    logger.warning(
+                        f"Truncated tool call from {agent.name}: finish_reason={finish_reason!r}, "
+                        f"max_tokens={agent.max_tokens}, "
+                        f"tools={[n for n, _a, _i, _ok in parsed]}"
+                    )
+
+                # Append assistant message with tool calls to context
+                current_messages.append(self._assistant_turn(message, parsed))
 
                 # Execute all requested tool calls
                 #
@@ -1208,8 +1298,7 @@ class LLMCaller:
                 # 읽고 스스로 고칩니다. 여기서 예외를 올리면 발언 전체가
                 # LLMUnavailableError 로 덮여, 이미 흘러간 글과 성공한 도구
                 # 관측까지 통째로 사라집니다.
-                for tc in tool_calls:
-                    fn_name, fn_args, call_id = self._parse_tool_call(tc)
+                for fn_name, fn_args, call_id, _parsed_ok in parsed:
                     if not fn_name:
                         # 도구 이름조차 못 읽었습니다. 모델에게 그대로 알리고
                         # 다음 판으로 넘깁니다 (고아 tool_call 을 남기면 다음
@@ -1239,6 +1328,15 @@ class LLMCaller:
                         "name": fn_name or "unknown_tool",
                         "content": output,
                     })
+
+                # 잘렸다는 사실은 **말로** 알려야 합니다. 도구 서버가 돌려준
+                # "Input validation error" 만으로는 모델이 원인을 알 수 없어,
+                # 같은 호출을 그대로 다시 시도하다 예산을 태웁니다.
+                if truncated:
+                    self._append_budget_notice(
+                        current_messages,
+                        TRUNCATED_TOOL_CALL_NOTICE.format(max_tokens=agent.max_tokens),
+                    )
 
             # 예산 소진. 여기서 예외를 올리면 지금까지의 발언이 통째로 사라집니다.
             # 사람에게 한 번 묻고, 답이 없으면 에이전트에게 즉시 끝내라고 합니다.

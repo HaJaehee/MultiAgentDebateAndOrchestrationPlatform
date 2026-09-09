@@ -44,7 +44,18 @@ endpoint will not explain, the remaining evidence is our own request: message co
 encoded roles, estimated tokens against the budget, tools and `tool_choice`, and the largest
 messages by name and size. Sizes only — never content.
 
-→ [LLM Integration §2.1, §5.3](agents/llm-integration.md) · [UI Components §1](ui/components.md)
+That fingerprint immediately paid for itself. It showed a request nowhere near its context budget
+whose largest message was an `assistant(tool_calls*1)` of 14,546 characters — a
+`filesystem__write_file` whose arguments JSON had been **cut off by `max_tokens` mid-string**. We
+parsed what we could, the MCP server refused the fragment, and then we appended the assistant turn
+to the context *verbatim* — resending JSON we had ourselves failed to read, on every following
+request in that turn. `finish_reason` was never inspected, so nothing noticed.
+
+Tool calls are now re-serialised from the arguments actually executed (unreadable ones collapse to
+a short marker), which also fixes a mismatched `tool_call_id` when the provider sends an empty one,
+and the agent is told it was truncated and to split the write instead of repeating it.
+
+→ [LLM Integration §2.1, §2.2, §5.3](agents/llm-integration.md) · [UI Components §1](ui/components.md)
 
 ---
 
