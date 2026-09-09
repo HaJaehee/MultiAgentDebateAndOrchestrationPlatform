@@ -37,7 +37,14 @@ deleted (`Client has been deleted but is still being used`). Nothing broke, but 
 once per process, so a benign one hides the next real bug. `refresh_list()` now reads first and
 draws second, re-checking in between.
 
-→ [LLM Integration §5.3](agents/llm-integration.md) · [UI Components §1](ui/components.md)
+And a diagnostic one: **a failed LLM call now records what we sent.** An endpoint does not always
+say why it refused — a gateway in front of vLLM was seen turning an upstream 400 into its own 500
+and discarding the reason, which also made LiteLLM retry a deterministic error twice. When the
+endpoint will not explain, the remaining evidence is our own request: message count, run-length
+encoded roles, estimated tokens against the budget, tools and `tool_choice`, and the largest
+messages by name and size. Sizes only — never content.
+
+→ [LLM Integration §2.1, §5.3](agents/llm-integration.md) · [UI Components §1](ui/components.md)
 
 ---
 

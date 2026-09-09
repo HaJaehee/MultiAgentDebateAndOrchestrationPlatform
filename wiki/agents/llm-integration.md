@@ -71,6 +71,50 @@ sequenceDiagram
    `CancelledError` propagates. See
    [MCP Resilience §4](file:///d:/MultiAgentOrchestrator/wiki/mcp/error-handling-resilience.md).
 
+
+### 2.1. When a call fails, record what we sent (v0.5.2)
+
+An endpoint does not always say why it refused. A gateway in front of vLLM was seen returning
+
+```
+Error code: 500 - {'error': "client error: 400, message='Bad Request', url='.../chat/completions'"}
+```
+
+— the upstream answered **400**, the gateway wrapped it in its own **500**, and vLLM's actual
+message (`maximum context length...`, `roles must alternate...`) was discarded on the way. LiteLLM
+classifies 500 as retryable, so a deterministic request-shape error was also retried twice before
+surfacing. All that reached the log was the exception string, which said nothing about the request.
+
+When the endpoint will not say why, the remaining evidence is our own. Every hard failure in
+[`_complete_once()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) — streaming and the
+non-streaming retry both refused — now logs a
+[`request_fingerprint()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py):
+
+```
+Request fingerprint for Senior Python Engineer (model=openai/qwen3-27b, api_base=http://gateway/v1):
+  messages=12 roles=system,user,assistant,tool,assistant,tool,assistant,tool,assistant,tool,assistant,tool
+  tokens~124,508 / budget 123,392 (window 128,000, max_tokens 4,096)  <-- OVER BUDGET
+  tools=12 tool_choice=auto
+  largest: [9] tool filesystem__read_text_file 120,000 chars; [5] tool ... 64,000 chars; [11] tool ... 30,999 chars
+```
+
+Each line answers one class of 400 without a round trip to the server's own logs:
+
+| Line | What it settles |
+|---|---|
+| `roles=` (run-length encoded) | consecutive `user` turns (§5.2, §5.3); a `tool` result with no `assistant` before it |
+| `tokens~ / budget` | context overflow — and whether `max_context_window` is set above the model's real limit, in which case the trim never fires and the endpoint refuses first |
+| `tools= tool_choice=` | tool history sent with no tools defined (§5.3), or a `tool_choice` the endpoint rejects |
+| `largest:` | which tool result inflated the request, by name and size |
+
+**Sizes only, never content.** A tool that read a source file must not copy it into the log, and
+what the diagnosis needs is the volume, not the text. Note that `tokens~` and `chars` diverge on
+purpose: the token count comes from the tokenizer (`litellm.token_counter`), the sizes are raw
+characters, and their ratio varies with the content.
+
+Building the fingerprint can never fail the call — any error inside it becomes a one-line
+`Request fingerprint unavailable ...` and the original exception propagates untouched.
+
 ---
 
 ## 3. Sequential Thinking (Step-by-Step Reasoning)
