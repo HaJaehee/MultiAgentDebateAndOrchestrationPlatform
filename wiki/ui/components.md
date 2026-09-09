@@ -31,6 +31,15 @@ The web application workspace is organized into four primary UI components in [a
 > deleted. Debates outlive the page that started them (see
 > [engine-lifecycle.md](../orchestration/engine-lifecycle.md#4-who-owns-the-running-turn)), so a
 > late event arriving at a closed tab must not raise.
+>
+> Until v0.5.2 the sidebar was the exception — it checked only that its container *existed*, not
+> that it was still alive. NiceGUI is deliberately silent when an element *update* lands on a
+> deleted client (an async callback resuming after teardown is not a user bug), but **creating an
+> element, `clear()`, `ui.notify` and `ui.download` all warn**: `Client has been deleted but is
+> still being used`. Almost everything the sidebar draws happens *after* an `await`, so
+> `refresh_list()` now reads first and draws second, re-checking `alive` in between — which also
+> removes the blank-then-filled flash the old order produced. That warning is emitted once per
+> process, so leaving a benign one in place would hide the next real use-after-free.
 
 ### 1.1. Session Sidebar ([app/ui/components/sidebar.py](file:///d:/MultiAgentOrchestrator/app/ui/components/sidebar.py))
 - **`+ New Chat` Button**: Instantiates a fresh debate session and clears the workspace.

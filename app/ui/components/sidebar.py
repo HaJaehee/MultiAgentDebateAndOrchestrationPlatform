@@ -73,6 +73,30 @@ class SessionSidebar:
         self.drawer: Optional[ui.left_drawer] = None
         self.session_factory = get_session_factory()
 
+    # ------------------------------------------------------------------ 수명
+
+    @property
+    def alive(self) -> bool:
+        """이 사이드바가 아직 살아 있는 페이지에 붙어 있는지.
+
+        `ChatFeed.alive` 와 같은 뜻입니다. 여기 이 프로퍼티가 없던 동안 사이드바는
+        네 컴포넌트 중 유일하게 생존을 확인하지 않는 곳이었습니다 — 존재
+        (`if not self.container`)만 보고 삭제 여부는 보지 않았습니다.
+
+        이 클래스의 화면 작업은 거의 전부 `await` **뒤에** 옵니다 (DB 조회, 세션
+        이어받기, 내보내기). 그 사이에 사람이 새로고침하거나 탭을 닫으면
+        NiceGUI 가 클라이언트를 지우고, 깨어난 코드는 죽은 클라이언트에 그리게
+        됩니다. 엘리먼트 *갱신* 은 NiceGUI 가 조용히 넘기지만 **새 엘리먼트 생성,
+        `clear()`, `ui.notify`, `ui.download` 는** "Client has been deleted but is
+        still being used" 경고를 남깁니다.
+        """
+        return self.container is not None and not self.container.is_deleted
+
+    def _notify(self, *args, **kwargs) -> None:
+        """페이지가 아직 있을 때만 알립니다. 없으면 조용히 버립니다."""
+        if self.alive:
+            ui.notify(*args, **kwargs)
+
     def build_ui(self) -> ui.left_drawer:
         self.drawer = ui.left_drawer(value=True, elevated=True).classes(
             "bg-slate-900 text-slate-100 p-3.5 border-r border-slate-800 flex flex-col justify-between"
@@ -111,17 +135,30 @@ class SessionSidebar:
         await self.refresh_list()
 
     async def refresh_list(self) -> None:
-        """Reloads session items from database and renders them."""
-        if not self.container:
-            return
+        """Reloads session items from database and renders them.
 
-        self.container.clear()
+        순서 주의: **먼저 읽고, 그 다음에 그립니다.** 예전에는 `clear()` 를 조회보다
+        앞에 두었는데, 그 사이의 `await` 동안 페이지가 사라지면 깨어난 코드가 죽은
+        클라이언트에 세션 카드 수십 개를 만들었습니다. 이 메서드는 백그라운드
+        토론의 이벤트 소비자가 목록이 바뀌는 이벤트마다 부르므로, 토론 중
+        새로고침이면 언제든 걸릴 수 있는 자리입니다.
+
+        조회를 먼저 하면 목록이 비었다 채워지는 깜빡임도 사라집니다.
+        """
+        if not self.alive:
+            return
 
         async with self.session_factory() as db:
             stmt = select(SessionModel).order_by(desc(SessionModel.updated_at))
             res = await db.execute(stmt)
             sessions = res.scalars().all()
             started_times = await first_user_message_times(db)
+
+        # 읽는 동안 페이지가 사라졌을 수 있습니다.
+        if not self.alive:
+            return
+
+        self.container.clear()
 
         if not sessions:
             with self.container:
@@ -233,22 +270,22 @@ class SessionSidebar:
                 )
         except Exception as e:  # noqa: BLE001 - 실패해도 사이드바는 살아야 합니다
             logger.error(f"Could not continue session {session_id}: {e}", exc_info=True)
-            ui.notify(f"세션을 이어받지 못했습니다: {e}", type="negative", position="bottom-right")
+            self._notify(f"세션을 이어받지 못했습니다: {e}", type="negative", position="bottom-right")
             return
 
         if result is None:
-            ui.notify("세션을 찾을 수 없습니다.", type="warning", position="bottom-right")
+            self._notify("세션을 찾을 수 없습니다.", type="warning", position="bottom-right")
             return
 
         await self._select_session(result["session_id"])
 
         if result["memory_carried"]:
-            ui.notify(
+            self._notify(
                 f"'{result['title']}' 로 이어갑니다. 작업 공간과 지식 그래프를 물려받았습니다.",
                 type="positive", position="top", close_button="확인",
             )
         else:
-            ui.notify(
+            self._notify(
                 f"'{result['title']}' 로 이어갑니다. 작업 공간은 물려받았지만 "
                 f"지식 그래프는 옮기지 못했습니다 (이전 대화가 기록한 것이 없거나 "
                 f"memory 서버가 꺼져 있습니다).",
@@ -271,7 +308,7 @@ class SessionSidebar:
                 res = await db.execute(select(SessionModel).where(SessionModel.id == session_id))
                 session_obj = res.scalar_one_or_none()
                 if session_obj is None:
-                    ui.notify("세션을 찾을 수 없습니다.", type="warning", position="bottom-right")
+                    self._notify("세션을 찾을 수 없습니다.", type="warning", position="bottom-right")
                     return
 
                 session_data = {
@@ -349,14 +386,19 @@ class SessionSidebar:
                 ]
         except Exception as e:  # noqa: BLE001 - 저장 실패가 화면을 죽이면 안 됩니다
             logger.error(f"Could not export session {session_id}: {e}", exc_info=True)
-            ui.notify(f"대화를 불러오지 못했습니다: {e}", type="negative", position="bottom-right")
+            self._notify(f"대화를 불러오지 못했습니다: {e}", type="negative", position="bottom-right")
+            return
+
+        # 브라우저가 받아 갈 파일이라, 페이지가 사라졌으면 보낼 곳이 없습니다.
+        if not self.alive:
+            logger.debug(f"Skipped the export download for {session_id}: the page is gone")
             return
 
         markdown = build_session_markdown(session_data, messages, artifacts, tool_calls)
         created = session_data.get("created_at")
         filename = safe_filename(session_data["title"], to_local(created) if created else None)
         ui.download(markdown.encode("utf-8"), filename)
-        ui.notify(
+        self._notify(
             f"'{filename}' 저장을 시작했습니다 (발언 {len(messages)}건).",
             type="positive", position="bottom-right",
         )
@@ -377,7 +419,7 @@ class SessionSidebar:
                             curr.title = new_title
                             await db.commit()
                     dialog.close()
-                    ui.notify("세션 이름이 변경되었습니다.", type="positive")
+                    self._notify("세션 이름이 변경되었습니다.", type="positive")
                     await self.refresh_list()
 
             with ui.row().classes("w-full justify-end gap-2"):
@@ -404,7 +446,7 @@ class SessionSidebar:
                     await db.commit()
 
                 dialog.close()
-                ui.notify("세션이 삭제되었습니다.", type="info")
+                self._notify("세션이 삭제되었습니다.", type="info")
 
                 if self.current_session_id == session_id:
                     self.current_session_id = None

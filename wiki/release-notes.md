@@ -30,7 +30,14 @@ after the goal (also `user`) and went out unmerged. It now merges before returni
 
 Neither fix changes what an agent is allowed to do; they change what leaves the process.
 
-→ [LLM Integration §5.3](agents/llm-integration.md)
+Also in this release: **the session sidebar now checks that its page is still alive.** It was the
+one component without an `alive` property, and nearly everything it draws happens after an `await`
+— so a refresh mid-debate could leave it building session cards on a client NiceGUI had already
+deleted (`Client has been deleted but is still being used`). Nothing broke, but that warning fires
+once per process, so a benign one hides the next real bug. `refresh_list()` now reads first and
+draws second, re-checking in between.
+
+→ [LLM Integration §5.3](agents/llm-integration.md) · [UI Components §1](ui/components.md)
 
 ---
 
