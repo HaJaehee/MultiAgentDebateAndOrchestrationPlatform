@@ -19,20 +19,29 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import BaseModel
 
+from app.config import strip_extended_path_prefix
+
 logger = logging.getLogger(__name__)
 
 
-async def _handle_list_roots(context: Any = None) -> types.ListRootsResult:
-    """Provides MCP Roots capability so servers (like filesystem) recognize allowed root directories."""
-    workspace_dir = Path(os.environ.get("WORKSPACE_DIR", "./workspace")).resolve()
-    return types.ListRootsResult(
-        roots=[
-            types.Root(
-                uri=types.AnyUrl(workspace_dir.as_uri()),
-                name="workspace",
-            )
-        ]
-    )
+def make_list_roots_handler(workspace: Path):
+    """이 연결이 보는 작업 공간을 Roots 로 알려주는 콜백을 만듭니다.
+
+    예전에는 전역 `WORKSPACE_DIR` 을 읽었습니다. 작업 공간이 서로 다른 런타임이
+    동시에 살아 있으면 그 값 하나로는 답할 수 없습니다 — 어느 서버가 물어봤든
+    마지막에 설정된 폴더를 알려주게 됩니다. 그래서 연결을 만들 때 폴더를 묶어 둡니다.
+    """
+    # 윈도우의 `\\?\` 접두사를 걷어내고 씁니다. 붙어 있으면 `as_uri()` 가
+    # `file://?/C:/...` 를 만들고 서버 쪽 URL 검증이 거절합니다 — 그러면 이 서버는
+    # 허용 디렉터리를 못 받은 채 뜹니다.
+    root = strip_extended_path_prefix(Path(workspace).expanduser().resolve())
+
+    async def _handle_list_roots(context: Any = None) -> types.ListRootsResult:
+        return types.ListRootsResult(
+            roots=[types.Root(uri=types.AnyUrl(root.as_uri()), name="workspace")]
+        )
+
+    return _handle_list_roots
 
 
 class MCPToolError(Exception):
@@ -258,8 +267,17 @@ class MCPClientConnection:
         headers: Optional[Dict[str, str]] = None,
         transport: str = "auto",
         timeout: float = 30.0,
+        workspace: Optional[Path] = None,
     ):
         self.server_name = server_name
+        # 이 연결이 보는 작업 공간. Roots 응답이 여기서 나옵니다. 주지 않으면
+        # 서버 env 에 적힌 값을, 그것도 없으면 전역을 씁니다 (옛 호출자 호환).
+        self.workspace = Path(
+            workspace
+            or (env or {}).get("WORKSPACE_DIR")
+            or os.environ.get("WORKSPACE_DIR", "./workspace")
+        ).expanduser().resolve()
+        self._list_roots = make_list_roots_handler(self.workspace)
         self.command = command
         self.args = args or []
         self.env = env or {}
@@ -420,7 +438,7 @@ class MCPClientConnection:
             async with ClientSession(
                 read_stream,
                 write_stream,
-                list_roots_callback=_handle_list_roots,
+                list_roots_callback=self._list_roots,
             ) as session:
                 await session.initialize()
                 self._session = session
@@ -446,7 +464,7 @@ class MCPClientConnection:
                 async with ClientSession(
                     read_stream,
                     write_stream,
-                    list_roots_callback=_handle_list_roots,
+                    list_roots_callback=self._list_roots,
                 ) as session:
                     await session.initialize()
                     self._session = session

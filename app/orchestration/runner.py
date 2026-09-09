@@ -41,14 +41,14 @@ MAX_QUEUED_EVENTS = 2000
 CANCEL_TIMEOUT = 20.0
 
 
-class WorkspaceConflictError(RuntimeError):
-    """다른 대화가 다른 작업 공간에서 토론 중일 때.
-
-    MCP 서버는 프로세스 전체가 공유하고, 작업 공간은 기동 시점에 고정됩니다.
-    서로 다른 작업 공간의 토론을 동시에 돌리면 나중에 시작한 쪽이 서버를 다시
-    띄우면서 앞선 토론의 도구가 남의 폴더를 읽고 쓰게 됩니다. 조용히 틀리느니
-    시작을 거절합니다.
-    """
+# 예전에는 여기에 `WorkspaceConflictError` 가 있었습니다. MCP 서버가 프로세스
+# 전체에 한 벌뿐이라 작업 공간이 다른 토론을 동시에 돌릴 수 없었고, 조용히 남의
+# 폴더를 쓰느니 두 번째 토론을 거절했습니다.
+#
+# 지금은 작업 공간마다 서버 묶음이 따로 뜹니다(`app/mcp/pool.py`). 그래서 거절할
+# 이유가 없어졌습니다. 자리가 모자랄 때의 거절은 풀이 `RuntimeCapacityError` 로
+# 합니다 — 이유가 "동시에 두 폴더를 쓸 수 없어서" 가 아니라 "지금 그만큼 띄울
+# 예산이 없어서" 로 바뀌었습니다.
 
 
 class TurnRun:
@@ -427,8 +427,9 @@ class DebateRunner:
     def running_sessions(self) -> List[str]:
         """지금 토론이 돌고 있는 대화의 id.
 
-        MCP 서버 구성처럼 프로세스 전체에 걸리는 설정을 화면에서 잠글지 판단할
-        때 씁니다. 돌고 있는 토론이 하나라도 있으면 그 도구를 쓰는 중입니다.
+        conf.json 처럼 **모든 런타임의 정본**인 설정을 화면에서 잠글지 판단할 때
+        씁니다. 서버 프로세스는 이제 작업 공간마다 나뉘지만, 그것들이 무엇을 어떻게
+        띄울지는 여전히 파일 하나가 정합니다.
         """
         return [sid for sid, run in self._runs.items() if run.status == "running"]
 
@@ -445,13 +446,6 @@ class DebateRunner:
             return existing
 
         run = TurnRun(session_id, user_prompt, workspace)
-        clashing = [r for r in self.running_elsewhere(session_id) if r.workspace != run.workspace]
-        if clashing:
-            raise WorkspaceConflictError(
-                f"다른 대화가 아직 토론 중이고 작업 공간이 다릅니다 "
-                f"({clashing[0].workspace}). MCP 서버는 프로세스 전체가 공유하므로 "
-                f"동시에 두 작업 공간을 쓸 수 없습니다. 그 토론이 끝난 뒤 시작하세요."
-            )
         self._runs[session_id] = run
 
         async def on_event(event: Dict[str, Any]) -> None:

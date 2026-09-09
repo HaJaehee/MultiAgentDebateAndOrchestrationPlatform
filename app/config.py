@@ -5,7 +5,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Mapping, Optional
 from dotenv import load_dotenv
 from pydantic import (
     AliasChoices,
@@ -57,13 +57,34 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 #
 # 여기서 한 번 절대 경로로 만들어 두면 argv 로 가든 env 로 가든 같은 곳을
 # 가리킵니다.
+
+# 윈도우의 확장 길이 경로 접두사. `Path.resolve()` 가 이걸 붙인 채로 돌려주는
+# 경우가 있습니다 (특히 아직 만들어지지 않은 폴더). 그대로 두면 `as_uri()` 가
+# `file://?/C:/...` 라는 UNC 모양을 만들고, MCP Roots 응답이 URL 검증에 걸려
+# "Failed to request initial roots" 로 조용히 실패합니다 — filesystem 서버는
+# 허용 디렉터리를 못 받은 채 뜹니다.
+_EXTENDED_PREFIX = '\\\\?\\'
+_EXTENDED_UNC_PREFIX = '\\\\?\\UNC\\'
+
+
+def strip_extended_path_prefix(path: Path) -> Path:
+    """윈도우의 확장 길이 경로 접두사를 걷어냅니다 (다른 OS 에서는 그대로)."""
+    text = str(path)
+    if text.startswith(_EXTENDED_UNC_PREFIX):
+        return Path('\\\\' + text[len(_EXTENDED_UNC_PREFIX):])
+    if text.startswith(_EXTENDED_PREFIX):
+        return Path(text[len(_EXTENDED_PREFIX):])
+    return path
+
+
 def resolve_workspace_dir(value: Optional[str] = None) -> Path:
     """작업 공간 경로를 절대 경로로 정규화합니다. 비어 있으면 `<루트>/workspace`."""
     raw = (value or "").strip()
     if not raw:
         return PROJECT_ROOT / "workspace"
     path = Path(raw).expanduser()
-    return path.resolve() if path.is_absolute() else (PROJECT_ROOT / path).resolve()
+    resolved = path.resolve() if path.is_absolute() else (PROJECT_ROOT / path).resolve()
+    return strip_extended_path_prefix(resolved)
 
 
 os.environ["WORKSPACE_DIR"] = str(resolve_workspace_dir(os.environ.get("WORKSPACE_DIR")))
@@ -147,8 +168,13 @@ def resolve_agent_icon(value: Optional[str]) -> Optional[Path]:
     return path if path.is_file() else None
 
 
-def _substitute_env(text: str) -> str:
-    """Expands ${VAR} / ${VAR:-default}, where the default may itself contain ${...}."""
+def _substitute_env(text: str, overrides: Optional[Mapping[str, str]] = None) -> str:
+    """Expands ${VAR} / ${VAR:-default}, where the default may itself contain ${...}.
+
+    `overrides` 가 있으면 `os.environ` 보다 먼저 봅니다. 작업 공간처럼
+    **런타임마다 달라야 하는** 값을 전역 환경변수를 건드리지 않고 넘기는
+    통로입니다. 전역을 바꾸면 마지막에 부른 쪽이 나머지 전부의 경로를 덮습니다.
+    """
     out: List[str] = []
     i, n = 0, len(text)
 
@@ -169,9 +195,12 @@ def _substitute_env(text: str) -> str:
             var_name, sep, default_expr = expr.partition(":-")
             var_name = var_name.strip()
             if VAR_NAME_PATTERN.fullmatch(var_name):
-                resolved = os.environ.get(var_name, "")
+                if overrides is not None and var_name in overrides:
+                    resolved = overrides[var_name]
+                else:
+                    resolved = os.environ.get(var_name, "")
                 if not resolved and sep:
-                    resolved = _substitute_env(default_expr)
+                    resolved = _substitute_env(default_expr, overrides)
                 out.append(resolved)
             else:
                 out.append(text[i:j])
@@ -196,14 +225,17 @@ def join_text_lines(value: Any) -> Any:
     return value
 
 
-def resolve_env_vars(value: Any) -> Any:
-    """Recursively resolves ${VAR_NAME} or ${VAR_NAME:-default} strings using os.environ."""
+def resolve_env_vars(value: Any, overrides: Optional[Mapping[str, str]] = None) -> Any:
+    """Recursively resolves ${VAR_NAME} or ${VAR_NAME:-default} strings using os.environ.
+
+    `overrides` 는 `os.environ` 보다 우선합니다 (`_substitute_env` 참고).
+    """
     if isinstance(value, str):
-        return _substitute_env(value)
+        return _substitute_env(value, overrides)
     elif isinstance(value, dict):
-        return {k: resolve_env_vars(v) for k, v in value.items()}
+        return {k: resolve_env_vars(v, overrides) for k, v in value.items()}
     elif isinstance(value, list):
-        return [resolve_env_vars(item) for item in value]
+        return [resolve_env_vars(item, overrides) for item in value]
     return value
 
 
@@ -538,24 +570,46 @@ class RootConfig(BaseModel):
     mcp_servers: Dict[str, MCPServerConfig] = Field(default_factory=dict)
     agents: Dict[str, AgentConfig] = Field(default_factory=dict)
 
-    # 치환 **전** 의 "mcp_servers" 원문. 작업 공간을 런타임에 바꿀 때 이걸
-    # 새 WORKSPACE_DIR 로 다시 풉니다. 이미 치환된 경로 문자열을 찾아 바꾸는
+    # 치환 **전** 의 "mcp_servers" 원문. 작업 공간을 런타임마다 다르게 풀 때
+    # 이걸 그 작업 공간으로 다시 풉니다. 이미 치환된 경로 문자열을 찾아 바꾸는
     # 것보다 정확합니다 — 같은 치환기를 그대로 한 번 더 돌리는 것이니까요.
     raw_mcp_servers: Dict[str, Any] = Field(default_factory=dict, exclude=True)
 
-    def mcp_servers_for_workspace(self, workspace: Path) -> Dict[str, MCPServerConfig]:
-        """`WORKSPACE_DIR` 를 바꿔 놓고 "mcp_servers" 를 다시 해석합니다.
+    def mcp_servers_for_workspace(
+        self, workspace: Path, extra_env: Optional[Mapping[str, str]] = None,
+    ) -> Dict[str, MCPServerConfig]:
+        """"mcp_servers" 를 이 작업 공간 기준으로 해석합니다.
 
-        환경변수를 실제로 바꾸는 것은 의도한 부작용입니다. MCP 서버는 자식
-        프로세스로 뜨므로 이 값을 물려받아야 하고, Roots 응답도 이걸 읽습니다.
+        **`os.environ` 은 건드리지 않습니다.** 예전에는 여기서 전역
+        `WORKSPACE_DIR` 을 바꿔 자식 프로세스에게 물려줬지만, 작업 공간이 다른
+        런타임이 둘 이상 살아 있으면 마지막에 부른 쪽이 나머지 전부의 경로를
+        덮어씁니다. 대신 치환기에 이 작업 공간만 얹어 넘기고, 결과로 나온 각
+        서버의 `env` 에 `WORKSPACE_DIR` 을 **명시적으로** 적습니다. 자식은
+        부모의 낡은 전역이 아니라 그 값을 봅니다.
+
+        `extra_env` 는 런타임이 자기 프로세스에만 걸고 싶은 환경변수입니다
+        (TMP, 샌드박스 네임스페이스 상한 등). 치환에도 쓰이고 결과 `env` 에도
+        얹히므로, conf.json 이 `${...}` 로 참조하는 값도 런타임마다 다르게
+        줄 수 있습니다.
         """
-        os.environ["WORKSPACE_DIR"] = str(workspace)
-        if not self.raw_mcp_servers:
-            return self.enabled_mcp_servers
-        resolved = resolve_env_vars(self.raw_mcp_servers)
-        servers = {name: MCPServerConfig.model_validate(cfg) for name, cfg in resolved.items()}
+        overrides: Dict[str, str] = {"WORKSPACE_DIR": str(workspace)}
+        overrides.update({k: str(v) for k, v in (extra_env or {}).items()})
+
+        if self.raw_mcp_servers:
+            resolved = resolve_env_vars(self.raw_mcp_servers, overrides)
+            servers = {name: MCPServerConfig.model_validate(cfg) for name, cfg in resolved.items()}
+        else:
+            # 원문이 없는 경우(테스트에서 손으로 만든 설정 등). 이미 풀린 값을
+            # 복사해 씁니다 — 원본을 고치면 다른 런타임까지 따라 바뀝니다.
+            servers = {name: cfg.model_copy(deep=True) for name, cfg in self.mcp_servers.items()}
+
         # 매니저는 켜져 있는 서버만 띄웁니다 (`enabled_mcp_servers` 와 같은 기준).
-        return {name: cfg for name, cfg in servers.items() if cfg.enabled}
+        servers = {name: cfg for name, cfg in servers.items() if cfg.enabled}
+        for cfg in servers.values():
+            # 원격 서버는 우리가 띄우는 프로세스가 아니라 환경을 줄 자리가 없습니다.
+            if cfg.command:
+                cfg.env = {**overrides, **cfg.env}
+        return servers
 
     @model_validator(mode="before")
     @classmethod

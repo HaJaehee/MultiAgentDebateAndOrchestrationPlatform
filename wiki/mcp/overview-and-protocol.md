@@ -4,7 +4,8 @@ The MADO: Multi-Agent Debate & Orchestration Platform embeds a native host imple
 
 Implementation files:
 - [app/mcp/client.py](file:///d:/MultiAgentOrchestrator/app/mcp/client.py): Stdio process management, session lifecycle, and error capture.
-- [app/mcp/manager.py](file:///d:/MultiAgentOrchestrator/app/mcp/manager.py): Central MCP tool registry, permissions dispatcher, and workspace initializer.
+- [app/mcp/manager.py](file:///d:/MultiAgentOrchestrator/app/mcp/manager.py): Tool registry, permissions dispatcher, and workspace initializer for **one** workspace.
+- [app/mcp/pool.py](file:///d:/MultiAgentOrchestrator/app/mcp/pool.py): One manager per workspace, reference counted, so sessions in different folders run concurrently — see [Runtime Isolation](file:///d:/MultiAgentOrchestrator/wiki/mcp/runtime-isolation.md).
 
 ---
 

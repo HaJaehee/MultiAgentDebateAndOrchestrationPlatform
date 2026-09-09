@@ -103,16 +103,20 @@ sandbox in particular resolves what it is given with `Path(value).resolve()` aga
 cwd, so `./workspace` pointed at the sandbox's install directory while `filesystem` pointed at
 the project's. Two servers, one setting, two folders.
 
-### Runtime switching
+### One server group per workspace
 
-`MCPManager.set_workspace(path)` re-resolves the **raw** `[mcp_servers]` table with the new
-`WORKSPACE_DIR` and restarts every server. Re-running the same substitution is exact; string-
-replacing paths in already-substituted argv would not be.
+The root is fixed at spawn time for every one of these servers, so there is no way to point a
+running server at another folder. Rather than restart the shared servers whenever a session
+wants a different workspace, the platform keeps **one group per workspace**:
+[`MCPRuntimePool`](file:///d:/MultiAgentOrchestrator/app/mcp/pool.py) resolves the **raw**
+`mcp_servers` table against that folder — re-running the same substitution is exact, whereas
+string-replacing paths in already-substituted argv would not be — and starts a group for it.
 
-The root is fixed at spawn time for every one of these servers, so there is no way to change
-it without a restart. Because the manager is process-wide, two conversations with different
-workspaces cannot debate concurrently — `DebateRunner.start()` raises `WorkspaceConflictError`
-rather than let the running debate's tools quietly move to another folder.
+Conversations in different workspaces therefore debate concurrently; conversations sharing a
+workspace share the group, and stay apart inside it through the per-conversation scope in each
+request's `_meta`. See
+[Runtime Isolation](file:///d:/MultiAgentOrchestrator/wiki/mcp/runtime-isolation.md) for the
+reference counting, idle TTL, and the runtime budget.
 
 ### The sandbox kernel's cwd (closed in v0.4.1)
 

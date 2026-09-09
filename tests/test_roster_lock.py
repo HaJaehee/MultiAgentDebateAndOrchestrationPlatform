@@ -1,9 +1,10 @@
 """토론이 돌고 있는 동안 MCP 서버 구성을 잠그는 화면 쪽 규칙.
 
-MCP 서버는 프로세스 전체가 공유합니다. 진행 중인 토론은 지금 그 서버들의 도구를
-쓰고 있으므로, 도중에 내리거나 다시 띄우면 그 토론의 도구 호출이 실패하거나 —
-더 나쁘게는 — 새로 뜬 다른 구성의 서버가 응답합니다. 이 대화든 다른 대화든
-마찬가지라, 하나라도 돌고 있으면 잠급니다.
+서버 프로세스는 작업 공간마다 나뉘지만, **무엇을 어떻게 띄울지는 conf.json 하나가
+정합니다.** 여기서 서버를 고치면 살아 있는 런타임 전부를 다시 띄우게 되고
+(`MCPRuntimePool.reload_all`), 진행 중인 토론은 그 도중에 도구를 잃거나 다른
+구성으로 응답하는 서버를 만납니다. 이 대화든 다른 대화든 마찬가지라, 하나라도
+돌고 있으면 잠급니다.
 
 여기서는 화면 컨트롤이 실제로 잠기는지와, 잠긴 상태에서 누른 조작이 conf.json 에
 닿지 않는지를 봅니다.
@@ -78,12 +79,31 @@ class _FakeManager:
         return {}
 
 
+class _FakePool:
+    """런타임을 실제로 띄우지 않는 풀.
+
+    `reload_all()` 이 살아 있는 런타임 전부에 걸린다는 것이 요점이므로, 매니저
+    하나를 대표로 두고 그것이 몇 번 다시 떴는지만 셉니다.
+    """
+
+    def __init__(self, manager: "_FakeManager"):
+        self.manager = manager
+
+    def get(self, workspace=None):
+        return self.manager
+
+    async def reload_all(self):
+        await self.manager.reload_from_config()
+        return {}
+
+
 @pytest.fixture()
 def roster(monkeypatch):
     runner = _FakeRunner([])
     manager = _FakeManager()
     monkeypatch.setattr(roster_module, "get_debate_runner", lambda: runner)
     monkeypatch.setattr(roster_module, "get_mcp_manager", lambda: manager)
+    monkeypatch.setattr(roster_module, "get_runtime_pool", lambda: _FakePool(manager))
     monkeypatch.setattr(roster_module.ui, "notify", lambda *a, **k: None)
 
     control = AgentRosterControl()

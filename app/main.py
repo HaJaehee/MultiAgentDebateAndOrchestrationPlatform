@@ -18,6 +18,7 @@ from app.about import (
 from app.config import DEFAULT_CONFIG_PATH, PROJECT_ROOT, get_config, resolve_agent_icon
 from app.database.session import init_db
 from app.mcp.manager import get_mcp_manager
+from app.mcp.pool import get_runtime_pool
 from app.orchestration.runner import get_debate_runner
 from app.ui.app import create_ui
 from app.ui.personas_page import create_personas_page
@@ -79,20 +80,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db(cfg.app.db_url)
     logger.info("SQLite database tables initialized.")
 
-    # 3. Initialize MCP Manager & Tool Discovery
+    # 3. MCP 런타임 준비
+    #
+    # 기본 작업 공간의 런타임을 미리 띄웁니다. 첫 토론이 서버 기동을 기다리지
+    # 않게 하려는 것뿐이고, 다른 폴더를 쓰는 대화는 자기 런타임을 따로 받습니다.
     #
     # 서버 하나가 기동에 실패해도 앱은 떠야 합니다. 도구 없이 토론하는 것과
     # 화면조차 열리지 않는 것은 전혀 다른 이야기입니다 (설정을 고치려면 그
     # 화면이 필요합니다).
-    mcp_mgr = get_mcp_manager()
+    pool = get_runtime_pool()
     try:
-        await mcp_mgr.initialize()
-        logger.info("MCP Manager initialized.")
+        await pool.warm_default()
+        logger.info(
+            "MCP runtime pool ready (max %d runtimes, idle TTL %.0fs).",
+            pool.max_runtimes, pool.idle_ttl,
+        )
     except asyncio.CancelledError:
         raise
     except BaseException as exc:  # noqa: BLE001
         logger.error(
-            "MCP Manager could not be initialized (%s: %s); starting without MCP tools. "
+            "The default MCP runtime could not be initialized (%s: %s); starting without MCP tools. "
             "설정 화면에서 서버를 고친 뒤 재연결하세요.",
             type(exc).__name__, exc, exc_info=True,
         )
@@ -115,9 +122,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except BaseException as exc:  # noqa: BLE001
         logger.warning("Could not cancel every debate task: %s: %s", type(exc).__name__, exc)
 
-    # 유지 중인 MCP 세션과 서버 프로세스를 정리합니다.
+    # 유지 중인 MCP 세션과 서버 프로세스를 **런타임 전부** 정리합니다.
     try:
-        await mcp_mgr.shutdown()
+        await get_runtime_pool().shutdown_all()
         logger.info("MCP sessions closed.")
     except BaseException as exc:  # noqa: BLE001
         logger.warning("Could not close every MCP session: %s: %s", type(exc).__name__, exc)
@@ -234,10 +241,16 @@ async def session_personas(session_id: str):
 
 @server.get("/api/mcp")
 async def mcp_status():
-    """MCP 서버별 연결 상태. conf.json 에서 비활성화한 서버도 함께 보고합니다."""
+    """MCP 서버별 연결 상태. conf.json 에서 비활성화한 서버도 함께 보고합니다.
+
+    서버는 이제 작업 공간마다 따로 뜹니다. 목록(평평한 모양)은 **기본 작업
+    공간**의 것이라 예전 소비자가 그대로 동작하고, 살아 있는 런타임 전부는
+    `runtimes` 에 담깁니다.
+    """
     cfg = get_config()
+    pool = get_runtime_pool()
     status = get_mcp_manager().connection_status()
-    return [
+    servers = [
         {
             "name": name,
             "enabled": server_cfg.enabled,
@@ -249,6 +262,12 @@ async def mcp_status():
         }
         for name, server_cfg in cfg.mcp_servers.items()
     ]
+    return {
+        "servers": servers,
+        "runtimes": pool.status(),
+        "max_runtimes": pool.max_runtimes,
+        "idle_ttl_seconds": pool.idle_ttl,
+    }
 
 
 from app.ui.theme import FAVICON_SVG

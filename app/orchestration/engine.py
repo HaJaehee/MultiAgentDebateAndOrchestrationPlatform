@@ -5,6 +5,7 @@ import re
 import uuid
 from contextlib import nullcontext
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
 from sqlalchemy import select
 from app.agents.base import Agent
@@ -19,7 +20,8 @@ from app.agents.llm import (
 from app.agents.personas import prepare_agents_for_turn
 from app.agents.pool import AgentPool, get_agent_pool
 from app.config import TOOL_ITERATION_CEILING, resolve_workspace_dir
-from app.mcp.manager import get_mcp_manager
+from app.mcp.manager import MCPManager
+from app.mcp.pool import get_runtime_pool
 from app.mermaid_lint import format_issues, lint_mermaid
 from app.database.models import (
     ArtifactModel,
@@ -156,14 +158,17 @@ class OrchestratorEngine:
     # ------------------------------------------------------------------ 작업 공간
 
     @staticmethod
-    async def _apply_session_workspace(workspace_dir: str) -> None:
-        """세션이 지정한 작업 공간으로 MCP 서버를 맞춥니다 (같으면 아무것도 안 함)."""
-        manager = get_mcp_manager()
-        desired = resolve_workspace_dir(workspace_dir or None)
-        if manager.workspace == desired:
-            return
-        logger.info(f"Switching MCP workspace for this turn: {manager.workspace} -> {desired}")
-        await manager.set_workspace(desired)
+    def _mcp_for(state: DebateState) -> Optional[MCPManager]:
+        """이 턴이 빌린 MCP 런타임.
+
+        예전에는 전역 매니저 하나를 이 턴의 작업 공간으로 **다시 띄웠습니다**.
+        그래서 폴더가 다른 토론이 동시에 돌 수 없었습니다. 지금은 턴이 시작할 때
+        그 폴더의 런타임을 빌리고(`run_turn`), 발언마다 그것을 내려보냅니다.
+
+        None 을 돌려주면 `LLMCaller` 가 자기 기본 런타임으로 물러섭니다 — 풀을
+        거치지 않고 엔진을 직접 부르는 테스트가 그 경로를 씁니다.
+        """
+        return get_runtime_pool().get(state.workspace_dir)
 
     # ------------------------------------------------------------------ 발언
 
@@ -415,6 +420,7 @@ class OrchestratorEngine:
                 budget_arbiter=self._make_budget_arbiter(control, on_event),
                 context_arbiter=self._make_context_arbiter(state, agent, control, on_event),
                 on_context_trim=_on_context_trim,
+                mcp=self._mcp_for(state),
             )
             # 확정본이 비었는데 화면에는 글이 흘러갔다면 그 글을 남깁니다.
             # 여기서 정하는 `content` 가 DB 에 들어가는 값이라, 비워 둔 채로
@@ -611,6 +617,14 @@ class OrchestratorEngine:
 
     # ------------------------------------------------------------------ 턴
 
+    async def _session_workspace(self, session_id: str) -> Path:
+        """이 대화가 쓰기로 한 작업 공간. 대화를 찾을 수 없으면 기본값."""
+        async with self.session_factory() as db:
+            res = await db.execute(
+                select(SessionModel.workspace_dir).where(SessionModel.id == session_id)
+            )
+            return resolve_workspace_dir(res.scalar_one_or_none() or None)
+
     async def run_turn(
         self,
         session_id: str,
@@ -624,7 +638,33 @@ class OrchestratorEngine:
         메모를 확인합니다. 정지는 태스크를 죽이는 것이 아니라 남은 라운드를
         건너뛰고 최종 합성으로 넘어가는 것이라, 지금까지의 토론으로도 산출물이
         나옵니다.
+
+        **이 대화의 작업 공간에 해당하는 MCP 런타임을 빌린 채로** 돕니다.
+        filesystem 은 허용 경로를 argv 로, sandbox 는 `SANDBOX_WORKSPACE` 를 env 로
+        기동 시점에 받으므로 폴더마다 프로세스 묶음이 따로 있어야 합니다. 같은
+        폴더를 쓰는 다른 대화가 이미 빌려 놓았으면 그것을 함께 씁니다.
+
+        반납은 턴이 **어떻게 끝나든** 일어나야 합니다 — 정상 종료, 사용자 정지,
+        취소, 예외 전부. 반납을 놓치면 그 런타임은 아무도 안 쓰는 채로 종료 때까지
+        남고, 그만큼 다음 대화가 쓸 자리가 줄어듭니다.
         """
+        pool = get_runtime_pool()
+        workspace = await self._session_workspace(session_id)
+        await pool.acquire(workspace, holder=session_id)
+        try:
+            return await self._run_turn(session_id, user_prompt, workspace, on_event, control)
+        finally:
+            await pool.release(session_id, workspace)
+
+    async def _run_turn(
+        self,
+        session_id: str,
+        user_prompt: str,
+        workspace: Path,
+        on_event: Optional[EventCallback] = None,
+        control: Optional[TurnControl] = None,
+    ) -> DebateState:
+        """`run_turn` 의 본문. 런타임은 이미 빌린 상태로 들어옵니다."""
         async with self.session_factory() as db:
             # 1. Load session config from DB
             stmt = select(SessionModel).where(SessionModel.id == session_id)
@@ -632,11 +672,6 @@ class OrchestratorEngine:
             session_model = res.scalar_one_or_none()
             if not session_model:
                 raise ValueError(f"Session with ID '{session_id}' not found.")
-
-            # 이 대화의 작업 공간을 적용합니다. filesystem 은 허용 경로를 argv 로,
-            # sandbox 는 SANDBOX_WORKSPACE 를 env 로 기동 시점에 받으므로, 경로가
-            # 달라졌으면 서버를 다시 띄우는 것 외에 방법이 없습니다.
-            await self._apply_session_workspace(session_model.workspace_dir)
 
             # 옛 이름으로 저장된 대화도 지금 쓰는 전략으로 옮겨 돌립니다.
             strategy_name = resolve_strategy_name(session_model.strategy)
@@ -664,6 +699,7 @@ class OrchestratorEngine:
             state = DebateState(
                 session_id=session_id,
                 user_prompt=user_prompt,
+                workspace_dir=str(workspace),
                 strategy=strategy_name,
                 max_rounds=max_rounds,
                 current_round=0,
@@ -1096,7 +1132,8 @@ class OrchestratorEngine:
         )}]
 
         content, _ = await self.llm_caller.call_agent(
-            selector, prompt, custom_instructions, session_id=state.session_id
+            selector, prompt, custom_instructions, session_id=state.session_id,
+            mcp=self._mcp_for(state),
         )
         return self._parse_speaker_selection(content, candidates)
 
@@ -1394,7 +1431,8 @@ class OrchestratorEngine:
         )}]
 
         content, _ = await self.llm_caller.call_agent(
-            planner, prompt, custom_instructions, session_id=state.session_id
+            planner, prompt, custom_instructions, session_id=state.session_id,
+            mcp=self._mcp_for(state),
         )
         return self._parse_assignments(content, candidates)
 
@@ -1605,16 +1643,20 @@ class OrchestratorEngine:
             })
         return prompt
 
-    def _memory_search_tool_for(self, agent: Optional[Agent]) -> Optional[str]:
+    def _memory_search_tool_for(
+        self, agent: Optional[Agent], state: Optional[DebateState] = None,
+    ) -> Optional[str]:
         """이 에이전트가 실제로 쓸 수 있는 메모리 검색 도구의 이름. 없으면 None.
 
         서버 키가 아니라 **주어진 도구 목록**에서 찾습니다. 서버를 껐거나 연결에
-        실패했으면 없는 도구를 가리키게 되기 때문입니다.
+        실패했으면 없는 도구를 가리키게 되기 때문입니다. 그 목록은 이 턴이 빌린
+        런타임에서 나옵니다 — 대화마다 작업 공간이 다르면 뜬 서버도 다릅니다.
         """
         if agent is None:
             return None
+        mcp = (self._mcp_for(state) if state else None) or self.llm_caller.mcp_manager
         try:
-            tools = self.llm_caller.mcp_manager.get_openai_tools_for_servers(
+            tools = mcp.get_openai_tools_for_servers(
                 self.llm_caller.resolve_tool_servers(agent)
             )
         except Exception:  # noqa: BLE001 - 도구 목록을 못 구해도 합성은 진행합니다
@@ -1667,7 +1709,7 @@ class OrchestratorEngine:
             # 것은, 이 메서드가 프롬프트 문자열을 돌려준다는 계약을 호출부와
             # 테스트가 이미 쓰고 있기 때문입니다.
             state.context_dropped += dropped
-            memory_tool = self._memory_search_tool_for(agent)
+            memory_tool = self._memory_search_tool_for(agent, state)
             notice = context_trim_notice(dropped, memory_tool)
             if memory_tool:
                 notice += (
@@ -1876,6 +1918,7 @@ class OrchestratorEngine:
         content, _ = await self.llm_caller.call_agent(
             fixer, [{"role": "user", "content": "\n".join(parts)}],
             custom_instructions, session_id=state.session_id,
+            mcp=self._mcp_for(state),
         )
         return [b["code"] for b in find_mermaid_blocks(content or "")]
 

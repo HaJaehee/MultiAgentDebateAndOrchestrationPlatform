@@ -132,30 +132,36 @@ Cannot find package '@modelcontextprotocol/sdk' imported from .../memory-scoped.
 
 ---
 
-## 작업 공간 전환
+## 작업 공간마다 한 묶음
 
 filesystem 은 허용 디렉터리를 **argv** 로, sandbox 는 `SANDBOX_WORKSPACE` 를
-**env** 로 받습니다. 둘 다 기동 시점에 고정되므로, 경로가 달라지면 **서버를 다시
-띄우는 것 외에 방법이 없습니다.**
+**env** 로 받습니다. 둘 다 기동 시점에 고정되므로, 떠 있는 서버를 다른 폴더로
+돌려세울 방법이 없습니다.
+
+그래서 대화가 폴더를 바꿀 때마다 공용 서버를 다시 띄우는 대신, **폴더마다 서버
+묶음을 하나씩** 둡니다 (`MCPRuntimePool`).
 
 ```python
-async def set_workspace(self, path):
-    target = resolve_workspace_dir(str(path))
-    if self._initialized and target == self.workspace:
-        return target
-    ensure_workspace(str(target))
-    # 이미 치환된 문자열을 찾아 바꾸는 대신, 원문을 새 WORKSPACE_DIR 로 다시 풉니다.
-    self.server_configs = get_config().mcp_servers_for_workspace(target)
-    self._workspace = target
-    await self.initialize()
+manager = await get_runtime_pool().acquire(workspace, holder=session_id)
+try:
+    ...  # 이 턴의 모든 도구 호출이 이 매니저를 거칩니다
+finally:
+    await get_runtime_pool().release(session_id, workspace)
 ```
 
-`${WORKSPACE_DIR}` 가 어디에 몇 번 나오든 정확합니다 — 같은 치환기를 한 번 더
-돌리는 것이니까요. **`conf.json` 은 건드리지 않습니다.** 작업 공간은 대화의
+묶음을 띄울 때는 이미 치환된 문자열을 찾아 바꾸는 대신 **원문을 그 작업 공간으로
+다시 풉니다**. `${WORKSPACE_DIR}` 가 어디에 몇 번 나오든 정확합니다 — 같은 치환기를
+한 번 더 돌리는 것이니까요. **`conf.json` 은 건드리지 않습니다.** 작업 공간은 대화의
 설정이지 배포 설정이 아닙니다.
 
-MCP 서버는 프로세스 전체가 공유하므로, **서로 다른 작업 공간의 토론을 동시에
-돌리는 것은 거절**됩니다 (`WorkspaceConflictError`).
+**서로 다른 폴더의 토론은 동시에 돕니다.** 같은 폴더를 쓰는 대화끼리는 묶음을 함께
+쓰고(파일을 이미 공유하는 사이입니다), 그 안에서는 요청 메타데이터의 대화 스코프가
+지식 그래프와 샌드박스 커널을 갈라 둡니다.
+
+묶음 수 상한은 `MCP_MAX_RUNTIMES` (기본 4)이고, 아무도 안 쓰는 묶음은
+`MCP_RUNTIME_IDLE_TTL` (기본 300초) 동안 살아 있다가 정리됩니다. 자리가 다 차고
+전부 쓰는 중이면 `RuntimeCapacityError` 로 거절합니다 — 어느 대화가 붙잡고 있는지
+이름을 담아서.
 
 ---
 

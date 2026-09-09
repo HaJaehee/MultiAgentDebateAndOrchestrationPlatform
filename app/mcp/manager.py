@@ -4,8 +4,9 @@ import logging
 import os
 import shutil
 import subprocess
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 from app.config import MCPServerConfig, PROJECT_ROOT, get_config, resolve_workspace_dir
 from app.mcp.client import (
     MCPClientConnection,
@@ -17,8 +18,14 @@ from app.mcp.client import (
 logger = logging.getLogger(__name__)
 
 
+@lru_cache(maxsize=1)
 def find_git_executable() -> Optional[str]:
-    """Finds git executable from PATH or standard Windows installation locations."""
+    """Finds git executable from PATH or standard Windows installation locations.
+
+    `os.environ["PATH"]` 과 `GIT_PYTHON_GIT_EXECUTABLE` 을 고치므로 한 번만
+    돕니다. 런타임이 여러 개 뜨면 작업 공간마다 불리는데, 그때마다 전역 PATH 를
+    다시 조립할 이유가 없습니다.
+    """
     which_git = shutil.which("git")
     if which_git:
         return which_git
@@ -99,6 +106,23 @@ def sync_vendored_servers(server_configs: Dict[str, MCPServerConfig]) -> None:
                 logger.info(f"Installed forked memory MCP server at: {target}")
             except OSError as e:
                 logger.warning(f"Could not install forked memory MCP server at '{target}': {e}")
+
+
+# 작업 공간 준비는 경로마다 한 번씩만. 같은 폴더를 쓰는 런타임 둘이 동시에
+# `git init` 을 돌리면 서로의 절반 만들어진 저장소를 봅니다.
+_workspace_locks: Dict[str, asyncio.Lock] = {}
+
+
+async def ensure_workspace_async(path: str | Path) -> None:
+    """`ensure_workspace` 를 이벤트 루프 밖에서, 경로마다 직렬화해 돌립니다.
+
+    안쪽은 `subprocess.run` 여러 번입니다. 루프에서 그대로 돌리면 런타임 하나가
+    뜨는 동안 화면 전체가 멈추고, 런타임 N 개가 동시에 뜨면 그만큼 곱해집니다.
+    """
+    key = str(Path(path).expanduser().resolve())
+    lock = _workspace_locks.setdefault(key, asyncio.Lock())
+    async with lock:
+        await asyncio.to_thread(ensure_workspace, key)
 
 
 def ensure_workspace(path: str) -> None:
@@ -203,20 +227,14 @@ def memory_graph_dir(workspace: Path) -> Optional[Path]:
     서버 이름을 박아 두지 않고 `MEMORY_GRAPH_DIR` 를 쓰는 서버를 찾습니다.
     사용자가 서버 키를 'memory' 가 아닌 다른 이름으로 등록해도 따라갑니다.
 
-    `mcp_servers_for_workspace()` 는 `WORKSPACE_DIR` 환경변수를 실제로 바꿉니다
-    (자식 프로세스가 물려받아야 하므로 의도된 부작용입니다). 여기서는 읽기만
-    하려는 것이라, 부르고 나서 원래 값으로 되돌립니다 — 그러지 않으면 지금
-    떠 있는 서버들과 다른 폴더를 가리키게 됩니다.
+    `mcp_servers_for_workspace()` 는 순수 함수입니다 (환경변수를 바꾸지 않습니다).
+    그래서 여기서는 그냥 부르고 결과만 읽으면 됩니다.
     """
-    previous = os.environ.get("WORKSPACE_DIR")
     try:
         servers = get_config().mcp_servers_for_workspace(workspace)
     except Exception as e:  # noqa: BLE001 - 설정을 못 읽어도 이어받기는 계속됩니다
         logger.warning(f"Could not resolve MCP servers for '{workspace}': {e}")
         return None
-    finally:
-        if previous is not None:
-            os.environ["WORKSPACE_DIR"] = previous
 
     for cfg in servers.values():
         configured = (cfg.env or {}).get(MEMORY_GRAPH_DIR_ENV, "").strip()
@@ -297,48 +315,50 @@ def compose_scope(server_name: str, scope: Optional[str], actor: Optional[str]) 
 
 
 class MCPManager:
-    """Central MCP Host & Tool Registry manager."""
+    """작업 공간 하나를 보는 MCP 서버 묶음.
 
-    def __init__(self, server_configs: Optional[Dict[str, MCPServerConfig]] = None):
+    **인스턴스 하나 = 프로세스 묶음 하나 = 작업 공간 하나** 입니다. 예전에는
+    프로세스 전체에 하나뿐이어서 작업 공간을 바꾸려면 서버를 통째로 다시 띄워야
+    했고, 그래서 서로 다른 폴더를 쓰는 토론이 동시에 돌 수 없었습니다. 지금은
+    `MCPRuntimePool` 이 작업 공간마다 이 객체를 하나씩 들고 있습니다
+    (`app/mcp/pool.py`).
+
+    작업 공간은 **기동 시점에 고정**됩니다. filesystem 은 허용 경로를 argv 로,
+    sandbox 는 `SANDBOX_WORKSPACE` 를 env 로 받고, 둘 다 프로세스가 살아 있는
+    동안에는 바꿀 수 없기 때문입니다. 바꾸고 싶으면 이 런타임을 반납하고 다른
+    런타임을 받습니다.
+    """
+
+    def __init__(
+        self,
+        server_configs: Optional[Dict[str, MCPServerConfig]] = None,
+        workspace: Optional[str | Path] = None,
+    ):
+        # 작업 공간을 인자로 받습니다. 예전에는 `os.environ["WORKSPACE_DIR"]` 을
+        # 읽었는데, 그 값은 프로세스에 하나뿐이라 런타임이 둘 이상이면 서로의
+        # 폴더를 가리킵니다.
+        self._workspace = resolve_workspace_dir(str(workspace) if workspace else None)
         self.server_configs = server_configs or {}
         self.clients: Dict[str, MCPClientConnection] = {}
         self._tool_lookup: Dict[str, Tuple[MCPClientConnection, str]] = {}  # qualified_name -> (client, tool_name)
         self._initialized = False
-        self._workspace: Optional[Path] = None
+        # 이 런타임의 서버들에만 걸리는 환경변수. 풀이 채워 넣습니다.
+        self._runtime_env: Dict[str, str] = {}
+        # initialize / shutdown / reconnect 직렬화. 이게 없으면 한쪽의
+        # `shutdown()` 이 다른 쪽이 방금 채운 `self.clients` 를 지웁니다.
+        self._lifecycle = asyncio.Lock()
 
     @property
     def workspace(self) -> Path:
-        """지금 떠 있는 MCP 서버들이 보고 있는 작업 공간."""
-        if self._workspace is None:
-            self._workspace = resolve_workspace_dir(os.environ.get("WORKSPACE_DIR"))
+        """이 런타임의 서버들이 보고 있는 작업 공간."""
         return self._workspace
 
-    async def set_workspace(self, path: str | Path) -> Path:
-        """작업 공간을 바꾸고 서버를 다시 띄웁니다.
-
-        filesystem 은 허용 디렉터리를 argv 로, sandbox 는 `SANDBOX_WORKSPACE`
-        를 env 로 **기동 시점에** 받습니다. 둘 다 프로세스가 살아 있는 동안에는
-        바꿀 수 없으므로, 경로가 달라지면 다시 띄우는 것 외에 방법이 없습니다.
-
-        conf.json 은 건드리지 않습니다. 이것은 대화(세션)의 설정이지 배포 설정이
-        아닙니다.
-        """
-        target = resolve_workspace_dir(str(path))
-        if self._initialized and target == self.workspace:
-            return target
-
-        ensure_workspace(str(target))
-        # 이미 치환된 문자열을 찾아 바꾸는 대신, 원문을 새 WORKSPACE_DIR 로
-        # 다시 풉니다. `${WORKSPACE_DIR}` 가 어디에 몇 번 나오든 정확합니다.
-        self.server_configs = get_config().mcp_servers_for_workspace(target)
-        self._workspace = target
-
-        await self.initialize()
-        logger.info(f"MCP workspace switched to: {target}")
-        return target
+    @property
+    def is_initialized(self) -> bool:
+        return self._initialized
 
     async def reload_from_config(self) -> Dict[str, Any]:
-        """conf.json 을 다시 읽어 서버 목록을 지금 작업 공간으로 다시 띄웁니다.
+        """conf.json 을 다시 읽어 서버 목록을 이 작업 공간으로 다시 띄웁니다.
 
         화면에서 서버를 추가·삭제하거나 켜고 끈 뒤에 부릅니다. 살아 있는 서버만
         골라 손대지 않고 전부 다시 띄웁니다. 서버 프로세스는 명령·인자·환경을
@@ -349,36 +369,67 @@ class MCPManager:
 
         돌려주는 값은 다시 띄운 뒤의 연결 상태 요약입니다.
         """
-        self.server_configs = get_config().mcp_servers_for_workspace(self.workspace)
+        self.server_configs = get_config().mcp_servers_for_workspace(
+            self.workspace, self.runtime_env,
+        )
         await self.initialize()
         return self.connection_status()
+
+    @property
+    def runtime_env(self) -> Dict[str, str]:
+        """이 런타임의 서버들에만 걸리는 환경변수.
+
+        `MCPRuntimePool` 이 채워 넣습니다. 풀 없이 직접 만든 매니저는 비어 있고,
+        그때는 conf.json 의 기본값과 프로세스 환경을 그대로 씁니다.
+        """
+        return dict(self._runtime_env)
+
+    def set_runtime_env(self, env: Optional[Mapping[str, str]]) -> None:
+        """런타임 전용 환경변수를 지정합니다 (`initialize()` 전에 부릅니다)."""
+        self._runtime_env = {k: str(v) for k, v in (env or {}).items()}
 
     async def initialize(self) -> None:
         """Initializes all configured MCP clients and discovers tools.
 
         각 클라이언트는 여기서 연 세션을 `shutdown()` 까지 유지합니다.
+
+        `sync_vendored_servers` 는 여기서 부릅니다. 그것은 파일을 놓는 일이자
+        **설정에 적힌 상대 경로를 절대 경로로 고치는** 일이고, 후자는 서버를
+        띄우기 직전마다 필요합니다 — 런타임은 conf.json 원문을 자기 작업 공간으로
+        새로 풀기 때문에, 한 번 고쳐 둔 설정을 물려받지 않습니다. 상대 경로를 그대로
+        넘기면 자식 프로세스가 자기 cwd 로 풀어서 엉뚱한 파일을 봅니다.
+
+        파일 쓰기 자체는 내용이 같으면 건너뜁니다. 런타임 기동은 풀의 락이
+        직렬화하므로(`app/mcp/pool.py`) 같은 파일에 동시에 쓰는 일도 없습니다.
         """
-        await self.shutdown()
-        self._tool_lookup.clear()
+        async with self._lifecycle:
+            await self._shutdown_locked()
+            self._tool_lookup.clear()
 
-        ensure_workspace(str(self.workspace))
-        sync_vendored_servers(self.server_configs)
+            await ensure_workspace_async(self.workspace)
+            sync_vendored_servers(self.server_configs)
 
-        for name in self.server_configs:
-            await self._start_client(name)
+            for name in self.server_configs:
+                await self._start_client(name)
 
-        self._rebuild_tool_lookup()
-        self._initialized = True
+            self._rebuild_tool_lookup()
+            self._initialized = True
+
         tool_total = sum(len(c.tools) for c in self.clients.values())
         connected = [n for n, c in self.clients.items() if c.is_connected]
         failed = [n for n in self.clients if n not in connected]
         logger.info(
-            f"MCPManager initialized. Connected: {connected or '-'} | "
+            f"MCP runtime for '{self.workspace}' initialized. Connected: {connected or '-'} | "
             f"Unavailable: {failed or '-'} | Total registered tools: {tool_total}"
         )
 
     async def shutdown(self) -> None:
         """열려 있는 모든 MCP 세션과 서버 프로세스를 정리합니다."""
+        async with self._lifecycle:
+            await self._shutdown_locked()
+
+    async def _shutdown_locked(self) -> None:
+        """`_lifecycle` 을 이미 쥐고 있는 쪽이 부르는 정리."""
         for name, client in list(self.clients.items()):
             try:
                 await client.close()
@@ -401,6 +452,7 @@ class MCPManager:
             headers=cfg.headers,
             transport=cfg.transport,
             timeout=cfg.timeout,
+            workspace=self.workspace,
         )
         self.clients[name] = client
         try:
@@ -437,16 +489,17 @@ class MCPManager:
         if not targets:
             return False
 
-        for name in targets:
-            existing = self.clients.pop(name, None)
-            if existing is not None:
-                try:
-                    await existing.close()
-                except Exception as e:  # noqa: BLE001
-                    logger.warning(f"Error closing MCP server '{name}' before reconnect: {e}")
-            await self._start_client(name)
+        async with self._lifecycle:
+            for name in targets:
+                existing = self.clients.pop(name, None)
+                if existing is not None:
+                    try:
+                        await existing.close()
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(f"Error closing MCP server '{name}' before reconnect: {e}")
+                await self._start_client(name)
 
-        self._rebuild_tool_lookup()
+            self._rebuild_tool_lookup()
         reconnected = [n for n in targets if self.clients[n].is_connected]
         logger.info(f"MCP reconnect requested for {targets} -> connected: {reconnected or '-'}")
         return bool(reconnected)
@@ -550,14 +603,19 @@ class MCPManager:
             )
 
 
-# Global singleton instance
-_mcp_manager: Optional[MCPManager] = None
-
-
 def get_mcp_manager() -> MCPManager:
-    global _mcp_manager
-    if _mcp_manager is None:
-        from app.config import get_config
-        cfg = get_config()
-        _mcp_manager = MCPManager(cfg.enabled_mcp_servers)
-    return _mcp_manager
+    """기본 작업 공간의 런타임.
+
+    예전에는 이것이 프로세스 전체의 유일한 매니저였습니다. 지금은
+    `MCPRuntimePool` 이 작업 공간마다 하나씩 들고 있고, 이 함수는 그중 기본
+    작업 공간의 것을 돌려줍니다. 토론 경로는 세션의 작업 공간으로 런타임을
+    받아 쓰므로 이 함수를 쓰지 않습니다 — 아직 어느 대화에도 속하지 않은
+    화면(설정 패널의 기본값 표시 등)과 옛 호출자를 위한 자리입니다.
+
+    **아직 떠 있지 않으면 빈 런타임을 돌려줍니다.** 여기서 서버를 띄우지는
+    않습니다. 기동은 소유자가 분명한 자리(풀의 `acquire`)에서만 일어나야
+    반납도 그 짝을 맞출 수 있습니다.
+    """
+    from app.mcp.pool import get_runtime_pool
+
+    return get_runtime_pool().default_runtime()

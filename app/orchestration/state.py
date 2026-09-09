@@ -25,6 +25,10 @@ class DebateMessage(BaseModel):
 class DebateState(BaseModel):
     session_id: str
     user_prompt: str
+    # 이 턴이 빌린 MCP 런타임의 작업 공간. 런타임 객체 자체가 아니라 **키**를
+    # 들고 다닙니다 — 살아 있는 프로세스 묶음의 소유권은 풀에 있고, 상태는
+    # 직렬화되어 화면과 기록으로 흘러가기 때문입니다 (`app/mcp/pool.py`).
+    workspace_dir: str = ""
     strategy: str = "sequential_debate"
     max_rounds: int = 3
     current_round: int = 0

@@ -274,18 +274,30 @@ ArtifactModel 로 DB 저장 → 산출물 뷰어 탭
 
 ---
 
-## 동시 실행 제약
+## 동시 실행
 
-MCP 서버는 프로세스 전체가 공유하고 작업 공간은 기동 시점에 고정됩니다.
-서로 다른 작업 공간의 토론을 동시에 돌리면 나중에 시작한 쪽이 서버를 다시
-띄우면서 앞선 토론의 도구가 남의 폴더를 읽고 쓰게 됩니다.
+작업 공간이 달라도 동시에 토론할 수 있습니다. 작업 공간은 서버 기동 시점에
+고정되므로 **폴더마다 MCP 서버 묶음을 하나씩** 띄우고, 턴은 시작할 때 자기
+폴더의 묶음을 빌려 끝날 때 돌려줍니다.
 
 ```python
-class WorkspaceConflictError(RuntimeError):
-    """조용히 틀리느니 시작을 거절합니다."""
+pool = get_runtime_pool()
+workspace = await self._session_workspace(session_id)
+await pool.acquire(workspace, holder=session_id)
+try:
+    return await self._run_turn(session_id, user_prompt, workspace, on_event, control)
+finally:
+    await pool.release(session_id, workspace)
 ```
 
-같은 작업 공간이면 동시 토론이 가능합니다.
+반납은 턴이 **어떻게 끝나든** 일어나야 합니다 — 정상 종료, 사용자 정지, 취소,
+예외 전부. 놓치면 그 묶음은 아무도 안 쓰는 채로 종료 때까지 남습니다.
+
+묶음 수에는 상한이 있습니다 (`MCP_MAX_RUNTIMES`, 기본 4). 자리가 없으면
+놀고 있는 묶음부터 정리하고, 전부 쓰는 중이면 `RuntimeCapacityError` 로
+거절합니다 — 어느 대화가 붙잡고 있는지 이름을 담아서. 조용히 틀리느니
+거절한다는 규칙은 그대로이고, 이유만 "동시에 두 폴더를 못 쓴다" 에서
+"지금 그만큼 띄울 예산이 없다" 로 바뀌었습니다.
 
 ---
 

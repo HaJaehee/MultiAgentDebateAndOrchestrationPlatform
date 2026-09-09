@@ -43,6 +43,15 @@ flowchart TD
 
 ## 2. Phase Breakdown
 
+### Phase 0: Borrowing the MCP Runtime
+Before anything else, `run_turn()` acquires the MCP runtime for this session's workspace
+and holds it for the whole turn, releasing it in a `finally` so the reference is returned
+however the turn ends — completion, user stop, cancellation, or an exception. Sessions
+pointing at the same folder share one runtime; a different folder gets its own group of
+server processes, which is what allows debates in different workspaces to run at the same
+time. Every `call_agent()` in the turn is handed that runtime explicitly. See
+[Runtime Isolation](file:///d:/MultiAgentOrchestrator/wiki/mcp/runtime-isolation.md).
+
 ### Phase 1: Planning & Goal Decomposition
 1. **Multi-Turn Context Restoration**: At the start of a turn, the engine loads all previous `MessageModel` records for the session from SQLite into `state.messages`. This ensures previous user prompts and agent remarks are fully restored.
 2. The user's input is saved as a `MessageModel` with `sender_key = "user"` and `round_number = 0`.
@@ -138,3 +147,10 @@ On the UI side ([`app/ui/app.py`](file:///d:/MultiAgentOrchestrator/app/ui/app.p
   `ArtifactViewer`) exposes `alive` and ignores updates aimed at a deleted page.
 - Server shutdown cancels outstanding runs via `DebateRunner.shutdown()`; deleting a
   session cancels its run via `forget()`.
+
+Runs in different workspaces are no longer refused. `DebateRunner` used to raise
+`WorkspaceConflictError` when a second session tried to start a debate in a different
+folder, because the MCP servers were shared process-wide and switching the workspace under
+a running debate would have pointed its tools at someone else's files. With one runtime per
+workspace there is nothing to clash over; the only remaining refusal is
+`RuntimeCapacityError` when the runtime budget is exhausted.

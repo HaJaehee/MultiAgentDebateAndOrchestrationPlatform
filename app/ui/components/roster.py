@@ -24,7 +24,8 @@ from app.config import (
     set_agent_enabled_in_conf_file,
     set_mcp_server_enabled_in_conf_file,
 )
-from app.mcp.manager import get_mcp_manager
+from app.mcp.manager import MCPManager, get_mcp_manager
+from app.mcp.pool import get_runtime_pool
 from app.orchestration.runner import get_debate_runner
 from app.orchestration.state import DebateState
 from app.orchestration.strategies import (
@@ -735,13 +736,27 @@ class AgentRosterControl:
         # 메뉴가 같은 시점에 잠겨야 합니다.
         self.refresh_agent_cards()
 
+    def _session_runtime(self) -> MCPManager:
+        """이 대화의 작업 공간에 해당하는 MCP 런타임.
+
+        **떠 있는 것만 찾습니다** (`pool.get`). 화면을 그리는 것만으로 서버가 뜨면
+        사이드바를 클릭할 때마다 프로세스 묶음이 하나씩 늘어납니다. 아직 안 떴으면
+        기본 런타임을 돌려주고, 그쪽도 비어 있으면 칩은 "미기동" 으로 그려집니다 —
+        그게 사실입니다. 첫 토론이 시작될 때 이 폴더의 서버가 뜹니다.
+        """
+        return get_runtime_pool().get(self.workspace_dir) or get_mcp_manager()
+
     def refresh_mcp_status(self) -> None:
-        """conf.json 의 MCP 서버별 연결 상태를 칩으로 다시 그립니다."""
+        """conf.json 의 MCP 서버별 연결 상태를 칩으로 다시 그립니다.
+
+        상태는 **이 대화가 쓸 런타임**의 것입니다. 폴더가 다르면 뜬 서버도
+        다르므로, 전역 하나를 보여주면 다른 대화의 상태를 읽게 됩니다.
+        """
         if self.mcp_row is None or self.mcp_row.is_deleted:
             return
 
         try:
-            status = get_mcp_manager().connection_status()
+            status = self._session_runtime().connection_status()
             configured = get_config().mcp_servers
         except Exception as e:  # noqa: BLE001 - UI 는 설정 오류로 죽지 않아야 합니다
             logger.warning(f"Could not read MCP status: {e}")
@@ -822,16 +837,19 @@ class AgentRosterControl:
     def _current_mcp_lock_reason(self) -> str:
         """지금 MCP 구성을 바꾸면 안 되는 이유. 바꿔도 되면 빈 문자열.
 
-        진행 중인 토론은 지금 이 서버들의 도구를 쓰고 있습니다. 도중에 서버를
-        내리거나 다시 띄우면 그 토론의 도구 호출이 실패하거나, 더 나쁘게는 새로
-        뜬 서버가 다른 구성으로 응답합니다. 이 대화든 다른 대화든 마찬가지입니다.
+        서버 프로세스는 이제 작업 공간마다 나뉘지만, **무엇을 어떻게 띄울지는
+        여전히 conf.json 하나가 정합니다.** 여기서 서버를 고치면 살아 있는 런타임
+        전부를 다시 띄우게 되고(`pool.reload_all`), 진행 중인 토론은 그 도중에
+        도구를 잃거나 다른 구성으로 응답하는 서버를 만납니다. 그래서 이 대화든
+        다른 대화든 하나라도 돌고 있으면 잠급니다.
         """
         running = get_debate_runner().running_sessions()
         if not running:
             return ""
         return (
             f"토론이 진행 중인 대화가 {len(running)}개 있습니다. MCP 서버 구성은 "
-            f"모든 라운드가 끝나거나 정지되어 최종 아티팩트가 나온 뒤에 바꿀 수 있습니다."
+            f"conf.json 하나로 모든 작업 공간의 서버를 정하므로, 모든 라운드가 "
+            f"끝나거나 정지되어 최종 아티팩트가 나온 뒤에 바꿀 수 있습니다."
         )
 
     def _sync_mcp_lock(self) -> None:
@@ -1456,7 +1474,8 @@ class AgentRosterControl:
         progress = self._progress_toast("MCP 서버를 다시 띄우는 중입니다...") if restart_servers else None
         try:
             if restart_servers:
-                await get_mcp_manager().reload_from_config()
+                # 살아 있는 런타임 전부. conf.json 은 폴더가 달라도 정본 하나입니다.
+                await get_runtime_pool().reload_all()
             # 설정을 다시 읽었으므로 에이전트 풀도 그 구성으로 맞춥니다.
             reload_agent_pool()
             ui.notify(done_message, type="positive", position="bottom-right")
@@ -1738,7 +1757,7 @@ class AgentRosterControl:
             # 새 설정을, 도구는 옛 서버를 가리키게 됩니다.
             if self._mcp_fingerprint() != before_mcp:
                 try:
-                    await get_mcp_manager().reload_from_config()
+                    await get_runtime_pool().reload_all()
                     ui.notify("MCP 서버 구성도 바뀌어 함께 다시 띄웠습니다.",
                               type="info", position="bottom-right")
                 except Exception as e:  # noqa: BLE001
@@ -1784,7 +1803,7 @@ class AgentRosterControl:
 
         try:
             configured = get_config().mcp_servers
-            status = get_mcp_manager().connection_status()
+            status = self._session_runtime().connection_status()
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Could not read MCP servers: {e}")
             configured, status = {}, {}
@@ -1903,7 +1922,7 @@ class AgentRosterControl:
             self.mcp_reconnect_btn.disable()
         progress = self._progress_toast("MCP 서버 재연결을 시도합니다...")
         try:
-            changed = await get_mcp_manager().reconnect()
+            changed = await self._session_runtime().reconnect()
             self.refresh_mcp_status()
             if changed:
                 ui.notify("MCP 서버에 다시 연결되었습니다.", type="positive", position="bottom-right")
@@ -1922,15 +1941,22 @@ class AgentRosterControl:
         """입력값이 실제로 어느 폴더가 되는지 보여줍니다 (상대 경로·빈 값 포함)."""
         if self.workspace_hint is None or self.workspace_hint.is_deleted:
             return
-        effective = resolve_workspace_dir(self.workspace_dir or None)
-        live = get_mcp_manager().workspace
-        text = f"현재 적용: {live}"
-        if effective != live:
-            text += f"   |   적용 대기: {effective}  ('적용' 을 누르세요)"
+        saved = resolve_workspace_dir(self.workspace_dir or None)
+        typed = resolve_workspace_dir((self.workspace_input.value or "").strip() or None)             if self.workspace_input is not None else saved
+        live = get_runtime_pool().get(saved) is not None
+        text = f"이 대화의 작업 공간: {saved}"
+        text += "   |   MCP 서버 기동됨" if live else "   |   MCP 서버는 첫 토론 때 기동됩니다"
+        if typed != saved:
+            text += f"   |   적용 대기: {typed}  ('적용' 을 누르세요)"
         self.workspace_hint.set_text(text)
 
     async def _on_workspace_apply(self) -> None:
-        """작업 공간을 바꾸고 MCP 서버를 다시 띄웁니다.
+        """이 대화가 쓸 작업 공간을 바꿉니다.
+
+        **여기서 MCP 서버를 다시 띄우지 않습니다.** 서버는 이제 작업 공간마다
+        따로 뜨고(`app/mcp/pool.py`), 이 대화의 다음 토론이 시작될 때 그 폴더의
+        런타임이 붙습니다. 다른 대화가 토론 중이어도 상관없습니다 — 그쪽 서버는
+        그쪽 폴더를 계속 보고 있습니다.
 
         conf.json 은 건드리지 않습니다. 이것은 대화의 설정입니다.
         """
@@ -1939,28 +1965,26 @@ class AgentRosterControl:
         value = (self.workspace_input.value or "").strip()
 
         if self.session_id and get_debate_runner().is_running(self.session_id):
-            ui.notify("토론이 진행 중입니다. 끝난 뒤에 바꾸세요.", type="warning", position="bottom-right")
-            return
-        others = get_debate_runner().running_elsewhere(self.session_id or "")
-        if others:
-            ui.notify(
-                "다른 대화가 토론 중입니다. MCP 서버는 프로세스 전체가 공유하므로 "
-                "지금 바꾸면 그 토론이 남의 폴더를 쓰게 됩니다.",
-                type="warning", position="bottom-right",
-            )
+            # 진행 중인 토론은 이미 런타임을 빌려 쓰고 있습니다. 도중에 바꾸면
+            # 화면과 도구가 서로 다른 폴더를 가리킵니다.
+            ui.notify("이 대화의 토론이 진행 중입니다. 끝난 뒤에 바꾸세요.",
+                      type="warning", position="bottom-right")
             return
 
         if self.workspace_apply_btn:
             self.workspace_apply_btn.disable()
         try:
             self.workspace_dir = value
-            target = await get_mcp_manager().set_workspace(resolve_workspace_dir(value or None))
+            target = resolve_workspace_dir(value or None)
             self.refresh_mcp_status()
             self._refresh_workspace_hint()
             if self.on_config_changed:
                 await self.on_config_changed()
-            ui.notify(f"작업 공간을 '{target}' 로 바꾸고 MCP 서버를 다시 띄웠습니다.",
-                      type="positive", position="bottom-right")
+            ui.notify(
+                f"이 대화의 작업 공간을 '{target}' 로 바꿨습니다. "
+                f"다음 토론부터 그 폴더의 MCP 서버가 붙습니다.",
+                type="positive", position="bottom-right",
+            )
         except Exception as e:  # noqa: BLE001
             logger.error(f"Workspace switch failed: {e}", exc_info=True)
             ui.notify(f"작업 공간 변경 실패: {e}", type="negative", position="bottom-right")

@@ -11,7 +11,7 @@ from app.agents.pool import AgentPool
 from app.agents.llm import LLMCaller, LLMUnavailableError
 from app.database.models import MessageModel, SessionModel
 from app.database.session import get_session_factory
-from app.mcp.client import _handle_list_roots, MCPClientConnection
+from app.mcp.client import make_list_roots_handler, MCPClientConnection
 from app.orchestration.engine import OrchestratorEngine
 from app.orchestration.state import DebateState
 from tests.fake_llm import FakeLLMCaller
@@ -70,11 +70,25 @@ def test_host_and_port_precedence_hierarchy():
 
 
 @pytest.mark.asyncio
-async def test_mcp_roots_capability():
-    res = await _handle_list_roots()
+async def test_mcp_roots_capability(tmp_path):
+    """Roots 는 **그 연결의** 작업 공간을 알려야 합니다.
+
+    전역 하나를 읽던 시절에는, 폴더가 다른 런타임이 동시에 떠 있으면 어느 서버가
+    물어봤든 마지막에 설정된 폴더를 알려줬습니다.
+    """
+    ws_a, ws_b = tmp_path / "a", tmp_path / "b"
+    ws_a.mkdir()
+    ws_b.mkdir()
+
+    res = await make_list_roots_handler(ws_a)()
     assert len(res.roots) > 0
     assert res.roots[0].name == "workspace"
     assert str(res.roots[0].uri).startswith("file://")
+    assert Path(res.roots[0].uri.path.lstrip("/")).resolve() == ws_a.resolve()
+
+    # 서로 다른 연결은 서로 다른 폴더를 알려줍니다.
+    res_b = await make_list_roots_handler(ws_b)()
+    assert res_b.roots[0].uri != res.roots[0].uri
 
 
 @pytest.mark.asyncio

@@ -21,7 +21,7 @@ from app.agents.personas import (
 )
 from app.database.models import ArtifactModel, MessageModel, SessionModel
 from app.database.session import get_session_factory
-from app.orchestration.runner import TurnRun, WorkspaceConflictError, get_debate_runner
+from app.orchestration.runner import TurnRun, get_debate_runner
 from app.orchestration.strategies import resolve_strategy_name
 from app.session_ops import discard_turn
 from app.ui.components.artifact_viewer import ArtifactViewer
@@ -421,11 +421,11 @@ def create_ui() -> None:
 
                 # 토론은 이 페이지가 아니라 프로세스가 소유합니다. 새로고침하거나
                 # 페르소나 화면에 다녀와도 중단되지 않고, 돌아오면 다시 이어 붙습니다.
+                # 작업 공간이 다른 대화가 이미 돌고 있어도 막지 않습니다. 폴더마다
+                # MCP 서버 묶음이 따로 뜨기 때문입니다 (`app/mcp/pool.py`). 자리가
+                # 모자라면 턴이 시작된 뒤 `RuntimeCapacityError` 로 끝나고, 그
+                # 사유는 아래 실패 경로를 통해 화면에 그대로 나옵니다.
                 run = runner.start(current_session_id, prompt, roster_control.workspace_dir)
-            except WorkspaceConflictError as exc:
-                chat_feed.set_busy(False, str(exc), "Blocked")
-                ui.notify(str(exc), type="warning", position="bottom-right")
-                return
             except Exception as exc:  # noqa: BLE001 - 입력이 잠긴 채로 남으면 안 됩니다
                 logger.error(f"Could not start the debate: {exc}", exc_info=True)
                 chat_feed.set_busy(False, f"토론을 시작하지 못했습니다: {exc}", "Error")

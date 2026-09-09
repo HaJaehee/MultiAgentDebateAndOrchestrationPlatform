@@ -240,7 +240,7 @@ async def test_partial_stream_is_kept_alongside_the_failure_notice():
         async def call_agent(self, agent, messages, custom_instructions="",
                              on_tool_call=None, on_chunk=None, session_id=None,
                              budget_arbiter=None,
-                             context_arbiter=None, on_context_trim=None):
+                             context_arbiter=None, on_context_trim=None, mcp=None):
             if agent.key == "critic":
                 if on_chunk:
                     await on_chunk("검토를 시작하겠습니다")
@@ -637,23 +637,75 @@ def test_mcp_servers_reresolve_for_a_new_workspace(tmp_path):
     from app.config import get_config
 
     cfg = get_config()
-    previous = os.environ.get("WORKSPACE_DIR")
-    try:
-        servers = cfg.mcp_servers_for_workspace(tmp_path)
-        assert servers["filesystem"].args[-1] == str(tmp_path)
-        assert servers["sandbox"].env["SANDBOX_WORKSPACE"] == str(tmp_path)
-        assert servers["git"].args[-1] == str(tmp_path)
-        # 비활성 서버는 띄우지 않으므로 빠져야 합니다.
-        assert "fetch" not in servers
-    finally:
-        if previous is not None:
-            os.environ["WORKSPACE_DIR"] = previous
+    before = os.environ.get("WORKSPACE_DIR")
+
+    servers = cfg.mcp_servers_for_workspace(tmp_path)
+    assert servers["filesystem"].args[-1] == str(tmp_path)
+    assert servers["sandbox"].env["SANDBOX_WORKSPACE"] == str(tmp_path)
+    assert servers["git"].args[-1] == str(tmp_path)
+    # 비활성 서버는 띄우지 않으므로 빠져야 합니다.
+    assert "fetch" not in servers
+
+    # 자식 프로세스는 부모의 전역이 아니라 이 값을 봅니다.
+    assert servers["filesystem"].env["WORKSPACE_DIR"] == str(tmp_path)
+
+    # **전역은 그대로여야 합니다.** 예전에는 여기서 os.environ["WORKSPACE_DIR"] 을
+    # 실제로 바꿔 자식에게 물려줬습니다. 작업 공간이 다른 런타임이 둘 이상 살아
+    # 있으면 마지막에 부른 쪽이 나머지 전부의 경로를 덮어씁니다.
+    assert os.environ.get("WORKSPACE_DIR") == before
+
+
+def test_a_windows_extended_path_still_becomes_a_file_uri():
+    r"""윈도우의 확장 길이 접두사(`\\?\`)가 붙은 경로도 Roots 로 나가야 합니다.
+
+    윈도우에서 `Path.resolve()` 가 이 접두사를 붙여 돌려주는 경우가 있습니다
+    (특히 아직 만들어지지 않은 폴더). 그대로 `as_uri()` 하면
+    `file://?/C:/...` 라는 UNC 모양이 나오고, 서버 쪽 URL 검증이 거절합니다 —
+    그러면 filesystem 서버는 허용 디렉터리를 못 받은 채 뜨고, 그 사실은
+    "Failed to request initial roots" 한 줄로만 남습니다.
+    """
+    from pathlib import Path
+    from app.config import strip_extended_path_prefix
+
+    B = chr(92)
+    extended = Path(B * 2 + "?" + B + "C:" + B + "Users" + B + "x")
+    assert strip_extended_path_prefix(extended).as_uri() == "file:///C:/Users/x"
+    # 멀쩡한 경로는 건드리지 않습니다.
+    plain = Path("C:" + B + "Users" + B + "x")
+    assert strip_extended_path_prefix(plain) == plain
+
+
+def test_runtime_env_is_per_workspace(tmp_path):
+    """런타임마다 자기 임시 폴더와 커널 예산을 받아야 합니다.
+
+    node 런타임 격리의 실체가 이것입니다 — node.exe 나 node_modules 를 복제하는
+    것이 아니라, 폴더마다 별도의 프로세스를 **자기 환경으로** 띄우는 것.
+    """
+    from app.mcp.pool import MCPRuntimePool
+
+    pool = MCPRuntimePool(max_runtimes=4)
+    env_a = pool.runtime_env(tmp_path / "ws-a")
+    env_b = pool.runtime_env(tmp_path / "ws-b")
+
+    assert env_a["WORKSPACE_DIR"] != env_b["WORKSPACE_DIR"]
+    assert env_a["TMP"] != env_b["TMP"]
+    assert env_a["TMP"].startswith(str(tmp_path / "ws-a"))
+    # HOME 은 건드리지 않습니다 — git 설정과 파이썬 사이트 패키지가 거기 있습니다.
+    assert "HOME" not in env_a and "USERPROFILE" not in env_a
+    # 런타임을 나눠 띄우는 만큼 샌드박스 커널 예산도 나눕니다.
+    assert int(env_a["SANDBOX_MAX_NAMESPACES"]) <= 16 // 4 or int(env_a["SANDBOX_MAX_NAMESPACES"]) == 2
 
 
 @pytest.mark.asyncio
-async def test_concurrent_debates_in_different_workspaces_are_refused(tmp_path):
-    """MCP 서버는 프로세스 전체가 공유합니다. 조용히 남의 폴더를 쓰느니 거절합니다."""
-    from app.orchestration.runner import DebateRunner, WorkspaceConflictError
+async def test_concurrent_debates_in_different_workspaces_both_run(tmp_path):
+    """작업 공간이 다른 토론은 **동시에** 돕니다.
+
+    예전에는 두 번째 토론을 거절했습니다 (`WorkspaceConflictError`). MCP 서버가
+    프로세스 전체에 한 벌뿐이라, 나중에 시작한 쪽이 서버를 다시 띄우면서 앞선
+    토론의 도구가 남의 폴더를 읽고 쓰게 됐기 때문입니다. 지금은 폴더마다 서버
+    묶음이 따로 뜹니다.
+    """
+    from app.orchestration.runner import DebateRunner
 
     class Never(FakeLLMCaller):
         async def call_agent(self, *args, **kwargs):
@@ -664,47 +716,74 @@ async def test_concurrent_debates_in_different_workspaces_are_refused(tmp_path):
     runner = DebateRunner(_engine(llm_caller=Never()))
 
     run_a = runner.start(sid_a, "첫 대화", str(tmp_path / "ws-a"))
+    run_b = runner.start(sid_b, "둘째 대화", str(tmp_path / "ws-b"))
+    # 두 태스크가 실제로 한 발짝씩 나아가게 둡니다. 시작도 하기 전에 취소하면
+    # 코루틴 본문이 돌지 않아 상태가 "running" 에 머뭅니다.
+    await asyncio.sleep(0.05)
     try:
-        with pytest.raises(WorkspaceConflictError) as excinfo:
-            runner.start(sid_b, "둘째 대화", str(tmp_path / "ws-b"))
-        assert "작업 공간" in str(excinfo.value)
-
-        # 같은 작업 공간이면 막지 않습니다.
-        run_c = runner.start(sid_b, "둘째 대화", str(tmp_path / "ws-a"))
-        assert run_c.status == "running"
-        await runner.cancel(sid_b)
+        assert run_a.status == "running"
+        assert run_b.status == "running"
+        assert run_a.workspace != run_b.workspace
     finally:
+        await runner.cancel(sid_b)
         await runner.cancel(sid_a)
     assert run_a.status == "cancelled"
+    assert run_b.status == "cancelled"
 
 
 @pytest.mark.asyncio
-async def test_session_workspace_is_applied_at_turn_start(tmp_path, monkeypatch):
-    """세션에 지정된 폴더로 MCP 서버를 맞춘 뒤에 토론이 시작되어야 합니다."""
-    from app.orchestration import engine as engine_module
+async def test_each_session_speaks_through_its_own_runtime(tmp_path):
+    """발언에는 **그 대화의 작업 공간** 런타임이 실려야 합니다.
 
-    switched = []
+    이것이 빠지면 도구는 여전히 전역 하나를 거쳐 나가고, 프로세스를 나눈 의미가
+    없어집니다.
+    """
+    from app.mcp.pool import get_runtime_pool
 
-    class FakeManager:
-        workspace = tmp_path / "current"
+    sid_a = await _make_session()
+    sid_b = await _make_session()
+    session_factory = get_session_factory()
+    async with session_factory() as db:
+        (await db.get(SessionModel, sid_a)).workspace_dir = str(tmp_path / "ws-a")
+        (await db.get(SessionModel, sid_b)).workspace_dir = str(tmp_path / "ws-b")
+        await db.commit()
 
-        async def set_workspace(self, path):
-            switched.append(path)
-            FakeManager.workspace = path
-            return path
+    caller_a, caller_b = FakeLLMCaller(), FakeLLMCaller()
+    await _engine(llm_caller=caller_a).run_turn(session_id=sid_a, user_prompt="설계해줘")
+    await _engine(llm_caller=caller_b).run_turn(session_id=sid_b, user_prompt="설계해줘")
 
-    monkeypatch.setattr(engine_module, "get_mcp_manager", lambda: FakeManager())
+    used_a = {id(m) for m in caller_a.runtimes if m is not None}
+    used_b = {id(m) for m in caller_b.runtimes if m is not None}
+    assert used_a and used_b, "발언이 런타임을 받지 못했습니다"
+    assert used_a.isdisjoint(used_b), "두 대화가 같은 런타임을 썼습니다"
+
+    # 각 런타임은 자기 폴더를 봅니다.
+    pool = get_runtime_pool()
+    assert pool.get(tmp_path / "ws-a").workspace == (tmp_path / "ws-a").resolve()
+    assert pool.get(tmp_path / "ws-b").workspace == (tmp_path / "ws-b").resolve()
+
+
+@pytest.mark.asyncio
+async def test_the_runtime_is_released_when_the_turn_ends(tmp_path):
+    """턴이 끝나면 런타임을 놓아야 합니다.
+
+    반납을 놓치면 그 런타임은 아무도 안 쓰는 채로 종료 때까지 남고, 그만큼 다음
+    대화가 쓸 자리가 줄어듭니다. 프로세스는 유휴 TTL 동안 살려 두지만, **붙잡고
+    있는 사람**은 없어야 합니다.
+    """
+    from app.mcp.pool import get_runtime_pool
 
     sid = await _make_session()
     session_factory = get_session_factory()
     async with session_factory() as db:
-        row = await db.get(SessionModel, sid)
-        row.workspace_dir = str(tmp_path / "chosen")
+        (await db.get(SessionModel, sid)).workspace_dir = str(tmp_path / "ws")
         await db.commit()
 
     await _engine(llm_caller=FakeLLMCaller()).run_turn(session_id=sid, user_prompt="설계해줘")
 
-    assert switched == [(tmp_path / "chosen").resolve()]
+    pool = get_runtime_pool()
+    status = pool.status()[pool.key_for(tmp_path / "ws")]
+    assert status["holders"] == []
 
 
 # ------------------------------------------------------- 8. 대화별 도구 스코프

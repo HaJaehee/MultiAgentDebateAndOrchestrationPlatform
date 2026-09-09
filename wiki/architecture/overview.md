@@ -44,13 +44,13 @@ flowchart TD
         Engine["OrchestratorEngine (engine.py)"]
         Pool["AgentPool (pool.py)"]
         LLM["LLMCaller (llm.py)"]
-        MCP["MCPManager (manager.py)"]
+        MCP["MCPRuntimePool (pool.py)<br/>one MCPManager per workspace"]
         DBEngine["SQLAlchemy Async Engine (session.py)"]
     end
 
     subgraph StorageLayer ["Persistence Layer"]
         SQLite[("multiagent.db (SQLite)")]
-        Workspace["./workspace (Shared Directory / Git Repo)"]
+        Workspace["workspace folders (one Git repo each)<br/>one MCP runtime per folder"]
     end
 
     subgraph MCPLayer ["MCP Server Processes (stdio)"]
@@ -92,11 +92,11 @@ flowchart TD
 - Manages application startup and shutdown using `fastapi.concurrency.asynccontextmanager`.
 - Initializes the configuration singleton via `get_config()`.
 - Runs database table migrations via `init_db()`.
-- Launches all enabled MCP servers and builds the tool registry via `MCPManager.initialize()`.
+- Warms the default workspace's MCP runtime via `MCPRuntimePool.warm_default()`; other workspaces get their own server group when a debate first needs them (see [Runtime Isolation](file:///d:/MultiAgentOrchestrator/wiki/mcp/runtime-isolation.md)).
 - Instantiates the `AgentPool`.
 - Mounts REST API endpoints (`/api/health`, `/api/agents`, `/api/mcp`, `/api/sessions/{session_id}/personas`).
 - Serves the NiceGUI application at `http://{host}:{port}`.
-- On shutdown, gracefully closes all running MCP subprocesses and releases resources.
+- On shutdown, gracefully closes every runtime's MCP subprocesses and releases resources.
 
 ### 4.2. Configuration Subsystem ([app/config.py](file:///d:/MultiAgentOrchestrator/app/config.py))
 - Parses [conf.json](file:///d:/MultiAgentOrchestrator/conf.json) with the standard-library `json` module, stripping `//` documentation keys.
@@ -117,6 +117,7 @@ flowchart TD
 
 ### 4.5. Model Context Protocol (MCP) Host ([app/mcp/](file:///d:/MultiAgentOrchestrator/app/mcp/))
 - Implements an asynchronous MCP host manager ([manager.py](file:///d:/MultiAgentOrchestrator/app/mcp/manager.py)) and stdio client connection manager ([client.py](file:///d:/MultiAgentOrchestrator/app/mcp/client.py)).
+- Holds **one manager per workspace** in a reference-counted pool ([pool.py](file:///d:/MultiAgentOrchestrator/app/mcp/pool.py)), because a server binds the folder it may touch at spawn time. This is what lets debates in different workspaces run concurrently.
 - Manages long-lived client processes so stateful tools (e.g., IPython kernel namespaces, memory graph) persist across debate turns.
 - Auto-converts MCP tool schemas into OpenAI Function Calling format with namespaced qualified names (`server__tool`).
 - Captures raw process stderr using a dedicated background thread tee for accurate diagnostic tooltips in the UI.

@@ -64,6 +64,8 @@ class FakeLLMCaller:
         self.budget_grants: List[int] = []
         # 각 발언이 어떤 대화 스코프로 도구를 부를지 (MCP _meta 로 나가는 값)
         self.scopes: List[Optional[str]] = []
+        # 각 발언이 받은 MCP 런타임 (작업 공간별로 다른 객체여야 합니다)
+        self.runtimes: List[Any] = []
 
     def _reply_for(self, agent: Agent, messages: List[Dict[str, Any]]) -> str:
         if agent.key in self.replies:
@@ -86,9 +88,13 @@ class FakeLLMCaller:
         budget_arbiter: Optional[Callable[[Dict[str, Any]], Any]] = None,
         context_arbiter: Optional[Callable[[Dict[str, Any]], Any]] = None,
         on_context_trim: Optional[Callable[[int], Any]] = None,
+        mcp: Any = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         self.calls.append(agent.key)
         self.scopes.append(session_id)
+        # 이 발언이 어느 MCP 런타임을 받았는지. 대화마다 작업 공간이 다르면
+        # 런타임도 달라야 한다는 것을 확인하는 테스트가 읽습니다.
+        self.runtimes.append(mcp)
         # 도구 예산이 바닥났을 때 사람에게 물어보는 통로. 진짜 호출기는 상한에
         # 닿았을 때만 씁니다. 대역은 "받았다" 는 사실만 기록하고, 예산 소진을
         # 흉내 내야 하는 테스트가 직접 부릅니다.

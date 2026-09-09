@@ -90,12 +90,21 @@ By defaulting `PYTHON_BIN` to `sys.executable`, the child MCP process inherits t
 | `PYTHON_BIN` | `sys.executable` | Python binary path. In portable bundles: `python_runtime\python.exe`. |
 | `MCP_NODE_HOME` | `./mcp_node` | Path where Node MCP server npm modules are located. |
 | `MCP_SANDBOX_HOME` | `./mcp_sandbox` | Path to the AirgappedPySandbox repository checkout. |
-| `WORKSPACE_DIR` | `./workspace` | Root folder for agent filesystem I/O and git commits. |
+| `WORKSPACE_DIR` | `./workspace` | **Default** workspace for agent filesystem I/O and git commits. A session can point at any other folder from the roster panel; each distinct folder gets its own group of MCP server processes. |
 | `SANDBOX_KERNEL_PYTHON`| `PYTHON_BIN` | Python interpreter used for the IPython code sandbox execution kernel. |
 | `SANDBOX_EXEC_TIMEOUT` | `60` | Execution timeout in seconds for code evaluation. |
-| `SANDBOX_MAX_NAMESPACES`| `16` | Maximum concurrent isolated kernel sessions in the sandbox. Namespaces are scoped per conversation **and per speaker**, so budget `concurrent debates x agents holding sandbox access` (two by default: coder and critic). Above the cap the least recently used kernel is shut down and its variables are gone. |
+| `SANDBOX_MAX_NAMESPACES`| `16` | Total IPython kernel budget. Namespaces are scoped per conversation **and per speaker**, so budget `concurrent debates x agents holding sandbox access` (two by default: coder and critic). Because a sandbox server now runs per workspace, the pool divides this number by `MCP_MAX_RUNTIMES` before handing it to each one — otherwise the kernels would multiply. Above the cap the least recently used kernel is shut down and its variables are gone. |
 
-### 3.5. Tool-Call Safety Limits
+### 3.5. MCP Runtime Pool
+
+Read at import time by [app/mcp/pool.py](file:///d:/MultiAgentOrchestrator/app/mcp/pool.py). An MCP server binds the folder it may touch at spawn time, so the platform keeps **one server group per workspace**; see [Runtime Isolation](file:///d:/MultiAgentOrchestrator/wiki/mcp/runtime-isolation.md).
+
+| Environment Variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `MCP_MAX_RUNTIMES` | `4` | How many distinct workspaces may have live server groups at once. This is a memory budget, **not** a limit on concurrent debates — any number of sessions sharing a folder share one group. When the cap is reached the pool reaps idle groups first; if every group is in use, `acquire` raises `RuntimeCapacityError` naming what holds the slots rather than pointing a debate at the wrong folder. |
+| `MCP_RUNTIME_IDLE_TTL` | `300` | Seconds an unreferenced group stays alive before being stopped. Consecutive turns in the same folder then start instantly instead of paying the spawn cost again (the sandbox spends seconds launching an IPython kernel). |
+
+### 3.6. Tool-Call Safety Limits
 
 Read once at import time by [app/mcp/client.py](file:///d:/MultiAgentOrchestrator/app/mcp/client.py). Both exist so that a single misbehaving server cannot take the whole backend with it; leave them alone unless a specific server legitimately needs more room.
 
@@ -106,7 +115,7 @@ Read once at import time by [app/mcp/client.py](file:///d:/MultiAgentOrchestrato
 
 ---
 
-### 3.6. Windows Console & Process Encoding
+### 3.7. Windows Console & Process Encoding
 | Environment Variable | Default | Purpose |
 | :--- | :--- | :--- |
 | `PYTHONIOENCODING` | `utf-8` | Prevents Windows CP949 encoding crashes on console/stdio pipes. |

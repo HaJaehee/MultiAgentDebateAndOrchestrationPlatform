@@ -44,14 +44,14 @@
 ```text
 DebateRunner.start(session_id, prompt)
    │
-   ├─ 다른 작업 공간에서 토론 중인가? ──▶ WorkspaceConflictError (시작 거부)
-   │
    ├─ asyncio.Task 생성 (브라우저와 무관하게 계속 돎)
    │
    └─ engine.run_turn()
+        ├─ MCP 런타임 대여   이 대화의 폴더에 해당하는 서버 묶음
+        │                    (없으면 기동, 자리가 없으면 RuntimeCapacityError)
+        │                    턴이 어떻게 끝나든 finally 에서 반납
         ├─ 세션 로드         전략, max_rounds, active_agents, 커스텀 지침
         ├─ 전략 이름 정규화   옛 이름(free_debate 등)을 지금 이름으로
-        ├─ 작업 공간 적용     경로가 다르면 MCP 서버 재기동
         ├─ prepare_agents_for_turn()   ◀── 첫 턴이면 여기서 페르소나·구성 잠금
         └─ 이전 대화 기록 로드 (맥락 보존)
 ```

@@ -693,6 +693,9 @@ class LLMCaller:
     """
 
     def __init__(self, mcp_manager: Optional[MCPManager] = None):
+        # 기본 런타임. 실제 토론은 발언마다 **그 대화의 작업 공간에 해당하는**
+        # 런타임을 `call_agent(mcp=...)` 로 받아 씁니다. 이 값은 그것이 주어지지
+        # 않았을 때의 폴백입니다.
         self.mcp_manager = mcp_manager or get_mcp_manager()
 
     def build_system_prompt(self, agent: Agent, custom_instructions: str = "") -> str:
@@ -731,10 +734,16 @@ class LLMCaller:
         budget_arbiter: Optional[BudgetArbiter] = None,
         context_arbiter: Optional[ContextArbiter] = None,
         on_context_trim: Optional[Callable[[int], Any]] = None,
+        mcp: Optional[MCPManager] = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Executes a turn for the given agent.
         Returns (response_text, tool_call_logs).
+
+        `mcp` 는 이 발언이 쓸 MCP 런타임입니다. 대화마다 작업 공간이 다를 수
+        있고 런타임은 작업 공간마다 따로 뜨므로, 어느 것을 쓸지는 턴을 여는
+        쪽(`OrchestratorEngine.run_turn`)이 정해 내려보냅니다. 주지 않으면
+        기본 런타임을 씁니다.
 
         `session_id` 는 MCP 도구 호출의 스코프로 함께 보내집니다. 이걸 빠뜨리면
         서버가 대화를 구분할 수 없어 다른 대화의 상태(지식 그래프 등)를 봅니다.
@@ -758,7 +767,8 @@ class LLMCaller:
         # 자르기보다 먼저 구합니다. 무엇이 잘렸는지 알리는 문구가 "메모리 그래프에서
         # 찾아보라" 로 바뀌려면, 이 에이전트가 그 도구를 실제로 갖고 있는지 알아야
         # 합니다 (서버를 껐거나 연결에 실패했으면 없는 도구를 가리키게 됩니다).
-        tools = self.mcp_manager.get_openai_tools_for_servers(self.resolve_tool_servers(agent))
+        mcp = mcp or self.mcp_manager
+        tools = mcp.get_openai_tools_for_servers(self.resolve_tool_servers(agent))
 
         # 순서 주의: 먼저 한도에 맞춰 자르고, 그 다음 role 을 합칩니다. 생략 안내가
         # user 로 들어가므로 합치기를 나중에 해야 교대가 보장됩니다.
@@ -782,6 +792,7 @@ class LLMCaller:
                 agent, formatted_messages, tools, on_tool_call, on_chunk=on_chunk,
                 session_id=session_id, budget_arbiter=budget_arbiter,
                 context_arbiter=context_arbiter, on_context_trim=on_context_trim,
+                mcp=mcp,
             )
         except LLMUnavailableError:
             raise
@@ -1172,6 +1183,7 @@ class LLMCaller:
         fn_name: str,
         fn_args: Dict[str, Any],
         session_id: Optional[str],
+        mcp: Optional[MCPManager] = None,
     ) -> Tuple[str, str]:
         """MCP 도구를 부르고, 결과를 항상 (문자열, 상태) 로 돌려줍니다.
 
@@ -1181,7 +1193,7 @@ class LLMCaller:
         취소만은 그대로 올려 보냅니다.
         """
         try:
-            output, status = await self.mcp_manager.execute_tool(
+            output, status = await (mcp or self.mcp_manager).execute_tool(
                 fn_name, fn_args, scope=session_id, actor=agent.key
             )
         except asyncio.CancelledError:
@@ -1242,6 +1254,7 @@ class LLMCaller:
         budget_arbiter: Optional[BudgetArbiter] = None,
         context_arbiter: Optional[ContextArbiter] = None,
         on_context_trim: Optional[Callable[[int], Any]] = None,
+        mcp: Optional[MCPManager] = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """도구 루프. 상한은 두 겹의 안전장치와 함께 돕니다.
 
@@ -1402,7 +1415,7 @@ class LLMCaller:
                         )
                     else:
                         output, status = await self._execute_tool_safely(
-                            agent, fn_name, fn_args, session_id
+                            agent, fn_name, fn_args, session_id, mcp,
                         )
 
                     call_log = {

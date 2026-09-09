@@ -6,6 +6,44 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## Unreleased — per-workspace MCP runtimes
+
+Until now the platform held one `MCPManager` for the whole process. An MCP server is told which
+folder it may touch **at spawn time** — `filesystem` takes it as `argv`, `sandbox` as an
+environment variable — so one manager could only ever look at one workspace. A second debate in a
+different folder was refused outright (`WorkspaceConflictError`), which is the honest thing to do
+when the alternative is silently reading someone else's files, but it made multi-session use
+impossible.
+
+**MCP servers are now pooled per workspace.** `MCPRuntimePool` hands out one manager per folder,
+reference counted by session id: sessions sharing a folder share the processes, a different folder
+gets its own group, and a turn borrows its runtime for the whole turn and returns it in a
+`finally`. Idle runtimes stay warm for `MCP_RUNTIME_IDLE_TTL` so consecutive turns do not pay the
+startup cost again, and `MCP_MAX_RUNTIMES` caps how many groups may exist — a memory budget, since
+each one is a whole set of server processes. A runtime in use is never evicted; when nothing can be
+freed the pool raises `RuntimeCapacityError` naming what holds the slots.
+
+Worth being precise about what "isolating the Node runtime" means here: `node.exe` and
+`node_modules` are read-only while running and stay shared. What was leaking was **process state** —
+heap, cwd, `TMP`, `WORKSPACE_DIR`, the memory-graph directory, the sandbox's kernels — so that is
+what the pool separates, by starting each group with its own environment. `HOME` is deliberately
+left alone; git and Python read user configuration from it.
+
+Two globals had to become pure first, or a second runtime would simply overwrite the first.
+`mcp_servers_for_workspace()` used to assign `os.environ["WORKSPACE_DIR"]` so children would
+inherit it — whichever call came last won. It now substitutes through an overrides mapping and
+writes the path into each server's `env` explicitly. The MCP **Roots** callback read the same
+global; it is now bound per connection, so each server is told about its own folder.
+
+Fixing that surfaced a Windows bug that had been there all along: `Path.resolve()` can return an
+extended-length path (`\\?\C:\...`), and `as_uri()` turns that into `file://?/C:/...`, which the
+server rejects. The filesystem server then came up with no allowed directories, and the only trace
+was one `Failed to request initial roots` line.
+
+→ [Runtime Isolation](mcp/runtime-isolation.md)
+
+---
+
 ## v0.5.3
 
 v0.5.2 fixed two request-shaping bugs by reading the code. This release is about the case where

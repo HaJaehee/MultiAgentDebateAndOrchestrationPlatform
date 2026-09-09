@@ -91,30 +91,47 @@ curl -si 'localhost:8000/agent-icon?src=data/agent_icons/critic-0491a7c46f.png' 
 
 MCP 서버별 연결 상태. `"enabled": false` 로 꺼 둔 서버도 함께 보고합니다.
 
+서버 프로세스는 **작업 공간마다 따로** 뜹니다. `servers` 는 기본 작업 공간의 상태이고,
+지금 살아 있는 런타임 전부는 `runtimes` 에 담깁니다.
+
 ```json
-[
-  {
-    "name": "filesystem",
-    "enabled": true,
-    "command": "node",
-    "connected": true,
-    "available": true,
-    "tool_count": 14,
-    "error": null
+{
+  "servers": [
+    {
+      "name": "filesystem",
+      "enabled": true,
+      "command": "node",
+      "connected": true,
+      "available": true,
+      "tool_count": 14,
+      "error": null
+    },
+    {
+      "name": "memory",
+      "enabled": true,
+      "command": "node",
+      "connected": false,
+      "available": false,
+      "tool_count": 0,
+      "error": "Cannot find package '@modelcontextprotocol/sdk' imported from ..."
+    }
+  ],
+  "runtimes": {
+    "D:\MultiAgentOrchestrator\workspace": {
+      "workspace": "D:\MultiAgentOrchestrator\workspace",
+      "holders": ["3f1c...세션 id"],
+      "idle_seconds": 0.0,
+      "initialized": true,
+      "servers": { "filesystem": { "connected": true, "tool_count": 14, "...": "..." } }
+    }
   },
-  {
-    "name": "memory",
-    "enabled": true,
-    "command": "node",
-    "connected": false,
-    "available": false,
-    "tool_count": 0,
-    "error": "Cannot find package '@modelcontextprotocol/sdk' imported from ..."
-  }
-]
+  "max_runtimes": 4,
+  "idle_ttl_seconds": 300.0
+}
 ```
 
-`error` 에 자식 프로세스의 stderr 갈무리가 들어갑니다.
+`error` 에 자식 프로세스의 stderr 갈무리가 들어갑니다. `holders` 는 그 런타임을 지금
+쓰고 있는 대화의 id 이고, 비어 있으면 유휴 상태로 `idle_ttl_seconds` 뒤에 정리됩니다.
 → [MCP 호스트](../03-core/04-mcp-host.md#연결-상태)
 
 ---
