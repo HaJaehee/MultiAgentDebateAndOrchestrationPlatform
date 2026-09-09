@@ -583,6 +583,30 @@ TRUNCATED_ANSWER_FOOTER = (
     "이어서 받으려면 남은 부분을 다시 요청하거나, 에이전트 설정의 `max_tokens` 를 올리세요."
 )
 
+# 이어받기를 다 쓰고도 끝나지 않았을 때. 위와 달리 "이미 N번 이어받았다" 를 밝힙니다 —
+# 그래야 사람이 `max_continuations` 를 더 올릴지, `max_tokens` 를 올릴지, 아니면 애초에
+# 요구 범위를 좁힐지 판단할 수 있습니다.
+CONTINUED_BUT_STILL_TRUNCATED_FOOTER = (
+    "> ⚠️ **이어받기 {used}회를 모두 쓰고도 끝나지 않아 여기서 멈췄습니다** "
+    "(응답 한도 max_tokens={max_tokens:,}). 끝맺지 못한 문장이나 닫히지 않은 코드 블록이 "
+    "있을 수 있습니다. `max_tokens` 를 올리거나, 요구 범위를 좁혀 다시 물어보세요."
+)
+
+# 이어받기를 요청하는 지시문.
+#
+# **이어붙일 것**이라는 사실을 분명히 해야 합니다. 그러지 않으면 모델은 새 답변을
+# 시작하는 것으로 알고 "네, 이어서 설명드리겠습니다" 같은 서두를 붙이거나 앞부분을
+# 요약해 되풀이합니다. 둘 다 이음매에 그대로 남습니다.
+CONTINUE_ANSWER_INSTRUCTION = (
+    "[이어쓰기] 바로 위 당신의 글은 응답 한도에 걸려 **문장 중간에서 잘렸습니다.**\n"
+    "그 마지막 글자 **바로 다음부터** 이어서 계속 쓰세요.\n"
+    "- 이 답변은 앞 글에 **그대로 이어 붙습니다.** 인사말·머리말·'이어서 쓰겠습니다' 같은 "
+    "말을 앞에 넣지 마세요.\n"
+    "- 앞에서 이미 쓴 내용을 요약하거나 되풀이하지 마세요. 잘린 지점부터 새 내용만 쓰세요.\n"
+    "- 코드 블록이나 표 안에서 잘렸다면 그 안에서 계속 쓰고, 끝나면 제대로 닫으세요.\n"
+    "- 문서를 끝까지 마무리하세요."
+)
+
 BUDGET_WRAP_UP_FOOTER = (
     "> ⚠️ **도구 호출 상한({limit}회)에 도달**해 도구 없이 마무리한 발언입니다 "
     "(도구 {tool_calls}건 실행). 더 확인이 필요하면 에이전트 설정의 "
@@ -973,6 +997,68 @@ class LLMCaller:
         except Exception:  # noqa: BLE001
             return ""
 
+    async def _finish_truncated_answer(
+        self,
+        agent: Agent,
+        messages: List[Dict[str, Any]],
+        segments: List[str],
+        finish_reason: str,
+        on_chunk: Optional[Callable[[str], Any]] = None,
+    ) -> None:
+        """`max_tokens` 에 걸려 잘린 발언을 이어받아 `segments` 를 채웁니다.
+
+        잘린 발언에 표시만 남기는 것으로 충분하지 않은 자리가 있습니다. **최종 합성
+        보고서**가 그렇습니다 — 그것이 이 대화의 산출물인데, 문장 중간에서 끊긴 채로
+        저장되면 표시가 붙어 있어도 결국 처음부터 다시 돌려야 합니다.
+
+        그래서 잘렸으면 한 판 더 부릅니다. 지금까지 쓴 글을 assistant 발언으로 넣고
+        "그 마지막 글자 바로 다음부터 이어서" 라고 지시한 뒤, 돌아온 조각을 **구분자
+        없이 그대로 이어 붙입니다.** `segments` 의 다른 조각들은 빈 줄로 이어지지만
+        여기는 한 문장이 반으로 갈린 자리라, 빈 줄을 넣으면 그 자리가 문단 경계로
+        보이게 됩니다.
+
+        멈추는 조건이 셋입니다. 끝까지 받았거나(`finish_reason` 이 `length` 가 아님),
+        `max_continuations` 를 다 썼거나, 이어받기 호출 자체가 실패했거나. 어느
+        쪽이든 **그때까지 받은 글은 남깁니다** — 이어받기는 발언을 더 낫게 하려는
+        것이지, 실패하면 앞의 것까지 버리라는 것이 아닙니다.
+
+        도구는 넘기지 않습니다. 지금은 쓰던 글을 마저 쓰는 자리이지 새로 무언가를
+        확인할 자리가 아닙니다.
+        """
+        if finish_reason != "length":
+            return
+        if not segments or agent.max_continuations <= 0:
+            segments.append(TRUNCATED_ANSWER_FOOTER.format(max_tokens=agent.max_tokens))
+            return
+
+        convo = list(messages)
+        used = 0
+        for _ in range(agent.max_continuations):
+            convo.append({"role": "assistant", "content": segments[-1]})
+            convo.append({"role": "user", "content": CONTINUE_ANSWER_INSTRUCTION})
+            try:
+                message, finish_reason = await self._complete_once(agent, convo, None, on_chunk)
+            except Exception as exc:  # noqa: BLE001 - 이어받기 실패로 앞의 글을 버리지 않습니다
+                logger.warning(f"Continuation failed for {agent.name}: {type(exc).__name__}: {exc}")
+                break
+
+            piece = self._compose_content(agent, message)
+            if not piece.strip():
+                logger.warning(f"Continuation returned nothing for {agent.name}; stopping")
+                break
+
+            used += 1
+            segments[-1] = segments[-1] + piece      # 한 문장이 갈린 자리입니다
+            if finish_reason != "length":
+                logger.info(f"Continued a truncated answer for {agent.name}: {used} time(s)")
+                return
+
+        if used:
+            segments.append(CONTINUED_BUT_STILL_TRUNCATED_FOOTER.format(
+                used=used, max_tokens=agent.max_tokens))
+        else:
+            segments.append(TRUNCATED_ANSWER_FOOTER.format(max_tokens=agent.max_tokens))
+
     # ------------------------------------------------------------ 도구 예산
 
     @staticmethod
@@ -1073,7 +1159,9 @@ class LLMCaller:
                 logger.warning(
                     f"Truncated wrap-up answer from {agent.name}: max_tokens={agent.max_tokens}"
                 )
-                segments.append(TRUNCATED_ANSWER_FOOTER.format(max_tokens=agent.max_tokens))
+                await self._finish_truncated_answer(
+                    agent, current_messages, segments, finish_reason, on_chunk
+                )
         except Exception as exc:  # noqa: BLE001
             logger.error(f"Final tool-free answer failed for {agent.name}: {exc}")
             if not segments:
@@ -1375,9 +1463,9 @@ class LLMCaller:
                             f"Truncated answer from {agent.name}: finish_reason='length', "
                             f"max_tokens={agent.max_tokens}"
                         )
-                        segments.append(
-                            TRUNCATED_ANSWER_FOOTER.format(max_tokens=agent.max_tokens)
-                        )
+                    await self._finish_truncated_answer(
+                        agent, current_messages, segments, finish_reason, on_chunk
+                    )
                     return "\n\n".join(segments), tool_logs
 
                 # 실행하기 전에 먼저 다 풀어 둡니다. 되돌려 보낼 발언이 **실제로

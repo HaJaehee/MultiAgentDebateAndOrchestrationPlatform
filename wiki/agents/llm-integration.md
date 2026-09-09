@@ -194,9 +194,40 @@ transcript, because there is nothing for the model to recover — the turn is ov
 can carry both this footer and `BUDGET_WRAP_UP_FOOTER`: two different limits were hit, and the knob
 to raise is different for each (`max_tokens` versus `max_tool_iterations`).
 
-> The setting to change is `max_tokens`. 4096 is roughly 16,000 characters — narrow for an agent
-> that writes whole documents through a tool, and narrow for the synthesis report. `conf.example.json`
-> now says so next to the value.
+### 2.4. Continuing a truncated answer (v0.6.1)
+
+A footer is enough when the truncated thing is one turn of a debate — the next speaker can work
+around it. It is not enough for the **synthesis report**, which *is* the deliverable: a report that
+stops mid-sentence has to be regenerated, marker or no marker.
+
+So a turn that ends with `finish_reason: "length"` is continued.
+[`_finish_truncated_answer()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) appends what was
+written so far as an `assistant` turn, adds `CONTINUE_ANSWER_INSTRUCTION`, and calls again — up to
+`max_continuations` times (default 2, ceiling 10, `0` disables it).
+
+Three details decide whether this reads as one document or as a stitched-together one:
+
+- **No separator at the seam.** Other `segments` are joined by a blank line, because they are
+  separate paragraphs from separate tool iterations. A continuation resumes a sentence that was cut
+  in half, so the piece is concatenated directly onto the previous one.
+- **The instruction says it will be glued.** Without that, models open with "이어서 설명드리겠습니다"
+  or re-summarise what they already wrote, and both land in the middle of the text. It also tells
+  them to keep going *inside* a code block or table if that is where the cut happened, and to close
+  it properly.
+- **No tools are offered.** This is the model finishing a sentence, not a fresh chance to go
+  looking for something.
+
+It stops on any of three conditions — finished, budget spent, or the continuation call itself
+failed — and **whatever arrived already is always kept**. A failed continuation must not cost the
+text that preceded it. Running out of budget leaves a different footer than never trying
+(`CONTINUED_BUT_STILL_TRUNCATED_FOOTER` names how many continuations were used), because the reader
+is choosing between raising `max_continuations`, raising `max_tokens`, and asking for less.
+
+> Continuation is a repair, not a plan. It costs an extra call and re-sends the partial text, and
+> the seam is never quite free. If long output is the norm rather than the exception, raise
+> `max_tokens` — 4096 is roughly 16,000 characters, narrow for an agent that writes whole documents
+> through a tool and narrow for the synthesis report. `conf.example.json` now says so next to both
+> values.
 
 ---
 

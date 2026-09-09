@@ -397,6 +397,7 @@ INHERITABLE_LLM_FIELDS = (
     "extra_headers",
     "extra_body",
     "max_tool_iterations",
+    "max_continuations",
 )
 
 # Aliases that refer to the same underlying field; setting any one blocks inheritance of the group.
@@ -422,6 +423,18 @@ def _is_blank(value: Any) -> bool:
 # (그때까지 실행된 도구와 관측은 남지만 답변은 나오지 않습니다). 100 이면
 # 그런 작업이 들어가고, 폭주를 막는 선으로서의 역할도 그대로입니다.
 TOOL_ITERATION_CEILING = 130
+
+# 한 발언에서 "이어받기"를 허용하는 하드 상한.
+#
+# 응답이 `max_tokens` 에 걸려 잘리면 이어서 한 판 더 받아 붙입니다. 실제 횟수는
+# 에이전트마다 `max_continuations` 로 정합니다 (기본 2). 도구 루프와 같은 이유로
+# 상한을 둡니다 — 이어받기 한 번도 LLM 호출 한 번이고, 계속 잘리는 응답을 끝없이
+# 이어받으면 한 발언이 컨텍스트와 요금을 통째로 씁니다.
+#
+# 기본 2 는 `max_tokens` 의 3배까지 받을 수 있다는 뜻입니다 (원본 + 2회). 그보다
+# 긴 산출물이 필요하면 `max_tokens` 자체를 올리는 편이 낫습니다 — 이어받기는
+# 이음매가 생기고, 모델이 앞부분을 다시 읽어야 하므로 공짜가 아닙니다.
+CONTINUATION_CEILING = 10
 
 # 순서를 지정하지 않은 에이전트의 발언 우선순위. 전부 같은 값이라 정렬이 안정적으로
 # 유지되어 conf.json 에 적힌 순서가 그대로 나옵니다. 화면에서 순서를 바꾸면 그때
@@ -461,6 +474,7 @@ class LLMConfig(BaseModel):
     extra_headers: Optional[Dict[str, str]] = Field(default=None, description="Extra HTTP headers")
     extra_body: Optional[Dict[str, Any]] = Field(default=None, description="Extra JSON body fields")
     max_tool_iterations: Optional[int] = Field(default=None, ge=1, le=TOOL_ITERATION_CEILING)
+    max_continuations: Optional[int] = Field(default=None, ge=0, le=CONTINUATION_CEILING)
     sequential_thinking: SequentialThinkingConfig = Field(default_factory=SequentialThinkingConfig)
 
 class AgentConfig(BaseModel):
@@ -496,6 +510,10 @@ class AgentConfig(BaseModel):
     max_tool_iterations: int = Field(
         default=30, ge=1, le=TOOL_ITERATION_CEILING,
         description="Max MCP tool-loop iterations per turn",
+    )
+    max_continuations: int = Field(
+        default=2, ge=0, le=CONTINUATION_CEILING,
+        description="How many times a turn cut off at max_tokens may be continued (0 = never)",
     )
     allowed_mcp_servers: List[str] = Field(
         default_factory=list, description="List of MCP server keys this agent can access"
@@ -805,6 +823,7 @@ INT_VALUE_FIELDS = frozenset(
         "max_context_window",
         "num_retries",
         "max_tool_iterations",
+        "max_continuations",
         "max_steps",
         "thinking_budget_tokens",
         "debate_priority",
@@ -1099,6 +1118,7 @@ AGENT_OVERRIDE_FIELDS = (
     "num_retries",
     "drop_params",
     "max_tool_iterations",
+    "max_continuations",
 )
 
 SEQUENTIAL_THINKING_FIELDS = ("enabled", "mode", "max_steps", "show_steps")

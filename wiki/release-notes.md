@@ -6,6 +6,31 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.6.1
+
+**A turn cut off at `max_tokens` is now continued, not just labelled.**
+
+v0.5.3 taught the loop to notice `finish_reason: "length"` and mark the turn so a reader could see
+it had been cut. That is enough for one speaker's turn in a debate — the next speaker works around
+it. It is not enough for the **synthesis report**, which *is* the deliverable: a report that stops
+mid-sentence has to be regenerated whether or not it carries a marker.
+
+So the turn is continued. What was written so far goes back as an `assistant` turn, an instruction
+says to resume from the last character with no preamble and no re-summarising, and the returned
+piece is concatenated **with no separator** — other segments are joined by a blank line, but this
+one resumes a sentence that was cut in half. Up to `max_continuations` times (default 2, `0`
+disables). No tools are offered: the model is finishing a sentence, not going looking for something.
+
+It stops when the answer finishes, when the budget is spent, or when the continuation call itself
+fails — and whatever already arrived is always kept, because a failed repair must not cost the text
+it was repairing. Running out of continuations leaves a footer naming how many were used, since the
+reader is choosing between raising `max_continuations`, raising `max_tokens`, and asking for less.
+
+→ [LLM Integration §2.4](agents/llm-integration.md) ·
+[conf.json Reference](configuration/conf-json-reference.md)
+
+---
+
 ## v0.6.0
 
 Until now the platform held one `MCPManager` for the whole process. An MCP server is told which

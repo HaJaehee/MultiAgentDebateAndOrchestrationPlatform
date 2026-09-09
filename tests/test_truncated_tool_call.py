@@ -242,8 +242,11 @@ async def test_the_notice_carries_the_advice_for_the_agents_own_tools():
 # ------------------------------------------------------------------ 사람에게 알리기
 
 
-async def _plain_turn(finish_reason: str, tools=None):
-    """도구를 부르지 않는 발언 한 번. 돌아온 본문을 돌려줍니다."""
+async def _plain_turn(finish_reason: str, tools=None, max_continuations: int = 0):
+    """도구를 부르지 않는 발언 한 번. 돌아온 본문을 돌려줍니다.
+
+    이어받기는 기본으로 끕니다 — 여기서 보려는 것은 "사람에게 남는 표시" 입니다.
+    """
     async def fake_acompletion(**kwargs):
         if kwargs.get("stream"):
             raise RuntimeError("streaming unsupported")
@@ -258,9 +261,10 @@ async def _plain_turn(finish_reason: str, tools=None):
 
     caller = _caller()
     caller.mcp_manager.get_openai_tools_for_servers = lambda servers: tools or []
+    agent = _agent(max_continuations=max_continuations)
     with patch("litellm.acompletion", side_effect=fake_acompletion):
         content, _logs = await caller.call_agent(
-            _agent(), [{"role": "user", "content": "설계해줘"}])
+            agent, [{"role": "user", "content": "설계해줘"}])
     return content
 
 
@@ -305,3 +309,113 @@ def test_parse_tool_call_reports_whether_it_could_read_the_arguments():
 def test_a_missing_id_is_replaced_not_left_empty():
     _name, _args, call_id, ok = LLMCaller._parse_tool_call(_tool_call(GOOD, call_id=""))
     assert ok is True and call_id.startswith("call_")
+
+
+# ------------------------------------------------------------------ 이어받기
+
+
+async def _continuing_turn(pieces, finish_reasons, max_continuations=2):
+    """조각을 차례로 돌려주는 엔드포인트. `(본문, 나간 요청들)`."""
+    sent = []
+    turns = list(zip(pieces, finish_reasons))
+
+    async def fake_acompletion(**kwargs):
+        if kwargs.get("stream"):
+            raise RuntimeError("streaming unsupported")
+        sent.append(kwargs)
+        piece, finish = turns[min(len(sent) - 1, len(turns) - 1)]
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(
+                content=piece, tool_calls=None,
+                model_dump=lambda: {"role": "assistant", "content": piece},
+            ),
+            finish_reason=finish,
+        )])
+
+    caller = _caller()
+    caller.mcp_manager.get_openai_tools_for_servers = lambda servers: []
+    with patch("litellm.acompletion", side_effect=fake_acompletion):
+        content, _logs = await caller.call_agent(
+            _agent(max_continuations=max_continuations),
+            [{"role": "user", "content": "보고서 써줘"}])
+    return content, sent
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_report_is_continued_and_joined_without_a_seam():
+    """최종 보고서가 문장 중간에서 끊기면 표시만으로는 부족합니다 — 그것이 산출물입니다."""
+    content, sent = await _continuing_turn(
+        ["세 계층으로 나눕니다. 첫째로 게이트", "웨이가 요청을 받습니다. 끝."],
+        ["length", "stop"],
+    )
+
+    assert len(sent) == 2, "잘렸으니 한 판 더 불러야 합니다"
+    # 빈 줄이 끼면 한 문장이 두 문단으로 갈립니다.
+    assert "첫째로 게이트웨이가 요청을 받습니다. 끝." in content
+    assert "응답 한도" not in content, "끝까지 받았으면 표시를 붙일 이유가 없습니다"
+
+
+@pytest.mark.asyncio
+async def test_the_continuation_request_shows_the_model_its_own_partial_text():
+    content, sent = await _continuing_turn(["앞부분", "뒷부분"], ["length", "stop"])
+
+    second = sent[1]["messages"]
+    assert second[-2]["role"] == "assistant" and second[-2]["content"] == "앞부분"
+    assert second[-1]["role"] == "user" and "이어쓰기" in second[-1]["content"]
+    assert "tools" not in sent[1], "마저 쓰는 자리이지 새로 확인할 자리가 아닙니다"
+
+
+@pytest.mark.asyncio
+async def test_running_out_of_continuations_says_how_many_were_used():
+    """`max_tokens` 를 올릴지 `max_continuations` 를 올릴지 사람이 판단해야 합니다."""
+    content, sent = await _continuing_turn(
+        ["1", "2", "3"], ["length", "length", "length"], max_continuations=2)
+
+    assert len(sent) == 3, "원본 + 이어받기 2회"
+    assert "이어받기 2회" in content
+    assert "123" in content, "받은 것은 전부 남습니다"
+
+
+@pytest.mark.asyncio
+async def test_continuation_can_be_turned_off():
+    content, sent = await _continuing_turn(["앞부분"], ["length"], max_continuations=0)
+
+    assert len(sent) == 1
+    assert "응답 한도" in content and "이어받기" not in content
+
+
+@pytest.mark.asyncio
+async def test_a_failed_continuation_keeps_what_was_already_written():
+    """이어받기는 발언을 낫게 하려는 것이지, 실패하면 앞의 것까지 버리라는 것이 아닙니다."""
+    sent = []
+
+    async def fake_acompletion(**kwargs):
+        if kwargs.get("stream"):
+            raise RuntimeError("streaming unsupported")
+        sent.append(kwargs)
+        if len(sent) > 1:
+            raise RuntimeError("client error: 400, message='Bad Request'")
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(
+                content="여기까지 썼습니다", tool_calls=None,
+                model_dump=lambda: {"role": "assistant", "content": ""},
+            ),
+            finish_reason="length",
+        )])
+
+    caller = _caller()
+    caller.mcp_manager.get_openai_tools_for_servers = lambda servers: []
+    with patch("litellm.acompletion", side_effect=fake_acompletion):
+        content, _logs = await caller.call_agent(
+            _agent(max_continuations=2), [{"role": "user", "content": "써줘"}])
+
+    assert "여기까지 썼습니다" in content
+    assert "응답 한도" in content
+
+
+@pytest.mark.asyncio
+async def test_an_empty_continuation_stops_instead_of_looping():
+    content, sent = await _continuing_turn(["앞부분", "   "], ["length", "length"])
+
+    assert len(sent) == 2, "빈 답을 받으면 더 조르지 않습니다"
+    assert "앞부분" in content
