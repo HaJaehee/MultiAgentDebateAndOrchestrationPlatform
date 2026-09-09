@@ -438,6 +438,7 @@ async def test_tool_loop_stops_at_the_limit_and_wraps_up_without_tools():
     from app.agents.llm import LLMCaller
 
     seen_tools = []
+    seen_choices = []
 
     def _message(with_tools: bool):
         tc = SimpleNamespace(
@@ -454,8 +455,10 @@ async def test_tool_loop_stops_at_the_limit_and_wraps_up_without_tools():
         if kwargs.get("stream"):
             raise RuntimeError("streaming unsupported")   # 비스트리밍 경로로 떨어뜨립니다
         seen_tools.append(kwargs.get("tools"))
-        # 도구를 주지 않은 판에서는 도구를 부를 수 없습니다.
-        return SimpleNamespace(choices=[SimpleNamespace(message=_message(bool(kwargs.get("tools"))))])
+        seen_choices.append(kwargs.get("tool_choice"))
+        # 부르지 말라고 한 판에서는 도구를 부를 수 없습니다.
+        can_call = bool(kwargs.get("tools")) and kwargs.get("tool_choice") != "none"
+        return SimpleNamespace(choices=[SimpleNamespace(message=_message(can_call))])
 
     agent = Agent(key="coder", name="Coder", role="Engineer",
                   model="fake/model", api_key="k", max_tool_iterations=4)
@@ -472,8 +475,11 @@ async def test_tool_loop_stops_at_the_limit_and_wraps_up_without_tools():
         content, logs = await caller.call_agent(agent, [{"role": "user", "content": "읽어줘"}])
 
     assert len(seen_tools) == 5, "한도만큼 돌고, 마무리 한 판을 더 부릅니다"
-    assert all(seen_tools[:4]), "한도 안에서는 도구를 계속 줍니다"
-    assert seen_tools[4] is None, "마무리 판에는 도구를 주지 않아야 또 부르려 하지 않습니다"
+    assert all(seen_tools), "도구 목록은 마무리 판에도 그대로 실립니다"
+    assert seen_choices[:4] == ["auto"] * 4, "한도 안에서는 자유롭게 부릅니다"
+    # 목록은 주되 부르지는 못하게 합니다. 빼 버리면 Anthropic 이 이미 쌓인
+    # tool_use/tool_result 를 이유로 400 을 돌려줍니다.
+    assert seen_choices[4] == "none", "마무리 판에서는 도구를 부를 수 없어야 합니다"
     assert len(logs) == 4, "실행된 도구 기록은 그대로 남습니다"
     assert "확인한 만큼만 정리하면 이렇습니다." in content, "마무리 발언이 살아 있어야 합니다"
     assert "파일을 확인합니다." in content, "도중의 발언도 버리지 않습니다"
@@ -542,6 +548,7 @@ async def test_a_granted_extension_keeps_the_same_speech_going():
     from app.agents.llm import LLMCaller
 
     seen_tools = []
+    seen_choices = []
     asked = []
 
     def _message(with_tools: bool):
@@ -559,7 +566,9 @@ async def test_a_granted_extension_keeps_the_same_speech_going():
         if kwargs.get("stream"):
             raise RuntimeError("streaming unsupported")
         seen_tools.append(kwargs.get("tools"))
-        return SimpleNamespace(choices=[SimpleNamespace(message=_message(bool(kwargs.get("tools"))))])
+        seen_choices.append(kwargs.get("tool_choice"))
+        can_call = bool(kwargs.get("tools")) and kwargs.get("tool_choice") != "none"
+        return SimpleNamespace(choices=[SimpleNamespace(message=_message(can_call))])
 
     async def arbiter(info):
         asked.append(dict(info))
@@ -584,7 +593,8 @@ async def test_a_granted_extension_keeps_the_same_speech_going():
     assert len(asked) == 2, "상한에 닿을 때마다 물어봅니다"
     assert asked[0]["limit"] == 2 and asked[1]["limit"] == 4, "확장된 상한이 다음 물음에 반영됩니다"
     assert len(logs) == 4, "늘려 준 만큼 도구를 더 부를 수 있어야 합니다"
-    assert seen_tools[-1] is None, "확장을 거절당한 뒤에는 도구 없이 마무리합니다"
+    assert seen_choices[-1] == "none", "확장을 거절당한 뒤에는 도구를 부를 수 없습니다"
+    assert seen_tools[-1], "그래도 목록 자체는 실려 있어야 합니다 (Anthropic 400 방지)"
 
 
 # --------------------------------------------------------------- 7. 작업 공간

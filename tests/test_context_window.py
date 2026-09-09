@@ -203,10 +203,31 @@ def test_trimming_keeps_the_head_and_the_latest_block():
     fitted, dropped = fit_tool_loop_context(agent, messages)
 
     assert fitted[0]["content"] == "sys"
-    assert fitted[1]["content"] == "목표"
-    assert "컨텍스트 한도로 생략" in fitted[2]["content"]
+    # 생략 안내는 바로 앞 user(목표) 에 합쳐집니다 — 따로 끼우면 user 가 연달아
+    # 두 번이 되고, OpenAI 호환 셔임은 그것을 400 으로 거절합니다.
+    assert fitted[1]["content"].startswith("목표")
+    assert "컨텍스트 한도로 생략" in fitted[1]["content"]
     # 가장 최근 관측은 남아야 합니다 — 그것이 지금 판단의 근거입니다.
     assert "결과 11" in fitted[-1]["content"]
+
+
+def test_trimming_never_leaves_two_user_turns_in_a_row():
+    """`merge_consecutive_roles` 가 막아 주던 400 이 루프 안쪽에서 되살아났었습니다.
+
+    "roles must alternate between user and assistant" — Anthropic·Gemini 와
+    상당수 OpenAI 호환 셔임이 이것으로 요청을 거절합니다. 발언 시작 전 경로는
+    자르기 뒤에 합치기를 두어 지켜졌는데, 도구 루프의 트림만 빠져 있었습니다.
+    """
+    agent = _agent()
+    fitted, dropped = fit_tool_loop_context(agent, _tool_loop_messages(rounds=12))
+
+    assert dropped > 0
+    roles = [m["role"] for m in fitted]
+    repeats = [
+        (a, b) for a, b in zip(roles, roles[1:])
+        if a == b and a in ("user", "assistant")
+    ]
+    assert repeats == [], f"같은 role 이 연달아 있습니다: {repeats}"
 
 
 def test_a_conversation_that_fits_is_untouched():
@@ -221,7 +242,7 @@ def test_the_trim_notice_carries_the_memory_hint():
         agent, _tool_loop_messages(rounds=12), None, "memory__search_nodes"
     )
     assert dropped > 0
-    assert "memory__search_nodes" in fitted[2]["content"]
+    assert "memory__search_nodes" in fitted[1]["content"]
 
 
 # --------------------------------------------------------------- 4. 실제 한도 조회

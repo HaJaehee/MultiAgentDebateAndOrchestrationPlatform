@@ -447,6 +447,12 @@ def fit_tool_loop_context(
 
     맨 앞(system + 목표)과 맨 뒤(가장 최근 덩어리)은 남깁니다. 최근 관측이 지금
     판단의 근거라, 잘라야 한다면 앞쪽을 버리는 편이 낫습니다.
+
+    돌려주기 전에 `merge_consecutive_roles` 를 한 번 태웁니다. 생략 안내는 user 인데
+    바로 앞 `head[1]` 도 user 라, 그냥 끼우면 user 가 연달아 두 번이 됩니다 — 발언
+    시작 전 경로(`fit_context_window` 의 호출부)가 자르기 뒤에 합치기를 두는 것과
+    같은 이유입니다. 그쪽은 지켜졌는데 루프 안쪽만 빠져 있어서, OpenAI 호환 셔임에서
+    긴 도구 루프가 400 으로 끊겼습니다.
     """
     budget = context_budget(agent, window)
     if budget <= 0 or len(messages) <= 3:
@@ -485,7 +491,8 @@ def fit_tool_loop_context(
         f"(max_context_window={window or agent.max_context_window})"
     )
     notice = {"role": "user", "content": context_trim_notice(dropped, memory_tool)}
-    return head + [notice] + [m for b in blocks for m in b], dropped
+    trimmed = head + [notice] + [m for b in blocks for m in b]
+    return merge_consecutive_roles(trimmed), dropped
 
 
 CONTEXT_WIDENED_INSTRUCTION = (
@@ -625,8 +632,13 @@ class LLMCaller:
         agent: Agent,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: str = "auto",
     ) -> Dict[str, Any]:
-        """Maps the agent configuration onto LiteLLM completion parameters."""
+        """Maps the agent configuration onto LiteLLM completion parameters.
+
+        `tool_choice` 는 도구를 넘기되 **부르지는 못하게** 해야 하는 자리를 위해
+        열어 둡니다 (`"none"`). 자세한 사연은 `_wrap_up_without_tools` 에 있습니다.
+        """
         kwargs: Dict[str, Any] = {
             "model": agent.model,
             "messages": messages,
@@ -677,7 +689,7 @@ class LLMCaller:
 
         if tools:
             kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
+            kwargs["tool_choice"] = tool_choice
 
         return kwargs
 
@@ -711,9 +723,10 @@ class LLMCaller:
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]],
         on_chunk: Optional[Callable[[str], Any]] = None,
+        tool_choice: str = "auto",
     ) -> Any:
         """LLM 한 판. 스트리밍이 안 되는 엔드포인트면 한 번만 비스트리밍으로 되묻습니다."""
-        kwargs = self.build_completion_kwargs(agent, messages, tools)
+        kwargs = self.build_completion_kwargs(agent, messages, tools, tool_choice)
         streamed_any = False
         try:
             response = await litellm.acompletion(**kwargs, stream=True)
@@ -799,6 +812,7 @@ class LLMCaller:
         tool_logs: List[Dict[str, Any]],
         limit: int,
         on_chunk: Optional[Callable[[str], Any]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """예산이 바닥난 자리에서 도구 없이 결론만 받아 냅니다.
 
@@ -817,9 +831,24 @@ class LLMCaller:
             BUDGET_EXHAUSTED_INSTRUCTION.format(limit=limit, tool_calls=len(tool_logs)),
         )
         try:
-            # tools 를 아예 넘기지 않습니다. 상한을 알려 주고도 도구 목록을 함께
-            # 주면 모델은 또 부르려 하고, 그 호출은 실행되지 않은 채 버려집니다.
-            message = await self._complete_once(agent, current_messages, None, on_chunk)
+            # 도구 목록은 **넘기되 부르지 못하게** 합니다 (`tool_choice="none"`).
+            #
+            # 예전에는 `tools` 를 아예 빼고 불렀습니다. 의도는 옳았습니다 — 상한을
+            # 알려 주고도 목록을 함께 주면 모델은 또 부르려 하고, 그 호출은 실행되지
+            # 않은 채 버려지니까요. 그런데 이 시점의 `current_messages` 에는 이미
+            # 실행한 도구의 `tool_calls` assistant 메시지와 `tool` 결과가 쌓여
+            # 있습니다. **Anthropic 은 tool_use/tool_result 가 든 대화를 `tools`
+            # 없이 보내면 400 으로 거절합니다** ("Requests which include `tool_use`
+            # or `tool_result` blocks must define tools"). OpenAI 는 받아주므로,
+            # 도구를 많이 쓴 긴 발언에서 claude 계열 에이전트만 이유 없이 죽는
+            # 모양으로 나타났습니다.
+            #
+            # `tool_choice="none"` 은 두 요구를 모두 만족시킵니다 — 도구는 정의되어
+            # 있고, 모델은 그것을 부를 수 없습니다.
+            message = await self._complete_once(
+                agent, current_messages, tools, on_chunk,
+                tool_choice="none" if tools else "auto",
+            )
             final = self._compose_content(agent, message).strip()
             if final:
                 segments.append(final)
@@ -1023,7 +1052,8 @@ class LLMCaller:
                         if dropped and on_context_trim:
                             on_context_trim(dropped)
                         return await self._wrap_up_without_tools(
-                            agent, current_messages, segments, tool_logs, limit, on_chunk
+                            agent, current_messages, segments, tool_logs, limit, on_chunk,
+                            tools=tools,
                         )
 
                 if over:
@@ -1136,5 +1166,5 @@ class LLMCaller:
                 continue
 
             return await self._wrap_up_without_tools(
-                agent, current_messages, segments, tool_logs, limit, on_chunk
+                agent, current_messages, segments, tool_logs, limit, on_chunk, tools=tools
             )
