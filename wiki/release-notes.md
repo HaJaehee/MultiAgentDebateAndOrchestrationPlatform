@@ -6,6 +6,34 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.5.2
+
+Two request-shaping bugs that made agents fail with a **400 Bad Request** for no visible reason.
+Both live in the MCP tool loop, both were already solved *outside* it, and both were selective
+enough to look like an endpoint outage: one hit Anthropic models only, the other hit
+OpenAI-compatible shims only, and neither could occur until a turn had run long enough.
+
+**The wrap-up call dropped `tools` while the conversation still carried tool blocks.** When an
+agent exhausts its tool budget, `_wrap_up_without_tools()` asks for a closing answer with no
+further tool use — previously by omitting `tools` from the request. By that point the message
+list holds the `tool_calls` assistant messages and `tool` results of every call already made, and
+Anthropic refuses a conversation containing `tool_use` / `tool_result` blocks when the request
+defines no tools. OpenAI accepts it. So a gpt-4o orchestrator was fine while a Claude specialist
+died — but only on the tool-heavy turns that reach the budget. The tools are now sent with
+`tool_choice: "none"`: defined, but uncallable.
+
+**The in-loop context trim re-created consecutive `user` turns.** `merge_consecutive_roles()`
+exists because Anthropic, Gemini and several OpenAI-compatible shims reject two `user` messages
+in a row. The pre-turn path is careful about it — trim first, merge second. The loop's own trim,
+`fit_tool_loop_context()`, inserts the same kind of elision notice as a `user` message directly
+after the goal (also `user`) and went out unmerged. It now merges before returning.
+
+Neither fix changes what an agent is allowed to do; they change what leaves the process.
+
+→ [LLM Integration §5.3](agents/llm-integration.md)
+
+---
+
 ## v0.5.1
 
 One change: **an agent's card colour and icon are now chosen, not derived.**

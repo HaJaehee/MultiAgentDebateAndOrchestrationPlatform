@@ -179,3 +179,36 @@ carrying `tool_calls`, and `tool` results, are never merged — that would break
 
 Order matters: trim first, merge second. Trimming inserts its elision notice as a `user`
 message, which would otherwise sit next to another `user` message.
+
+### 5.3. The same two rules apply *inside* the tool loop (v0.5.2)
+
+Sections 5.1 and 5.2 run once, before the loop. The loop then keeps appending — an assistant
+message per iteration plus one `tool` result per call, and a single tool output can be tens of
+kilobytes. Two things that were handled correctly before the loop were getting undone inside it.
+
+**The in-loop trim did not merge.** [`fit_tool_loop_context()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py)
+drops whole `assistant(tool_calls) + tool results` blocks, oldest first — never a bare `tool`
+message, which would be a 400 of its own. But its elision notice is a `user` message inserted
+directly after the head (`system` + the goal, also `user`), and unlike the pre-loop path its
+result went straight out to the endpoint. That is exactly the consecutive-`user` 400 from §5.2,
+reappearing only in long tool loops on the endpoints least able to tolerate it. The return value
+now goes through `merge_consecutive_roles()`, so the notice folds into the goal message.
+
+**The wrap-up call dropped `tools` while the history still held tool blocks.** When the tool
+budget runs out — or when the user declines to widen the context and chooses to wrap up —
+[`_wrap_up_without_tools()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) asks for a
+final answer with no further tool use. It used to do that by omitting `tools` entirely. The
+intent was right: hand a model the list after telling it the budget is gone and it calls a tool
+anyway, and that call is discarded unexecuted.
+
+But by then `current_messages` contains the `tool_calls` assistant messages and `tool` results
+of everything already executed, and **Anthropic rejects a conversation carrying `tool_use` /
+`tool_result` blocks when the request defines no tools** (`Requests which include tool_use or
+tool_result blocks must define tools`). OpenAI accepts it, so the symptom was selective: the
+gpt-4o orchestrator was fine while a Claude specialist died with a 400 — and only on its longest,
+most tool-heavy turns, which reads as a random failure.
+
+The tools are now sent with `tool_choice: "none"`, which satisfies both requirements at once —
+the tools are defined, and the model cannot call them. LiteLLM maps `"none"` onto each provider's
+equivalent. `build_completion_kwargs()` takes the choice as a parameter; every other call site
+still passes `"auto"`.
