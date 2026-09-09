@@ -66,6 +66,7 @@ SessionModel(
 | `name` — 화면에 뜨는 이름 | `model`, `api_base`, `api_key` |
 | `role` — 역할 | `allowed_mcp_servers` |
 | `system_prompt` — 기본 지시 | `temperature`, `max_tokens` … |
+| `card_color`, `icon` — 카드 색과 아이콘 | |
 
 운영 설정은 `conf.json` 이 정본입니다. 대화의 성격을 바꾸는 것은 인격이지
 엔드포인트가 아닙니다.

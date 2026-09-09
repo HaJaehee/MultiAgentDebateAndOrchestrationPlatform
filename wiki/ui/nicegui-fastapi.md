@@ -48,7 +48,12 @@ ui.run_with(
 
 ### Route Map:
 - **`GET /`**: Main interactive workspace featuring the session history sidebar, agent roster controls, debate feed, and artifact viewer tabs.
-- **`GET /personas/{session_id}`**: Dedicated session persona editor where users can customize names, roles, and system prompts before starting a debate.
+- **`GET /personas/{session_id}`**: Dedicated session persona editor where users can customize names, roles, system prompts, and card appearance before starting a debate.
+- **`GET /agent-icon?src=<path>`**: Serves an agent's icon image. `src` comes from `agents.<key>.icon`
+  in `conf.json`, so it is treated as untrusted: only image files **inside the project folder** are
+  returned, and anything else — traversal, an absolute path elsewhere, a non-image — is refused. A miss
+  answers with a default robot SVG at **200, not 404**; by the time the browser asks for the image the
+  page is already drawn, and a 404 would leave a broken avatar where an icon should be.
 - **`GET /api/*`**: Asynchronous REST endpoints (`/api/health`, `/api/agents`, `/api/mcp`, `/api/sessions/{session_id}/personas`) available for automated monitoring and headless integration.
 
 ---
@@ -57,5 +62,5 @@ ui.run_with(
 
 The UI uses Quasar Framework components styled with custom CSS:
 - **Dark Mode**: Forced system-wide dark palette with dark background (`#121212`), elevated card surfaces (`#1e1e1e`), and high-contrast typography.
-- **Agent Avatars & Badges**: Each agent has distinct visual indicators (e.g. Indigo for Orchestrator, Teal for Architect, Deep Purple for Coder, Amber for Critic).
+- **Agent Avatars & Badges**: Each agent has distinct visual indicators (e.g. Indigo for Orchestrator, Teal for Architect, Deep Purple for Coder, Amber for Critic). Since v0.5.1 both the colour and the icon can be chosen per agent — including an uploaded image — and a chosen colour also paints the card border. See [Agent Pool §1](../agents/agent-pool-and-roles.md).
 - **Collapsible Tool Accordions**: Tool invocations collapse into clean accordions with colored status badges (Green for `success`, Red for `error`), keeping the main debate timeline readable.

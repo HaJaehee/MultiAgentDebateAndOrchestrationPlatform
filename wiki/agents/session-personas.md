@@ -43,7 +43,7 @@ stateDiagram-v2
 ### Phase 1: Unlocked Draft (Session Creation)
 - When a new session is created, `session.personas_locked` is `False`.
 - The user can open the persona editor at `/personas/{session_id}` (accessed via the **"Persona Settings"** button in the agent roster panel).
-- **Editable Fields**: `name`, `role`, and `system_prompt`.
+- **Editable Fields**: `name`, `role`, `system_prompt`, and the card's appearance — `card_color` and `icon`. The appearance editor is the same one the **Add Agent** dialog uses, so a colour is picked from twelve swatches or a colour picker, and an icon is either a Material icon name or an uploaded image (see [Agent Pool §1](agent-pool-and-roles.md)). The preview avatar and the card border follow the choice immediately.
 - Operational settings (`model`, `api_base`, `allowed_mcp_servers`, credentials) are not editable here — they are governed by `conf.json` while the session is open, and frozen into the session at the first message (see §6).
 - Draft changes are saved to the [`session_agents`](file:///d:/MultiAgentOrchestrator/app/database/models.py#L94-L115) table in SQLite.
 - Agents that have not been edited continue to reflect their `conf.json` defaults.
@@ -77,14 +77,17 @@ bring it back, because the snapshot held no model, endpoint, or credentials to r
 ### 6.1. What is frozen
 
 `session_agents.config_snapshot` (JSON, nullable) now holds the **entire `AgentConfig`** at lock
-time: model, endpoint, API key, sampling values, tool permissions, sequential-thinking settings, and
-the persona merged in. From that moment the conversation does not consult `conf.json` at all.
+time: model, endpoint, API key, sampling values, tool permissions, sequential-thinking settings, card
+colour and icon, and the persona merged in. From that moment the conversation does not consult
+`conf.json` at all. The two appearance values are additionally written to the `card_color` and
+`icon_path` columns, so a card can be drawn without unpacking the snapshot.
 
 | Change to `conf.json` | Started conversation | Not-yet-started conversation |
 | :--- | :--- | :--- |
 | Add an agent | unaffected — shown unchecked, joins only if the user checks it | enabled by default |
 | Delete or disable an agent | **unaffected** — it keeps speaking with its frozen configuration | drops out of the pool |
 | Change model / endpoint / key | unaffected | applies immediately |
+| Change card colour / icon | unaffected — past turns keep the colours they were recorded with | applies immediately |
 | Change `allowed_mcp_servers` | unaffected | applies immediately |
 | Enable/disable an MCP **server** | **affected** | affected |
 
@@ -135,13 +138,15 @@ Because `freeze_personas()` snapshots all agents into `session_agents` upon the 
 Instead, [`_differs()`](file:///d:/MultiAgentOrchestrator/app/agents/personas.py#L59-L62) performs field-by-field value comparison:
 
 ```python
-EDITABLE_FIELDS = ("name", "role", "system_prompt")
+EDITABLE_FIELDS = ("name", "role", "system_prompt", "card_color", "icon")
 
 def _differs(a: AgentPersona, b: AgentPersona) -> bool:
     return any(getattr(a, f) != getattr(b, f) for f in EDITABLE_FIELDS)
 ```
 
-If `name`, `role`, or `system_prompt` differs from the `conf.json` baseline, `is_customized` is set to `True`.
+If any of those differs from the `conf.json` baseline, `is_customized` is set to `True`. Appearance
+counts: changing only the colour is still a change the badge has to report, or the screen would show
+a difference it refuses to acknowledge.
 
 ---
 

@@ -131,6 +131,7 @@ overrides = prune_agent_overrides(submitted, defaults)   # 같은 값은 제거
 | 함수 | 하는 일 |
 | :--- | :--- |
 | `update_agent_persona_in_conf_file()` | name / role / system_prompt 갱신 (없으면 생성) |
+| `update_agent_appearance_in_conf_file()` | card_color / icon 갱신 (빈 값이면 항목을 지움) |
 | `add_agent_to_conf_file()` | 새 에이전트 추가 |
 | `set_agent_enabled_in_conf_file()` | 활성/비활성 (오케스트레이터는 거부) |
 | `remove_agent_from_conf_file()` | 에이전트 삭제 (오케스트레이터는 거부) |

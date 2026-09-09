@@ -6,6 +6,74 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.5.1
+
+One change: **an agent's card colour and icon are now chosen, not derived.**
+
+**Before.** Appearance came from the agent key alone — a fixed table for the five built-in keys, and
+`crc32(key)` into a six-colour palette for everything else. There was no way to change it, and the
+*border* was not per-agent at all: the roster border reported enabled/disabled, and the feed border
+reported the message kind (user / orchestrator / error / other). So a user who added three agents got
+three colours the system picked, on cards whose outline said nothing about who was speaking.
+
+**Now.** Two optional keys per agent, `card_color` and `icon`, chosen from the UI and written back to
+`conf.json`. One editor serves both entry points — the **에이전트 추가** dialog and the persona
+editor — with a live preview, twelve swatches plus a colour picker, a Material-icon box, and
+**image upload**.
+
+### Where the image goes
+
+An uploaded icon is copied into `data/agent_icons/` under the project root (created on demand) and
+`conf.json` stores only the relative path, so the folder survives being moved or carried onto an
+air-gapped machine. The filename is `<key>-<content-sha1[:10]>.<ext>` — naming the file ourselves
+removes path traversal and name collisions in one move, and re-uploading the same image is a no-op.
+
+### The border rule
+
+Only agents whose colour was chosen explicitly get a coloured border. Without that condition every
+existing installation would repaint on upgrade, and the roster border would stop answering "is this
+agent participating?" first. A failed turn's red border is never overwritten — there the colour *is*
+the message.
+
+### Frozen with the conversation
+
+`session_agents` gains `card_color` and `icon_path`, and both values also enter `config_snapshot`.
+Recolouring an agent tomorrow leaves today's transcript exactly as it was recorded — the same reason
+personas freeze. The feed no longer resolves colours from `conf.json` at all; the roster hands it the
+agents it is drawing, which for a locked conversation are the frozen ones. Existing databases pick up
+the two columns through the startup migration.
+
+### Three layers of fallback
+
+A missing icon must never leave a broken avatar, so:
+
+1. At render time, `avatar` becomes `img:` **only** if the path resolves to a real image inside the
+   project folder. Anything else falls back to the key-derived icon, with a warning in the log.
+2. If the file disappears after the page was drawn, `/agent-icon` answers with a default robot SVG at
+   **200, not 404**.
+3. That route repeats the containment and file-type checks, so an icon path cannot become a way to
+   read arbitrary files.
+
+→ [Agent Pool §1](agents/agent-pool-and-roles.md) ·
+[Session Personas §3, §6](agents/session-personas.md) ·
+[conf.json Reference §2.4](configuration/conf-json-reference.md) ·
+[Database Schema §2.5](architecture/database-schema.md) ·
+[UI Components §1.2.1](ui/components.md) ·
+[NiceGUI + FastAPI §2](ui/nicegui-fastapi.md)
+
+### Operational impact
+
+| | |
+| :--- | :--- |
+| New Python dependencies | **None** — `requirements.txt` unchanged |
+| Runtime / wheels / Node re-packaging | **Not required** |
+| Schema change | `session_agents.card_color` · `icon_path`, added automatically at startup |
+| New folder | `data/agent_icons/`, created on first upload and gitignored |
+| Update path | `python package_source.py` |
+| Test suite | 500 → **528** tests |
+
+---
+
 ## v0.5.0
 
 Seven changes, in the order they were made. Four are fixes to failures users hit in practice;

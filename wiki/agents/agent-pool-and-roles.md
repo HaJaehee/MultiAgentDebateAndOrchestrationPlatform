@@ -6,7 +6,12 @@ The MADO: Multi-Agent Debate & Orchestration Platform coordinates multiple speci
 
 ## 1. Agent Architecture & UI Styling
 
-Each agent is represented by the [`Agent`](file:///d:/MultiAgentOrchestrator/app/agents/base.py#L17-L64) Pydantic model. When loaded from [conf.json](file:///d:/MultiAgentOrchestrator/conf.json), UI styling attributes (avatar icon, Quasar color, and hex badge color) are assigned automatically:
+Each agent is represented by the [`Agent`](file:///d:/MultiAgentOrchestrator/app/agents/base.py) Pydantic
+model — `AgentConfig` plus the three values the screen actually draws with. A single function,
+[`style_for_agent(key, card_color, icon)`](file:///d:/MultiAgentOrchestrator/app/agents/base.py),
+produces them in two steps.
+
+**Step 1 — the key decides a default.** The five built-in keys have a fixed table:
 
 ```python
 AGENT_STYLE_MAP = {
@@ -18,11 +23,47 @@ AGENT_STYLE_MAP = {
 }
 ```
 
-Agents created from the UI are not in this table.
-[`style_for_agent()`](file:///d:/MultiAgentOrchestrator/app/agents/base.py) picks a colour for them
-from `CUSTOM_STYLE_PALETTE` using `crc32(key)` — Python's string `hash()` is randomised per process
-and would give the same agent a different colour on every restart. Falling back to one grey robot for
-everyone made speakers indistinguishable in the debate feed.
+Agents created from the UI are not in that table, so a colour is picked from
+`CUSTOM_STYLE_PALETTE` using `crc32(key)` — Python's string `hash()` is randomised per process and
+would give the same agent a different colour on every restart. Falling back to one grey robot for
+everyone made speakers indistinguishable in the debate feed. This step runs whether or not anyone
+has chosen anything, so **appearance is never a required field**.
+
+**Step 2 — `conf.json` overrides it.** Two optional keys per agent:
+
+| Key | Value | Drives |
+| :--- | :--- | :--- |
+| `card_color` | `"#rrggbb"`, or a Quasar palette name (`"teal-8"`) | avatar background, role badge, and the **card border** in the roster and the debate feed |
+| `icon` | a Material icon name (`"query_stats"`), or a path to an image | the avatar |
+
+Both are chosen from the UI — the **Add Agent** dialog and the **persona editor** share one editor
+([`ui/components/agent_appearance.py`](file:///d:/MultiAgentOrchestrator/app/ui/components/agent_appearance.py))
+— and what is chosen is written back to `conf.json`. Clearing a value removes the key and returns
+that agent to step 1. `badge_color` is the chosen colour resolved to something CSS can use directly,
+which the border needs: Quasar colour names are classes, not values.
+
+Borders are painted **only for agents whose colour was chosen explicitly**. Without that rule the
+roster border would stop meaning "enabled / disabled", and every existing installation would change
+appearance on upgrade. The red border on a failed turn is never overwritten — there the colour *is*
+the message.
+
+### 1.1. Icon images and the fallback
+
+An uploaded image is copied into `data/agent_icons/` under the project root (created on demand) and
+`conf.json` stores only the relative path, so moving the folder — or an air-gapped transfer — keeps
+the configuration valid. The filename is `<key>-<content-sha1[:10]>.<ext>`: naming the file ourselves
+removes path traversal and name collisions in one move, and the same image uploaded twice is one file.
+Accepted: png · jpg · gif · webp · svg · bmp · ico, up to 2 MB.
+
+`avatar` becomes `"img:/agent-icon?src=..."` **only if the file resolves to a real image inside the
+project folder.** Every other case — the file was deleted, the path is wrong, the config travelled
+without its images, the path points outside the project — falls back to the icon from step 1, with a
+warning in the log. The fallback lives in one place (`_avatar_value`) because a blank or broken avatar
+is much worse than a stale configuration.
+
+The [`/agent-icon`](../ui/nicegui-fastapi.md) route repeats the same checks server-side and answers a
+miss with a default robot SVG at **200, not 404** — by the time the browser asks, the page is already
+drawn.
 
 ---
 

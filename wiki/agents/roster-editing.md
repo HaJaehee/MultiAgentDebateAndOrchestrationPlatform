@@ -15,6 +15,19 @@ Five operations share one surface and **one lock**:
 | Disable / delete | the card's **⋮ menu** | `enabled` / section removal |
 | Tool assignment | the card's **도구 N** button | `allowed_mcp_servers` |
 
+A sixth `conf.json` edit — the card's colour and icon — rides along but is not part of that lock. It
+is set in the **에이전트 추가** dialog (where it is simply part of adding an agent) and in the persona
+editor, which has a lock of its own:
+
+| Operation | Control | Value written |
+| :--- | :--- | :--- |
+| Card colour / icon | the **에이전트 추가** dialog, or the persona editor at `/personas/{id}` | `card_color` / `icon` |
+
+Appearance follows the *persona* lock, the same one that governs name, role and system prompt: it is
+editable until this conversation's first user message and read-only afterwards. Either way a started
+conversation is unaffected, because it froze its own copy of both values at lock time (see
+[session-personas.md §6](session-personas.md#6-a-started-conversation-is-self-contained)).
+
 ---
 
 ## 1. The lock: who may edit, and when

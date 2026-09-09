@@ -21,8 +21,10 @@ erDiagram
         integer max_rounds "Max debate rounds"
         integer parallel_limit "Max agents running at once (parallel_dispatch)"
         json active_agents "List of participating agent keys"
+        json known_agents "Agents that existed when the roster was last saved"
         text custom_instructions "Session-specific prompt additions"
         boolean personas_locked "True once first user message sent"
+        text workspace_dir "Per-session workspace ('' = conf.json default)"
         datetime created_at "UTC timestamp"
         datetime updated_at "UTC timestamp"
     }
@@ -68,6 +70,9 @@ erDiagram
         string name "Agent display name override"
         string role "Agent role/title override"
         text system_prompt "System prompt override"
+        string card_color "Agent card colour ('' = derived from the key)"
+        text icon_path "Material icon name or image path"
+        json config_snapshot "Whole AgentConfig, frozen at lock time"
         datetime created_at "UTC timestamp"
         datetime updated_at "UTC timestamp"
     }
@@ -88,8 +93,10 @@ Represents a single multi-agent collaboration workspace or discussion thread.
 | `max_rounds` | `INTEGER` | No | `3` | Maximum specialist debate rounds per user turn. |
 | `parallel_limit` | `INTEGER` | No | `3` | How many agents may run concurrently in one round. Read only by `parallel_dispatch`; assignments beyond it queue on a semaphore rather than being dropped. Added by the lightweight migration in `session.py`, so existing databases get `3`. |
 | `active_agents` | `JSON` | No | `[]` | Array of agent keys participating in this session. |
+| `known_agents` | `JSON` | No | `[]` | Every agent that existed when this roster was last saved. `active_agents` is an allow-list, so without this a key missing from it cannot be told apart from an agent that did not exist yet — which made every conversation show newly added agents as switched off. |
 | `custom_instructions` | `TEXT` | No | `''` | User-defined custom instructions injected into every agent prompt. |
 | `personas_locked` | `BOOLEAN` | No | `False` | Locks session personas once the first user message is received. |
+| `workspace_dir` | `TEXT` | No | `''` | Workspace this conversation uses; empty means the `conf.json` default. Unlike personas it never locks — it must be changeable mid-debate. |
 | `created_at` | `DATETIME` | No | `utc_now` | UTC creation timestamp. |
 | `updated_at` | `DATETIME` | No | `utc_now` | UTC last updated timestamp. |
 
@@ -136,8 +143,9 @@ Persists individual output artifacts synthesized by the Master Orchestrator at t
 | `language` | `VARCHAR(50)` | No | `'markdown'` | Syntax highlighting language (e.g. `'python'`, `'mermaid'`). |
 | `created_at` | `DATETIME` | No | `utc_now` | UTC creation timestamp. |
 
-### 2.5. `session_agents` Table ([SessionAgentModel](file:///d:/MultiAgentOrchestrator/app/database/models.py#L94-L115))
-Stores customized agent persona overrides (name, role, system prompt) for a specific session.
+### 2.5. `session_agents` Table ([SessionAgentModel](file:///d:/MultiAgentOrchestrator/app/database/models.py))
+Holds a session's agent personas, their card appearance, and — from the first user message onward —
+the frozen operating configuration that makes a started conversation self-contained.
 
 | Column | Type | Nullable | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
@@ -147,8 +155,15 @@ Stores customized agent persona overrides (name, role, system prompt) for a spec
 | `name` | `VARCHAR(100)` | No | `''` | Customized display name. |
 | `role` | `VARCHAR(150)` | No | `''` | Customized role description. |
 | `system_prompt` | `TEXT` | No | `''` | Customized system prompt. |
+| `card_color` | `VARCHAR(40)` | No | `''` | Card colour for this conversation. Empty means "not chosen", and the colour is derived from the agent key instead. |
+| `icon_path` | `TEXT` | No | `''` | Material icon name, or the path to an uploaded image under `data/agent_icons/`. |
+| `config_snapshot` | `JSON` | Yes | `NULL` | The whole `AgentConfig` frozen at lock time. `NULL` marks a conversation locked before this column existed; those keep following the live `conf.json`. |
 | `created_at` | `DATETIME` | No | `utc_now` | UTC creation timestamp. |
 | `updated_at` | `DATETIME` | No | `utc_now` | UTC update timestamp. |
+
+`card_color` and `icon_path` also live inside `config_snapshot`. They are duplicated into columns
+because drawing a card needs them without parsing JSON, and because they must attach to rows written
+before the snapshot column existed.
 
 > **Unique Constraint**: A compound unique constraint `uq_session_agent` exists across `(session_id, agent_key)`, ensuring only one persona record exists per agent per session.
 
@@ -177,3 +192,24 @@ async with engine.begin() as conn:
     await conn.run_sync(Base.metadata.create_all)
 ```
 This guarantees that all required tables and constraints are created automatically without requiring separate migration tools.
+
+### Columns added later
+
+`create_all` creates missing *tables*; it never adds a column to a table that already exists. So
+before it runs, `_add_missing_columns()` walks the `_ADDED_COLUMNS` map, compares it against
+`PRAGMA table_info`, and issues `ALTER TABLE ... ADD COLUMN` for whatever is absent — idempotent, and
+skipped entirely for a table `create_all` just created.
+
+```python
+_ADDED_COLUMNS = {
+    "sessions": {"personas_locked": ..., "workspace_dir": ..., "known_agents": ..., "parallel_limit": ...},
+    "session_agents": {"config_snapshot": "TEXT",
+                       "card_color": "VARCHAR(40) NOT NULL DEFAULT ''",
+                       "icon_path": "TEXT NOT NULL DEFAULT ''"},
+}
+```
+
+This is why an existing `multiagent.db` can be carried across upgrades without a migration tool.
+Note the deliberate asymmetry: `config_snapshot` is nullable because `NULL` carries meaning
+("locked before this column existed"), while the appearance columns default to `''` because "not
+chosen" and "no row yet" want the same behaviour.

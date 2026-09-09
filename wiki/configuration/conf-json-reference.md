@@ -160,7 +160,37 @@ Configures specialist agents in the agent pool.
 | `debate_priority` | `int` | `100` | Speaking order within a round; lower speaks first. Ties keep `conf.json` order, so leaving every agent at the default speaks in file order. Rewritten as `10, 20, 30…` when cards are dragged in the roster. |
 | `debate_stance` | `str` | `"neutral"` | `"proponent"` / `"critic"` / `"neutral"`. Read only by the adversarial strategy, which alternates the two sides. If no agent declares a side, that strategy degrades to a single priority-ordered pass. |
 | `system_prompt` | `str \| list[str]` | `""` | Base persona instruction and behavioral guidelines. An array is joined with newlines. |
+| `card_color` | `str` | `null` | Card colour: `"#rrggbb"` or a Quasar palette name (`"teal-8"`). Drives the avatar, the role badge and the card border. Omit it and the colour is derived from the agent key. Also accepted spelled `color`. |
+| `icon` | `str` | `null` | A Material icon name (`"query_stats"`), or a path to an image relative to the project root (`"data/agent_icons/coder-1a2b3c4d5e.png"`). Omit it and the icon is derived from the agent key. Also accepted spelled `avatar` or `icon_path`. |
 | `sequential_thinking` | `dict` | Inherited | Per-agent sequential thinking overrides (keys merge with `llm`). |
+
+Neither appearance key is inherited from `llm` — a value shared by every agent would defeat the point
+of having one. Both are chosen from the UI and written back here; clearing one removes the key (and
+its legacy spelling) so the agent returns to key-derived styling.
+
+### 2.4.1. Icon images
+
+Uploading an image from the **에이전트 추가** dialog or the persona editor copies it into
+`data/agent_icons/` under the project root — created on demand — and stores only the relative path,
+so the folder can be moved or transferred to an air-gapped machine without breaking the config. The
+filename is `<key>-<content-sha1[:10]>.<ext>`, which removes both path traversal and name collisions,
+and makes re-uploading the same image a no-op. Accepted: png · jpg · gif · webp · svg · bmp · ico, up
+to 2 MB.
+
+If the file cannot be found — deleted, mistyped, or config moved without its images — the agent falls
+back to its key-derived icon rather than showing a broken avatar. See
+[Agent Pool §1.1](../agents/agent-pool-and-roles.md).
+
+```json
+"data_scientist": {
+  "name": "Data Scientist",
+  "role": "Data Analysis & ML Pipeline",
+  "card_color": "#0097a7",
+  "icon": "query_stats",
+  "allowed_mcp_servers": ["filesystem"],
+  "system_prompt": "Owns data-pipeline design and ML architecture review."
+}
+```
 
 ---
 

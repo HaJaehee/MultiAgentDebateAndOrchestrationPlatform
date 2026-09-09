@@ -128,9 +128,14 @@ def reload_agent_pool() -> AgentPool:
 | `name` | `model`, `api_base`, `api_key` |
 | `role` | `allowed_mcp_servers` |
 | `system_prompt` | `temperature`, `max_tokens` … |
+| `card_color`, `icon` | |
 
 운영 설정은 `conf.json` 이 정본입니다. 대화의 성격을 바꾸는 것은 인격이지
 엔드포인트가 아니기 때문입니다.
+
+겉모습은 인격 쪽에 붙습니다 — 누가 말하는지를 화면에서 가려내는 값이라, 대화마다
+달라질 수 있어야 합니다. 다만 저장하면 `conf.json` 에도 함께 적힙니다 (이름·역할·
+시스템 프롬프트와 같습니다).
 
 ### 3단계 생애주기
 

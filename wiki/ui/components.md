@@ -56,6 +56,10 @@ The web application workspace is organized into four primary UI components in [a
   participation checkbox · ⋮ menu (stance, disable, delete) · model line · tool button. The checkbox
   scopes to *this conversation*; everything in the ⋮ menu writes to `conf.json`. They are deliberately
   one layer apart — side by side they are indistinguishable and the mistake is expensive.
+- **Card border** (v0.5.1): normally the border reports participation — indigo when enabled, grey when
+  not. An agent whose `card_color` was chosen explicitly gets that colour instead, but only while it is
+  enabled, so the border never stops answering "is this agent in?" first. Agents with no chosen colour
+  look exactly as they did before, which is why an upgrade does not repaint an existing roster.
 - **Reordering**: cards are dragged to set `debate_priority`; the lifted card fades and the drop edge
   is marked. See [roster-editing.md](../agents/roster-editing.md#5-speaking-order-by-drag).
 - **Speaking-order preview** (v0.5.0): a line under the cards showing the order this round will
@@ -93,8 +97,32 @@ The web application workspace is organized into four primary UI components in [a
   receives its root at spawn time. The value is stored on the session row — `conf.json` is never
   written. Blocked while a debate is running, here or in another conversation.
 
+### 1.2.1. Appearance Editor ([app/ui/components/agent_appearance.py](file:///d:/MultiAgentOrchestrator/app/ui/components/agent_appearance.py))
+
+One editor serves both places a card's colour and icon can be set — the **에이전트 추가** dialog and
+the persona editor — because two copies would drift on how a value is picked or written.
+
+- **Live preview**: an avatar rendered with `style_for_agent()`, the same call the roster and the feed
+  make, so what the preview shows is what will be drawn. It is re-created rather than mutated on every
+  change: a Material icon and an `img:` image are not the same Quasar property.
+- **Colour**: twelve swatches plus a colour picker. Whatever is chosen is stored verbatim, since
+  NiceGUI accepts a hex CSS colour and a Quasar palette name through the same `color` argument.
+- **Icon**: a Material-icon combobox (free text allowed) or **이미지 업로드**. An upload is written to
+  `data/agent_icons/` the moment it is selected, and the returned relative path becomes the value.
+- **Change notifications are attached after the widgets are built.** NiceGUI's inputs fire
+  `on_value_change` when a value is assigned programmatically too. Wired during construction, the icon
+  box — empty, because an uploaded path is not in the Material list — would report itself as a user
+  selection and erase the image it was created to display. The same reason a `_syncing` flag guards
+  every write-back from code.
+
 ### 1.3. Chat & Debate Feed ([app/ui/components/chat_feed.py](file:///d:/MultiAgentOrchestrator/app/ui/components/chat_feed.py))
 - **Color-Coded Message Timeline**: Displays user prompts, orchestrator guidance, and specialist contributions with distinct avatars, roles, and colors.
+- **Per-conversation styling** (v0.5.1): the feed does not resolve colours from `conf.json`. The roster
+  hands it the agents it is drawing (`set_agent_styles()`) every time it redraws, so a locked
+  conversation renders from its frozen snapshot — recolouring an agent today leaves yesterday's
+  transcript as it was recorded. An agent with a chosen colour also gets that colour on its message
+  border; the red border of a failed turn is never overwritten, because there the colour is the
+  message.
 - **Real-Time Token Streaming**: Supports incremental token streaming (`start_streaming_message()`, `append_stream_chunk()`, and `_finalize_streaming_message()`). Agent messages stream directly into reactive markdown cards as LLM completion chunks arrive.
 - **Folding Tool Accordions**: Each MCP tool call (input arguments and execution outputs) renders inside an expandable Quasar accordion, preserving timeline readability.
 - **Status & Progress Banner**: Shows real-time speaker indicators (e.g. `[Senior Python Engineer] 발언 및 분석 중...`) and round counters during execution.
