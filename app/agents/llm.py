@@ -528,6 +528,57 @@ TRUNCATED_TOOL_CALL_NOTICE = (
 )
 
 
+# 파일 쓰기 도구를 가진 에이전트의 시스템 프롬프트에 상시로 붙는 두어 줄.
+#
+# `truncation_advice` 는 **잘린 뒤에** 하는 말이고 이쪽은 **잘리기 전에** 하는 말입니다.
+# 사후 수습만으로는 부족했습니다 — 잘린 호출 한 번은 실패한 도구 실행, 낭비된 도구
+# 예산, 되돌려 보낼 수 없는 인자, 그리고 다시 쓰는 한 판을 뜻합니다.
+#
+# 예전에는 "인자를 짧게 쓰라" 는 상시 지시를 일부러 넣지 않았습니다. 모델은 자기
+# 출력이 몇 토큰인지 셀 수 없어서 지켜지지 않고, 지키려다 내용만 부실해지기
+# 때문입니다. 그런데 여기 적는 것은 **크기가 아니라 전략**입니다 — 어느 도구를
+# 고르고 어떤 단위로 나눌 것인가. 토큰을 셀 필요가 없으므로 모델이 실제로 따를 수
+# 있고, 요즘 코딩 에이전트들이 전체 쓰기 대신 편집 도구를 주력으로 두는 것과 같은
+# 방향입니다.
+FILE_WRITING_HEAD = (
+    "[파일 쓰기] 파일을 한 번의 도구 호출로 다 쓰려 하지 마세요. **도구 호출의 인자도 "
+    "응답 한도(max_tokens)를 함께 씁니다.** 내용이 길면 인자가 중간에서 잘리고 그 호출은 "
+    "실패합니다."
+)
+
+
+def file_writing_guidance(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
+    """파일 쓰기 도구를 **가진** 에이전트에게만 붙는 상시 지침. 없으면 None.
+
+    도구를 이름 꼬리로 찾는 것은 `truncation_advice` 와 같은 규칙이고, 갈래도 같습니다 —
+    덧붙일 수 있으면 나누어 덧붙이라고, 덮어쓰기뿐이면 파일을 쪼개라고 합니다.
+    도구가 없으면 None 이라, 파일을 만지지 않는 에이전트(비평가 등)의 프롬프트는
+    한 글자도 늘지 않습니다.
+    """
+    append, write = append_tool(tools), file_write_tool(tools)
+    if not append and not write:
+        return None
+
+    if append and write:
+        body = (
+            f"- 먼저 `{write}` 로 첫 부분(도입·목차·첫 절)만 만들고, 이어지는 부분은 "
+            f"`{append}` 로 **뒤에 덧붙이세요.** 절이나 챕터 단위로 나누면 됩니다.\n"
+            f"- 한 번의 호출에는 한 덩어리만 담으세요. `{write}` 로 파일 전체를 다시 쓰는 "
+            f"방식으로 이어붙이면 호출이 점점 커져 결국 잘립니다."
+        )
+    elif append:
+        body = (
+            f"- 긴 내용은 `{append}` 로 절이나 챕터 단위로 **나누어 덧붙이세요.** "
+            f"한 번의 호출에는 한 덩어리만 담습니다."
+        )
+    else:
+        body = (
+            f"- `{write}` 는 덮어쓰기라 이어붙일 수 없습니다. 내용이 길면 **파일을 여러 개로 "
+            f"나누어**(예: `01-개요.md`, `02-설계.md`) 각각 한 번에 쓰세요."
+        )
+    return f"{FILE_WRITING_HEAD}\n{body}"
+
+
 def truncation_advice(tools: Optional[List[Dict[str, Any]]] = None) -> str:
     """잘린 뒤에 무엇을 하라고 할지. **이 발언이 실제로 가진 도구**에 따라 다릅니다.
 
@@ -722,8 +773,17 @@ class LLMCaller:
         # 않았을 때의 폴백입니다.
         self.mcp_manager = mcp_manager or get_mcp_manager()
 
-    def build_system_prompt(self, agent: Agent, custom_instructions: str = "") -> str:
-        """System prompt = persona + sequential thinking protocol + session instructions."""
+    def build_system_prompt(
+        self,
+        agent: Agent,
+        custom_instructions: str = "",
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        """System prompt = persona + sequential thinking + file-writing rule + session instructions.
+
+        세션 지침이 맨 뒤인 것은 그것이 가장 구체적인 지시이기 때문입니다. 파일 쓰기
+        지침은 그 앞에 두어, 사람이 세션 지침으로 다르게 시키면 그쪽이 뒤에 옵니다.
+        """
         parts = [agent.system_prompt]
 
         st = agent.sequential_thinking
@@ -733,6 +793,10 @@ class LLMCaller:
                 parts.append(
                     f"각 사고 단계는 반드시 '{st.mcp_server}' MCP 서버의 sequentialthinking 도구를 호출해 기록한 뒤 진행하세요."
                 )
+
+        guidance = file_writing_guidance(tools)
+        if guidance:
+            parts.append(guidance)
 
         if custom_instructions:
             parts.append(f"[Session Custom Instructions]:\n{custom_instructions}")
@@ -781,18 +845,22 @@ class LLMCaller:
         `context_arbiter` 는 컨텍스트 창이 넘쳐 기록을 버려야 할 때의 같은 통로이고,
         `on_context_trim` 은 실제로 생략이 일어났음을 화면에 알리는 콜백입니다.
         """
-        formatted_messages: List[Dict[str, Any]] = [
-            {"role": "system", "content": self.build_system_prompt(agent, custom_instructions)}
-        ]
-        formatted_messages.extend(messages)
-
         # Retrieve available tools for this agent
         #
-        # 자르기보다 먼저 구합니다. 무엇이 잘렸는지 알리는 문구가 "메모리 그래프에서
+        # 시스템 프롬프트보다 먼저 구합니다. 파일 쓰기 지침이 이 에이전트가 실제로
+        # 가진 도구의 이름을 짚기 때문입니다 (`file_writing_guidance`).
+        #
+        # 자르기보다도 먼저입니다. 무엇이 잘렸는지 알리는 문구가 "메모리 그래프에서
         # 찾아보라" 로 바뀌려면, 이 에이전트가 그 도구를 실제로 갖고 있는지 알아야
         # 합니다 (서버를 껐거나 연결에 실패했으면 없는 도구를 가리키게 됩니다).
         mcp = mcp or self.mcp_manager
         tools = mcp.get_openai_tools_for_servers(self.resolve_tool_servers(agent))
+
+        formatted_messages: List[Dict[str, Any]] = [
+            {"role": "system",
+             "content": self.build_system_prompt(agent, custom_instructions, tools)}
+        ]
+        formatted_messages.extend(messages)
 
         # 순서 주의: 먼저 한도에 맞춰 자르고, 그 다음 role 을 합칩니다. 생략 안내가
         # user 로 들어가므로 합치기를 나중에 해야 교대가 보장됩니다.

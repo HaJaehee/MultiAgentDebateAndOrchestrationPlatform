@@ -28,7 +28,12 @@ fails — and whatever already arrived is always kept, because a failed repair m
 it was repairing. Running out of continuations leaves a footer naming how many were used, since the
 reader is choosing between raising `max_continuations`, raising `max_tokens`, and asking for less.
 
-→ [LLM Integration §2.4](agents/llm-integration.md) ·
+And the rule now arrives *before* the failure: agents holding a file-writing tool carry two lines
+in their system prompt saying to build a long file in sections rather than one call — naming the
+append tool they actually have. Not a size limit (a model cannot count its own output tokens) but a
+strategy: which tool, and what unit to split on. Agents with no file tool get nothing added.
+
+→ [LLM Integration §2.4, §2.5](agents/llm-integration.md) ·
 [conf.json Reference](configuration/conf-json-reference.md)
 
 ---

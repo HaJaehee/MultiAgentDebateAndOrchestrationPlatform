@@ -194,6 +194,33 @@ transcript, because there is nothing for the model to recover — the turn is ov
 can carry both this footer and `BUDGET_WRAP_UP_FOOTER`: two different limits were hit, and the knob
 to raise is different for each (`max_tokens` versus `max_tool_iterations`).
 
+### 2.5. Telling the agent the rule *before* it is cut off
+
+§2.2 repairs a truncated tool call after the fact. That was never going to be enough on its own: one
+truncated call costs a failed tool execution, a wasted tool-budget slot, arguments that cannot be
+sent back, and another round to rewrite. Repair is the safety net, not the plan.
+
+The plan is the same one every modern coding agent uses — **don't make whole-file writing the
+primary path.** Those harnesses hand the model edit/patch tools first and reserve whole-file writes
+for new or small files, and their prompts say to prefer targeted edits. The model is not being
+clever about length; the tool surface simply does not invite a 14KB one-shot. Our architect tried
+one because `write_file` was in its hand and nothing had said otherwise.
+
+So [`file_writing_guidance()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) adds two lines
+to the system prompt of agents that hold a file-writing tool — resolved by name tail, the same rule
+as `truncation_advice()`, and shaped the same three ways (append by name; split into several files
+when only an overwriting tool exists; nothing at all when the agent has no file tool, so a critic's
+prompt does not grow by a character).
+
+Note what it does *not* say. An earlier version of this argument rejected a standing instruction,
+correctly: "keep your arguments short" is unfollowable, because a model cannot count its own output
+tokens, and trying makes the content worse instead of shorter. What goes in the prompt is not a size
+but a **strategy** — which tool to reach for and what unit to split on (a section, a chapter). That
+needs no token counting, so the model can actually comply.
+
+It sits before `[Session Custom Instructions]`, which stay last: if a person tells the agent
+something different for this session, theirs is the more specific instruction and should win.
+
 ### 2.4. Continuing a truncated answer (v0.6.1)
 
 A footer is enough when the truncated thing is one turn of a debate — the next speaker can work

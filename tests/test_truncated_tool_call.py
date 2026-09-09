@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.agents.base import Agent
-from app.agents.llm import LLMCaller, truncation_advice
+from app.agents.llm import LLMCaller, file_writing_guidance, truncation_advice
 
 # 실제로 끊긴 자리를 그대로 옮긴 인자입니다. 닫히지 않은 문자열이라 파싱되지 않습니다.
 TRUNCATED = '{"path": "app/util.py", "content": "def load(path):\n    if path:'
@@ -466,3 +466,81 @@ async def test_a_debate_turn_that_used_tools_is_continued_too():
     assert "세 갈래로 나뉘어 있습니다. 이상입니다." in content
     assert "파일을 확인합니다.\n\n관측 결과" in content, "도구 판의 글과는 빈 줄로 갈립니다"
     assert "응답 한도" not in content
+
+
+# ------------------------------------------------------------------ 잘리기 전에
+
+
+def test_an_agent_with_file_tools_is_told_the_rule_up_front():
+    """사후 수습(`truncation_advice`)만으로는 부족합니다.
+
+    잘린 호출 한 번은 실패한 도구 실행, 낭비된 도구 예산, 되돌려 보낼 수 없는
+    인자, 그리고 다시 쓰는 한 판을 뜻합니다. 요즘 코딩 에이전트들이 전체 쓰기
+    대신 편집 도구를 주력으로 두는 것과 같은 방향으로, 규칙을 미리 알립니다.
+    """
+    text = file_writing_guidance(_tools("filesystem__write_file", "filesystem__edit_file"))
+    assert text is not None
+    assert "`filesystem__edit_file` 로 **뒤에 덧붙이세요.**" in text
+    assert "절이나 챕터 단위" in text
+    # 크기가 아니라 전략입니다 — 모델은 자기 출력 토큰을 셀 수 없습니다.
+    assert "자 이상" not in text and "토큰 이하" not in text
+
+
+def test_an_overwriting_only_agent_is_told_to_split_into_files():
+    text = file_writing_guidance(_tools("filesystem__write_file"))
+    assert "덮어쓰기라 이어붙일 수 없습니다" in text
+    assert "파일을 여러 개로 나누어" in text
+    assert "덧붙이세요" not in text
+
+
+def test_an_agent_without_file_tools_gets_nothing():
+    """비평가처럼 파일을 만지지 않는 에이전트의 프롬프트는 한 글자도 늘면 안 됩니다."""
+    assert file_writing_guidance(_tools("memory__search_nodes")) is None
+    assert file_writing_guidance([]) is None
+    assert file_writing_guidance(None) is None
+
+
+def test_the_rule_lands_in_the_system_prompt_only_when_it_applies():
+    caller = LLMCaller()
+    agent = _agent()
+
+    with_tools = caller.build_system_prompt(
+        agent, tools=_tools("filesystem__write_file", "filesystem__edit_file"))
+    assert "[파일 쓰기]" in with_tools
+
+    assert "[파일 쓰기]" not in caller.build_system_prompt(agent, tools=_tools("memory__search_nodes"))
+    assert "[파일 쓰기]" not in caller.build_system_prompt(agent)
+
+
+def test_session_instructions_stay_last():
+    """세션 지침이 가장 구체적인 지시이므로, 다르게 시키면 그쪽이 뒤에 와야 합니다."""
+    prompt = LLMCaller().build_system_prompt(
+        _agent(), custom_instructions="파일은 한 번에 쓰세요.",
+        tools=_tools("filesystem__write_file", "filesystem__edit_file"))
+    assert prompt.index("[파일 쓰기]") < prompt.index("[Session Custom Instructions]")
+
+
+@pytest.mark.asyncio
+async def test_the_real_turn_carries_the_rule():
+    """`call_agent` 가 도구를 먼저 구해 프롬프트에 넣는지 (순서가 뒤집히면 조용히 빠집니다)."""
+    sent = []
+
+    async def fake_acompletion(**kwargs):
+        if kwargs.get("stream"):
+            raise RuntimeError("streaming unsupported")
+        sent.append(kwargs)
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(content="알겠습니다.", tool_calls=None,
+                                    model_dump=lambda: {"role": "assistant", "content": ""}),
+            finish_reason="stop")])
+
+    caller = _caller()
+    caller.mcp_manager.get_openai_tools_for_servers = lambda servers: _tools(
+        "filesystem__write_file", "filesystem__edit_file")
+    with patch("litellm.acompletion", side_effect=fake_acompletion):
+        await caller.call_agent(_agent(), [{"role": "user", "content": "문서 써줘"}])
+
+    system = sent[0]["messages"][0]
+    assert system["role"] == "system"
+    assert "[파일 쓰기]" in system["content"]
+    assert "filesystem__edit_file" in system["content"]
