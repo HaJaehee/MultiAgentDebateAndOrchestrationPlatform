@@ -102,7 +102,6 @@ def roster(monkeypatch):
     runner = _FakeRunner([])
     manager = _FakeManager()
     monkeypatch.setattr(roster_module, "get_debate_runner", lambda: runner)
-    monkeypatch.setattr(roster_module, "get_mcp_manager", lambda: manager)
     monkeypatch.setattr(roster_module, "get_runtime_pool", lambda: _FakePool(manager))
     monkeypatch.setattr(roster_module.ui, "notify", lambda *a, **k: None)
 
@@ -303,3 +302,89 @@ async def test_reload_picks_up_a_newly_added_agent(roster, monkeypatch):
     # 새 에이전트가 선택 목록에 들어오고, 켜진 채로 나옵니다.
     assert control.selected_agents["researcher"] is True
     assert set(control.selected_agents) == {"orchestrator", "architect", "researcher"}
+
+
+# ---------------------------------------------------------------- 런타임 상태 칩
+#
+# 서버는 이제 앱 기동 때가 아니라 **첫 토론 때** 그 폴더에서 뜹니다. 그래서 화면이
+# 열려 있는 동안 상태가 실제로 바뀌고, 화면이 그 순간을 보고 있어야 합니다.
+
+
+class _ServerConfig:
+    def __init__(self, enabled: bool = True):
+        self.enabled = enabled
+        self.command = "node"
+
+
+class _ConfigWithServers:
+    mcp_servers = {"filesystem": _ServerConfig()}
+    enabled_mcp_servers = mcp_servers
+
+
+class _LateStartPool:
+    """첫 조회에는 아직 안 떠 있고, 그 뒤부터 떠 있는 풀."""
+
+    def __init__(self, manager):
+        self.manager = manager
+        self.started = False
+
+    def get(self, workspace=None):
+        return self.manager if self.started else None
+
+
+class _ConnectedManager:
+    workspace = Path(".").resolve()
+
+    def connection_status(self):
+        return {"filesystem": {"connected": True, "available": True, "tool_count": 14,
+                               "command": "node", "endpoint": "node", "transport": "stdio",
+                               "remote": False, "error": None}}
+
+
+def test_a_workspace_without_a_runtime_shows_nothing_running(roster, monkeypatch):
+    """이 대화의 폴더에 서버가 없으면 "미기동" 이어야 합니다.
+
+    예전에는 기본 런타임으로 물러섰습니다. 그러면 다른 폴더를 쓰는 대화에 **남의
+    작업 공간에서 뜬 서버**가 "도구 14" 로 그려집니다 — 이 대화의 서버는 하나도
+    안 떠 있는데 말입니다.
+    """
+    control, _, _ = roster
+    monkeypatch.setattr(roster_module, "get_config", lambda *a, **k: _ConfigWithServers())
+    monkeypatch.setattr(roster_module, "get_runtime_pool",
+                        lambda: _LateStartPool(_ConnectedManager()))
+
+    control.refresh_mcp_status()
+
+    assert control._session_runtime() is None
+    assert control.mcp_status_seen == (), "뜨지 않은 런타임의 상태가 그려졌습니다"
+
+
+def test_the_chip_follows_a_runtime_that_starts_mid_debate(roster, monkeypatch):
+    """토론이 도는 **중에** 서버가 떠도 칩이 따라가야 합니다.
+
+    잠금 사유만 보던 시절에는 못 봤습니다 — 토론 시작과 함께 잠기고, 그 뒤로는
+    사유가 그대로라 조기 반환했기 때문입니다. 그래서 도구가 다 붙은 뒤에도
+    "미기동" 이 토론이 끝날 때까지 남았습니다.
+    """
+    control, runner, _ = roster
+    pool = _LateStartPool(_ConnectedManager())
+    monkeypatch.setattr(roster_module, "get_config", lambda *a, **k: _ConfigWithServers())
+    monkeypatch.setattr(roster_module, "get_runtime_pool", lambda: pool)
+
+    # 토론이 시작됩니다 — 아직 서버는 뜨기 전.
+    runner.running = ["session-a"]
+    control.refresh_mcp_lock()
+    assert control.mcp_locked is True
+    assert control.mcp_status_seen == ()
+
+    # 잠금 사유는 그대로인 채로 런타임만 떴습니다.
+    pool.started = True
+    control._sync_mcp_panel()
+
+    assert control.mcp_status_seen == (("filesystem", True, 14),)
+
+    # 바뀐 것이 없으면 다시 그리지 않습니다 (타이머가 2초마다 부릅니다).
+    drawn = []
+    monkeypatch.setattr(control, "refresh_mcp_status", lambda: drawn.append(1))
+    control._sync_mcp_panel()
+    assert drawn == []

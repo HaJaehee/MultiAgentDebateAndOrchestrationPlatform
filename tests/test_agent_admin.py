@@ -347,11 +347,25 @@ class _FakeManager:
         return {}
 
 
+class _FakePool:
+    """런타임을 실제로 띄우지 않는 풀 (이 대화의 폴더에 하나가 떠 있는 상태)."""
+
+    def __init__(self, manager: "_FakeManager"):
+        self.manager = manager
+
+    def get(self, workspace=None):
+        return self.manager
+
+    async def reload_all(self):
+        await self.manager.reload_from_config()
+        return {}
+
+
 @pytest.fixture()
 def roster(monkeypatch):
     runner = _FakeRunner([])
     monkeypatch.setattr(roster_module, "get_debate_runner", lambda: runner)
-    monkeypatch.setattr(roster_module, "get_mcp_manager", lambda: _FakeManager())
+    monkeypatch.setattr(roster_module, "get_runtime_pool", lambda: _FakePool(_FakeManager()))
     monkeypatch.setattr(roster_module.ui, "notify", lambda *a, **k: None)
 
     control = AgentRosterControl()

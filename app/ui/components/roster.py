@@ -24,7 +24,7 @@ from app.config import (
     set_agent_enabled_in_conf_file,
     set_mcp_server_enabled_in_conf_file,
 )
-from app.mcp.manager import MCPManager, get_mcp_manager
+from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
 from app.orchestration.runner import get_debate_runner
 from app.orchestration.state import DebateState
@@ -162,6 +162,11 @@ class AgentRosterControl:
         # 그 도구가 지금 쓰이는 중이므로 잠급니다.
         self.mcp_locked: bool = False
         self.mcp_lock_reason: str = ""
+        # 마지막으로 칩에 그린 런타임 상태의 지문. 서버는 이제 첫 토론 때 뜨므로
+        # 화면이 열려 있는 동안 상태가 **실제로 바뀝니다**. 잠금 사유만 보고 있으면
+        # 그 변화를 놓쳐, 도구가 다 붙은 뒤에도 "미기동" 이 토론이 끝날 때까지
+        # 남습니다.
+        self.mcp_status_seen: Optional[tuple] = None
         self.cards_row: Optional[ui.row] = None
         self.order_preview: Optional[ui.row] = None
         # 에이전트 구성 변경(추가·삭제·진영·발언 순서·도구)은 "이 대화가 아직
@@ -322,10 +327,10 @@ class AgentRosterControl:
                 self.mcp_row = ui.row().classes("w-full gap-2 flex-wrap items-center")
                 self._sync_mcp_lock()
                 self.refresh_mcp_status()
-                # 다른 화면에서 시작·종료된 토론은 이 화면에 이벤트로 오지 않습니다.
-                # 잠금 상태만 주기적으로 맞춥니다 (딕셔너리 조회 한 번이고, 상태가
-                # 바뀔 때만 다시 그립니다).
-                ui.timer(2.0, self._sync_mcp_lock)
+                # 다른 화면에서 시작·종료된 토론은 이 화면에 이벤트로 오지 않고,
+                # 서버는 첫 토론 때 뜨므로 화면이 열려 있는 동안 상태가 바뀝니다.
+                # 둘 다 주기적으로 맞춥니다 (조회 몇 번이고, 바뀔 때만 다시 그립니다).
+                ui.timer(2.0, self._sync_mcp_panel)
 
                 # 작업 공간 (이 대화 전용). filesystem·git·memory·sandbox MCP 가
                 # 모두 이 폴더 하나를 공유합니다.
@@ -736,15 +741,26 @@ class AgentRosterControl:
         # 메뉴가 같은 시점에 잠겨야 합니다.
         self.refresh_agent_cards()
 
-    def _session_runtime(self) -> MCPManager:
-        """이 대화의 작업 공간에 해당하는 MCP 런타임.
+    def _session_runtime(self) -> Optional[MCPManager]:
+        """이 대화의 작업 공간에 해당하는 MCP 런타임. 아직 안 떴으면 None.
 
         **떠 있는 것만 찾습니다** (`pool.get`). 화면을 그리는 것만으로 서버가 뜨면
-        사이드바를 클릭할 때마다 프로세스 묶음이 하나씩 늘어납니다. 아직 안 떴으면
-        기본 런타임을 돌려주고, 그쪽도 비어 있으면 칩은 "미기동" 으로 그려집니다 —
-        그게 사실입니다. 첫 토론이 시작될 때 이 폴더의 서버가 뜹니다.
+        사이드바를 클릭할 때마다 프로세스 묶음이 하나씩 늘어납니다.
+
+        없을 때 기본 런타임으로 물러서지 **않습니다.** 그러면 다른 폴더를 쓰는
+        대화에 남의 작업 공간에서 뜬 서버의 상태가 "도구 14" 처럼 그려집니다 —
+        이 대화의 서버는 하나도 안 떠 있는데 말입니다. 없으면 없다고 그리는 것이
+        맞고, 그게 "첫 토론 때 기동됩니다" 라는 사실과도 맞습니다.
         """
-        return get_runtime_pool().get(self.workspace_dir) or get_mcp_manager()
+        return get_runtime_pool().get(self.workspace_dir)
+
+    @staticmethod
+    def _status_fingerprint(status: Dict[str, Any]) -> tuple:
+        """칩에 그려질 내용의 요약. 같으면 다시 그릴 이유가 없습니다."""
+        return tuple(sorted(
+            (name, bool(info.get("connected")), int(info.get("tool_count") or 0))
+            for name, info in status.items()
+        ))
 
     def refresh_mcp_status(self) -> None:
         """conf.json 의 MCP 서버별 연결 상태를 칩으로 다시 그립니다.
@@ -756,11 +772,16 @@ class AgentRosterControl:
             return
 
         try:
-            status = self._session_runtime().connection_status()
+            runtime = self._session_runtime()
+            status = runtime.connection_status() if runtime is not None else {}
             configured = get_config().mcp_servers
         except Exception as e:  # noqa: BLE001 - UI 는 설정 오류로 죽지 않아야 합니다
             logger.warning(f"Could not read MCP status: {e}")
             status, configured = {}, {}
+
+        # 방금 그린 것을 기억해 둡니다. 타이머가 이 값과 비교해 바뀐 때만 다시
+        # 그립니다 (`_sync_mcp_runtime`).
+        self.mcp_status_seen = self._status_fingerprint(status)
 
         self.mcp_row.clear()
         connected_count = 0
@@ -776,7 +797,8 @@ class AgentRosterControl:
                     tip = f"{name}: conf.json 에서 enabled = false"
                 elif info is None:
                     icon, icon_cls, color, detail = "help_outline", "text-slate-500", "grey-8", "미기동"
-                    tip = f"{name}: 아직 기동되지 않았습니다"
+                    tip = (f"{name}: 이 대화의 작업 공간에는 아직 서버가 뜨지 않았습니다.\r\n"
+                           f"첫 토론을 시작하면 그 폴더의 서버 묶음이 기동됩니다 (수 초).")
                 elif info["connected"]:
                     connected_count += 1
                     icon, icon_cls, color = "check_circle", "text-emerald-400", "green-8"
@@ -863,9 +885,34 @@ class AgentRosterControl:
         self.mcp_lock_reason = reason
         self._apply_mcp_lock()
 
+    def _sync_mcp_runtime(self) -> None:
+        """런타임 상태가 바뀌었으면 칩을 다시 그립니다.
+
+        잠금 사유만 보던 시절에는 이 갱신이 없었습니다. 서버가 앱 기동 때 한 번
+        다 떠 있었으니 화면이 열려 있는 동안 상태가 변할 일이 없었기 때문입니다.
+        지금은 첫 토론이 시작될 때 그 폴더의 서버가 뜨므로, 그 순간을 보지 않으면
+        도구가 다 붙은 뒤에도 "미기동" 이 토론이 끝날 때까지 남습니다.
+        """
+        if not self.alive or self.mcp_row is None or self.mcp_row.is_deleted:
+            return
+        try:
+            runtime = self._session_runtime()
+            status = runtime.connection_status() if runtime is not None else {}
+        except Exception as e:  # noqa: BLE001 - 화면 갱신이 설정 오류로 죽지 않게
+            logger.debug(f"Could not read MCP status for the refresh check: {e}")
+            return
+        if self._status_fingerprint(status) == self.mcp_status_seen:
+            return
+        self.refresh_mcp_status()
+
+    def _sync_mcp_panel(self) -> None:
+        """잠금과 런타임 상태를 화면에 맞춥니다 (타이머가 부릅니다)."""
+        self._sync_mcp_lock()
+        self._sync_mcp_runtime()
+
     def refresh_mcp_lock(self) -> None:
         """토론이 시작·종료된 직후 화면에서 부릅니다 (타이머를 기다리지 않도록)."""
-        self._sync_mcp_lock()
+        self._sync_mcp_panel()
 
     def _apply_mcp_lock(self) -> None:
         if not self.alive:
@@ -1803,7 +1850,8 @@ class AgentRosterControl:
 
         try:
             configured = get_config().mcp_servers
-            status = self._session_runtime().connection_status()
+            runtime = self._session_runtime()
+            status = runtime.connection_status() if runtime is not None else {}
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Could not read MCP servers: {e}")
             configured, status = {}, {}
@@ -1918,11 +1966,22 @@ class AgentRosterControl:
 
     async def _on_mcp_reconnect(self) -> None:
         """연결되지 않은 MCP 서버를 다시 띄웁니다."""
+        runtime = self._session_runtime()
+        if runtime is None:
+            # 이 대화의 폴더에는 아직 서버 묶음이 없습니다. 여기서 띄워 버리면
+            # 아무도 반납하지 않는 런타임이 남아 다음 대화의 자리를 먹습니다.
+            ui.notify(
+                "이 대화의 작업 공간에는 아직 MCP 서버가 뜨지 않았습니다. "
+                "첫 토론을 시작하면 기동됩니다.",
+                type="info", position="bottom-right",
+            )
+            return
+
         if self.mcp_reconnect_btn:
             self.mcp_reconnect_btn.disable()
         progress = self._progress_toast("MCP 서버 재연결을 시도합니다...")
         try:
-            changed = await self._session_runtime().reconnect()
+            changed = await runtime.reconnect()
             self.refresh_mcp_status()
             if changed:
                 ui.notify("MCP 서버에 다시 연결되었습니다.", type="positive", position="bottom-right")
