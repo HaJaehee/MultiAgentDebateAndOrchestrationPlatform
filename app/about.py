@@ -9,8 +9,8 @@ APP_NAME = "MADO: Multi-Agent Debate & Orchestration Platform"
 APP_SHORT_NAME = "MADO"
 APP_TAGLINE = "MCP-enabled Autonomous Collaborative Debate & Synthesis"
 
-# 표기는 `v0.6.1`, 값은 `0.6.1`. FastAPI 의 `version=` 은 접두사 없는 쪽을 받습니다.
-APP_VERSION = "0.6.1"
+# 표기는 `v0.6.1.1`, 값은 `0.6.1.1`. FastAPI 의 `version=` 은 접두사 없는 쪽을 받습니다.
+APP_VERSION = "0.6.1.1"
 APP_VERSION_LABEL = f"v{APP_VERSION}"
 
 AUTHOR = "Ha, Jaehee"

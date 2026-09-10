@@ -6,6 +6,29 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.6.1.1
+
+**The MCP status chips follow the runtime instead of the lock.**
+
+v0.6.0 moved server startup from application boot to the first debate in a workspace, which means
+the panel's state now genuinely changes while a page is open. The chips did not notice: the only
+periodic path that redrew them ran when the *lock* state changed, and a debate locks the panel on
+its first message and keeps the same reason until it ends. So the servers came up in two or three
+seconds and the chips kept saying "미기동" until the whole turn finished.
+
+The two-second timer now compares a fingerprint of the runtime state — connected flag and tool
+count per server — alongside the lock reason, and redraws only when either moved, so the early
+return that made the timer cheap is still there.
+
+Fixed alongside it: a session whose workspace had no runtime yet fell back to the **default**
+runtime's status, drawing another workspace's servers as though they were this conversation's.
+A conversation with no servers running now says so, and the reconnect button explains that the
+group starts with the first debate rather than starting one nobody would release.
+
+→ [Runtime Isolation](mcp/runtime-isolation.md)
+
+---
+
 ## v0.6.1
 
 **A turn cut off at `max_tokens` is now continued, not just labelled.**
