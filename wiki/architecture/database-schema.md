@@ -38,7 +38,10 @@ erDiagram
         text content "Message text content"
         integer round_number "0 for user/plan/synthesis, 1..N for debate"
         string msg_type "user | orchestrator | agent | system"
-        datetime created_at "UTC timestamp"
+        datetime created_at "Ordering key (not the speech time)"
+        datetime started_at "Nullable: when the speech actually started"
+        datetime finished_at "Nullable: when the speech actually finished"
+        datetime turn_started_at "Nullable: set only on the synthesis row that closed a turn"
     }
 
     tool_calls {
@@ -113,7 +116,12 @@ Stores the sequential transcript of messages exchanged during a debate.
 | `content` | `TEXT` | No | `''` | Text content of the message. |
 | `round_number` | `INTEGER` | No | `0` | Debate round number (`0` for user input, planning, synthesis). |
 | `msg_type` | `VARCHAR(30)` | No | `'agent'` | Message classification: `'user'`, `'orchestrator'`, `'agent'`, `'system'`. |
-| `created_at` | `DATETIME` | No | `utc_now` | UTC creation timestamp. |
+| `created_at` | `DATETIME` | No | `utc_now` | **Ordering key, not the speech time.** The row is inserted after the LLM reply arrives, so this is roughly the *end*; in a parallel round it is overwritten with `round base time + dispatch index (ms)` so a reload replays in dispatch order. |
+| `started_at` | `DATETIME` | Yes | - | Wall-clock time the speech actually started (taken before the stream opens). |
+| `finished_at` | `DATETIME` | Yes | - | Wall-clock time the speech actually finished, including a speech that ended in failure. Taken outside the write lock, so waiting to commit is not counted. |
+| `turn_started_at` | `DATETIME` | Yes | - | Set **only** on the synthesis speech that closed a turn: when that turn's opening request was recorded. `finished_at - turn_started_at` is the turn's total elapsed time, shown in the report footer and the Markdown export. Recorded explicitly rather than inferred, because an interjection right after planning is also a `user` row with `round_number=0`. `NULL` elsewhere, which also marks the row that closed a turn. |
+
+`started_at` equals `finished_at` for records that take no time (a person's message, a speaker-selection note). Both are `NULL` for rows written before v0.6.1.2: the migration deliberately adds them without a default, because backfilling would make every old speech appear to start and finish at the moment of migration. The chat feed and the Markdown export show such rows with the single `created_at` value and without calling it a start or an end ([`app/timestamps.py` `speech_timing`](file:///d:/MultiAgentOrchestrator/app/timestamps.py)).
 
 ### 2.3. `tool_calls` Table ([ToolCallRecordModel](file:///d:/MultiAgentOrchestrator/app/database/models.py#L63-L78))
 Logs every MCP tool invocation executed by an agent during a turn.

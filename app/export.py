@@ -10,10 +10,19 @@ DB 를 모르는 순수 함수로 둡니다. 화면은 읽어 온 값을 넘기�
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.orchestration.strategies import get_strategy
+# 시각 규칙은 `app.timestamps` 가 정본입니다. 여기서도 이름을 내보내 기존 호출자
+# (`from app.export import to_local` 등)가 그대로 동작하게 합니다.
+from app.timestamps import (  # noqa: F401 - 다시 내보냄
+    format_duration,
+    report_completed_line,
+    speech_time_text,
+    speech_timing,
+    to_local,
+)
 
 # 발언 종류별 머리표. 누가 무슨 자격으로 말했는지가 한눈에 보여야 합니다.
 TYPE_LABEL = {
@@ -50,19 +59,6 @@ def _fence(content: str, language: str = "") -> str:
     longest = max((len(m) for m in re.findall(r"`{3,}", body)), default=2)
     fence = "`" * max(3, longest + 1)
     return f"{fence}{language}\n{body}\n{fence}"
-
-
-def to_local(value: datetime) -> datetime:
-    """기록된 시각을 이 기계의 시간대로 옮깁니다.
-
-    기록은 UTC 로 적지만 SQLite 는 오프셋을 버리므로, 읽어 오면 시간대가 없는
-    UTC 벽시계입니다. 그대로 찍으면 한국에서는 9시간 전으로 보입니다.
-    """
-    if isinstance(value, str):
-        value = datetime.fromisoformat(value)
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone()
 
 
 def _fmt_time(value: Any) -> str:
@@ -158,7 +154,9 @@ def build_session_markdown(
         label = TYPE_LABEL.get(msg.get("msg_type", "agent"), "🤖 에이전트")
         name = msg.get("sender_name") or msg.get("sender_key") or "unknown"
         role = msg.get("sender_role") or ""
-        stamp = _fmt_time(msg.get("created_at"))
+        # 시작·종료·소요 시간. 옛 기록은 `created_at` 한 시각으로 물러섭니다
+        # (`speech_timing` 의 `legacy` 참고).
+        stamp = speech_time_text(msg)
         header = f"#### {label} · {name}"
         if role:
             header += f" ({role})"

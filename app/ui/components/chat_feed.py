@@ -1,9 +1,10 @@
 import json
 import logging
 import time
-from typing import Any, Callable, Coroutine, Dict, Iterable, List, Optional, Set
+from typing import Any, Callable, Coroutine, Dict, Iterable, List, Optional, Set, Tuple
 from nicegui import ui
 from app.agents.base import style_for_agent
+from app.timestamps import format_duration, speech_time_text, speech_timing
 from app.ui.clipboard import copy_to_clipboard
 
 logger = logging.getLogger(__name__)
@@ -110,6 +111,36 @@ COUNTDOWN_CLASSES = "font-mono flex-shrink-0 whitespace-nowrap"
 def _all_decision_classes(slot: str) -> str:
     """모든 종류가 쓰는 색 클래스. 다시 칠하기 전에 통째로 걷어냅니다."""
     return " ".join(style[slot] for style in DECISION_STYLES.values())
+
+
+def card_time_text(msg: Dict[str, Any]) -> Tuple[str, str]:
+    """발언 카드에 적을 시각 한 줄과 툴팁. 시각이 전혀 없으면 둘 다 빈 문자열.
+
+    카드는 한 대화 안에서 위아래로 이어 읽으므로 **시각만** 짧게 적고, 날짜까지
+    붙은 전체 시각은 툴팁에 둡니다 (저장 문서와 같은 문구 — `speech_time_text`).
+    시작과 끝의 날짜가 다르면 끝쪽에만 날짜를 붙입니다. 자정을 넘긴 발언에서
+    `23:59:50 → 00:00:12` 만 적으면 거꾸로 흐른 것처럼 보입니다.
+    """
+    t = speech_timing(msg)
+    started, finished = t["started"], t["finished"]
+    if started is None and finished is None:
+        return "", ""
+
+    clock = "%H:%M:%S"
+    if t["legacy"] or t["instant"]:
+        at = started or finished
+        return at.strftime(clock), at.strftime("%Y-%m-%d %H:%M:%S")
+    if finished is None:
+        # 스트리밍 중인 카드. 끝나면 `_finalize_streaming_message` 가 고쳐 씁니다.
+        return f"{started.strftime(clock)} 시작 · 진행 중", f"시작 {started.strftime('%Y-%m-%d %H:%M:%S')}"
+    if started is None:
+        return f"{finished.strftime(clock)} 종료", speech_time_text(msg)
+
+    end = finished.strftime(clock if finished.date() == started.date() else "%m-%d " + clock)
+    # 경과 시간은 종료 시각 **오른쪽에**, 무엇의 시간인지 이름을 붙여 적습니다. 숫자만
+    # 두면 "2분 5초" 가 경과인지 남은 시간인지 읽는 사람이 짐작해야 합니다.
+    label = f"{started.strftime(clock)} → {end} · 경과 {format_duration(t['seconds'])}"
+    return label, speech_time_text(msg)
 
 
 def _card_classes(msg_type: str, sender_key: str) -> str:
@@ -833,6 +864,20 @@ class ChatFeed:
         info["markdown"].set_content(final_content)
         info["content"] = final_content
 
+        # "진행 중" 이던 시각 줄을 종료 시각과 소요 시간으로 고쳐 씁니다. 확정본에
+        # 시작 시각이 빠져 있으면 스트리밍을 시작할 때 받아 둔 값을 씁니다.
+        timed = dict(msg)
+        if not timed.get("started_at") and info.get("started_at"):
+            timed["started_at"] = info["started_at"]
+        time_text, time_full = card_time_text(timed)
+        time_label = info.get("time_label")
+        if time_label is not None and not time_label.is_deleted:
+            time_label.set_text(time_text)
+            time_label.set_visibility(bool(time_text))
+        time_tip = info.get("time_tip")
+        if time_tip is not None and not time_tip.is_deleted:
+            time_tip.set_text(time_full)
+
         msg_type = msg.get("msg_type", "agent")
         if msg_type != info.get("msg_type"):
             card = info.get("card")
@@ -1019,6 +1064,15 @@ class ChatFeed:
                                 ui.badge(sender_role, color=style["color"]).props("dense text-[10px]")
                             failed_badge = ui.badge("응답 없음", color="red-9").props("dense text-[10px]")
                             failed_badge.set_visibility(msg_type == "error")
+                        # 발언 시작·종료 시각. 이름 밑에 작게 둡니다 — 오른쪽 버튼 줄에
+                        # 넣으면 좁은 화면에서 라운드 배지와 버튼을 밀어냅니다.
+                        time_text, time_full = card_time_text(msg)
+                        time_label = ui.label(time_text).classes(
+                            "text-[10px] font-mono text-slate-400 leading-tight"
+                        )
+                        with time_label:
+                            time_tip = ui.tooltip(time_full)
+                        time_label.set_visibility(bool(time_text))
 
                 with ui.row().classes("items-center gap-1 no-wrap flex-shrink-0"):
                     if round_num > 0:
@@ -1060,6 +1114,9 @@ class ChatFeed:
             "expand_tip": expand_tip,
             "tool_container": tool_container,
             "failed_badge": failed_badge,
+            "time_label": time_label,
+            "time_tip": time_tip,
+            "started_at": msg.get("started_at"),
             "msg_type": msg_type,
             "collapsed": False,
         })

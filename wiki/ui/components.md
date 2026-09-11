@@ -133,6 +133,15 @@ the persona editor — because two copies would drift on how a value is picked o
   border; the red border of a failed turn is never overwritten, because there the colour is the
   message.
 - **Real-Time Token Streaming**: Supports incremental token streaming (`start_streaming_message()`, `append_stream_chunk()`, and `_finalize_streaming_message()`). Agent messages stream directly into reactive markdown cards as LLM completion chunks arrive.
+- **Speech times** (v0.6.1.2): under the speaker's name each card shows when the speech started
+  and finished and how long it took — `10:56:22 → 10:58:27 · 경과 2분 5초`, elapsed to the right of the end time — with the full dated line
+  in a tooltip. A streaming card reads `10:56:22 시작 · 진행 중` and is rewritten in place by
+  `_finalize_streaming_message()`. Records that take no time (a person's message) and rows from
+  before the columns existed show a single time; the latter are never labelled a start or an end,
+  because their only timestamp is `created_at`, which is an ordering key written after the reply.
+  The end carries a date when it falls on a different local day, so a speech across midnight does
+  not read as time running backwards. The Markdown export uses the same rules
+  (`app/timestamps.py` `speech_timing` / `speech_time_text`) so the two never disagree.
 - **Folding Tool Accordions**: Each MCP tool call (input arguments and execution outputs) renders inside an expandable Quasar accordion, preserving timeline readability.
 - **Status & Progress Banner**: Shows real-time speaker indicators (e.g. `[Senior Python Engineer] 발언 및 분석 중...`) and round counters during execution.
 - **Liveness indicators**: while a turn is running the feed says so in three places at once —

@@ -9,6 +9,15 @@ logger = logging.getLogger(__name__)
 # create_all 은 기존 테이블에 컬럼을 추가하지 않습니다. 이미 만들어진 DB 를 쓰는
 # 배포본을 위해, 나중에 도입된 컬럼만 최소한으로 채워 넣습니다.
 _ADDED_COLUMNS = {
+    "messages": {
+        # 발언의 실제 시작·종료 시각. NULL 이면 "이 컬럼이 생기기 전의 발언" 이라
+        # 기본값을 넣지 않습니다 — 넣으면 옛 발언이 마이그레이션한 순간에 한꺼번에
+        # 시작하고 끝난 것처럼 보입니다.
+        "started_at": "DATETIME",
+        "finished_at": "DATETIME",
+        # 턴을 마무리한 합성 발언에만 채워집니다 (`MessageModel.turn_started_at`).
+        "turn_started_at": "DATETIME",
+    },
     "sessions": {
         "personas_locked": "BOOLEAN NOT NULL DEFAULT 0",
         "workspace_dir": "TEXT NOT NULL DEFAULT ''",

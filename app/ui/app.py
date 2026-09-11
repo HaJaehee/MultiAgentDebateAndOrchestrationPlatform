@@ -706,6 +706,13 @@ def create_ui() -> None:
                         "content": m.content,
                         "round_number": m.round_number,
                         "msg_type": m.msg_type,
+                        # 카드에 시작·종료 시각을 적습니다. `created_at` 은 정렬 키라
+                        # 시각으로 쓰지 않지만, 두 컬럼이 생기기 전의 발언은 그것밖에
+                        # 없으므로 함께 넘깁니다 (`app.timestamps.speech_timing`).
+                        "created_at": m.created_at,
+                        "started_at": m.started_at,
+                        "finished_at": m.finished_at,
+                        "turn_started_at": m.turn_started_at,
                         "tool_calls": [
                             {
                                 "tool_name": tc.tool_name,

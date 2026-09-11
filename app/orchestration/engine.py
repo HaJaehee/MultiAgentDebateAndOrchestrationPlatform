@@ -19,6 +19,7 @@ from app.agents.llm import (
 )
 from app.agents.personas import prepare_agents_for_turn
 from app.agents.pool import AgentPool, get_agent_pool
+from app.timestamps import report_completed_line
 from app.config import TOOL_ITERATION_CEILING, resolve_workspace_dir
 from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
@@ -341,8 +342,12 @@ class OrchestratorEngine:
         db_lock: Optional[asyncio.Lock] = None,
         created_at: Optional[datetime] = None,
         post_process: Optional[Callable[[str], Coroutine[Any, Any, str]]] = None,
+        turn_started_at: Optional[datetime] = None,
     ) -> DebateMessage:
         """한 에이전트의 발언을 스트리밍하고, DB 에 기록하고, 상태에 반영합니다.
+
+        `turn_started_at` 은 이 발언이 턴을 마무리하는 합성 발언일 때만 줍니다.
+        그 턴의 총 경과 시간을 기록에서 다시 계산할 수 있게 함께 적습니다.
 
         `db_lock` 은 이 발언이 다른 발언과 **동시에** 진행될 때만 필요합니다
         (병렬 지시 전략). `db` 는 세션 하나를 공유하는데 SQLAlchemy AsyncSession 은
@@ -364,6 +369,9 @@ class OrchestratorEngine:
         파일에서 도구 기록이 발언과 따로 놀았습니다.
         """
         msg_id = str(uuid.uuid4())
+        # 벽시계 시작 시각. `created_at` 과 따로 둡니다 — 그쪽은 발언이 끝난 뒤에
+        # 들어가는 정렬 키라서, 병렬 라운드에서는 실제 시각이 아닙니다.
+        started_at = utc_now()
         if on_event:
             await on_event({
                 "type": "message_stream_start",
@@ -375,6 +383,7 @@ class OrchestratorEngine:
                     "content": "",
                     "round_number": round_number,
                     "msg_type": msg_type,
+                    "started_at": started_at,
                 },
             })
 
@@ -466,6 +475,11 @@ class OrchestratorEngine:
             if agent.key not in state.failed_agent_keys:
                 state.failed_agent_keys.append(agent.key)
 
+        # 응답이 끝난 시각. 실패로 끝난 발언도 여기서 잽니다 — 언제 포기했는지는
+        # 그 자체로 쓸모 있는 기록입니다 (엔드포인트가 몇 초 만에 끊었는지, 한도까지
+        # 버텼는지). 기록 락을 기다린 시간이 섞이지 않도록 락 **밖에서** 잽니다.
+        finished_at = utc_now()
+
         async with (db_lock or nullcontext()):
             db.add(MessageModel(
                 id=msg_id,
@@ -476,6 +490,9 @@ class OrchestratorEngine:
                 content=content,
                 round_number=round_number,
                 msg_type=final_type,
+                started_at=started_at,
+                finished_at=finished_at,
+                turn_started_at=turn_started_at,
                 **({"created_at": created_at} if created_at is not None else {}),
             ))
             for call_log in executed_tools:
@@ -528,6 +545,9 @@ class OrchestratorEngine:
             # 발언이 실패로 끝나면 `call_agent` 는 도구 기록을 돌려주지 못합니다.
             # 그전에 실제로 실행된 것은 남아 있어야 합니다.
             tool_calls=tool_logs or executed_tools,
+            started_at=started_at,
+            finished_at=finished_at,
+            turn_started_at=turn_started_at,
         )
         state.messages.append(message)
 
@@ -553,6 +573,9 @@ class OrchestratorEngine:
         둘을 구분 없이 읽습니다.
         """
         msg_id = str(uuid.uuid4())
+        # 사람 발언에는 걸리는 시간이 없습니다. 시작과 끝을 같은 시각으로 적어,
+        # 읽는 쪽이 "시각이 없는 옛 기록" 과 구분할 수 있게 합니다.
+        now = utc_now()
         db.add(MessageModel(
             id=msg_id,
             session_id=state.session_id,
@@ -562,6 +585,8 @@ class OrchestratorEngine:
             content=content,
             round_number=round_number,
             msg_type="user",
+            started_at=now,
+            finished_at=now,
         ))
         await db.commit()
 
@@ -573,6 +598,8 @@ class OrchestratorEngine:
             content=content,
             round_number=round_number,
             msg_type="user",
+            started_at=now,
+            finished_at=now,
         )
         state.messages.append(message)
 
@@ -730,13 +757,18 @@ class OrchestratorEngine:
                 )
 
             # 3. Record User Message in DB
-            await self._record_user_message(
+            #
+            # 이 요청이 기록된 시각이 이 턴의 시작입니다. 보고서와 저장 문서의 "총 경과"
+            # 가 여기서 셉니다 — 기록에 남는 시각이라, 문서를 읽는 사람이 "요청 시각 →
+            # 합성 종료" 로 같은 값을 다시 얻을 수 있습니다.
+            opening = await self._record_user_message(
                 db=db,
                 state=state,
                 content=user_prompt,
                 round_number=0,
                 on_event=on_event,
             )
+            turn_started_at = opening.started_at
 
             # 4. Phase 1: Master Orchestrator Goal Analysis & Planning
             state.status = "planning"
@@ -919,12 +951,17 @@ class OrchestratorEngine:
                 msg_type="orchestrator",
                 on_event=on_event,
                 post_process=_fix_diagrams,
+                turn_started_at=turn_started_at,
             )
             synthesis_failed = synth_message.msg_type == "error"
 
             # 7. Extract and Persist Artifacts
             artifacts = self._extract_artifacts_from_synthesis(
-                session_id, synth_message.content, state, synthesis_failed=synthesis_failed
+                session_id, synth_message.content, state, synthesis_failed=synthesis_failed,
+                # 합성 발언이 끝난 시각. 다이어그램 자가 수선(`_fix_diagrams`)까지 마친
+                # 뒤에 잰 값이라, 보고서 본문이 확정된 순간입니다.
+                completed_at=synth_message.finished_at,
+                turn_started_at=turn_started_at,
             )
             for art in artifacts:
                 art_db = ArtifactModel(
@@ -996,6 +1033,8 @@ class OrchestratorEngine:
         저장 파일이 이것을 다른 발언과 똑같이 읽습니다.
         """
         msg_id = str(uuid.uuid4())
+        # LLM 을 부르지 않는 기록이라 걸리는 시간이 없습니다 (시작 = 끝).
+        now = utc_now()
         db.add(MessageModel(
             id=msg_id,
             session_id=state.session_id,
@@ -1005,6 +1044,8 @@ class OrchestratorEngine:
             content=content,
             round_number=round_number,
             msg_type=msg_type,
+            started_at=now,
+            finished_at=now,
         ))
         await db.commit()
 
@@ -1016,6 +1057,8 @@ class OrchestratorEngine:
             content=content,
             round_number=round_number,
             msg_type=msg_type,
+            started_at=now,
+            finished_at=now,
         )
         state.messages.append(message)
         if on_event:
@@ -1947,11 +1990,27 @@ class OrchestratorEngine:
         synth_text: str,
         state: DebateState,
         synthesis_failed: bool = False,
+        completed_at: Optional[datetime] = None,
+        turn_started_at: Optional[datetime] = None,
     ) -> List[ArtifactItem]:
-        """Extracts markdown, code, and mermaid artifacts from the synthesis text."""
+        """Extracts markdown, code, and mermaid artifacts from the synthesis text.
+
+        `completed_at` 이 주어지면 종합 보고서 끝에 완료 시각을 적고, `turn_started_at`
+        까지 있으면 그 오른쪽에 이 턴의 총 경과 시간을 붙입니다. 합성이 실패했으면
+        적지 않습니다 — 그 아티팩트는 실패 안내이지 완료된 보고서가 아니므로,
+        "보고서 완료" 라고 적으면 거짓입니다.
+        """
         artifacts: List[ArtifactItem] = []
 
         # 1. Full Synthesized Markdown Document
+        report = synth_text
+        completed_line = (
+            "" if synthesis_failed else report_completed_line(completed_at, turn_started_at)
+        )
+        if completed_line:
+            # 본문에만 붙입니다. 아래의 코드·다이어그램 추출은 원문(`synth_text`)으로
+            # 하므로 이 줄이 다른 아티팩트에 섞이지 않습니다.
+            report = f"{synth_text.rstrip()}\n\n---\n\n{completed_line}\n"
         artifacts.append(
             ArtifactItem(
                 artifact_type="markdown",
@@ -1959,7 +2018,7 @@ class OrchestratorEngine:
                     "합성 실패 (LLM 연결 끊김)" if synthesis_failed
                     else "종합 아키텍처 & 산출물 보고서 (Final Synthesis Report)"
                 ),
-                content=synth_text,
+                content=report,
                 language="markdown",
             )
         )

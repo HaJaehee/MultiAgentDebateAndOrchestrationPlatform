@@ -33,6 +33,7 @@ from app.database.models import (
     SessionAgentModel,
     SessionModel,
     ToolCallRecordModel,
+    utc_now,
 )
 from app.mcp.manager import carry_over_memory_graph
 
@@ -308,6 +309,8 @@ async def continue_session(
     # 오케스트레이터의 발언으로 넣습니다. 사용자가 쓴 글이 아니므로 user 로
     # 넣을 수 없고(사이드바의 '시작 시각' 도 그 행에서 옵니다), 중재자가 이번
     # 토론의 출발점을 정리해 둔 것이 이 쪽지의 성격에 맞습니다.
+    # 앱이 지어 넣는 쪽지라 걸리는 시간이 없습니다 (시작 = 끝).
+    noted_at = utc_now()
     db.add(MessageModel(
         id=str(uuid.uuid4()),
         session_id=new_id,
@@ -317,6 +320,8 @@ async def continue_session(
         content=note,
         round_number=0,
         msg_type="orchestrator",
+        started_at=noted_at,
+        finished_at=noted_at,
     ))
 
     await db.commit()

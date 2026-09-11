@@ -46,7 +46,8 @@ app/
 ├── main.py                   303   FastAPI 앱, lifespan, /api/*, /agent-icon, CLI 진입점
 ├── config.py               1,285   conf.json 로더·기록기, 환경변수 치환, 아이콘 저장소, Pydantic
 ├── session_ops.py            335   세션 생성·삭제·이어받기
-├── export.py                 206   대화 → 마크다운 문서
+├── export.py                 204   대화 → 마크다운 문서
+├── timestamps.py             153   발언 시작·종료·경과, 턴 총 경과, 보고서 완료 시각 (화면·문서·보고서 공용, app 무의존)
 ├── export_mermaid.py       1,618   Mermaid → SVG/PNG 렌더러 (외부 의존 없음)
 ├── mermaid_lint.py           323   다이어그램 문법 검사·복구
 │
@@ -57,7 +58,8 @@ app/
 │   └── personas.py           415   세션별 인격·겉모습, 구성 스냅샷
 │
 ├── mcp/
-│   ├── manager.py            563   서버 수명, 도구 색인, 작업 공간 전환
+│   ├── manager.py            563   작업 공간 하나의 서버 묶음, 도구 색인
+│   ├── pool.py               378   작업 공간별 런타임 풀 (참조 카운트·유휴 회수·상한)
 │   └── client.py             780   stdio 세션, 도구 검색·실행, stderr 갈무리
 │
 ├── orchestration/
@@ -97,12 +99,13 @@ app/
 | 새 토론 전략 | `orchestration/strategies.py` |
 | 토론 흐름 변경 | `orchestration/engine.py` |
 | LLM 호출 파라미터 | `agents/llm.py` (`build_completion_kwargs`) |
-| MCP 서버 다루는 방식 | `mcp/manager.py` |
+| MCP 서버 다루는 방식 | `mcp/manager.py` · 작업 공간별 런타임은 `mcp/pool.py` |
 | 발언 카드 모양 | `ui/components/chat_feed.py` |
 | 에이전트 카드 색·아이콘 | `agents/base.py` (해석·폴백) · `ui/components/agent_appearance.py` (편집기) |
 | 로스터 컨트롤 | `ui/components/roster.py` |
 | 산출물 렌더링 | `ui/components/artifact_viewer.py` |
 | 내보내기 형식 | `export.py` |
+| 발언·보고서 시각 표기 | `timestamps.py` (화면·저장 문서·보고서가 모두 여기를 거칩니다) |
 | API 엔드포인트 | `main.py` |
 | 버전·저작자 표기 | `about.py` (여기만 고치면 전부 따라옵니다) |
 | DB 스키마 | `database/models.py` |

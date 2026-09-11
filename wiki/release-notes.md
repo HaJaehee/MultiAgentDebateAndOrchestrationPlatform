@@ -6,6 +6,61 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.6.1.2
+
+**Every speech now records when it started and when it finished, and both are shown.**
+
+The obvious shortcut was `messages.created_at`, and it would have been wrong. The row is inserted
+*after* the LLM reply arrives, so that value is roughly the end of the speech, not the start. In a
+parallel round it is not a time at all: it is overwritten with the round's base time plus the
+dispatch index in milliseconds, because completion order varies and a reload has to replay the
+speeches in the order they were assigned. It is an ordering key, and it stays one.
+
+So `started_at` and `finished_at` are new, real wall-clock columns. The start is taken before the
+stream opens; the end is taken after the reply — including a reply that failed, since how long an
+endpoint took to give up is worth knowing — and outside the write lock, so time spent waiting to
+commit is not counted as speaking. A person's message and a speaker-selection note take no time
+and record the same instant twice. In a parallel round the intervals overlap, which is the truth.
+
+The migration adds both columns **without a default**. Backfilling would make every old speech
+appear to start and finish at the moment of migration. Rows without them are shown with their
+single `created_at` value and are never labelled a start or an end.
+
+Each chat card shows `10:56:22 → 10:58:27 · 경과 2분 5초` under the speaker's name — the elapsed
+time sits to the right of the end time and is labelled, because a bare `2분 5초` leaves the reader
+guessing whether it is elapsed or remaining. The full dated line is in a tooltip; a streaming card
+reads `시작 · 진행 중` and is rewritten when it finishes. The Markdown export writes
+`시작 … · 종료 … · 경과 …` with dates.
+
+The **final synthesis report** now ends with `*보고서 완료: … · 총 경과 …*`. The report is copied
+and forwarded on its own, so when the conclusion was reached — and how long the turn took to reach
+it — has to be written inside it. Completion is the synthesis speech's `finished_at`, taken after
+diagram self-repair, so it matches that card's end time exactly. Code and diagram artifacts are
+still cut from the original text, and a failed synthesis gets no completion line — it is a failure
+notice, not a completed report. In the Markdown export the same total follows the synthesis
+speech's own line: `시작 … · 종료 … · 경과 … · 총 경과 …`.
+
+The turn total runs from **when the opening request was recorded** to the end of synthesis, so a
+reader of the transcript can recompute it from the two times shown. It is not inferred from the
+record. An interjection made during a debate is also a `user` message, and one made right after
+planning is recorded with `round_number=0` — exactly like the request that opened the turn —
+so "the last round-0 user message" would silently shorten the total of any turn someone spoke up
+in. Instead the synthesis row records `turn_started_at` explicitly; it is `NULL` on every other
+row, which also marks which row closed a turn.
+
+All of this goes through one set of pure helpers in the new `app/timestamps.py`, so the screen,
+the saved document and the report cannot disagree about a time. They began in `app/export.py`, but
+the engine importing them from there closed a cycle — `app.export` → strategies → the
+orchestration package → the engine → a half-loaded `app.export` — that only failed when something
+imported `app.export` first. `app.main` happened to import in a safe order, which is exactly why it
+would have surfaced later as a startup crash rather than now. `app.timestamps` imports nothing from
+the app; `app.export` re-exports the names so existing imports keep working.
+
+→ [Database Schema §2.2](architecture/database-schema.md) · [UI Components §1.3](ui/components.md) ·
+[Artifact Generation §2.1](orchestration/artifact-generation.md)
+
+---
+
 ## v0.6.1.1
 
 **The MCP status chips follow the runtime instead of the lock.**

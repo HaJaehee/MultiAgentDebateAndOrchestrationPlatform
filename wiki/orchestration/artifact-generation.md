@@ -33,6 +33,16 @@ flowchart LR
 - **Type**: `markdown`
 - **Title**: `종합 아키텍처 & 산출물 보고서 (Final Synthesis Report)`
 - **Content**: The full narrative report written by the Master Orchestrator, including executive summaries, decision matrices, edge-case audit findings, and verification steps.
+- **Completion time** (v0.6.1.2): the report ends with a rule and
+  `*보고서 완료: YYYY-MM-DD HH:MM:SS · 총 경과 12분 5초*` — the turn's total elapsed time to the right
+  of the completion time, measured from the recorded opening request (`messages.turn_started_at`).
+  The report is copied, downloaded, and forwarded on its own, away from the transcript, so the
+  moment the conclusion was reached has to travel **inside** it. The value is the synthesis
+  speech's `finished_at` — taken after diagram self-repair, i.e. when the report text became final
+  — so it matches the end time on the synthesis card and in the Markdown export exactly. It is
+  appended to this artifact only; code and diagram artifacts are extracted from the original text,
+  so the line never ends up inside runnable code. A failed synthesis gets no such line: that
+  artifact is a failure notice, and calling it a completed report would be false.
 - **Rendering**: Rendered as GitHub-flavored Markdown with table styling and syntax-highlighted code blocks.
 
 ### 2.2. Architecture Diagrams (`mermaid`)

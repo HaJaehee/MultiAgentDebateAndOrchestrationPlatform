@@ -69,7 +69,30 @@ class MessageModel(Base):
     content: Mapped[str] = mapped_column(Text, default="")
     round_number: Mapped[int] = mapped_column(Integer, default=0)
     msg_type: Mapped[str] = mapped_column(String(30), default="agent")  # 'user', 'orchestrator', 'agent', 'system'
+    # **정렬 키**입니다. 발언 시작 시각이 아닙니다.
+    #
+    # 발언 행은 LLM 응답이 다 온 **뒤에** 들어가므로 이 값은 대략 끝난 시각이고,
+    # 병렬 라운드에서는 아예 `라운드 기준 시각 + 지시 순번(ms)` 으로 덮어씁니다 —
+    # 완료 순서가 제각각이라 커밋 시각을 그대로 쓰면 새로고침할 때마다 발언 순서가
+    # 달라지기 때문입니다 (`OrchestratorEngine._speak`). 기록을 다시 읽을 때
+    # `order_by(created_at)` 이 이것을 씁니다. 사람에게 보여줄 시각은 아래 둘입니다.
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    # 발언이 실제로 시작된 시각과 끝난 시각 (벽시계). 병렬 라운드에서는 여러
+    # 발언의 구간이 겹칩니다 — 그게 사실입니다.
+    #
+    # NULL 이면 이 컬럼이 생기기 전에 기록된 발언입니다. 그때는 `created_at` 하나만
+    # 있고, 그것이 시작인지 끝인지 알 수 없으므로 화면과 문서는 한 시각만 적습니다.
+    # 사람 발언이나 지명 기록처럼 걸리는 시간이 없는 것은 두 값이 같습니다.
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 이 발언이 **한 턴을 마무리한 합성 발언**일 때만 채웁니다: 그 턴을 연 사람 요청이
+    # 기록된 시각. `finished_at - turn_started_at` 이 그 턴의 총 경과 시간입니다.
+    #
+    # 기록에서 거꾸로 추론하지 않고 따로 적는 이유: 토론 도중의 사람 개입도 똑같이
+    # `msg_type="user"` 로 들어가고, 계획 직후의 개입은 `round_number=0` 이라 턴을 연
+    # 요청과 구분되지 않습니다. 추론하면 개입이 있던 턴의 총 경과가 조용히 짧아집니다.
+    # 다른 발언은 NULL 이고, 그래서 이 값이 곧 "이 행이 턴을 마무리했다" 는 표시입니다.
+    turn_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     session: Mapped["SessionModel"] = relationship("SessionModel", back_populates="messages")
     tool_calls: Mapped[List["ToolCallRecordModel"]] = relationship(

@@ -338,6 +338,9 @@ class SessionSidebar:
                         "round_number": m.round_number,
                         "msg_type": m.msg_type,
                         "created_at": m.created_at,
+                        "started_at": m.started_at,
+                        "finished_at": m.finished_at,
+                        "turn_started_at": m.turn_started_at,
                         "tool_calls": [
                             {
                                 "tool_name": tc.tool_name,

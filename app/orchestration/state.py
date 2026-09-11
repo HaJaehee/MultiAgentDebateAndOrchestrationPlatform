@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 from app.agents.base import Agent
@@ -20,6 +21,12 @@ class DebateMessage(BaseModel):
     round_number: int = 0
     msg_type: str = "agent"  # 'user', 'orchestrator', 'agent', 'system', 'error'
     tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
+    # 발언이 실제로 시작·종료된 시각 (`MessageModel.started_at` / `finished_at`).
+    # 걸리는 시간이 없는 기록(사람 발언, 지명 결과)은 두 값이 같습니다.
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    # 이 발언이 턴을 마무리한 합성 발언이면 그 턴이 시작된 시각 (`MessageModel.turn_started_at`).
+    turn_started_at: Optional[datetime] = None
 
 
 class DebateState(BaseModel):

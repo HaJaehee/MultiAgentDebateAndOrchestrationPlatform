@@ -214,6 +214,32 @@ async def test_the_named_agents_really_run_at_the_same_time():
 
 
 @pytest.mark.asyncio
+async def test_parallel_speeches_record_their_real_overlapping_times():
+    """병렬 라운드의 `created_at` 은 지시 순서를 박아 둔 정렬 키라 1ms 간격입니다.
+
+    그 값을 발언 시각으로 보여주면 세 발언이 같은 순간에 끝난 것처럼 보입니다.
+    시작·종료 시각은 실제 벽시계라, 구간이 겹치고 각자 걸린 만큼 깁니다.
+    """
+    llm = _DispatchingLLM(hold=0.05)
+
+    rows = await _run(llm)
+
+    dispatched = ("architect", "coder", "critic")
+    parallel = [r for r in rows if r.round_number == 1 and r.sender_key in dispatched]
+    assert len(parallel) == len(dispatched)
+    for row in parallel:
+        assert row.started_at is not None and row.finished_at is not None
+        assert (row.finished_at - row.started_at).total_seconds() >= 0.04, row.sender_key
+
+    # 구간이 실제로 겹칩니다 — 마지막으로 시작한 발언이 가장 먼저 끝난 발언보다 먼저 시작했습니다.
+    assert max(r.started_at for r in parallel) < min(r.finished_at for r in parallel)
+
+    # 정렬 키는 그대로 지시 순서입니다 (이 기능이 created_at 을 건드리지 않았다).
+    keys = sorted(r.created_at for r in parallel)
+    assert (keys[-1] - keys[0]).total_seconds() < 0.01
+
+
+@pytest.mark.asyncio
 async def test_each_agent_gets_its_own_task():
     llm = _DispatchingLLM()
 
