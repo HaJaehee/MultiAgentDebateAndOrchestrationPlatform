@@ -6,6 +6,57 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.7.0
+
+v0.6.1.2 stopped telling a tool call that had run that it had not. Following that log line further
+turned up five more ways `max_tokens` and the context window went wrong — each small on its own, all
+showing up as the same symptom: a response cut short or gone, with nothing in the log to say which.
+
+**Tool definitions now count against the context budget.** They are sent with every request —
+filesystem, memory and git alone are 35 tools and about 5,300 tokens — but the budget counted only
+the messages and kept `max_tokens + 512` for output. A conversation filled to the budget overran the
+window by the size of the tool list, and the server either answered 400 or let the model write only
+what was left, which reads as `finish_reason='length'` on a response that had barely started. The
+budget now subtracts the tool definitions everywhere it is used, including the synthesis transcript.
+
+**A turn whose whole budget went to reasoning gets its answer asked for again.** A reasoning model
+counts hidden reasoning against `max_tokens`; think long enough and the body is empty. The turn used
+to end as a lone footer — and after a tool loop, continuation glued onto the text from *before* the
+tool call. Now the model is told its body was empty, handed the tail of its own reasoning with
+"conclude from here", and asked once more without deliberating if needed, within
+`max_continuations`. If nothing comes, the footer says reasoning used the limit rather than calling
+it a cut.
+
+The same blank card had a second cause unrelated to the limit: when a reasoning parser misses the
+end-of-thinking marker, the whole output — answer included — arrives as `reasoning_content` with
+`finish_reason: "stop"`. `prompt` mode discards reasoning, so the turn was empty and nothing was
+logged. If that reasoning contains the protocol's `## 최종 결론`, it now becomes the body without
+another call; if not, the answer is asked for again; and if that fails, the footer says the answer
+was left in the reasoning and — with `show_steps` on — shows the reasoning rather than a blank card.
+
+**`native` mode reports the `max_tokens` it actually sends.** With a thinking budget at least as
+large as `max_tokens`, the request carries both added together, but the budget, notices, logs and
+footers used the configured number. One function now decides it, and people see
+`8,192 (설정 4,096 + 사고 예산 4,096)`.
+
+**The token-count fallback no longer undercounts.** When `litellm.token_counter` raises, the old
+fallback counted Korean at half its size and a large `write_file` turn — empty `content`, everything
+in the arguments — as 4 tokens. It now counts tool-call arguments and weights characters by script.
+
+**A tool call that leaks into the text is no longer taken as the answer.** When a server's parser
+cannot read a call, the markup arrives as ordinary text. The tool never ran, a cut call was
+"continued" as prose, and the raw markup stayed on the card. Common formats (Hermes/Qwen, Mistral,
+Llama, DeepSeek, gpt-oss) are now recognised outside code blocks; the markup is removed, the model is
+told the call did not run, and it is asked to call properly — at most twice, then a footer explains.
+
+Found on the way: **continuation after tool use now keeps the tools defined** (with
+`tool_choice="none"`). It used to leave them out, which Anthropic rejects when the conversation holds
+tool calls, so Claude agents' continuations after any tool use silently failed.
+
+→ [LLM Integration §2.4, §2.6, §2.7, §5.1](agents/llm-integration.md)
+
+---
+
 ## v0.6.1.2
 
 **Every speech now records when it started and when it finished, and both are shown.**

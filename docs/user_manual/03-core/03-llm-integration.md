@@ -64,7 +64,10 @@ def build_system_prompt(self, agent, custom_instructions=""):
 `maximum context length ... however you requested ...` 로 400 을 돌려줍니다.
 
 ```python
-budget = agent.max_context_window - agent.max_tokens - 512   # 응답분 + 여유
+budget = (agent.max_context_window
+          - effective_max_tokens(agent)            # 실제로 요청에 실리는 응답 한도
+          - 512                                    # 여유
+          - tool_schema_tokens(agent.model, tools))  # 요청마다 함께 나가는 도구 정의
 
 head, tail = messages[:2], messages[-1:]   # system+목표 / 이번 차례 지시
 middle = messages[2:-1]
@@ -74,6 +77,15 @@ while middle and estimate_tokens(...) > budget:
 
 **맨 앞(목표)과 맨 뒤(이번 차례 지시)는 절대 덜어내지 않습니다.** 그 사이를
 오래된 것부터 버리고, 무엇이 빠졌는지 모델에게 알립니다.
+
+v0.7.0 전에는 예산에서 두 가지가 빠져 있었습니다.
+
+- **도구 정의** — 요청마다 함께 나갑니다. filesystem·memory·git 만 붙여도 35개에 약 5천
+  토큰입니다. 이게 빠져 있어서 대화가 예산까지 차면 요청이 창을 그만큼 넘겼고, 서버는
+  400 을 내거나 남은 창만큼만 쓰게 해 `finish_reason='length'` 가 났습니다.
+- **실제 응답 한도** — `native` 모드에서 사고 예산이 `max_tokens` 이상이면 요청에는 둘을
+  더한 값이 나가는데, 예산은 설정값만 뺐습니다. 이제 한 함수(`effective_max_tokens`)가
+  정하고, 안내·로그에는 `8,192 (설정 4,096 + 사고 예산 4,096)` 처럼 출처를 함께 적습니다.
 
 ```text
 [앞선 발언 7건은 컨텍스트 한도로 생략되었습니다.

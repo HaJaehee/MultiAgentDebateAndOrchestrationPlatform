@@ -12,6 +12,7 @@ from app.agents.base import Agent
 from app.agents.llm import (
     LLMCaller,
     LLMUnavailableError,
+    context_budget,
     context_trim_notice,
     estimate_tokens,
     memory_search_tool,
@@ -1697,14 +1698,25 @@ class OrchestratorEngine:
         """
         if agent is None:
             return None
-        mcp = (self._mcp_for(state) if state else None) or self.llm_caller.mcp_manager
+        return memory_search_tool(self._tools_for(agent, state))
+
+    def _tools_for(
+        self, agent: Optional[Agent], state: Optional[DebateState] = None,
+    ) -> List[Dict[str, Any]]:
+        """이 에이전트의 요청에 실릴 도구 정의. 못 구하면 빈 목록.
+
+        도구 정의는 요청마다 함께 나가는 입력이라, 전사의 크기를 정할 때도 그 몫을 빼야
+        합니다 (`context_budget`). 대역 호출기처럼 도구를 모르는 경우에도 합성은 진행합니다.
+        """
+        if agent is None:
+            return []
         try:
-            tools = mcp.get_openai_tools_for_servers(
+            mcp = (self._mcp_for(state) if state else None) or self.llm_caller.mcp_manager
+            return mcp.get_openai_tools_for_servers(
                 self.llm_caller.resolve_tool_servers(agent)
-            )
+            ) or []
         except Exception:  # noqa: BLE001 - 도구 목록을 못 구해도 합성은 진행합니다
-            return None
-        return memory_search_tool(tools)
+            return []
 
     def _build_synthesis_prompt(
         self, state: DebateState, agent: Optional[Agent] = None
@@ -1730,8 +1742,10 @@ class OrchestratorEngine:
         if agent is None:
             kept, dropped = [render(m) for m in usable], 0
         else:
-            # 응답 분량과 지시문 몫을 빼고 남는 것이 전사의 예산입니다.
-            budget = agent.max_context_window - agent.max_tokens - 1024
+            # 응답 분량(사고 예산이 더해진 실제 값), 요청마다 실리는 도구 정의, 지시문 몫을
+            # 빼고 남는 것이 전사의 예산입니다. 예전에는 설정값 `max_tokens` 만 뺐습니다 —
+            # 도구 정의 수천 토큰과 `native` 모드의 사고 예산이 빠져, 합성 요청이 창을 넘겼습니다.
+            budget = context_budget(agent, tools=self._tools_for(agent, state)) - 512
             kept_rev: List[str] = []
             dropped = 0
             for msg in reversed(usable):

@@ -290,8 +290,11 @@ Three details decide whether this reads as one document or as a stitched-togethe
   or re-summarise what they already wrote, and both land in the middle of the text. It also tells
   them to keep going *inside* a code block or table if that is where the cut happened, and to close
   it properly.
-- **No tools are offered.** This is the model finishing a sentence, not a fresh chance to go
-  looking for something.
+- **Tools are defined but cannot be called** (`tool_choice="none"`, since v0.7.0). This is the
+  model finishing a sentence, not a fresh chance to go looking for something. Until v0.7.0 the tools
+  were left out altogether — which Anthropic rejects with a 400 whenever the conversation already
+  holds `tool_use`/`tool_result` blocks, so continuation silently failed for Claude agents after
+  any tool use. `_wrap_up_without_tools()` had already learned this; continuation had not.
 
 It stops on any of three conditions — finished, budget spent, or the continuation call itself
 failed — and **whatever arrived already is always kept**. A failed continuation must not cost the
@@ -304,6 +307,91 @@ is choosing between raising `max_continuations`, raising `max_tokens`, and askin
 > `max_tokens` — 4096 is roughly 16,000 characters, narrow for an agent that writes whole documents
 > through a tool and narrow for the synthesis report. `conf.example.json` now says so next to both
 > values.
+
+### 2.6. When the whole budget went to thinking (v0.7.0)
+
+A reasoning model counts its hidden reasoning against `max_tokens`. When it thinks long enough, the
+response ends with `finish_reason: "length"` and **no visible text at all** — the reasoning arrives
+in `reasoning_content`, which `prompt` mode does not show. Continuation had nothing to continue, so
+the turn became a footer and nothing else. Worse, after a tool loop the continuation used
+`segments[-1]` — the text from *before* a tool call — and glued the new piece onto the wrong
+paragraph.
+
+`_finish_truncated_answer()` now receives the text of the response that hit the limit
+(`last_text`). If it is empty, `_recover_empty_answer()` asks for the answer instead of a
+continuation:
+
+1. It says the body was empty because reasoning used the limit (`ANSWER_AFTER_REASONING_INSTRUCTION`).
+2. It hands back the **tail** of that reasoning — at most `REASONING_CARRY_CHARS` (2,000) — with
+   "conclude from here", because asking the same question again makes the model think the same
+   distance and stop in the same place.
+3. If the body is empty again, it asks once more to answer without deliberating (`ANSWER_NOW_AGAIN`).
+
+It makes at most `max_continuations` calls. An answer that arrives but is itself cut is continued
+normally. If nothing arrives, the footer says what happened — reasoning used the limit — rather
+than calling it a cut (`REASONING_EXHAUSTED_FOOTER`). A continuation that itself returns only
+reasoning is asked once more to continue without it (`CONTINUE_WITHOUT_REASONING`), and each
+continuation request is now assembled fresh: previously every attempt appended another full copy of
+the text so far to the conversation.
+
+Whether the body was empty is judged on the **text the model returned**, not on the composed
+segment: `native` mode prepends the reasoning as a quote block, so a composed segment can be
+non-empty while the answer is missing — and continuation would then have extended the quote.
+
+#### The answer left inside the reasoning, with no limit reached
+
+The same empty card has a second cause that has nothing to do with `max_tokens`. When a server's
+reasoning parser (vLLM with Qwen3 or DeepSeek-R1, for example) does not find the end-of-thinking
+marker, or the model writes its answer inside the thinking block, the **entire** output is classified
+as `reasoning_content` and the response ends normally with `finish_reason: "stop"`. `prompt` mode
+discards reasoning, so the turn was blank — with no log line — even when the reasoning held a
+complete `## 최종 결론`.
+
+A tool-free response with no body text, some reasoning, and a finish other than `length` now goes
+to `_answer_left_in_reasoning()`:
+
+1. **The reasoning contains a conclusion marker** (`conclusion_from_reasoning()`): the server merely
+   misclassified a finished answer. The reasoning becomes the body with no further call, and because
+   it is what should have been the body, `show_steps` applies to it as usual.
+2. **No marker**: the model only thought. The answer is requested with
+   `ANSWER_ONLY_IN_REASONING_INSTRUCTION` — which says the answer was left in the reasoning, not that
+   a limit was hit — carrying the reasoning's tail, the same way as the `length` case.
+3. **Still nothing**: `ANSWER_ONLY_IN_REASONING_FOOTER` explains it, and when `show_steps` is on, the
+   reasoning that did arrive is kept above it as a quote block in the same shape `native` mode uses
+   (so `strip_reasoning_trace()` removes it from the next speaker's prompt). A visible trace of what
+   the model thought is better than a blank card. It is not added twice when `native` mode already
+   prepended it.
+
+A normal reasoning-model answer — body text *and* reasoning — is untouched. A response with neither
+body nor reasoning is also left as it is: there is nothing to recover it from.
+
+### 2.7. A tool call that leaked into the text (v0.7.0)
+
+When a server's tool parser cannot read the call a model produced — often because the call was cut
+at `max_tokens`, sometimes because the parser does not match that model's format — the markup comes
+back as ordinary `content` instead of `tool_calls`. The loop used to accept it as the answer: the
+tool never ran, a cut one was "continued" as though the markup were prose, and the card kept the raw
+`<tool_call>{...`.
+
+`find_leaked_tool_call()` now looks for the common formats before a tool-free response is accepted:
+
+| Format | Marker |
+| :--- | :--- |
+| Hermes, Qwen 2.5 / 3 | `<tool_call>{` |
+| Mistral | `[TOOL_CALLS]` |
+| Llama 3.1 built-in tools | `<|python_tag|>` |
+| Llama 3.x custom functions | `<function=name>{` |
+| DeepSeek V3 / R1 | `<｜tool▁calls▁begin｜>` |
+| gpt-oss (harmony) | `to=functions.name` |
+
+Markers inside fenced code blocks are ignored — an answer *explaining* a tool-call format is not a
+leak — and a match only counts when the speech was actually offered tools. When a leak is found the
+markup is removed from the speech, the text before it is kept, and the model is told the call was
+not executed and to call the tool properly (`LEAKED_TOOL_CALL_NOTICE`, with the truncation cause and
+advice when the response hit the limit). This is retried at most `MAX_LEAKED_TOOL_CALL_RETRIES` (2)
+times: a repeat means the server's parser and the model's format do not match, and asking again will
+not change that, so the speech ends with `LEAKED_TOOL_CALL_FOOTER`. In the tool-free wrap-up after
+the tool budget is spent, a call cannot be retried, so the markup is removed and the footer added.
 
 ---
 
@@ -383,15 +471,41 @@ and read nowhere. Past a few rounds the request exceeded the model's window and 
 answered **400** (`maximum context length ... however you requested ...`).
 
 The system prompt, the goal, and the current turn instruction are kept; the middle is dropped
-oldest-first until the estimate fits `max_context_window - max_tokens - 512`. The model is told
-how many turns were elided so it does not invent them. Token counting uses
-`litellm.token_counter`, falling back to a character heuristic for unknown models.
+oldest-first until the estimate fits the budget. The model is told how many turns were elided so it
+does not invent them.
+
+**The budget** ([`context_budget()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py)) is
+
+```
+max_context_window − effective max_tokens − 512 − tool definitions
+```
+
+Two of those terms were missing until v0.7.0, and both produced requests that did not fit:
+
+- **Tool definitions** (`tool_schema_tokens()`). They are sent with every request, and filesystem,
+  memory and git alone are 35 tools and about 5,300 tokens. The output reserve was only
+  `max_tokens + 512`, so a conversation filled to the budget overran the window by the size of the
+  tool list — the server then either answered 400 or let the model write only what was left of its
+  window, which surfaces as `finish_reason='length'` on a response that barely started. The same term
+  now applies inside the tool loop (`fit_tool_loop_context`), in the pressure notices, in the context
+  arbiter's numbers, in the request fingerprint, and in the synthesis transcript bound.
+- **The effective `max_tokens`** (`effective_max_tokens()`). In `native` mode with a thinking budget
+  at least as large as `max_tokens`, the request carries both added together. Only the request used
+  that value; the budget, the notices, the logs and the footers all used the configured number.
+  Everything now reads the one function, and people and models see `max_tokens_label()` — for example
+  `8,192 (설정 4,096 + 사고 예산 4,096)` — so the number is both correct and traceable to the config.
+
+Token counting uses `litellm.token_counter`. If it raises, the fallback now counts tool-call
+arguments and weights characters by script (ASCII ÷ 3, everything else × 1.5). The old fallback,
+`characters // 2` over `content` only, counted Korean at half its real size and an 18,000-character
+`write_file` turn — whose `content` is empty — as 4 tokens.
 
 The synthesis call is bounded separately, in
 [`_build_synthesis_prompt()`](file:///d:/MultiAgentOrchestrator/app/orchestration/engine.py):
 it packs the whole transcript into a *single* user message, so there are no messages for
 `fit_context_window()` to drop. It fills from the most recent turn backwards — later turns
-already reflect the earlier discussion, so if something must go, the front should go.
+already reflect the earlier discussion, so if something must go, the front should go. Its budget is
+`context_budget()` for the orchestrator's own tools, less another 512 for the instructions.
 
 ### 5.2. Merge consecutive same-role turns (`merge_consecutive_roles`)
 
