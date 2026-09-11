@@ -140,8 +140,9 @@ Three things then went wrong in sequence, and only the first was handled.
    **400**; the gateway in front of it wrapped that in a 500 and discarded the reason.
 
 **What changed.** `_complete_once()` now returns `(message, finish_reason)` — `finish_reason` was
-never inspected before, so being cut off was invisible. A turn is treated as truncated when the
-endpoint says `length` *or* when any tool call's arguments would not parse.
+never inspected before, so being cut off was invisible. Since v0.6.1.2 two cases are kept apart
+(see "Reaching the limit with readable calls" below): arguments that would not parse mean the call
+really was cut and did not run; `length` with readable arguments means the calls **did** run.
 
 [`_assistant_turn()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) replaces the verbatim
 `model_dump()`: every tool call is re-serialised from the arguments **we actually executed**, so
@@ -154,6 +155,49 @@ kept the empty one — a mismatched pair, which is a 400 in its own right.
 
 Finally the agent is *told*, in words, via `TRUNCATED_TOOL_CALL_NOTICE`: which limit it hit, that
 the call did not really run, and what to do instead. The `-32602` alone says none of that.
+
+#### Reaching the limit with readable calls (v0.6.1.2)
+
+A log line like `Truncated tool call ... finish_reason='length', tools=['filesystem__read_file']`
+reads as if reading a file exceeded `max_tokens`. It cannot: `finish_reason` belongs to **one
+response**, not to a tool, and a file's contents come back as the *input* of the next request. The
+`tools` list named what the cut response was *asking for*. A 20-token read call reaches a
+4,096-token cap only because something else in the same response used the budget — long reasoning
+written before the call (prompt-mode `Thought 1..N`), a reasoning model's hidden
+`reasoning_content`, another call in the same response, or a server that allows only what is left
+of its context window once earlier tool results have filled it.
+
+The old rule treated `length` alone as proof the arguments were cut. So a read call that parsed and
+**ran** was followed by `TRUNCATED_TOOL_CALL_NOTICE` — "the call did not run, do not resend it" —
+right under its own result, plus advice to split a file *write* the model never attempted.
+
+The loop now separates the two:
+
+| Situation | Executed? | The model is told |
+| :--- | :--- | :--- |
+| Some arguments would not parse (any `finish_reason`) | No | `TRUNCATED_TOOL_CALL_NOTICE` + `truncation_advice()` — unchanged |
+| `length`, every call readable | **Yes** | `LIMIT_REACHED_AFTER_TOOL_CALLS_NOTICE`: the calls ran and their results are above; the cut point is the end of the **last** call, so check that its result is what was intended; anything planned after it in that response never went out; keep pre-call reasoning short |
+
+The warning is not dropped for readable calls, because some providers repair a cut JSON so that it
+parses while its content still ends mid-way. File-writing advice — "check the file really got all
+of it", plus the append/split guidance — is added only when that last call is a write
+(`is_file_writing_call()`), never after a read.
+
+**The log now says what used the budget**, in sizes only, following the same rule as
+`request_fingerprint`:
+
+```
+Response from Coder reached max_tokens after readable tool call(s); they were executed (the last one may be cut):
+  finish_reason='length', max_tokens=4096, text=1,960 chars, reasoning=0 chars,
+  prompt≈302 tok (window 128,000), calls=[filesystem__read_file(args 35 chars)]
+```
+
+`completion_budget_report()` separates the four causes at a glance: a large `text` is reasoning
+written before the call; a large `reasoning` is a reasoning model thinking out of sight; a large
+`args` is the call itself; all three small with `prompt` near `window` means the server capped the
+output to what its window had left. A call whose arguments would not parse is marked `unreadable`
+and logged as `Truncated tool call`. A tool-free answer cut at the limit (`Truncated answer`) carries
+the same sizes.
 
 **What to do instead depends on the tools that agent actually holds**, which is why
 `truncation_advice()` resolves them by name tail — the same rule as `memory_write_tool()`, so a

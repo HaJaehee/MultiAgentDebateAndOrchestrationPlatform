@@ -18,7 +18,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.agents.base import Agent
-from app.agents.llm import LLMCaller, file_writing_guidance, truncation_advice
+from app.agents.llm import (
+    LLMCaller,
+    completion_budget_report,
+    file_writing_guidance,
+    limit_reached_notice,
+    truncation_advice,
+)
 
 # 실제로 끊긴 자리를 그대로 옮긴 인자입니다. 닫히지 않은 문자열이라 파싱되지 않습니다.
 TRUNCATED = '{"path": "app/util.py", "content": "def load(path):\n    if path:'
@@ -143,17 +149,40 @@ async def test_the_agent_is_told_that_it_was_cut_off():
 
     told = "\n".join(str(m.get("content")) for m in sent[-1]["messages"])
     assert "출력 잘림" in told
+    assert "실행되지 않았습니다" in told, "인자를 못 읽은 호출은 정말로 실행되지 않았습니다"
     assert "4,096" in told, "어느 한도에 걸렸는지 알려야 사람이 조정할 수 있습니다"
     assert "나누어" in told, "다음에 무엇을 하라는 말이 있어야 합니다"
 
 
 @pytest.mark.asyncio
-async def test_finish_reason_length_alone_is_enough_to_warn():
-    """인자가 우연히 닫혔어도 잘린 것은 잘린 것입니다 (내용이 중간에서 끝납니다)."""
-    sent = await _one_tool_turn(GOOD, "length")
+async def test_unreadable_arguments_are_cut_even_without_length():
+    """`finish_reason` 이 `tool_calls` 여도 인자를 못 읽었으면 잘린 것입니다."""
+    sent = await _one_tool_turn(TRUNCATED, "tool_calls")
 
     told = "\n".join(str(m.get("content")) for m in sent[-1]["messages"])
     assert "출력 잘림" in told
+
+
+@pytest.mark.asyncio
+async def test_finish_reason_length_alone_is_enough_to_warn():
+    """인자가 닫혀 있어도 한도에 닿았으면 알립니다 — 다만 **사실대로**.
+
+    일부 프로바이더는 잘린 JSON 을 닫아 읽을 수 있게 고쳐 줍니다. 그러면 인자는
+    파싱되지만 파일 내용은 중간에서 끝납니다. 그래서 경고는 남깁니다.
+
+    그러나 그 호출은 실제로 실행됐습니다. 예전처럼 "실행되지 않았습니다, 다시
+    보내지 마세요" 라고 하면, 모델은 결과를 받아 놓고 정반대의 말을 듣습니다.
+    """
+    sent = await _one_tool_turn(GOOD, "length")
+
+    told = "\n".join(str(m.get("content")) for m in sent[-1]["messages"])
+    assert "응답 한도 도달" in told
+    assert "실행되었고" in told
+    assert "실행되지 않았습니다" not in told
+    assert "출력 잘림" not in told
+    # 마지막 호출이 쓰기였으니 끝이 들어갔는지 확인하라는 말은 있어야 합니다.
+    assert "filesystem__write_file" in told
+    assert "끝까지 들어갔는지" in told
 
 
 @pytest.mark.asyncio
@@ -544,3 +573,164 @@ async def test_the_real_turn_carries_the_rule():
     assert system["role"] == "system"
     assert "[파일 쓰기]" in system["content"]
     assert "filesystem__edit_file" in system["content"]
+
+
+# ------------------------------------------------------------------ 한도에 닿았지만 인자는 읽힌 호출
+#
+# 실제로 겪은 일입니다. 로그에 `Truncated tool call ... finish_reason='length',
+# tools=['filesystem__read_file']` 가 찍혔습니다. 20토큰짜리 파일 읽기 호출이
+# 4,096토큰 한도에 걸릴 리가 없는데 말입니다.
+#
+# `finish_reason` 은 도구가 아니라 **응답 한 번**의 끝난 이유입니다. 그 응답의 출력
+# 예산은 호출 앞의 긴 사고, 추론 모델의 숨은 reasoning, 같은 응답의 다른 호출이
+# 먹었고, 파일 읽기 호출은 그 끝에 겨우 들어갔을 뿐입니다. 그런데 우리는
+#
+# * 멀쩡히 실행된 호출에 "잘려서 실행되지 않았다, 다시 보내지 마라" 고 알렸고,
+# * 파일을 읽은 모델에게 "파일을 여러 개로 쪼개 쓰라" 는 조언까지 붙였고,
+# * 로그에는 도구 이름만 남겨, 무엇이 예산을 먹었는지 알 방법이 없었습니다.
+
+
+def _read_turn_caller(tools=None):
+    caller = LLMCaller()
+    caller.mcp_manager = SimpleNamespace(
+        get_openai_tools_for_servers=lambda servers: tools or [
+            {"type": "function", "function": {"name": "filesystem__read_file", "parameters": {}}},
+            {"type": "function", "function": {"name": "filesystem__write_file", "parameters": {}}},
+        ],
+        execute_tool=AsyncMock(return_value=("DEBUG = True", "success")),
+    )
+    return caller
+
+
+async def _read_turn(finish_reason: str, content: str, reasoning: str = ""):
+    sent = []
+    read_call = SimpleNamespace(
+        id="call_r",
+        function=SimpleNamespace(name="filesystem__read_file",
+                                 arguments=READ_ARGS),
+    )
+
+    async def fake_acompletion(**kwargs):
+        if kwargs.get("stream"):
+            raise RuntimeError("streaming unsupported")
+        sent.append(kwargs)
+        first = len(sent) == 1
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(
+                content=content if first else "정리했습니다.",
+                reasoning_content=reasoning if first else None,
+                tool_calls=[read_call] if first else None,
+                model_dump=lambda: {"role": "assistant", "content": ""},
+            ),
+            finish_reason=finish_reason if first else "stop",
+        )])
+
+    caller = _read_turn_caller()
+    with patch("litellm.acompletion", side_effect=fake_acompletion):
+        await caller.call_agent(_agent(), [{"role": "user", "content": "설정 봐줘"}])
+    return sent, caller.mcp_manager.execute_tool
+
+
+READ_ARGS = '{"path": "workspace/app/config.py"}'
+LONG_THOUGHT = "Thought 1: 설정 구조를 먼저 본다.\n" * 200
+
+
+@pytest.mark.asyncio
+async def test_a_read_at_the_limit_runs_and_is_not_told_it_did_not():
+    sent, execute = await _read_turn("length", LONG_THOUGHT)
+
+    execute.assert_awaited_once()
+    told = "\n".join(str(m.get("content")) for m in sent[-1]["messages"])
+    assert "DEBUG = True" in told, "읽은 결과는 그대로 전달돼야 합니다"
+    assert "응답 한도 도달" in told and "filesystem__read_file" in told
+    assert "실행되지 않았습니다" not in told
+    assert "출력 잘림" not in told
+
+
+@pytest.mark.asyncio
+async def test_a_read_at_the_limit_gets_no_file_writing_advice():
+    """파일을 읽은 모델에게 쪼개 쓰라고 하면, 하지도 않은 일을 고치라는 말이 됩니다."""
+    sent, _ = await _read_turn("length", LONG_THOUGHT)
+
+    notice = next(str(m.get("content")) for m in sent[-1]["messages"]
+                  if "응답 한도 도달" in str(m.get("content")))
+    for advice in ("쪼개", "나누어", "덮어쓰기", "끝까지 들어갔는지"):
+        assert advice not in notice, advice
+    assert "짧게" in notice, "무엇이 한도를 먹었는지에 대한 대처는 알려야 합니다"
+
+
+@pytest.mark.asyncio
+async def test_a_read_at_the_limit_logs_what_used_the_budget(caplog):
+    caplog.set_level("WARNING", logger="app.agents.llm")
+    await _read_turn("length", LONG_THOUGHT, reasoning="r" * 5000)
+
+    lines = [r.getMessage() for r in caplog.records if "max_tokens" in r.getMessage()]
+    assert len(lines) == 1
+    line = lines[0]
+    assert "reached max_tokens after readable tool call(s)" in line
+    assert "Truncated tool call" not in line, "읽힌 호출을 잘린 호출이라고 적으면 안 됩니다"
+    assert f"text={len(LONG_THOUGHT):,} chars" in line
+    assert "reasoning=5,000 chars" in line
+    assert "prompt≈" in line and "window" in line
+    assert f"filesystem__read_file(args {len(READ_ARGS):,} chars)" in line
+    # 크기만 적습니다. 사람의 코드·문서·사고가 로그로 새면 안 됩니다.
+    assert "Thought" not in line
+    assert "workspace/app/config.py" not in line
+
+
+@pytest.mark.asyncio
+async def test_a_cut_call_logs_that_it_was_unreadable(caplog):
+    caplog.set_level("WARNING", logger="app.agents.llm")
+    await _one_tool_turn(TRUNCATED, "length")
+
+    line = next(r.getMessage() for r in caplog.records if "max_tokens" in r.getMessage())
+    assert line.startswith("Truncated tool call from")
+    assert f"filesystem__write_file(args {len(TRUNCATED):,} chars, unreadable)" in line
+    assert "if path:" not in line
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_answer_logs_its_size_too(caplog):
+    caplog.set_level("WARNING", logger="app.agents.llm")
+    await _plain_turn("length")
+
+    line = next(r.getMessage() for r in caplog.records if "Truncated answer" in r.getMessage())
+    assert "text=" in line and "reasoning=" in line and "prompt≈" in line
+
+
+def test_the_limit_notice_names_the_last_call_and_only_advises_writes_for_writes():
+    tools = _tools("filesystem__write_file", "filesystem__edit_file")
+
+    read = limit_reached_notice(4096, "filesystem__read_file", tools)
+    assert "`filesystem__read_file`" in read
+    assert "filesystem__edit_file" not in read
+
+    write = limit_reached_notice(4096, "filesystem__write_file", tools)
+    assert "끝까지 들어갔는지" in write
+    assert "`filesystem__edit_file`" in write, "덧붙이는 도구가 있으면 그 이름을 짚어 줍니다"
+
+    edit = limit_reached_notice(4096, "myfs__edit_file", tools)
+    assert "끝까지 들어갔는지" in edit
+
+
+def test_the_budget_report_reads_every_shape_and_counts_only_sizes():
+    message = SimpleNamespace(
+        content=[{"type": "text", "text": "가나다"}, {"type": "text", "text": "라"}],
+        reasoning_content="생각" * 10,
+    )
+    raw = [
+        {"id": "a", "function": {"name": "fs__read_file", "arguments": '{"path": "x"}'}},
+        SimpleNamespace(id="b", function=SimpleNamespace(name="fs__write_file",
+                                                         arguments={"path": "y", "content": "z"})),
+    ]
+    parsed = [("fs__read_file", {"path": "x"}, "a", True),
+              ("fs__write_file", {"path": "y", "content": "z"}, "b", True)]
+
+    report = completion_budget_report(message, raw, parsed, prompt_tokens=31200, window=32768)
+
+    assert f"text={len('가나다') + 1 + len('라')} chars" in report   # 블록 두 개를 줄바꿈 하나로 이은 길이
+    assert "reasoning=20 chars" in report
+    assert "prompt≈31,200 tok (window 32,768)" in report
+    assert "fs__read_file(args 13 chars)" in report
+    assert "fs__write_file(args 29 chars)" in report   # 딕셔너리 인자는 JSON 으로 잰 길이
+    assert "unreadable" not in report

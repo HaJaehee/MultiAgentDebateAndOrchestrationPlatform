@@ -331,6 +331,12 @@ def memory_search_tool(tools: Optional[List[Dict[str, Any]]]) -> Optional[str]:
     return _find_tool(tools, MEMORY_SEARCH_TOOLS)
 
 
+def is_file_writing_call(name: str) -> bool:
+    """이 호출이 파일에 내용을 쓰는 도구인가 (덮어쓰기든 덧붙이기든)."""
+    tail = (name or "").split("__", 1)[-1]
+    return tail in FILE_WRITE_TOOLS or tail in APPEND_TOOLS
+
+
 def append_tool(tools: Optional[List[Dict[str, Any]]]) -> Optional[str]:
     """파일 뒤에 덧붙일 수 있는 도구의 이름. 없으면 None."""
     return _find_tool(tools, APPEND_TOOLS)
@@ -527,6 +533,27 @@ TRUNCATED_TOOL_CALL_NOTICE = (
     "같은 내용을 그대로 다시 보내지 마세요 — 또 같은 자리에서 잘립니다.{advice}"
 )
 
+# 응답은 한도에 닿았지만 도구 호출의 인자는 **읽을 수 있었던** 경우.
+#
+# 예전에는 이것도 위의 고지문으로 알렸습니다. 그런데 도구는 실제로 실행되어 결과가
+# 바로 위에 있는데 "실행되지 않았습니다, 다시 보내지 마세요" 라고 하면 거짓입니다.
+# 게다가 `read_file` 한 번에 "파일을 여러 개로 쪼개 쓰라" 는 조언까지 붙어, 모델은
+# 받은 파일 내용과 정반대인 말을 동시에 받았습니다.
+#
+# 그렇다고 아무 말도 안 할 수는 없습니다. 한도에 닿은 자리는 **마지막 호출의 인자
+# 끝**이고, 일부 프로바이더는 잘린 JSON 을 닫아 "읽을 수 있게" 고쳐 줍니다. 그러면
+# 인자는 파싱되지만 끝이 잘려 있습니다 (파일 내용이 중간에서 끝나는 식으로). 그래서
+# "실행됐다" 와 "마지막 호출의 끝은 확인하라" 를 함께 말합니다.
+LIMIT_REACHED_AFTER_TOOL_CALLS_NOTICE = (
+    "[응답 한도 도달] 직전 응답은 응답 한도(max_tokens={max_tokens:,})에 닿아 멈췄습니다. "
+    "그 안의 도구 호출은 인자를 읽을 수 있어 **실행되었고**, 결과는 위에 있습니다. "
+    "다시 부를 필요는 없습니다.\n"
+    "다만 한도에 닿은 자리는 마지막 호출(`{last_call}`)의 인자 끝입니다. 그 끝부분이 "
+    "잘렸을 수 있으니 결과가 의도와 맞는지 확인하세요.{write_hint}\n"
+    "같은 응답에서 이어서 하려던 호출이나 설명이 있었다면 그것은 나가지 않았습니다. "
+    "도구를 부르기 전의 사고·설명도 같은 한도를 씁니다 — 짧게 쓰세요."
+)
+
 
 # 파일 쓰기 도구를 가진 에이전트의 시스템 프롬프트에 상시로 붙는 두어 줄.
 #
@@ -620,6 +647,88 @@ def truncation_advice(tools: Optional[List[Dict[str, Any]]] = None) -> str:
         )
 
     return "\n인자를 더 짧게 만들어 다시 호출하세요."
+
+def limit_reached_notice(
+    max_tokens: int, last_call: str, tools: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """응답이 한도에 닿았지만 호출 인자는 읽혔을 때 모델에게 할 말.
+
+    파일 쓰기 조언은 **마지막 호출이 쓰기일 때만** 붙입니다. 파일을 읽다가 한도에
+    닿은 모델에게 "나누어 쓰라" 고 하면, 하지도 않은 일을 고치라는 말이 됩니다.
+    """
+    write_hint = ""
+    if is_file_writing_call(last_call):
+        write_hint = (
+            " 파일을 썼다면 내용이 끝까지 들어갔는지 읽어서 확인하고, 끝이 잘렸다면 "
+            "같은 내용을 통째로 다시 보내지 마세요." + truncation_advice(tools)
+        )
+    return LIMIT_REACHED_AFTER_TOOL_CALLS_NOTICE.format(
+        max_tokens=max_tokens, last_call=last_call or "unknown_tool", write_hint=write_hint,
+    )
+
+
+def _message_text(message: Any) -> str:
+    """응답 본문. 프로바이더에 따라 블록 목록으로 오기도 합니다."""
+    content = getattr(message, "content", None) or ""
+    if isinstance(content, list):
+        content = "\n".join(
+            block.get("text", "") if isinstance(block, dict) else str(block) for block in content
+        )
+    return str(content)
+
+
+def _raw_arguments(call: Any) -> Any:
+    """tool_call 하나의 인자 원문 (객체든 딕셔너리든)."""
+    function = call.get("function") if isinstance(call, dict) else getattr(call, "function", None)
+    if isinstance(function, dict):
+        return function.get("arguments")
+    return getattr(function, "arguments", None)
+
+
+def completion_budget_report(
+    message: Any,
+    raw_calls: Optional[List[Any]],
+    parsed: Optional[List[Tuple[str, Dict[str, Any], str, bool]]],
+    prompt_tokens: int,
+    window: int,
+) -> str:
+    """응답 한 번의 출력 예산을 **무엇이** 썼는지. 크기만 적고 내용은 적지 않습니다.
+
+    `finish_reason='length'` 로그에 도구 이름만 있으면, 20토큰짜리 `read_file` 호출이
+    4,096토큰 한도에 걸린 것처럼 보입니다. 실제로 예산을 먹는 것은 그 호출이 아니라
+    같은 응답 안의 다른 것들이고, 무엇인지에 따라 대처가 다릅니다.
+
+    * `text` 가 크다       — 호출 앞에 긴 사고·설명을 썼습니다 (prompt 모드의 Thought).
+    * `reasoning` 이 크다  — 추론 모델의 숨은 사고입니다. 화면에는 안 보입니다.
+    * 어떤 호출의 `args` 가 크다 — 긴 파일 쓰기 같은 호출 자체입니다.
+    * 셋 다 작은데 `prompt` 가 창에 가깝다 — 서버가 남은 창만큼만 출력을 허락했습니다.
+
+    내용을 적지 않는 것은 `request_fingerprint` 와 같은 규칙입니다. 로그는 사람의
+    코드와 문서가 그대로 새어 나가도 되는 곳이 아닙니다.
+    """
+    text_chars = len(_message_text(message))
+    reasoning_chars = len(getattr(message, "reasoning_content", None) or "")
+
+    calls = []
+    for index, (name, _args, _call_id, parsed_ok) in enumerate(parsed or []):
+        raw = _raw_arguments(raw_calls[index]) if raw_calls and index < len(raw_calls) else None
+        if isinstance(raw, str):
+            arg_chars = len(raw)
+        elif raw is None:
+            arg_chars = 0
+        else:
+            arg_chars = len(json.dumps(raw, ensure_ascii=False, default=str))
+        mark = "" if parsed_ok else ", unreadable"
+        calls.append(f"{name or 'unknown_tool'}(args {arg_chars:,} chars{mark})")
+
+    report = (
+        f"text={text_chars:,} chars, reasoning={reasoning_chars:,} chars, "
+        f"prompt≈{prompt_tokens:,} tok (window {window:,})"
+    )
+    if calls:
+        report += f", calls=[{', '.join(calls)}]"
+    return report
+
 
 # 발언이 응답 한도에서 끊겼음을 기록과 화면에 남깁니다.
 #
@@ -1529,7 +1638,11 @@ class LLMCaller:
                     if finish_reason == "length":
                         logger.warning(
                             f"Truncated answer from {agent.name}: finish_reason='length', "
-                            f"max_tokens={agent.max_tokens}"
+                            f"max_tokens={agent.max_tokens}, "
+                            + completion_budget_report(
+                                message, None, None,
+                                estimate_tokens(agent.model, current_messages), window,
+                            )
                         )
                     await self._finish_truncated_answer(
                         agent, current_messages, segments, finish_reason, on_chunk
@@ -1539,15 +1652,32 @@ class LLMCaller:
                 # 실행하기 전에 먼저 다 풀어 둡니다. 되돌려 보낼 발언이 **실제로
                 # 실행한 인자와 같은 모양**이어야 하기 때문입니다 (`_assistant_turn`).
                 parsed = [self._parse_tool_call(tc) for tc in tool_calls]
-                truncated = finish_reason == "length" or any(
-                    not parsed_ok for _n, _a, _i, parsed_ok in parsed
-                )
-                if truncated:
-                    logger.warning(
-                        f"Truncated tool call from {agent.name}: finish_reason={finish_reason!r}, "
-                        f"max_tokens={agent.max_tokens}, "
-                        f"tools={[n for n, _a, _i, _ok in parsed]}"
+                # 두 가지를 구분합니다. 예전에는 둘을 하나로 묶어, 인자가 멀쩡히 읽혀
+                # 실행까지 된 호출에도 "잘려서 실행되지 않았다" 고 알렸습니다.
+                #
+                # * 인자를 못 읽었다 — 호출이 실제로 잘렸고 실행되지 않았습니다.
+                # * 인자는 읽혔는데 응답이 한도에 닿았다 — 호출은 실행됩니다. 다만
+                #   한도에 닿은 자리가 마지막 호출의 끝이라, 그 끝이 잘렸을 수는 있습니다.
+                arguments_cut = any(not parsed_ok for _n, _a, _i, parsed_ok in parsed)
+                limit_reached = finish_reason == "length" and not arguments_cut
+                if arguments_cut or limit_reached:
+                    budget = completion_budget_report(
+                        message, tool_calls, parsed,
+                        estimate_tokens(agent.model, current_messages), window,
                     )
+                    if arguments_cut:
+                        logger.warning(
+                            f"Truncated tool call from {agent.name}: "
+                            f"finish_reason={finish_reason!r}, max_tokens={agent.max_tokens}, "
+                            f"{budget}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Response from {agent.name} reached max_tokens after readable "
+                            f"tool call(s); they were executed (the last one may be cut): "
+                            f"finish_reason={finish_reason!r}, max_tokens={agent.max_tokens}, "
+                            f"{budget}"
+                        )
 
                 # Append assistant message with tool calls to context
                 current_messages.append(self._assistant_turn(message, parsed))
@@ -1593,13 +1723,18 @@ class LLMCaller:
                 # 잘렸다는 사실은 **말로** 알려야 합니다. 도구 서버가 돌려준
                 # "Input validation error" 만으로는 모델이 원인을 알 수 없어,
                 # 같은 호출을 그대로 다시 시도하다 예산을 태웁니다.
-                if truncated:
+                if arguments_cut:
                     self._append_budget_notice(
                         current_messages,
                         TRUNCATED_TOOL_CALL_NOTICE.format(
                             max_tokens=agent.max_tokens,
                             advice=truncation_advice(tools),
                         ),
+                    )
+                elif limit_reached:
+                    self._append_budget_notice(
+                        current_messages,
+                        limit_reached_notice(agent.max_tokens, parsed[-1][0], tools),
                     )
 
             # 예산 소진. 여기서 예외를 올리면 지금까지의 발언이 통째로 사라집니다.

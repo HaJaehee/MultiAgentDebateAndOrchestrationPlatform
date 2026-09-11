@@ -56,8 +56,22 @@ imported `app.export` first. `app.main` happened to import in a safe order, whic
 would have surfaced later as a startup crash rather than now. `app.timestamps` imports nothing from
 the app; `app.export` re-exports the names so existing imports keep working.
 
+**A tool call that ran is no longer told it did not.** A log line
+`Truncated tool call ... finish_reason='length', tools=['filesystem__read_file']` looked as if reading
+a file had exceeded `max_tokens`. It had not: `finish_reason` describes the whole response, and the
+`tools` list only named what that response was asking for. Something else in the same response —
+reasoning written before the call, hidden `reasoning_content`, another call — had used the budget.
+The loop treated `length` alone as proof the arguments were cut, so a read that parsed and ran was
+followed by "this call did not run, do not resend it" beneath its own result, with advice to split a
+file write nobody made. Now arguments that would not parse still get that notice; `length` with
+readable arguments gets a truthful one — the calls ran, the last one sits at the cut point so check
+its result, and anything planned after it never went out — with write advice only when that last call
+was a write. The log line now reports, in sizes only, what used the budget: text, reasoning, the
+prompt against the window, and each call's argument size.
+
 → [Database Schema §2.2](architecture/database-schema.md) · [UI Components §1.3](ui/components.md) ·
-[Artifact Generation §2.1](orchestration/artifact-generation.md)
+[Artifact Generation §2.1](orchestration/artifact-generation.md) ·
+[LLM Integration §2.2](agents/llm-integration.md)
 
 ---
 
