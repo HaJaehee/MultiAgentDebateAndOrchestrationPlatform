@@ -146,7 +146,7 @@ class AgentAppearanceEditor:
         with self._preview:
             ui.avatar(
                 style["avatar"], color=style["color"], text_color="white", size="md"
-            ).classes("border-2").style(f"border-color: {style['badge_color']}")
+            ).classes("border-2 appearance-preview").style(f"border-color: {style['badge_color']}")
 
     def _render_icon_label(self) -> None:
         if self._icon_label is None or self._icon_label.is_deleted:
