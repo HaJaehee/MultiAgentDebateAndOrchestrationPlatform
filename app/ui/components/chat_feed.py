@@ -338,7 +338,7 @@ class ChatFeed:
                 self.progress_bar.set_visibility(False)
 
             # 2. Scrollable Messages Timeline (Fills all remaining vertical space)
-            with ui.scroll_area().classes("w-full flex-grow my-2 pr-2 min-h-0") as self.scroll_area:
+            with ui.scroll_area().classes("debate-feed w-full flex-grow my-2 pr-2 min-h-0") as self.scroll_area:
                 self.message_container = ui.column().classes("w-full gap-3 debate-timeline")
                 with self.message_container:
                     self._render_empty_placeholder()
@@ -1054,8 +1054,8 @@ class ChatFeed:
             card.style(f"border-color: {style['badge_color']}")
 
         with card:
-            with ui.row().classes("w-full items-center justify-between mb-1.5"):
-                with ui.row().classes("items-center gap-2"):
+            with ui.row().classes("w-full items-center justify-between mb-1.5 no-wrap"):
+                with ui.row().classes("items-center gap-2 min-w-0"):
                     ui.avatar(style["avatar"], color=style["color"], text_color="white", size="sm")
                     with ui.column().classes("gap-0"):
                         with ui.row().classes("items-center gap-2"):
@@ -1211,4 +1211,4 @@ class ChatFeed:
 
                 ui.label("Execution Output:").classes("font-semibold text-slate-400 mt-1")
                 with ui.scroll_area().classes("w-full max-h-32 bg-black/40 p-2 rounded text-slate-300 font-mono text-[11px]"):
-                    ui.label(output)
+                    ui.label(output).classes("mcp-tool-output")

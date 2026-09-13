@@ -116,6 +116,62 @@ body {
     max-width: 100%;
 }
 
+/* --- 토론 피드의 가로 폭 -------------------------------------------------
+   세션 목록과 같은 원인입니다. 피드도 Quasar 스크롤 영역 안에 있어서, 내용 상자
+   (.q-scrollarea__content)가 "보이는 너비" 가 아니라 "내용 너비" 로 늘어납니다.
+   긴 코드 줄·넓은 표·띄어쓰기 없는 긴 문자열이 하나만 있어도 카드 전체가 그만큼
+   넓어지고, 오른쪽에 붙은 복사·펼치기 버튼이 가로 스크롤 끝으로 밀려났습니다.
+   가장 흔한 범인은 도구 아코디언이었습니다 — write_file 의 인자는 파일 내용
+   전체가 한 줄짜리 JSON 문자열이라 수만 자 너비가 됩니다.
+
+   버튼만 붙잡아 두는(sticky) 방법은 택하지 않았습니다. 카드가 화면보다 넓은 한
+   본문을 읽으려면 여전히 옆으로 스크롤해야 하기 때문입니다. 대신 카드는 보이는
+   너비에 맞추고, **넓은 내용은 자기 상자 안에서만** 가로로 스크롤하게 합니다. */
+.debate-feed .q-scrollarea__content {
+    width: 100%;
+    max-width: 100%;
+}
+
+/* flex 항목은 기본값(min-width:auto) 때문에 내용보다 좁아지지 못하고 부모를 뚫고
+   나갑니다. 카드부터 본문·코드 상자까지 줄어들 수 있게 풀어 줍니다. */
+.debate-timeline,
+.debate-timeline .q-card,
+.debate-timeline .nicegui-column,
+.debate-timeline .nicegui-row,
+.debate-timeline .q-expansion-item,
+.debate-timeline .nicegui-markdown,
+.debate-timeline .nicegui-code {
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* 긴 코드 줄과 넓은 표는 그 상자 안에서만 가로로 스크롤합니다. 줄을 강제로
+   접으면 코드의 들여쓰기와 표의 열이 무너집니다. */
+.debate-timeline .nicegui-markdown pre,
+.debate-timeline .nicegui-code pre {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-wrap: normal;
+}
+.debate-timeline .nicegui-markdown table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+}
+.debate-timeline .nicegui-markdown img {
+    max-width: 100%;
+    height: auto;
+}
+
+/* 띄어쓰기 없는 긴 문자열(URL, 파일 경로, 인라인 코드)은 어디서든 줄바꿈합니다.
+   이것들은 가로 스크롤로 보는 것보다 접어서 보는 편이 읽힙니다. */
+.debate-timeline .nicegui-markdown p,
+.debate-timeline .nicegui-markdown li,
+.debate-timeline .nicegui-markdown :not(pre) > code,
+.debate-timeline .mcp-tool-output {
+    overflow-wrap: anywhere;
+}
+
 /* --- 에이전트 카드 드래그 -------------------------------------------------
    순서를 바꾸는 동안 무엇을 집었고 어디에 놓이는지 보여야 합니다. 이것이 없으면
    커서를 어디에 두어야 앞이고 어디가 뒤인지 알 방법이 없어, 놓아 보고 결과로
