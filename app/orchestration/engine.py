@@ -21,7 +21,7 @@ from app.agents.llm import (
 from app.agents.personas import prepare_agents_for_turn
 from app.agents.pool import AgentPool, get_agent_pool
 from app.timestamps import report_completed_line
-from app.config import TOOL_ITERATION_CEILING, resolve_workspace_dir
+from app.config import DATA_DIR, TOOL_ITERATION_CEILING, resolve_workspace_dir
 from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
 from app.mermaid_lint import format_issues, lint_mermaid
@@ -147,6 +147,57 @@ def extract_code_blocks(text: str) -> List[Dict[str, str]]:
                 lang = "mermaid"
         matches.append({"language": lang, "code": code})
     return matches
+
+
+# ---------------------------------------------------------------- 기록 실패
+
+# 커밋이 실패했을 때 다시 시도하기 전에 기다리는 시간(초). 시도는 이것보다 한 번 많습니다.
+#
+# SQLite 자체가 이미 잠금을 `SQLITE_BUSY_TIMEOUT_MS` 까지 기다리므로, 여기까지 왔다면
+# 바깥 프로그램이 파일을 오래 잡고 있는 것입니다. 조금 간격을 두고 다시 두드립니다.
+PERSIST_RETRY_DELAYS = (2.0, 5.0)
+
+# DB 에 끝내 기록하지 못한 발언·산출물을 남기는 폴더.
+#
+# 예전에는 기록 실패를 로그 한 줄로 남기고 넘어갔습니다. 화면에는 이미 흘러갔으니
+# 괜찮아 보이지만, 새로고침하거나 앱을 다시 켜면 **최종 합성 보고서가 사라졌습니다.**
+# 실제로 자리를 비운 사이 `database is locked` 로 그렇게 됐습니다. 대화의 산출물을
+# 조용히 잃는 것보다는, DB 가 아닌 곳에라도 남기고 사람에게 알리는 편이 낫습니다.
+UNSAVED_DIR = DATA_DIR / "unsaved"
+
+
+def save_unpersisted(
+    *,
+    kind: str,
+    session_id: str,
+    title: str,
+    body: str,
+    error: BaseException,
+    directory: Optional[Path] = None,
+) -> Optional[Path]:
+    """DB 에 기록하지 못한 내용을 마크다운 파일로 남깁니다. 파일마저 못 쓰면 None.
+
+    파일 이름에 무작위 꼬리를 붙이는 이유: 같은 초에 두 발언이 실패하면 앞의 것을
+    덮어씁니다.
+    """
+    folder = directory or UNSAVED_DIR
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    path = folder / f"{stamp}-{session_id[:8]}-{kind}-{uuid.uuid4().hex[:6]}.md"
+    first_line = str(error).splitlines()[0] if str(error) else ""
+    header = (
+        f"<!-- MADO: DB 에 기록하지 못한 {kind} -->\n"
+        f"<!-- session_id: {session_id} -->\n"
+        f"<!-- saved_at: {datetime.now().astimezone().isoformat(timespec='seconds')} -->\n"
+        f"<!-- error: {type(error).__name__}: {first_line} -->\n\n"
+        f"# {title}\n\n"
+    )
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        path.write_text(header + body, encoding="utf-8")
+        return path
+    except OSError as exc:
+        logger.error(f"Could not even write the unsaved {kind} to {path}: {exc}")
+        return None
 
 
 class OrchestratorEngine:
@@ -481,8 +532,8 @@ class OrchestratorEngine:
         # 버텼는지). 기록 락을 기다린 시간이 섞이지 않도록 락 **밖에서** 잽니다.
         finished_at = utc_now()
 
-        async with (db_lock or nullcontext()):
-            db.add(MessageModel(
+        def _message_rows() -> List[Any]:
+            rows: List[Any] = [MessageModel(
                 id=msg_id,
                 session_id=state.session_id,
                 sender_key=agent.key,
@@ -495,9 +546,9 @@ class OrchestratorEngine:
                 finished_at=finished_at,
                 turn_started_at=turn_started_at,
                 **({"created_at": created_at} if created_at is not None else {}),
-            ))
+            )]
             for call_log in executed_tools:
-                db.add(ToolCallRecordModel(
+                rows.append(ToolCallRecordModel(
                     id=str(uuid.uuid4()),
                     session_id=state.session_id,
                     message_id=msg_id,
@@ -507,23 +558,22 @@ class OrchestratorEngine:
                     output=call_log.get("output", ""),
                     status=call_log.get("status", "success"),
                 ))
-            try:
-                await db.commit()
-            except asyncio.CancelledError:
-                raise
-            except BaseException as exc:  # noqa: BLE001
-                # 기록에 실패했다고 발언을 잃을 수는 없습니다. 화면에는 이미
-                # 흘러갔고, 이 세션의 나머지 발언도 계속 기록되어야 합니다.
-                # 롤백하지 않으면 세션이 깨진 채로 남아 다음 커밋이 전부 실패합니다.
-                logger.error(
-                    f"Could not persist {agent.name}'s message: {type(exc).__name__}: {exc}",
-                    exc_info=True,
-                )
-                try:
-                    await db.rollback()
-                except BaseException:  # noqa: BLE001
-                    logger.debug("Rollback after a failed message commit also failed",
-                                 exc_info=True)
+            return rows
+
+        # 최종 합성이면 파일 이름과 알림에서 그렇다고 밝힙니다. 사람이 먼저 찾는 것이
+        # 그 보고서입니다. `turn_started_at` 은 합성 발언에만 주어집니다.
+        is_synthesis = turn_started_at is not None
+        async with (db_lock or nullcontext()):
+            await self._persist(
+                db, _message_rows,
+                what=("the final synthesis report" if is_synthesis else f"{agent.name}'s message"),
+                label=("최종 합성 보고서" if is_synthesis else f"{agent.name} 의 발언"),
+                kind=("synthesis" if is_synthesis else f"message-{agent.key}"),
+                session_id=state.session_id,
+                fallback_title=f"{agent.name} ({agent.role}) — Round {round_number}",
+                fallback_body=content,
+                on_event=on_event,
+            )
 
         if trimmed_here and on_event:
             await on_event({
@@ -556,6 +606,82 @@ class OrchestratorEngine:
             await on_event({"type": "message_added", "message": message.model_dump()})
         return message
 
+    # ------------------------------------------------------------------ 기록
+
+    async def _persist(
+        self,
+        db,
+        build: Callable[[], List[Any]],
+        *,
+        what: str,
+        label: str,
+        kind: str,
+        session_id: str,
+        fallback_title: str,
+        fallback_body: str,
+        on_event: Optional[EventCallback],
+    ) -> bool:
+        """행을 기록합니다. 실패하면 간격을 두고 다시 시도하고, 끝내 실패하면 파일로 남깁니다.
+
+        `build` 는 **시도할 때마다 새 행을 만들어** 돌려줘야 합니다. 실패한 커밋을 롤백하면
+        그 트랜잭션에 넣었던 객체는 세션에서 떨어져 나가, 같은 객체를 다시 넣는 것보다
+        새로 만드는 편이 확실합니다 (id 는 호출하는 쪽이 고정해 두므로 같은 행입니다).
+
+        롤백을 빠뜨리면 세션이 깨진 채로 남아 이 대화의 다음 커밋이 전부 실패합니다.
+
+        예외를 올리지 않습니다. 기록 실패로 토론이 멈추면, 이미 나온 발언 뒤로 이어질
+        발언까지 잃습니다. 대신 잃지 않게 파일로 남기고 사람에게 알립니다. 취소만은
+        그대로 올립니다.
+        """
+        attempts = len(PERSIST_RETRY_DELAYS) + 1
+        last: Optional[BaseException] = None
+        for attempt in range(1, attempts + 1):
+            db.add_all(build())
+            try:
+                await db.commit()
+                if attempt > 1:
+                    logger.info(f"Persisted {what} on attempt {attempt}/{attempts}")
+                return True
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - 어떤 기록 실패로도 토론을 멈추지 않습니다
+                last = exc
+                logger.warning(
+                    f"Could not persist {what} (attempt {attempt}/{attempts}): "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                try:
+                    await db.rollback()
+                except Exception:  # noqa: BLE001
+                    logger.debug("Rollback after a failed commit also failed", exc_info=True)
+                if attempt < attempts:
+                    await asyncio.sleep(PERSIST_RETRY_DELAYS[attempt - 1])
+
+        assert last is not None
+        saved_to = save_unpersisted(
+            kind=kind, session_id=session_id, title=fallback_title,
+            body=fallback_body, error=last,
+        )
+        logger.error(
+            f"Gave up persisting {what} after {attempts} attempts "
+            f"({type(last).__name__}: {last}); "
+            + (f"saved to {saved_to}" if saved_to else "could not save it to a file either"),
+            exc_info=last,
+        )
+        if on_event:
+            first_line = str(last).splitlines()[0] if str(last) else ""
+            try:
+                await on_event({
+                    "type": "persist_failed",
+                    "what": what,
+                    "label": label,
+                    "error": f"{type(last).__name__}: {first_line}",
+                    "saved_to": str(saved_to) if saved_to else None,
+                })
+            except Exception:  # noqa: BLE001 - 알리다 실패해도 토론은 계속됩니다
+                logger.debug("persist_failed notification failed", exc_info=True)
+        return False
+
     # ------------------------------------------------------------------ 유저 발언
 
     async def _record_user_message(
@@ -577,19 +703,28 @@ class OrchestratorEngine:
         # 사람 발언에는 걸리는 시간이 없습니다. 시작과 끝을 같은 시각으로 적어,
         # 읽는 쪽이 "시각이 없는 옛 기록" 과 구분할 수 있게 합니다.
         now = utc_now()
-        db.add(MessageModel(
-            id=msg_id,
+        await self._persist(
+            db,
+            lambda: [MessageModel(
+                id=msg_id,
+                session_id=state.session_id,
+                sender_key="user",
+                sender_name="User",
+                sender_role="Client / Requestor",
+                content=content,
+                round_number=round_number,
+                msg_type="user",
+                started_at=now,
+                finished_at=now,
+            )],
+            what="the user's message",
+            label="사용자 발언",
+            kind="message-user",
             session_id=state.session_id,
-            sender_key="user",
-            sender_name="User",
-            sender_role="Client / Requestor",
-            content=content,
-            round_number=round_number,
-            msg_type="user",
-            started_at=now,
-            finished_at=now,
-        ))
-        await db.commit()
+            fallback_title=f"User — Round {round_number}",
+            fallback_body=content,
+            on_event=on_event,
+        )
 
         message = DebateMessage(
             id=msg_id,
@@ -964,20 +1099,38 @@ class OrchestratorEngine:
                 completed_at=synth_message.finished_at,
                 turn_started_at=turn_started_at,
             )
+            # id 를 먼저 정해 둡니다. 다시 시도할 때 같은 산출물이 같은 행이 되어야 합니다.
             for art in artifacts:
-                art_db = ArtifactModel(
-                    id=str(uuid.uuid4()),
-                    session_id=session_id,
-                    artifact_type=art.artifact_type,
-                    title=art.title,
-                    content=art.content,
-                    language=art.language,
-                )
-                db.add(art_db)
-                art.id = art_db.id
+                art.id = str(uuid.uuid4())
                 state.artifacts.append(art)
 
-            await db.commit()
+            if artifacts:
+                fence = "`" * 3
+                await self._persist(
+                    db,
+                    lambda: [
+                        ArtifactModel(
+                            id=art.id,
+                            session_id=session_id,
+                            artifact_type=art.artifact_type,
+                            title=art.title,
+                            content=art.content,
+                            language=art.language,
+                        )
+                        for art in artifacts
+                    ],
+                    what=f"{len(artifacts)} artifact(s)",
+                    label=f"산출물 {len(artifacts)}건",
+                    kind="artifacts",
+                    session_id=session_id,
+                    fallback_title="산출물",
+                    fallback_body="\n\n".join(
+                        f"## {art.title} ({art.artifact_type})\n\n"
+                        f"{fence}{art.language or ''}\n{art.content}\n{fence}"
+                        for art in artifacts
+                    ),
+                    on_event=on_event,
+                )
 
             # 합성이 시작된 뒤에 도착한 개입은 이번 턴에 실을 자리가 없습니다.
             # 그대로 버리면 화면은 "다음 발언 차례에 반영됩니다" 라고 알린 채 턴이
@@ -1036,19 +1189,28 @@ class OrchestratorEngine:
         msg_id = str(uuid.uuid4())
         # LLM 을 부르지 않는 기록이라 걸리는 시간이 없습니다 (시작 = 끝).
         now = utc_now()
-        db.add(MessageModel(
-            id=msg_id,
+        await self._persist(
+            db,
+            lambda: [MessageModel(
+                id=msg_id,
+                session_id=state.session_id,
+                sender_key=agent.key,
+                sender_name=agent.name,
+                sender_role=agent.role,
+                content=content,
+                round_number=round_number,
+                msg_type=msg_type,
+                started_at=now,
+                finished_at=now,
+            )],
+            what=f"a note from {agent.name}",
+            label=f"{agent.name} 의 기록",
+            kind=f"note-{agent.key}",
             session_id=state.session_id,
-            sender_key=agent.key,
-            sender_name=agent.name,
-            sender_role=agent.role,
-            content=content,
-            round_number=round_number,
-            msg_type=msg_type,
-            started_at=now,
-            finished_at=now,
-        ))
-        await db.commit()
+            fallback_title=f"{agent.name} ({agent.role}) — Round {round_number}",
+            fallback_body=content,
+            on_event=on_event,
+        )
 
         message = DebateMessage(
             id=msg_id,

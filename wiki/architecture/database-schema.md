@@ -182,16 +182,62 @@ before the snapshot column existed.
 The database connection engine is configured in [app/database/session.py](file:///d:/MultiAgentOrchestrator/app/database/session.py):
 
 ```python
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-# Asynchronous engine with SQLite Write-Ahead Logging (WAL) recommended for concurrency
-engine = create_async_engine(
-    db_url,
-    echo=debug,
-    connect_args={"check_same_thread": False},
-)
-session_factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+engine = create_async_engine(db_url, echo=False, future=True)
+if engine.dialect.name == "sqlite":
+    configure_sqlite(engine, db_url)     # busy_timeout + WAL, per connection
+session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 ```
+
+> Until v0.7.1 this page showed a WAL comment and `connect_args` that were never in the code. The
+> engine used SQLite's defaults — which is exactly what failed (see below).
+
+### SQLite concurrency (v0.7.1)
+
+With no configuration, Python's SQLite driver waits **5 seconds** for a lock and then raises
+`database is locked`, and in the default rollback-journal mode every write transaction creates and
+deletes `multiagent.db-journal`. On Windows a file that another process has open cannot be replaced,
+so a brief open by a virus scanner, the search indexer, or a backup/sync agent is enough to fail a
+write. Windows schedules exactly those jobs while the user is away — and a final synthesis report
+was lost that way while the screen was locked.
+
+`configure_sqlite()` sets three pragmas on every new connection:
+
+| Pragma | Value | Why |
+| :--- | :--- | :--- |
+| `busy_timeout` | 30000 ms | A message write is milliseconds; anything holding the lock for 30 s is an outside process, and that much is survivable. |
+| `journal_mode` | `WAL` | No journal file created and deleted per write, and readers stop blocking the writer. |
+| `synchronous` | `NORMAL` | The recommended pairing with WAL: a power cut may lose the last few transactions but never corrupts the file. |
+
+WAL coordinates processes through shared memory (`-shm`), which network file systems do not
+guarantee, so **WAL is not enabled when the database is on a network location** — a UNC path, or a
+Windows drive whose `GetDriveTypeW` is `DRIVE_REMOTE`. `busy_timeout` still applies there. The
+`-wal`/`-shm` files next to the database were already excluded by both packaging scripts.
+
+Measured against a real lock held for 7 seconds by another connection: before, `journal_mode=delete`,
+`busy_timeout=5000`, and the write failed with `database is locked` after 5.5 s; after,
+`journal_mode=wal`, `busy_timeout=30000`, and the write waited 7.0 s and succeeded.
+
+### Never silently dropping a write (v0.7.1)
+
+The engine used to catch a failed message commit, log one line, roll back, and move on — sensible
+for keeping the debate alive, but the final synthesis took the same path, so the deliverable reached
+the screen and then vanished on the next reload.
+
+Every engine write — a speech with its tool records, the artifacts, a user message, a note — now goes
+through `OrchestratorEngine._persist()`:
+
+1. **Retry.** On failure it rolls back (skip that and every later commit in the session fails too)
+   and tries again after `PERSIST_RETRY_DELAYS` (2 s, then 5 s), on top of SQLite's own 30 s wait.
+   Rows are rebuilt for each attempt with the same ids, because a rollback detaches the objects that
+   were added.
+2. **Keep it anyway.** If every attempt fails, `save_unpersisted()` writes the content as Markdown to
+   `data/unsaved/<time>-<session>-<kind>-<rand>.md`, with the session id and the error in a header.
+   The final synthesis is named `synthesis` so it is the first thing a person finds.
+3. **Say so.** A `persist_failed` event raises a notification that stays until it is closed — this
+   tends to happen while nobody is watching, and a toast that fades is useless then.
+
+It never raises (except cancellation): a write failure that stopped the debate would cost every
+speech still to come.
 
 ### Table Auto-Creation
 When the application starts up inside `lifespan()` in [app/main.py](file:///d:/MultiAgentOrchestrator/app/main.py#L33-L35), it calls `init_db(db_url)`. This executes:

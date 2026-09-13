@@ -236,6 +236,24 @@ def create_ui() -> None:
                     type="warning",
                     position="bottom-right",
                 )
+            elif etype == "persist_failed":
+                # 사람이 자리를 비운 사이에 일어나기 쉬운 일이라(백신 검사·백업이 파일을
+                # 잡는 때), 저절로 사라지는 알림으로는 돌아와서 볼 수가 없습니다. 닫을
+                # 때까지 남깁니다.
+                saved = event.get("saved_to")
+                where = (
+                    f"내용은 파일로 남겼습니다: {saved}"
+                    if saved else "파일로도 남기지 못했습니다. 콘솔 로그를 확인하세요."
+                )
+                ui.notify(
+                    f"{event.get('label') or '기록'}을 DB 에 저장하지 못했습니다 "
+                    f"({event.get('error', '')}). {where}",
+                    type="negative",
+                    position="top",
+                    close_button="확인",
+                    timeout=0,
+                    multi_line=True,
+                )
             elif etype == "turn_completed":
                 failed = event.get("failed_agents") or []
                 if failed:

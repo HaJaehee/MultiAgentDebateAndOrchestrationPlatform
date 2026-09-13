@@ -33,8 +33,17 @@ MultiAgentOrchestrator/
 └── CLAUDE.md                 프로젝트 명세서
 ```
 
-생성물 (gitignore): `workspace/`, `data/`(올린 에이전트 아이콘), `multiagent.db`,
+생성물 (gitignore): `workspace/`, `data/`(올린 에이전트 아이콘, `data/unsaved/`),
+`multiagent.db`(과 WAL 파일 `multiagent.db-wal`·`multiagent.db-shm`),
 `mcp_node/`, `mcp_sandbox/`, `dist/`, `docs/user_manual_html/`
+
+`data/unsaved/` 에는 **DB 에 끝내 기록하지 못한 발언·최종 보고서·산출물**이 마크다운으로
+남습니다. 백신 검사나 백업 프로그램이 DB 파일을 오래 잡는 드문 경우를 위한 것이고, 그런 일이
+생기면 화면에 닫을 때까지 남는 알림이 뜹니다. 평소에는 비어 있습니다.
+
+DB 는 **로컬 디스크**에 두세요. 네트워크 드라이브에서는 동시 기록에 강한 WAL 모드를 켤 수
+없어(파일이 깨질 수 있습니다) 잠금에 약해집니다. 자리를 비운 사이 기록이 실패한 적이 있다면
+DB 가 있는 폴더를 백신 실시간 검사와 동기화·백업 대상에서 빼는 것도 도움이 됩니다.
 
 ---
 

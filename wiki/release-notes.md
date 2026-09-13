@@ -6,6 +6,34 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.7.1
+
+**A locked database no longer costs a final report.**
+
+While the screen was locked, a final synthesis report failed to save with `database is locked`. It
+had reached the screen, so nothing looked wrong until the page was reloaded and the report was gone.
+Two things were missing, and either alone would have been enough to lose it.
+
+**SQLite ran on its defaults.** A 5-second wait for a lock, and a journal file created and deleted on
+every write. On Windows, a virus scan, the search indexer, or a backup agent opening the file for a
+few seconds is enough — and Windows schedules exactly those while the user is away. Every connection
+now gets `busy_timeout=30000`, `journal_mode=WAL`, and `synchronous=NORMAL`. WAL is skipped when the
+database sits on a network location, where it can corrupt the file. Against a real 7-second lock the
+write that used to fail after 5.5 s now waits and succeeds.
+
+**A failed write was logged and dropped.** Every engine write now retries (2 s, then 5 s, on top of
+SQLite's own wait), rolling back between attempts. If it still fails, the content is written to
+`data/unsaved/` as Markdown — the report under `synthesis` — and a notification stays on screen until
+closed, because this happens when nobody is looking. It never stops the debate.
+
+The database page used to show a WAL comment and `connect_args` that were never in the code; it now
+shows what the engine actually does.
+
+→ [Database Schema §3](architecture/database-schema.md) ·
+[Project Layout](../docs/user_manual/05-reference/02-project-layout.md)
+
+---
+
 ## v0.7.0
 
 v0.6.1.2 stopped telling a tool call that had run that it had not. Following that log line further
