@@ -23,6 +23,8 @@ from app.agents.llm import (
     completion_budget_report,
     file_writing_guidance,
     limit_reached_notice,
+    reasoning_heavy_note,
+    reasoning_share,
     truncation_advice,
 )
 
@@ -734,3 +736,103 @@ def test_the_budget_report_reads_every_shape_and_counts_only_sizes():
     assert "fs__read_file(args 13 chars)" in report
     assert "fs__write_file(args 29 chars)" in report   # 딕셔너리 인자는 JSON 으로 잰 길이
     assert "unreadable" not in report
+
+
+# ------------------------------------------------------------------ 사고가 한도를 먹었을 때
+
+
+def _msg(reasoning: str = "", text: str = ""):
+    return SimpleNamespace(content=text, reasoning_content=reasoning)
+
+
+def _raw_call(arguments: str):
+    return SimpleNamespace(function=SimpleNamespace(name="filesystem__write_file", arguments=arguments))
+
+
+def test_reasoning_share_on_the_numbers_that_actually_happened():
+    """사고 8,605자 + 쓰기 인자 17,672자로 8,192 토큰에 닿았습니다. 사고가 3분의 1."""
+    share = reasoning_share(_msg("r" * 8605), [_raw_call("x" * 17672)])
+    assert 0.32 < share < 0.34
+    assert "약 33%" in reasoning_heavy_note(_msg("r" * 8605), [_raw_call("x" * 17672)])
+
+
+def test_light_reasoning_adds_nothing():
+    """사고가 조금뿐인 모델에게 "생각을 줄이라" 는 소음입니다."""
+    assert reasoning_heavy_note(_msg("r" * 800), [_raw_call("x" * 17672)]) == ""
+
+
+def test_no_reasoning_at_all_adds_nothing():
+    assert reasoning_share(_msg(text="본문"), [_raw_call("{}")]) == 0.0
+    assert reasoning_heavy_note(_msg(), None) == ""
+
+
+def test_the_note_is_a_strategy_not_a_size():
+    """모델은 자기 출력 토큰을 셀 수 없으므로 크기가 아니라 할 일을 말합니다."""
+    note = reasoning_heavy_note(_msg("r" * 9000), [_raw_call("x" * 9000)])
+    assert "사고를 짧게" in note
+    assert "사고 안에서 미리 써 보지 마세요" in note
+    assert "토큰 이하" not in note and "자 이하" not in note
+
+
+async def _reasoning_tool_turn(arguments: str, finish_reason: str, reasoning: str):
+    """사고를 한 뒤 도구를 한 번 부르고 다음 판에서 끝내는 발언. 나간 요청들을 돌려줍니다."""
+    sent = []
+
+    async def fake_acompletion(**kwargs):
+        if kwargs.get("stream"):
+            raise RuntimeError("streaming unsupported")
+        sent.append(kwargs)
+        first = len(sent) == 1
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(
+                content="" if first else "정리했습니다.",
+                reasoning_content=reasoning if first else None,
+                tool_calls=[_tool_call(arguments)] if first else None,
+                model_dump=lambda: {"role": "assistant", "content": ""},
+            ),
+            finish_reason=finish_reason if first else "stop",
+        )])
+
+    caller = _caller()
+    caller.mcp_manager.get_openai_tools_for_servers = lambda servers: _tools(
+        "filesystem__write_file", "filesystem__edit_file")
+    with patch("litellm.acompletion", side_effect=fake_acompletion):
+        await caller.call_agent(_agent(), [{"role": "user", "content": "문서 써줘"}])
+    return sent
+
+
+def _told(sent):
+    return "\n".join(str(m.get("content")) for m in sent[1]["messages"])
+
+
+@pytest.mark.asyncio
+async def test_a_cut_call_after_heavy_reasoning_is_told_to_think_less():
+    """로그 그대로: finish_reason='tool_calls' 인데 인자를 못 읽었고, 사고가 컸습니다."""
+    cut = '{"path": "a.md", "content": "' + "x" * 17600
+    sent = await _reasoning_tool_turn(cut, "tool_calls", "r" * 8605)
+
+    told = _told(sent)
+    assert "출력 잘림" in told
+    assert "사고(reasoning)에 썼습니다" in told
+    assert "filesystem__edit_file" in told, "나누어 쓰라는 조언도 그대로 있어야 합니다"
+
+
+@pytest.mark.asyncio
+async def test_a_cut_call_after_light_reasoning_is_not_lectured():
+    cut = '{"path": "a.md", "content": "' + "x" * 17600
+    sent = await _reasoning_tool_turn(cut, "tool_calls", "r" * 500)
+
+    told = _told(sent)
+    assert "출력 잘림" in told
+    assert "사고(reasoning)에 썼습니다" not in told
+
+
+@pytest.mark.asyncio
+async def test_a_readable_call_at_the_limit_after_heavy_reasoning_gets_the_note_too():
+    """인자는 읽혔지만 한도에 닿은 경우도 뿌리가 같습니다."""
+    readable = json.dumps({"path": "a.md", "content": "x" * 9000})
+    sent = await _reasoning_tool_turn(readable, "length", "r" * 9000)
+
+    told = _told(sent)
+    assert "응답 한도 도달" in told
+    assert "사고(reasoning)에 썼습니다" in told

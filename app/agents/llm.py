@@ -931,6 +931,57 @@ def _raw_arguments(call: Any) -> Any:
     return getattr(function, "arguments", None)
 
 
+def _argument_chars(raw: Any) -> int:
+    """도구 호출 인자 원문의 글자 수. 지문·예산 보고·사고 비중이 같은 잣대를 씁니다."""
+    if isinstance(raw, str):
+        return len(raw)
+    if raw is None:
+        return 0
+    return len(json.dumps(raw, ensure_ascii=False, default=str))
+
+
+# 한 응답의 출력 중 사고(reasoning)가 이 비율 이상이면, 잘린 도구 호출 고지에 "사고를
+# 줄이라" 를 덧붙입니다.
+#
+# 추론 모델은 숨은 사고도 `max_tokens` 에 넣어 셉니다. 실제로 사고 8,605자 + 파일 쓰기
+# 인자 17,672자로 8,192 토큰에 닿은 일이 있었습니다 — 사고가 출력의 3분의 1이었습니다.
+# 그런데 모델이 받은 말은 "나누어 쓰라" 뿐이라, 다음 판에서 또 그만큼 생각하고 조금 작은
+# 조각을 쓰면 다시 걸립니다. 로그의 `reasoning=` 은 사람만 봤습니다.
+#
+# 25% 아래에서는 붙이지 않습니다. 사고가 조금뿐인 모델에게 "생각을 줄이라" 는 소음이고,
+# 줄일 것도 없는데 줄이려다 판단이 부실해집니다.
+#
+# 글자로 재는 것은 `completion_budget_report` 와 같은 잣대를 쓰기 위해서입니다. 인자는
+# JSON 이스케이프(`\n` 가 두 글자)로 부풀어 세어지므로 사고의 비중은 실제보다 **작게**
+# 나옵니다 — 틀리더라도 덜 알리는 쪽으로 틀립니다.
+REASONING_HEAVY_SHARE = 0.25
+
+REASONING_HEAVY_TOOL_CALL_NOTE = (
+    "\n또 이번 응답은 출력의 약 {percent}%를 **사고(reasoning)에 썼습니다.** 사고와 도구 "
+    "호출 인자는 같은 응답 한도를 나눠 씁니다. 다음 호출에서는 사고를 짧게 끝내고 곧바로 "
+    "도구를 부르세요. 특히 **파일에 쓸 내용을 사고 안에서 미리 써 보지 마세요** — 같은 글을 "
+    "두 번 쓰는 셈이라 한도가 그만큼 사라집니다."
+)
+
+
+def reasoning_share(message: Any, raw_calls: Optional[List[Any]] = None) -> float:
+    """이번 응답의 출력(본문 + 사고 + 호출 인자) 중 사고가 차지한 비율, 0.0~1.0."""
+    reasoning = len(getattr(message, "reasoning_content", None) or "")
+    if not reasoning:
+        return 0.0
+    output = reasoning + len(_message_text(message))
+    output += sum(_argument_chars(_raw_arguments(call)) for call in raw_calls or [])
+    return reasoning / output if output else 0.0
+
+
+def reasoning_heavy_note(message: Any, raw_calls: Optional[List[Any]] = None) -> str:
+    """사고가 출력 예산을 크게 먹었으면 덧붙일 한 단락. 아니면 빈 문자열."""
+    share = reasoning_share(message, raw_calls)
+    if share < REASONING_HEAVY_SHARE:
+        return ""
+    return REASONING_HEAVY_TOOL_CALL_NOTE.format(percent=round(share * 100))
+
+
 def completion_budget_report(
     message: Any,
     raw_calls: Optional[List[Any]],
@@ -959,12 +1010,7 @@ def completion_budget_report(
     calls = []
     for index, (name, _args, _call_id, parsed_ok) in enumerate(parsed or []):
         raw = _raw_arguments(raw_calls[index]) if raw_calls and index < len(raw_calls) else None
-        if isinstance(raw, str):
-            arg_chars = len(raw)
-        elif raw is None:
-            arg_chars = 0
-        else:
-            arg_chars = len(json.dumps(raw, ensure_ascii=False, default=str))
+        arg_chars = _argument_chars(raw)
         mark = "" if parsed_ok else ", unreadable"
         calls.append(f"{name or 'unknown_tool'}(args {arg_chars:,} chars{mark})")
 
@@ -2211,18 +2257,21 @@ class LLMCaller:
                 # 잘렸다는 사실은 **말로** 알려야 합니다. 도구 서버가 돌려준
                 # "Input validation error" 만으로는 모델이 원인을 알 수 없어,
                 # 같은 호출을 그대로 다시 시도하다 예산을 태웁니다.
+                # 사고가 한도를 크게 먹었으면 "나누어 쓰라" 만으로는 다시 걸립니다.
+                # 두 경우 모두 같은 뿌리이므로 같은 한 단락을 덧붙입니다.
                 if arguments_cut:
                     self._append_budget_notice(
                         current_messages,
                         TRUNCATED_TOOL_CALL_NOTICE.format(
                             max_tokens=max_tokens_label(agent),
                             advice=truncation_advice(tools),
-                        ),
+                        ) + reasoning_heavy_note(message, tool_calls),
                     )
                 elif limit_reached:
                     self._append_budget_notice(
                         current_messages,
-                        limit_reached_notice(max_tokens_label(agent), parsed[-1][0], tools),
+                        limit_reached_notice(max_tokens_label(agent), parsed[-1][0], tools)
+                        + reasoning_heavy_note(message, tool_calls),
                     )
 
             # 예산 소진. 여기서 예외를 올리면 지금까지의 발언이 통째로 사라집니다.

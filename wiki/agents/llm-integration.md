@@ -199,6 +199,19 @@ output to what its window had left. A call whose arguments would not parse is ma
 and logged as `Truncated tool call`. A tool-free answer cut at the limit (`Truncated answer`) carries
 the same sizes.
 
+**When reasoning ate the budget, say so.** Reasoning models count hidden reasoning against
+`max_tokens`. One observed cut was 8,605 characters of reasoning plus a 17,672-character
+`write_file` argument — a third of the output was thinking. "Split the write" alone invites the
+same failure next round with a slightly smaller chunk, because the thinking still takes its third.
+When reasoning is at least `REASONING_HEAVY_SHARE` (25%) of the response's output — measured in
+characters with the same yardstick as `completion_budget_report`, so the log and the notice agree —
+[`reasoning_heavy_note()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) adds one paragraph:
+keep the reasoning short and call the tool, and do not draft the file inside the reasoning (that
+writes the same text twice). Below the threshold nothing is added; telling a model that barely
+thinks to think less is noise. JSON escaping inflates argument sizes, so the share errs low —
+toward saying less, not more. The same paragraph follows the readable-but-at-the-limit notice,
+which has the same root.
+
 **What to do instead depends on the tools that agent actually holds**, which is why
 `truncation_advice()` resolves them by name tail — the same rule as `memory_write_tool()`, so a
 renamed server key or a server that failed to start never produces advice to call a tool that is

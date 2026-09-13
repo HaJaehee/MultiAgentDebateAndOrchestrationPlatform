@@ -72,7 +72,7 @@
       "곧 출력이라 이 한도에 걸립니다. 걸리면 인자 JSON 이 중간에서 끊겨 도구가",
       "실패하고, 그냥 긴 글이면 문장 중간에서 끊긴 채 '응답 한도에 걸려 잘렸습니다'",
       "표시가 붙습니다. 파일이나 긴 보고서를 쓰는 에이전트(아키텍트·코더·최종 합성)",
-      "에게는 8192 이상을 권합니다.",
+      "에게는 16000 이상을 권합니다.",
       "추론 모델(속으로 생각하는 모델)은 그 생각도 이 한도에 넣어 셉니다. 생각이 길면 본문을",
       "못 쓰고 끝나는데, 앱이 답을 한 번 더 요청하지만 자주 그렇다면 이 값을 올리세요."
     ],
@@ -94,7 +94,21 @@
     "// 커스텀 헤더/바디": [
       "사내 게이트웨이 인증 헤더, 라우팅 태그 등. 필요하면 아래처럼 추가하세요.",
       "\"extra_headers\": { \"X-Org-Id\": \"${MY_ORG_ID}\", \"X-Project\": \"multiagent\" },",
-      "\"extra_body\": { \"user\": \"multiagent-orchestrator\" }"
+      "\"extra_body\": { \"user\": \"multiagent-orchestrator\" }",
+      "extra_body 는 요청 본문에 그대로 합쳐집니다. 키가 여럿이면 한 객체 안에 함께 적으세요."
+    ],
+
+    "// extra_body.chat_template_kwargs": [
+      "vLLM 이 모델의 채팅 템플릿에 넘기는 인자입니다 (Qwen3 계열 등). 필요하면 아래처럼 추가하세요.",
+      "\"extra_body\": { \"chat_template_kwargs\": { \"enable_thinking\": true } }",
+      "  enable_thinking = true  : 모델 자체 사고(reasoning)를 켭니다. Qwen3 의 기본값과 같습니다.",
+      "  enable_thinking = false : 모델 자체 사고를 끕니다.",
+      "모델 자체 사고도 응답 한도(max_tokens)를 함께 씁니다. sequential_thinking.mode 가 \"prompt\"",
+      "이면 단계적 사고를 따로 시키고 있으므로 두 번 생각하는 셈입니다. 긴 파일 쓰기가 자주",
+      "잘린다면 false 로 두어 그 몫을 본문과 도구 호출에 돌릴 수 있지만, 답의 품질이 달라질 수 있습니다.",
+      "주의: vLLM 전용 필드입니다. OpenAI·Anthropic·Gemini 는 모르는 본문 필드를 400 으로 거절할 수",
+      "있으므로 그런 엔드포인트에는 넣지 마세요. drop_params 는 extra_body 를 걸러 주지 않습니다.",
+      "그래서 기본값으로 두지 않고 예시로만 둡니다."
     ],
 
     "// sequential_thinking": [
