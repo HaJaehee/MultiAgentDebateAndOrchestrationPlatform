@@ -501,6 +501,19 @@ the IPs released. Verified in a browser: five wrong tokens from the LAN address 
 the right token; the loopback dialog listed `192.168.45.104 · 15분 남음`, `해제` emptied the list with a
 notice, and the remote browser then logged in (API 200).
 
+**Login audit log.** Locks lived only in memory, so a restart or an unlock erased the trace of an attack.
+`AuditLog` appends one JSON object per line to `data/security/login_audit.jsonl` (app-owned, outside git and
+the offline bundle): `lockout` with `ip`, `at`/`ts`, `failures`, `first_failure_ts`, `last_failure_ts`,
+`locked_until_ts`, `lockout_seconds` and the `user_agent` of the request that tripped the lock (truncated to
+300 characters); and `unlock` with `ip`, `by: "loopback"` and `remaining_seconds`. Failures below the threshold
+are not logged, and **the submitted token is never written**. Records are JSON-encoded, so a User-Agent
+containing a newline cannot forge a second record. The file rotates to `.1` above 5 MB; a write failure only
+logs a warning and never blocks login handling. The key dialog shows the file path and the last 20 records
+(`AuditLog.read`, newest first, broken lines skipped). The audit sink is attached by `get_access_control()`;
+an `AccessControl` built without one (tests) records nothing. Verified in a browser: five wrong tokens from
+the LAN address produced a `lockout` line with the browser's User-Agent, `해제` in the loopback dialog produced
+an `unlock` line (887.9 s remaining), and the dialog history listed both.
+
 **Backward compatibility: a public bind with no token.** A server that was already bound to `0.0.0.0`
 before tokens existed has none after the update, so every remote user would be locked out. On the first
 loopback page load, `bootstrap_missing_token()` — when `bind_is_public(app.host)` (`0.0.0.0`, `::`, empty

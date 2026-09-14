@@ -493,3 +493,82 @@ def test_unlock_is_loopback_only_in_the_ui():
     src = io.open(ROOT / "app" / "ui" / "components" / "access_token.py", encoding="utf-8").read()
     handler = src[src.index("def unlock_ips("):src.index("def render_locks(")]
     assert "if not _caller_is_loopback():" in handler.split("control.unlock")[0]
+
+
+# ------------------------------------------------------------------ 잠금 감사 기록
+
+
+import json  # noqa: E402
+
+from app.security import AuditLog, get_access_control  # noqa: E402
+
+
+def test_lockouts_and_unlocks_are_appended_to_the_audit_log(tmp_path):
+    clock = Clock()
+    audit = AuditLog(tmp_path / "security" / "login_audit.jsonl", clock=clock)
+    control = AccessControl(TOKEN, clock=clock, audit=audit)
+
+    async def go():
+        async with _client(control, REMOTE, host="10.0.0.1:8000") as c:
+            for _ in range(MAX_FAILURES):
+                clock.now += 10
+                await c.post("/login", data={"token": "Guess0000000000000000000"},
+                             headers={"user-agent": "attacker-bot/1.0\n{\"event\":\"forged\"}"})
+    run(go())
+    clock.now += 30
+    control.unlock(REMOTE[0])
+    control.unlock(REMOTE[0])  # 이미 풀림 → 기록하지 않음
+
+    lines = (tmp_path / "security" / "login_audit.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2, "줄바꿈이 든 User-Agent 가 기록을 늘리거나 위조하면 안 됩니다"
+    lockout, unlock = (json.loads(line) for line in lines)
+    assert lockout["event"] == "lockout" and lockout["ip"] == REMOTE[0]
+    assert lockout["failures"] == MAX_FAILURES
+    assert lockout["last_failure_ts"] - lockout["first_failure_ts"] == pytest.approx(40)
+    assert lockout["locked_until_ts"] == pytest.approx(lockout["last_failure_ts"] + LOCKOUT_SECONDS)
+    assert lockout["user_agent"].startswith("attacker-bot/1.0\n")
+    assert "Guess" not in "\n".join(lines), "입력한 토큰은 절대 기록하지 않습니다"
+    assert unlock["event"] == "unlock" and unlock["by"] == "loopback"
+    assert unlock["remaining_seconds"] == pytest.approx(LOCKOUT_SECONDS - 30)
+    assert [r["event"] for r in audit.read()] == ["unlock", "lockout"], "최근 것부터"
+
+
+def test_failures_below_the_threshold_are_not_logged(tmp_path):
+    audit = AuditLog(tmp_path / "a.jsonl")
+    control = AccessControl(TOKEN, audit=audit)
+    for _ in range(MAX_FAILURES - 1):
+        control.record_failure("10.0.0.9")
+    assert not (tmp_path / "a.jsonl").exists()
+
+
+def test_the_audit_log_rotates_and_survives_broken_lines(tmp_path):
+    path = tmp_path / "a.jsonl"
+    audit = AuditLog(path, max_bytes=400)
+    for i in range(10):
+        audit.write("lockout", f"10.0.0.{i}", failures=5)
+    assert path.with_name("a.jsonl.1").exists()
+    assert path.stat().st_size <= 400
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write("not json\n")
+    assert audit.read()[0]["ip"] == "10.0.0.9"
+
+
+def test_an_unwritable_audit_log_does_not_break_login(tmp_path):
+    blocker = tmp_path / "file"
+    blocker.write_text("x", encoding="utf-8")
+    control = AccessControl(TOKEN, audit=AuditLog(blocker / "sub" / "a.jsonl"))
+    for _ in range(MAX_FAILURES):
+        control.record_failure("10.0.0.7")
+    assert control.locked_for("10.0.0.7") > 0
+
+
+def test_the_app_writes_its_audit_log_under_data_security(monkeypatch):
+    import app.security as security
+
+    monkeypatch.setattr(security, "_control", None)
+    control = get_access_control()
+    from app.config import DATA_DIR
+
+    assert control.audit is not None
+    assert control.audit._target() == DATA_DIR / "security" / "login_audit.jsonl"
+    monkeypatch.setattr(security, "_control", None)

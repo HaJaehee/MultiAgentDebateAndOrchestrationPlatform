@@ -211,6 +211,87 @@ def same_origin(origin: str, host_header: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+# 감사 로그 파일이 이보다 커지면 `.1` 로 밀어 두고 새로 씁니다 (하나만 보관).
+AUDIT_MAX_BYTES = 5 * 1024 * 1024
+AUDIT_FILENAME = "login_audit.jsonl"
+_MAX_USER_AGENT = 300
+
+
+def default_audit_path() -> Path:
+    from app.config import DATA_DIR
+
+    return DATA_DIR / "security" / AUDIT_FILENAME
+
+
+class AuditLog:
+    """로그인 잠금 감사 기록 — 한 줄에 사건 하나인 JSON Lines, 덧붙이기만 합니다.
+
+    잠긴 IP 는 메모리에만 있어 재기동하거나 풀면 흔적이 사라졌습니다. 공격을 나중에 살펴볼 수
+    있도록 **잠금**과 **해제**를 파일에 남깁니다. 위치는 앱 소유의 `data/security/` 라 git 과
+    배포 번들에 들어가지 않습니다.
+
+    기록에는 IP·시각·실패 횟수·첫/마지막 실패 시각·User-Agent 가 들어가고, **입력한 토큰은 절대
+    남기지 않습니다.** 값은 JSON 으로 인코딩하므로 User-Agent 에 줄바꿈을 넣어 기록을 위조할 수
+    없습니다. 파일을 쓰지 못해도 로그인 처리는 계속합니다 (경고만 남깁니다).
+    """
+
+    def __init__(self, path: Optional[Path] = None, *, clock: Callable[[], float] = time.time,
+                 max_bytes: int = AUDIT_MAX_BYTES):
+        self.path = Path(path) if path is not None else None
+        self._clock = clock
+        self._max_bytes = max_bytes
+        self._lock = threading.Lock()
+
+    def _target(self) -> Path:
+        if self.path is None:
+            self.path = default_audit_path()
+        return self.path
+
+    def write(self, event: str, ip: str, **fields: Any) -> None:
+        import json
+        import logging
+
+        now = self._clock()
+        record = {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))
+                  + time.strftime("%z", time.localtime(now)),
+            "ts": round(now, 3),
+            "event": event,
+            "ip": ip,
+            **fields,
+        }
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        try:
+            path = self._target()
+            with self._lock:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if path.exists() and path.stat().st_size + len(line.encode("utf-8")) > self._max_bytes:
+                    os.replace(path, path.with_name(path.name + ".1"))
+                with open(path, "a", encoding="utf-8", newline="\n") as fh:
+                    fh.write(line)
+        except OSError as exc:
+            logging.getLogger(__name__).warning("Could not write the login audit log: %s", exc)
+
+    def read(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """최근 기록부터. 깨진 줄은 건너뜁니다."""
+        import json
+
+        path = self._target()
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        out: List[Dict[str, Any]] = []
+        for raw in reversed(lines):
+            try:
+                out.append(json.loads(raw))
+            except ValueError:
+                continue
+            if len(out) >= limit:
+                break
+        return out
+
+
 @dataclass
 class TokenStatus:
     enabled: bool
@@ -223,8 +304,10 @@ class AccessControl:
     """지금 적용된 토큰과, 그것으로 서명한 쿠키를 다룹니다. 프로세스에 하나."""
 
     def __init__(self, token: Optional[str] = None, *, source: str = "startup",
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time, audit: Optional[AuditLog] = None):
         self._clock = clock
+        # 잠금·해제를 남기는 곳. 없으면 기록하지 않습니다 (테스트 등). 앱은 `get_access_control` 이 붙입니다.
+        self.audit = audit
         self._lock = threading.Lock()
         self._token: Optional[str] = None
         self._key: bytes = b""
@@ -288,8 +371,9 @@ class AccessControl:
         remaining = until - self._clock()
         return remaining if remaining > 0 else 0.0
 
-    def record_failure(self, ip: str) -> None:
+    def record_failure(self, ip: str, *, user_agent: str = "") -> None:
         now = self._clock()
+        locked_record = None
         with self._lock:
             window = self._failures.setdefault(ip, deque())
             window.append(now)
@@ -297,7 +381,17 @@ class AccessControl:
                 window.popleft()
             if len(window) >= MAX_FAILURES:
                 self._locked_until[ip] = now + LOCKOUT_SECONDS
+                locked_record = {
+                    "failures": len(window),
+                    "first_failure_ts": round(window[0], 3),
+                    "last_failure_ts": round(now, 3),
+                    "locked_until_ts": round(now + LOCKOUT_SECONDS, 3),
+                    "lockout_seconds": LOCKOUT_SECONDS,
+                    "user_agent": (user_agent or "")[:_MAX_USER_AGENT],
+                }
                 window.clear()
+        if locked_record is not None and self.audit is not None:
+            self.audit.write("lockout", ip, **locked_record)
 
     def record_success(self, ip: str) -> None:
         with self._lock:
@@ -319,9 +413,12 @@ class AccessControl:
         서버 PC 의 주인만 부릅니다 (`access_token.py` 가 루프백을 확인). 잠겨 있지 않았으면 False.
         """
         with self._lock:
-            was_locked = self._locked_until.pop(ip, None) is not None
+            until = self._locked_until.pop(ip, None)
             self._failures.pop(ip, None)
-            return was_locked
+        was_locked = until is not None
+        if was_locked and self.audit is not None:
+            self.audit.write("unlock", ip, by="loopback", remaining_seconds=round(max(until - self._clock(), 0), 1))
+        return was_locked
 
 
 _control: Optional[AccessControl] = None
@@ -331,7 +428,9 @@ def get_access_control() -> AccessControl:
     """시작할 때 환경변수(= `.env`, `load_dotenv`)의 토큰으로 만듭니다."""
     global _control
     if _control is None:
-        _control = AccessControl(os.environ.get(TOKEN_ENV, "").strip() or None, source="startup")
+        _control = AccessControl(
+            os.environ.get(TOKEN_ENV, "").strip() or None, source="startup", audit=AuditLog()
+        )
     return _control
 
 
@@ -530,7 +629,7 @@ class AccessMiddleware:
         token = (form.get("token") or [""])[0]
         next_path = _safe_next((form.get("next") or ["/"])[0])
         if body is None or not control.check_token(token):
-            control.record_failure(ip)
+            control.record_failure(ip, user_agent=_headers(scope).get("user-agent", ""))
             await _respond(send, 401, login_page("토큰이 맞지 않습니다.", next_path))
             return
         control.record_success(ip)

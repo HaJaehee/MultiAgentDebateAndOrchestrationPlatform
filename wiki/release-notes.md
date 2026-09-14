@@ -24,7 +24,9 @@ saves it to `.env` and shows it in a popup ("외부 유저 인증 토큰이 없�
 `.env`에 저장하였습니다."). A malformed token written by the owner is never overwritten.
 
 The key dialog also lists IPs locked after failed logins and lets the server PC's owner lift a lock
-immediately instead of waiting 15 minutes.
+immediately instead of waiting 15 minutes. Lockouts and unlocks are kept as an audit trail in
+`data/security/login_audit.jsonl` (IP, times, failure count, User-Agent — never the submitted token), and the
+dialog shows the most recent entries.
 
 → [UI Components §1.3.6](ui/components.md) · [Environment Variables §3.1](configuration/environment-variables.md)
 

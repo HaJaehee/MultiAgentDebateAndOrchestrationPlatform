@@ -254,6 +254,32 @@ def build_access_buttons(env_path: Path = ENV_PATH, bind_host: Optional[str] = N
                 "flat dense round size=sm color=grey-4"
             ).tooltip("목록 새로고침")
         locks_box = ui.column().classes("w-full gap-1")
+        # 잠금·해제는 감사 기록 파일에도 남습니다 (재기동해도 남는 공격 흔적).
+        audit_label = ui.label("").classes("text-[10px] text-slate-500 break-all")
+        with ui.expansion("최근 잠금·해제 기록", icon="history").props("dense dark").classes(
+            "w-full text-xs text-slate-300"
+        ):
+            history_box = ui.column().classes("w-full gap-0.5")
+
+        def render_history() -> None:
+            audit = control.audit
+            history_box.clear()
+            if audit is None:
+                audit_label.set_text("감사 기록을 남기지 않는 설정입니다.")
+                return
+            audit_label.set_text(f"감사 기록: {audit._target()}")
+            records = audit.read(limit=20)
+            with history_box:
+                if not records:
+                    ui.label("기록이 없습니다.").classes("text-[11px] text-slate-500")
+                for rec in records:
+                    if rec.get("event") == "lockout":
+                        text = f"{rec.get('at', '')}  잠금  {rec.get('ip', '')}  실패 {rec.get('failures', '?')}회"
+                    elif rec.get("event") == "unlock":
+                        text = f"{rec.get('at', '')}  해제  {rec.get('ip', '')}  (서버 PC)"
+                    else:
+                        text = f"{rec.get('at', '')}  {rec.get('event', '')}  {rec.get('ip', '')}"
+                    ui.label(text).classes("font-mono text-[10px] text-slate-400 whitespace-pre")
 
         def unlock_ips(ips: List[str]) -> None:
             if not _caller_is_loopback():
@@ -269,6 +295,7 @@ def build_access_buttons(env_path: Path = ENV_PATH, bind_host: Optional[str] = N
 
         def render_locks() -> None:
             locks_box.clear()
+            render_history()
             locked = control.locked_ips()
             with locks_box:
                 if not locked:
