@@ -404,6 +404,47 @@ folders and all files; ArrowDown + Enter on `@src` inserted `@src/cache.py ` and
 the typed value with the reference block attached; a simulated upload inserted
 `@"uploads/새 설계서.docx"` and `@새` listed it at once.
 
+### 1.3.5. Workspace file download (v0.8.1)
+
+[app/ui/components/workspace_download.py](file:///d:/MultiAgentOrchestrator/app/ui/components/workspace_download.py),
+with the file logic in `app/workspace_files.py`. Uploads went in; nothing came out — a user on another PC
+had no way to take the files a debate produced.
+
+**Where.** The same `WorkspaceDownloadDialog(workspace_root).open` is attached in three places: a
+`작업 공간 파일 다운로드` button directly under the workspace input in the roster (enabled only when the
+*applied* workspace folder exists, refreshed with the workspace hint), a `작업 공간 파일` button in the
+header of every Markdown artifact tab, and a button at the end of the report body. All of them use the
+conversation's applied workspace, resolved exactly as the engine does.
+
+**Listing.** The cached index is invalidated first so files an agent just wrote appear. Files are shown
+newest first (`WorkspaceEntry.mtime` was added to the scan), filtered on the server by words that must all
+appear in the path, in a paginated `ui.table` with multiple selection. "Select visible" adds the current
+filter's rows; selecting one row offers `파일 받기`, several offer `zip 으로 받기 (n개)`.
+
+**Packing.** `plan_download()` re-resolves every submitted path with `safe_workspace_path()` — the browser's
+list is not trusted — expands folders by the same listing rules, drops duplicates, and records what it
+rejected. `build_workspace_zip()` runs in `run.io_bound`, refuses more than 5,000 files or 1 GB
+uncompressed, writes with `ZIP_DEFLATED`/zip64 using workspace-relative names (non-ASCII names get the
+UTF-8 flag), skips files that vanish mid-write, deletes the archive if packing fails, and stores it in
+`data/downloads/`, purging archives older than an hour.
+
+**Serving — a stale-content bug found in the browser.** `ui.download.file()` registers a route derived
+from a hash of the *file path* with `Cache-Control: public, max-age=3600`. Fetching the same URL again
+returned 200 from the browser cache, so re-downloading a file an agent had since rewritten could return the
+old content. `serve_once()` registers `/_mado/download/<uuid><ext>` with `single_use=True` and
+`max_cache_age=0`, then calls `ui.download.from_url`. Re-verified: the used URL returns 404, a second
+download gets a different URL, and after the file changed it returned the new content.
+
+**Verified in a browser** (anchor clicks intercepted and the URLs fetched): the report-tab and report-end
+buttons open the dialog; rows came newest first; one PDF downloaded as 2,057 bytes starting `%PDF`; three
+files downloaded as a zip starting `PK` whose entries were `uploads/요구사항 정의서.pdf`, `src/cache.py`,
+`docs/설계서.md` with the right contents. In a roster harness the button sat below the input and above the
+hint, was enabled for an existing folder, and opened the dialog. Real clicks and the browser's save
+dialog were not exercised (hidden preview window).
+
+**Not yet protected.** There is no authentication; with a non-loopback bind anyone on the network can
+download workspace files. Token-based remote access is the next task.
+
 ### 1.4. Artifact Viewer ([app/ui/components/artifact_viewer.py](file:///d:/MultiAgentOrchestrator/app/ui/components/artifact_viewer.py))
 - **Tabs accumulate across turns.** `add_artifacts()` appends a finished turn's artifacts (skipping ids
   already shown) and opens that turn's report; `render_artifacts()` is only for rebuilding from a full

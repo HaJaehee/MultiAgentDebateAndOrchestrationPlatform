@@ -134,6 +134,9 @@ class AgentRosterControl:
         self.custom_instructions: str = ""
         # 이 대화의 작업 공간. 빈 문자열이면 conf.json 기본값을 씁니다.
         self.workspace_dir: str = ""
+        # 작업 공간 파일 다운로드 창을 여는 쪽 (app.py 가 채웁니다).
+        self.on_open_workspace_download: Optional[Callable[[], Coroutine[None, None, None]]] = None
+        self.workspace_download_btn: Optional[ui.button] = None
 
         # Init selection defaults
         for ag in self.agent_pool.list_all():
@@ -347,6 +350,17 @@ class AgentRosterControl:
                     )
                     self.workspace_apply_btn.tooltip(
                         "이 대화에서 쓸 폴더로 MCP 서버를 다시 띄웁니다. conf.json 은 바뀌지 않습니다"
+                    )
+                # 적용된 작업 공간의 파일을 받아 갑니다. 다른 PC 에서 쓸 때는 이것이 결과물을
+                # 가져가는 유일한 길입니다. 폴더가 아직 없으면 잠가 둡니다.
+                with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                    self.workspace_download_btn = (
+                        ui.button("작업 공간 파일 다운로드", icon="download",
+                                  on_click=self._on_workspace_download)
+                        .props("flat dense no-caps color=sky-4 size=sm").classes("text-[11px]")
+                    )
+                    self.workspace_download_btn.tooltip(
+                        "이 대화에 적용된 작업 공간의 파일을 받습니다. 여러 개는 zip 으로 묶습니다"
                     )
                 self.workspace_hint = ui.label("").classes(
                     "text-[10px] text-slate-500 truncate w-full"
@@ -2008,6 +2022,16 @@ class AgentRosterControl:
         if typed != saved:
             text += f"   |   적용 대기: {typed}  ('적용' 을 누르세요)"
         self.workspace_hint.set_text(text)
+        btn = self.workspace_download_btn
+        if btn is not None and not btn.is_deleted:
+            if saved.is_dir():
+                btn.enable()
+            else:
+                btn.disable()
+
+    async def _on_workspace_download(self) -> None:
+        if self.on_open_workspace_download is not None:
+            await self.on_open_workspace_download()
 
     async def _on_workspace_apply(self) -> None:
         """이 대화가 쓸 작업 공간을 바꿉니다.

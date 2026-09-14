@@ -30,6 +30,7 @@ from app.ui.components.chat_feed import ChatFeed, clip_tool_output
 from app.ui.components.quiet_splitter import SPLITTER_FREEZE_JS, QuietSplitter
 from app.ui.components.roster import AgentRosterControl
 from app.ui.components.sidebar import SessionSidebar, event_changes_session_list
+from app.ui.components.workspace_download import WorkspaceDownloadDialog
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.mention_input import MENTION_JS
 from app.ui.mermaid_export import MERMAID_EXPORT_JS, MERMAID_IMAGE_JS
@@ -613,7 +614,10 @@ def create_ui() -> None:
             on_upload_file=on_upload_file,
             upload_destination=upload_destination,
         )
-        artifact_viewer = ArtifactViewer()
+        # 작업 공간 파일 다운로드. 입력란 아래와 보고서 탭, 두 곳에서 같은 창을 엽니다.
+        workspace_download = WorkspaceDownloadDialog(workspace_root)
+        roster_control.on_open_workspace_download = workspace_download.open
+        artifact_viewer = ArtifactViewer(on_open_workspace_files=workspace_download.open)
 
         # 로스터가 카드를 다시 그릴 때마다 채팅 피드도 같은 겉모습을 받습니다.
         # 잠긴 대화에서는 이 값이 conf.json 이 아니라 그때 굳은 스냅샷에서 오므로,

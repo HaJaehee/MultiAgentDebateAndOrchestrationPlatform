@@ -113,6 +113,7 @@ class WorkspaceEntry:
     path: str        # 작업 공간 기준 상대 경로, `/` 구분. 폴더는 끝에 `/` 가 붙지 않습니다.
     is_dir: bool
     size: int = 0
+    mtime: float = 0.0   # 파일의 마지막 수정 시각(epoch 초). 다운로드 목록을 최근 것부터 보여 줍니다.
 
     @property
     def name(self) -> str:
@@ -193,10 +194,10 @@ def scan_workspace(root: Path, max_entries: int = MAX_SCAN_ENTRIES) -> Workspace
             if _ignored(rel, f, False, rules):
                 continue
             try:
-                size = (base / f).stat().st_size
+                st = (base / f).stat()
             except OSError:
                 continue
-            scan.entries.append(WorkspaceEntry(rel, False, size))
+            scan.entries.append(WorkspaceEntry(rel, False, st.st_size, st.st_mtime))
             if len(scan.entries) >= max_entries:
                 scan.truncated = True
                 return scan
@@ -544,3 +545,143 @@ def agents_for_mentions(roster: Iterable[Any], active_keys: Iterable[str]) -> Li
         for a in roster
         if a.key != "orchestrator"
     ]
+
+
+# ---------------------------------------------------------------------------
+# 다운로드
+# ---------------------------------------------------------------------------
+
+# 한 번에 묶을 수 있는 파일 수와 (압축 전) 총 크기. 서버가 거대한 압축을 만들다 디스크와
+# 시간을 다 쓰지 않게 합니다. 넘으면 만들지 않고 이유를 알립니다.
+MAX_ZIP_FILES = 5_000
+MAX_ZIP_BYTES = 1024 * 1024 * 1024
+
+# 압축 파일을 잠시 두는 곳. 작업 공간 밖(앱 소유 `data/`)이라 에이전트 목록에 섞이지 않습니다.
+DOWNLOAD_TTL_SECONDS = 60 * 60
+
+
+class WorkspaceDownloadError(ValueError):
+    """다운로드를 만들 수 없는 요청 (빈 선택, 한도 초과, 작업 공간 밖 등)."""
+
+
+def download_dir() -> Path:
+    from app.config import DATA_DIR
+
+    path = DATA_DIR / "downloads"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def purge_old_downloads(directory: Optional[Path] = None, ttl: float = DOWNLOAD_TTL_SECONDS) -> int:
+    """오래된 압축 파일을 지웁니다. 지운 개수. 받는 중인 파일을 지우지 않도록 넉넉히 둡니다."""
+    directory = directory or download_dir()
+    removed = 0
+    now = time.time()
+    for item in directory.glob("*.zip"):
+        try:
+            if now - item.stat().st_mtime > ttl:
+                item.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+@dataclass
+class DownloadPlan:
+    files: List[Tuple[Path, str]] = field(default_factory=list)   # (실제 경로, 압축 안 이름)
+    total_bytes: int = 0
+    rejected: List[str] = field(default_factory=list)             # 작업 공간 밖이거나 없는 것
+
+
+def plan_download(root: Path, rel_paths: Iterable[str]) -> DownloadPlan:
+    """고른 경로를 검증해 실제로 내려줄 파일 목록을 만듭니다.
+
+    화면이 보낸 경로를 그대로 믿지 않습니다. 하나하나 작업 공간 안으로 풀고(링크 포함),
+    폴더면 목록 규칙(`scan_workspace`)대로 안의 파일을 담습니다. 같은 파일은 한 번만.
+    """
+    plan = DownloadPlan()
+    root = Path(root)
+    root_resolved = root.resolve()
+    seen = set()
+    for rel in rel_paths:
+        rel = (rel or "").strip().rstrip("/")
+        try:
+            target = safe_workspace_path(root, rel)
+        except WorkspacePathError:
+            plan.rejected.append(rel)
+            continue
+        if target.is_dir():
+            prefix = target.relative_to(root_resolved).as_posix()
+            candidates = [
+                e.path for e in scan_workspace(root).entries
+                if not e.is_dir and (e.path == prefix or e.path.startswith(prefix + "/"))
+            ]
+        elif target.is_file():
+            candidates = [target.relative_to(root_resolved).as_posix()]
+        else:
+            plan.rejected.append(rel)
+            continue
+        for candidate in candidates:
+            try:
+                path = safe_workspace_path(root, candidate)
+            except WorkspacePathError:
+                plan.rejected.append(candidate)
+                continue
+            key = str(path)
+            if key in seen or not path.is_file():
+                continue
+            seen.add(key)
+            try:
+                size = path.stat().st_size
+            except OSError:
+                plan.rejected.append(candidate)
+                continue
+            plan.files.append((path, path.relative_to(root_resolved).as_posix()))
+            plan.total_bytes += size
+    return plan
+
+
+def build_workspace_zip(
+    root: Path,
+    rel_paths: Iterable[str],
+    *,
+    directory: Optional[Path] = None,
+    max_files: int = MAX_ZIP_FILES,
+    max_bytes: int = MAX_ZIP_BYTES,
+) -> Tuple[Path, DownloadPlan, List[str]]:
+    """고른 파일을 압축합니다. (압축 파일, 계획, 읽지 못해 뺀 파일).
+
+    압축 안의 이름은 작업 공간 기준 상대 경로라, 풀면 폴더 구조가 그대로 나옵니다. 한글
+    이름은 zip 의 UTF-8 표시로 저장됩니다. 쓰는 동안 에이전트가 파일을 바꾸거나 지우면 그
+    파일만 빼고 계속합니다.
+    """
+    import zipfile
+
+    plan = plan_download(root, rel_paths)
+    if not plan.files:
+        raise WorkspaceDownloadError("내려받을 파일이 없습니다")
+    if len(plan.files) > max_files:
+        raise WorkspaceDownloadError(f"파일이 너무 많습니다 ({len(plan.files)}개, 최대 {max_files}개)")
+    if plan.total_bytes > max_bytes:
+        raise WorkspaceDownloadError(
+            f"합계가 너무 큽니다 ({format_size(plan.total_bytes)}, 최대 {format_size(max_bytes)})"
+        )
+
+    directory = directory or download_dir()
+    purge_old_downloads(directory)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    name = sanitize_upload_name(Path(root).resolve().name or "workspace")
+    target = unique_upload_target(directory, f"{name}-{stamp}.zip")
+    skipped: List[str] = []
+    try:
+        with zipfile.ZipFile(target, "x", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+            for path, arcname in plan.files:
+                try:
+                    zf.write(path, arcname)
+                except OSError:
+                    skipped.append(arcname)
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    return target, plan, skipped

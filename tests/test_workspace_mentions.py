@@ -257,3 +257,99 @@ def test_the_main_screen_wires_mentions_and_upload():
     assert app_src.count("await with_references(") == 2, "새 턴과 개입 모두"
     assert "MENTION_INPUT_CLASS" in feed_src and "MENTION_QUERY_EVENT" in feed_src
     assert MENTION_QUERY_EVENT in MENTION_JS and MENTION_INPUT_CLASS in MENTION_JS
+
+
+# ------------------------------------------------------------------ 다운로드
+
+
+import time  # noqa: E402
+import zipfile  # noqa: E402
+
+from app.ui.components.workspace_download import filter_rows  # noqa: E402
+from app.workspace_files import (  # noqa: E402
+    WorkspaceDownloadError,
+    build_workspace_zip,
+    plan_download,
+    purge_old_downloads,
+)
+
+
+def test_scan_records_modified_time_for_recent_first_listing(ws):
+    entry = next(e for e in scan_workspace(ws).entries if e.path == "docs/spec.md")
+    assert entry.mtime > 0
+
+
+def test_zip_keeps_relative_paths_and_korean_names(ws, tmp_path_factory):
+    out = tmp_path_factory.mktemp("downloads")
+    archive, plan, skipped = build_workspace_zip(
+        ws, ["docs/spec.md", "docs/요구사항 정의서.pdf", "src/cache.py"], directory=out
+    )
+    assert archive.parent == out and archive.suffix == ".zip"
+    with zipfile.ZipFile(archive) as zf:
+        assert sorted(zf.namelist()) == ["docs/spec.md", "docs/요구사항 정의서.pdf", "src/cache.py"]
+        assert zf.read("docs/spec.md") == b"# spec"
+    assert skipped == [] and plan.rejected == []
+
+
+def test_a_folder_expands_by_the_listing_rules_and_duplicates_collapse(ws):
+    plan = plan_download(ws, ["docs", "docs/spec.md", "docs/"])
+    assert sorted(arc for _, arc in plan.files) == ["docs/spec.md", "docs/요구사항 정의서.pdf"]
+
+
+@pytest.mark.parametrize("bad", ["../secret.txt", "/etc/passwd", "C:/Windows/win.ini", "docs/nope.md", ""])
+def test_download_never_leaves_the_workspace(ws, bad):
+    (ws.parent / "secret.txt").write_text("비밀", encoding="utf-8")
+    plan = plan_download(ws, [bad, "src/cache.py"])
+    assert [arc for _, arc in plan.files] == ["src/cache.py"]
+    assert bad.rstrip("/") in plan.rejected
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows 에서는 심볼릭 링크 권한이 필요합니다")
+def test_a_symlinked_file_pointing_outside_is_not_packed(ws, tmp_path_factory):
+    outside = tmp_path_factory.mktemp("outside") / "leak.txt"
+    outside.write_text("비밀", encoding="utf-8")
+    (ws / "link.txt").symlink_to(outside)
+    plan = plan_download(ws, ["link.txt", ""])
+    assert plan.files == []
+
+
+def test_empty_selection_and_limits_are_refused(ws, tmp_path_factory):
+    out = tmp_path_factory.mktemp("downloads")
+    with pytest.raises(WorkspaceDownloadError):
+        build_workspace_zip(ws, ["docs/nope.md"], directory=out)
+    with pytest.raises(WorkspaceDownloadError, match="많습니다"):
+        build_workspace_zip(ws, ["docs", "src"], directory=out, max_files=2)
+    with pytest.raises(WorkspaceDownloadError, match="큽니다"):
+        build_workspace_zip(ws, ["docs"], directory=out, max_bytes=5)
+    assert list(out.glob("*.zip")) == [], "거절한 요청은 파일을 남기지 않습니다"
+
+
+def test_old_archives_are_purged(tmp_path):
+    old = tmp_path / "old.zip"
+    new = tmp_path / "new.zip"
+    old.write_bytes(b"PK")
+    new.write_bytes(b"PK")
+    past = time.time() - 7200
+    os.utime(old, (past, past))
+    assert purge_old_downloads(tmp_path, ttl=3600) == 1
+    assert not old.exists() and new.exists()
+
+
+def test_download_search_needs_every_word():
+    rows = [{"path": "uploads/설계서.pdf"}, {"path": "src/cache.py"}, {"path": "uploads/notes.md"}]
+    assert [r["path"] for r in filter_rows(rows, "uploads pdf")] == ["uploads/설계서.pdf"]
+    assert len(filter_rows(rows, "  ")) == 3
+
+
+def test_download_buttons_are_wired_in_both_places():
+    app_src = io.open(ROOT / "app" / "ui" / "app.py", encoding="utf-8").read()
+    roster_src = io.open(ROOT / "app" / "ui" / "components" / "roster.py", encoding="utf-8").read()
+    viewer_src = io.open(ROOT / "app" / "ui" / "components" / "artifact_viewer.py", encoding="utf-8").read()
+    assert "WorkspaceDownloadDialog(workspace_root)" in app_src
+    assert "roster_control.on_open_workspace_download = workspace_download.open" in app_src
+    assert "ArtifactViewer(on_open_workspace_files=workspace_download.open)" in app_src
+    assert "작업 공간 파일 다운로드" in roster_src
+    # 입력란 아래: 버튼이 입력란보다 뒤, 안내 줄보다 앞에 만들어집니다.
+    assert roster_src.index("self.workspace_input = ui.input(") < roster_src.index("self.workspace_download_btn = (") \
+        < roster_src.index("self.workspace_hint = ui.label(")
+    assert "_open_workspace_files" in viewer_src

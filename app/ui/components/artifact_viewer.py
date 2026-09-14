@@ -1,7 +1,7 @@
 import json
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Coroutine, Dict, List, Optional
 from nicegui import ui
 
 from app.export_mermaid import convert_mermaid_to_staruml_mdj, generate_mermaid_standalone_html
@@ -55,7 +55,10 @@ def default_tab_index(artifacts: List[Dict[str, Any]]) -> int:
 class ArtifactViewer:
     """Tabbed artifact viewer for Synthesized Markdown, Code, Mermaid diagrams, and JSON exports."""
 
-    def __init__(self):
+    def __init__(self, on_open_workspace_files: Optional[Callable[[], Coroutine[None, None, None]]] = None):
+        # 보고서 탭의 "작업 공간 파일" 버튼이 여는 다운로드 창. 토론이 만든 파일을 결론을
+        # 읽는 그 자리에서 찾게 합니다. 없으면 버튼을 그리지 않습니다.
+        self.on_open_workspace_files = on_open_workspace_files
         self.artifacts: List[Dict[str, Any]] = []
         self.container: Optional[ui.card] = None
         self.content_column: Optional[ui.column] = None
@@ -198,6 +201,14 @@ class ArtifactViewer:
                         ).props("flat dense size=sm color=slate-4").tooltip("Mermaid 원본 스크립트 (.mmd) 파일 다운로드")
                 else:
                     with ui.row().classes("items-center gap-1"):
+                        if art_type == "markdown" and self.on_open_workspace_files is not None:
+                            ui.button(
+                                "작업 공간 파일",
+                                icon="folder_zip",
+                                on_click=self._open_workspace_files,
+                            ).props("flat dense size=sm color=sky-4").tooltip(
+                                "토론이 작업 공간에 만든 파일을 받습니다 (최근 것부터, 여러 개는 zip)"
+                            )
                         ui.button(
                             "Copy",
                             icon="content_copy",
@@ -221,6 +232,13 @@ class ArtifactViewer:
                     # `artifact-report`: 문단·섹션 단위로 화면 밖 것을 건너뜁니다 (theme.py).
                     with ui.column().classes("prose prose-invert max-w-none text-xs text-slate-200 artifact-report"):
                         ui.markdown(content)
+                    if self.on_open_workspace_files is not None:
+                        # 긴 보고서를 끝까지 읽은 자리에서도 바로 받게 합니다.
+                        ui.button(
+                            "이 작업 공간의 파일 다운로드",
+                            icon="download",
+                            on_click=self._open_workspace_files,
+                        ).props("outline dense no-caps size=sm color=sky-4").classes("mt-3")
 
     def _render_mermaid(self, content: str, wrapper_id: Optional[str] = None) -> None:
         """Mermaid 다이어그램. 렌더링에 실패하면 그 사실과 원본을 같이 보여줍니다.
@@ -265,6 +283,10 @@ class ArtifactViewer:
             except Exception as exc:  # noqa: BLE001 - 문법 오류로 뷰어가 죽으면 안 됩니다
                 logger.warning(f"Mermaid rendering failed: {exc}")
                 ui.code(content, language="mermaid").classes("w-full text-xs")
+
+    async def _open_workspace_files(self) -> None:
+        if self.on_open_workspace_files is not None:
+            await self.on_open_workspace_files()
 
     def _copy_to_clipboard(self, text: str) -> None:
         # `navigator.clipboard` 는 보안 컨텍스트에서만 있습니다. 이 앱은 LAN 의 다른

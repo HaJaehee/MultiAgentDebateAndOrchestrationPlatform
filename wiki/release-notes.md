@@ -8,6 +8,16 @@ changed*, not a second copy of the documentation.
 
 ## v0.8.1
 
+**Download workspace files.** A `작업 공간 파일 다운로드` button under the workspace input, and a
+`작업 공간 파일` button on report tabs (also at the end of the report), open a list of the applied
+workspace's files, newest first. One file downloads as is; several download as a zip with
+workspace-relative paths (max 5,000 files / 1 GB). Paths are re-checked on the server, so nothing outside
+the workspace is packed. A stale-content bug in NiceGUI's default download (path-derived URL cached for an
+hour) was found in the browser and avoided: each download gets a fresh, single-use, uncached URL. There is
+still no authentication — keep the app on `127.0.0.1` until token access lands.
+
+→ [UI Components §1.3.5](ui/components.md)
+
 **Flowcharts with sequence-diagram syntax no longer slip through.** A diagram failed to render with
 `Parse error … Note right of Validator: Expecting 'SEMI', … got 'NODE_STRING'`: the model had put a
 sequence-diagram `Note` inside a flowchart. The syntax checker had no rule for mixed diagram kinds, so
