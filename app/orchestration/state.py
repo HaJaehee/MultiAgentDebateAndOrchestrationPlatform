@@ -55,6 +55,9 @@ class DebateState(BaseModel):
     context_grant: Optional[int] = None
     # 컨텍스트 한도로 생략된 기록의 누적 건수 (발언·도구 관측·합성 전사 전부).
     context_dropped: int = 0
+    # `messages` 중 **이번 턴**이 시작되는 자리. 앞쪽은 이전 턴 기록을 맥락으로 불러온
+    # 것입니다. 산출물(전문가 코드, 합성 실패 시의 대체 결론)은 이번 턴 발언에서만 모읍니다.
+    turn_message_start: int = 0
     # LLM 응답을 받지 못해 이번 턴에서 발언하지 못한 에이전트. 합성 프롬프트와
     # 요약 아티팩트가 "없는 의견"을 있는 것처럼 다루지 않도록 여기에 남깁니다.
     failed_agent_keys: List[str] = Field(default_factory=list)

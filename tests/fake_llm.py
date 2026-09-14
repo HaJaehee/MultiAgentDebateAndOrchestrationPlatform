@@ -33,10 +33,7 @@ flowchart LR
     C --> D[합성 산출물]
 ```
 
-```python
-async def main() -> None:
-    print("ok")
-```
+구현은 전문가 발언과 `app/main.py` 에 있습니다.
 """
 
 

@@ -15,12 +15,13 @@ from app.agents.llm import (
     context_budget,
     context_trim_notice,
     estimate_tokens,
+    NATIVE_REASONING_HEADER,
     memory_search_tool,
     strip_reasoning_trace,
 )
 from app.agents.personas import prepare_agents_for_turn
 from app.agents.pool import AgentPool, get_agent_pool
-from app.timestamps import report_completed_line
+from app.timestamps import report_completed_line, to_local
 from app.config import DATA_DIR, TOOL_ITERATION_CEILING, resolve_workspace_dir
 from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
@@ -166,6 +167,54 @@ PERSIST_RETRY_DELAYS = (2.0, 5.0)
 # 그 화면이 조용히 구독에서 빠졌습니다 — 카드가 스트리밍 도중 멈춘 채 남았습니다.
 # 0.1초는 사람 눈에 끊겨 보이지 않을 만큼 짧고, 이벤트 수는 10분의 1 아래로 줄입니다.
 STREAM_EVENT_INTERVAL = 0.1
+
+# ---------------------------------------------------------------- 합성 결과
+
+# 합성 결론으로 보지 않는 줄 — 응답 한도·빈 답변 등을 알리는 꼬리표(`> ⚠️ ...`).
+_NOTICE_LINE = re.compile(r"^\s*>\s*⚠️")
+
+# 이번 턴 전문가 발언에서 모아 산출물로 올릴 코드의 최대 개수. 초안과 수정본이 여러 번
+# 오가는 토론에서 탭이 끝없이 늘지 않게 합니다.
+MAX_DEBATE_CODE_ARTIFACTS = 12
+
+
+def format_roster(agents: List[Agent], *, with_keys: bool = False) -> str:
+    """오케스트레이터에게 보여 줄 전문가 목록. 계획·발언자 지명·과업 분배가 함께 씁니다.
+
+    이름과 역할, 쓸 수 있는 도구 서버 이름만 적습니다. 시스템 프롬프트는 넣지 않습니다 —
+    누구에게 무엇을 맡길지 정하는 데는 이것으로 충분하고, 프롬프트 전문은 호출마다 수천
+    토큰입니다. 도구 서버는 "파일 쓰기는 누구에게" 를 가르는 데 필요해 이름만 붙입니다
+    (스키마는 넣지 않습니다). 단계적 사고 서버는 일을 하는 도구가 아니라 뺍니다.
+
+    `with_keys` 는 JSON 으로 에이전트 키를 돌려받는 호출(지명·분배)용입니다. 계획 발언은
+    전문가들이 전사에서 자기 이름을 찾아 읽으므로 이름으로 부르게 합니다.
+    """
+    lines = []
+    for agent in agents:
+        thinking_server = agent.sequential_thinking.mcp_server
+        servers = [s for s in agent.allowed_mcp_servers if s != thinking_server]
+        head = f"{agent.key}: {agent.name}" if with_keys else agent.name
+        tools = f" · 도구: {', '.join(servers)}" if servers else " · 도구: 없음"
+        lines.append(f"- {head} ({agent.role}){tools}")
+    return "\n".join(lines)
+
+
+def synthesis_has_content(text: str) -> bool:
+    """합성 발언이 실제로 결론을 담았는가.
+
+    오케스트레이터가 빈 답을 내면 예전에는 **빈 보고서가 정상 결론의 제목으로** 저장됐고,
+    화면은 그 턴의 산출물로 뷰어를 통째로 바꿔 이전 결론까지 사라져 보였습니다. 꼬리표만
+    붙은 답(응답 한도, 답이 사고 안에만 있음 등)도 결론이 아닙니다.
+    """
+    lines = (text or "").strip().splitlines()
+    # native 모드의 사고 인용 블록만 있고 답이 없는 경우. `strip_reasoning_trace` 는 이때
+    # 사고라도 넘기려고 원문을 지키므로, 여기서 따로 걷어냅니다.
+    if lines and lines[0].startswith(NATIVE_REASONING_HEADER):
+        while lines and (lines[0].startswith(">") or not lines[0].strip()):
+            lines.pop(0)
+    body = "\n".join(line for line in lines if not _NOTICE_LINE.match(line))
+    return bool(strip_reasoning_trace(body).strip())
+
 
 # DB 에 끝내 기록하지 못한 발언·산출물을 남기는 폴더.
 #
@@ -951,6 +1000,8 @@ class OrchestratorEngine:
                         msg_type=pm.msg_type,
                     )
                 )
+            # 여기서부터가 이번 턴입니다. 산출물은 이 뒤의 발언에서만 모읍니다.
+            state.turn_message_start = len(state.messages)
 
             # 3. Record User Message in DB
             #
@@ -972,6 +1023,21 @@ class OrchestratorEngine:
             if on_event:
                 await on_event({"type": "status_changed", "status": "planning", "speaker": orchestrator_agent.name})
 
+            # 0라운드에서 업무를 나누려면 누가 있는지 알아야 합니다. 예전에는 첫 턴 프롬프트에
+            # "(Architect, Coder, Critic)" 이 박혀 있어 로스터가 다른 세션에서 없는 사람에게
+            # 일을 나눴고, 이후 턴에는 목록 자체가 없었습니다.
+            specialists = [a for a in active_agents if a.key != "orchestrator"]
+            roster_block = (
+                f"[이번 토론 참여 전문가]\n{format_roster(specialists)}\n\n"
+                if specialists else ""
+            )
+            assign_rule = (
+                "위 전문가 각각에게, 목록의 이름 그대로 불러 이번 턴에 맡을 일과 산출물을 "
+                "한두 문장으로 지시하세요. 도구가 필요한 일(파일 쓰기 등)은 그 도구를 가진 "
+                "전문가에게 맡기고, 목록에 없는 역할에는 일을 주지 마세요."
+                if specialists else ""
+            )
+
             if len(state.messages) > 1:
                 history_snippets = []
                 for m in state.messages[:-1]:
@@ -989,13 +1055,20 @@ class OrchestratorEngine:
                     {"role": "user", "content": (
                         f"[이전 대화 맥락]:\n{history_text}\n\n"
                         f"[신규 User Request]:\n{user_prompt}\n\n"
+                        f"{roster_block}"
                         "위의 이전 세션 논의 맥락과 새로운 사용자 요청을 종합 분석하여 이번 토론의 핵심 목표, "
-                        "접근 방향, 각 에이전트에게 부여할 발언 지침을 작성하세요."
+                        "접근 방향, 각 전문가에게 부여할 발언 지침을 작성하세요. "
+                        f"{assign_rule}"
                     )}
                 ]
             else:
                 orch_plan_prompt = [
-                    {"role": "user", "content": f"[User Request]: {user_prompt}\n\n위 요청을 분석하고 이번 토론의 핵심 목표, 접근 방향, 각 에이전트(Architect, Coder, Critic)에게 부여할 발언 지침을 작성하세요."}
+                    {"role": "user", "content": (
+                        f"[User Request]: {user_prompt}\n\n"
+                        f"{roster_block}"
+                        "위 요청을 분석하고 이번 토론의 핵심 목표, 접근 방향, 각 전문가에게 부여할 "
+                        f"발언 지침을 작성하세요. {assign_rule}"
+                    )}
                 ]
 
             await self._speak(
@@ -1150,10 +1223,21 @@ class OrchestratorEngine:
                 turn_started_at=turn_started_at,
             )
             synthesis_failed = synth_message.msg_type == "error"
+            failure_reason = "LLM 연결 끊김" if synthesis_failed else ""
+            # 연결은 됐는데 결론이 비었습니다. 컨텍스트가 가득 찼거나, 답을 사고 안에만
+            # 썼거나, 응답 한도를 사고에 다 쓴 경우입니다. 정상 결론으로 저장하면 안 됩니다.
+            if not synthesis_failed and not synthesis_has_content(synth_message.content):
+                synthesis_failed = True
+                failure_reason = "빈 응답"
+                logger.error(
+                    f"Synthesis for session {session_id} came back empty; "
+                    f"keeping each specialist's latest speech as the report instead"
+                )
 
             # 7. Extract and Persist Artifacts
             artifacts = self._extract_artifacts_from_synthesis(
                 session_id, synth_message.content, state, synthesis_failed=synthesis_failed,
+                failure_reason=failure_reason,
                 # 합성 발언이 끝난 시각. 다이어그램 자가 수선(`_fix_diagrams`)까지 마친
                 # 뒤에 잰 값이라, 보고서 본문이 확정된 순간입니다.
                 completed_at=synth_message.finished_at,
@@ -1204,11 +1288,18 @@ class OrchestratorEngine:
 
             state.status = "completed"
             # 사용자가 도중에 끊었다면 합의에 이른 것이 아닙니다.
-            state.is_consensus_reached = not state.failed_agent_keys and not state.stopped_early
+            state.is_consensus_reached = (
+                not state.failed_agent_keys and not state.stopped_early and not synthesis_failed
+            )
             if state.failed_agent_keys:
                 state.error_message = (
                     "다음 에이전트가 LLM 엔드포인트에 닿지 못했습니다: "
                     + ", ".join(state.failed_agent_keys)
+                )
+            elif synthesis_failed:
+                state.error_message = (
+                    "오케스트레이터의 최종 결론이 비어 있었습니다. 전문가별 마지막 발언을 "
+                    "산출물로 남겼습니다."
                 )
 
             if on_event:
@@ -1379,7 +1470,7 @@ class OrchestratorEngine:
             ),
         })
 
-        roster = "\n".join(f"- {a.key}: {a.name} ({a.role})" for a in candidates)
+        roster = format_roster(candidates, with_keys=True)
         recent = [
             # 자르기 전에 사고 과정을 뗍니다 (계획 프롬프트와 같은 이유).
             f"{m.sender_name}({m.sender_role}): {strip_reasoning_trace(m.content)[:300]}"
@@ -1673,7 +1764,7 @@ class OrchestratorEngine:
             ),
         })
 
-        roster = "\n".join(f"- {a.key}: {a.name} ({a.role})" for a in candidates)
+        roster = format_roster(candidates, with_keys=True)
         recent = [
             # 자르기 전에 사고 과정을 뗍니다 (계획 프롬프트와 같은 이유).
             f"{m.sender_name}({m.sender_role}): {strip_reasoning_trace(m.content)[:300]}"
@@ -1953,6 +2044,12 @@ class OrchestratorEngine:
 
         최근 발언부터 채웁니다. 뒤로 갈수록 앞선 논의가 반영된 결론이라,
         잘라야 한다면 앞쪽을 버리는 편이 낫습니다.
+
+        오케스트레이터에게는 **결론과 종합 다이어그램만** 시킵니다. 예전에는 "완전한 실행
+        가능 소스 코드" 까지 요구해, 전문가들이 이미 쓴 코드를 합성에서 통째로 다시
+        출력했습니다. 응답 한도를 금방 채웠고, 그 합성 발언이 다음 턴 전사에 코드 덤프로
+        다시 들어가 컨텍스트가 턴마다 빠르게 포화됐습니다 — 결국 합성이 비어 돌아오는
+        원인이 됐습니다. 코드 산출물은 전문가 발언에서 따로 모읍니다.
         """
         usable = [m for m in state.messages if m.msg_type != "error"]
 
@@ -2025,13 +2122,16 @@ class OrchestratorEngine:
             f"[Full Multi-Agent Debate Transcript]:\n{full_transcript}\n"
             f"{early_stop}"
             f"{missing}\n"
-            f"수석 오케스트레이터로서 모든 토론과 피드백을 통합하여 최종 합의 보고서를 작성하세요.\n"
-            f"반드시 다음 항목들을 포함해야 합니다:\n"
-            f"1. **최종 합의 요약 및 아키텍처 결정 사항 (Summary & Architecture)**\n"
-            f"2. **Mermaid 다이어그램** (```mermaid 블록. 노드 라벨에 괄호를 쓸 때는 "
-            f'A["결제 서비스 (Payment)"] 처럼 반드시 큰따옴표로 감쌀 것)\n'
-            f"3. **완전한 실행 가능 소스 코드** (```python 블록)\n"
-            f"4. **품질/보안 점검표 및 엣지 케이스 대응 전략**"
+            f"수석 오케스트레이터로서 토론을 종합해 최종 합의 보고서를 작성하세요. "
+            f"이 보고서가 맡는 것은 **결론과 종합 다이어그램까지**입니다.\n"
+            f"다음 두 가지만 쓰세요:\n"
+            f"1. **최종 합의 결론** — 결정 사항과 그 근거, 채택하지 않은 대안과 이유, "
+            f"남은 쟁점과 위험\n"
+            f"2. **종합 Mermaid 다이어그램** 하나 (```mermaid 블록. 노드 라벨에 괄호를 쓸 때는 "
+            f'A["결제 서비스 (Payment)"] 처럼 반드시 큰따옴표로 감쌀 것)\n\n'
+            f"[하지 말 것] 소스 코드를 다시 쓰거나 붙여 넣지 마세요. 코드는 전문가 발언과 작업 "
+            f"공간 파일에 이미 있고, 산출물 탭에도 전문가 발언에서 따로 모읍니다. 코드가 필요한 "
+            f"자리는 파일 경로·모듈·함수 이름으로만 가리키세요."
         )
         return [{"role": "user", "content": prompt}]
 
@@ -2220,6 +2320,86 @@ class OrchestratorEngine:
             text = text[:block["start"]] + fixed + text[block["end"]:]
         return text
 
+    def _turn_speeches(self, state: DebateState) -> List[DebateMessage]:
+        """이번 턴 전문가 발언. 사용자·오케스트레이터(계획·지명·합성)·실패 안내는 뺍니다."""
+        return [
+            m for m in state.messages[state.turn_message_start:]
+            if m.sender_key not in ("user", "orchestrator") and m.msg_type != "error"
+        ]
+
+    def _debate_code_artifacts(self, state: DebateState, stamp: str) -> List[ArtifactItem]:
+        """이번 턴 전문가 발언에서 코드를 모읍니다. 에이전트마다 **가장 최근에** 코드를 낸 발언.
+
+        오케스트레이터가 합성에서 코드를 다시 쓰지 않으므로, 코드 탭은 여기서 채웁니다.
+        이전 턴의 코드는 그 턴의 산출물로 이미 남아 있으니 다시 올리지 않습니다. 사고 과정에
+        적은 초안이 섞이지 않게 결론만 봅니다. 같은 코드는 한 번만 올립니다.
+        """
+        latest: Dict[str, Tuple[DebateMessage, List[Dict[str, str]]]] = {}
+        for msg in self._turn_speeches(state):
+            blocks = [
+                b for b in extract_code_blocks(strip_reasoning_trace(msg.content))
+                if b["language"] in CODE_LANGUAGES
+            ]
+            if blocks:
+                latest[msg.sender_key] = (msg, blocks)
+
+        artifacts: List[ArtifactItem] = []
+        seen = set()
+        for msg, blocks in latest.values():
+            for block in blocks:
+                key = block["code"].strip()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                lang = "python" if block["language"] == "py" else block["language"]
+                artifacts.append(ArtifactItem(
+                    artifact_type="code",
+                    title=f"{stamp} {lang} · {msg.sender_name} R{msg.round_number}".strip(),
+                    content=block["code"],
+                    language=lang,
+                ))
+                if len(artifacts) >= MAX_DEBATE_CODE_ARTIFACTS:
+                    return artifacts
+        return artifacts
+
+    def _synthesis_fallback_report(
+        self, state: DebateState, failure_reason: str, synth_text: str
+    ) -> str:
+        """합성이 비었거나 실패했을 때 남기는 보고서 — LLM 없이 모은 전문가별 마지막 발언.
+
+        토론은 끝났는데 결론만 없는 상태입니다. 예전에는 이 턴의 산출물이 빈 보고서였고,
+        화면이 그것으로 뷰어를 바꿔 **토론 결과가 증발한 것처럼** 보였습니다. 발언 자체는
+        기록에 있지만, 결론을 찾는 사람은 산출물 탭을 봅니다.
+        """
+        latest: Dict[str, DebateMessage] = {}
+        for msg in self._turn_speeches(state):
+            latest[msg.sender_key] = msg
+
+        what = (
+            "만들지 못했습니다 (LLM 연결 끊김)" if failure_reason == "LLM 연결 끊김"
+            else f"비워 두었습니다 ({failure_reason})"
+        )
+        parts = [
+            f"> ⚠️ **오케스트레이터가 이번 턴의 최종 결론을 {what}.**\n"
+            f">\n"
+            f"> 토론 기록은 그대로 남아 있습니다. 아래는 LLM 없이 모은 **전문가별 마지막 "
+            f"발언**입니다. 이전 턴의 결론은 산출물 탭에 그대로 있습니다. 결론이 필요하면 "
+            f"같은 대화에서 \"결론만 다시 정리해 줘\" 처럼 요청하세요."
+        ]
+        notice = (synth_text or "").strip()
+        if notice and failure_reason == "LLM 연결 끊김":
+            parts.append(notice)
+        if latest:
+            parts.append("## 전문가별 마지막 발언")
+            for msg in latest.values():
+                body = strip_reasoning_trace(msg.content).strip() or "(내용 없음)"
+                parts.append(
+                    f"### {msg.sender_name} ({msg.sender_role}) — Round {msg.round_number}\n\n{body}"
+                )
+        else:
+            parts.append("_이번 턴에는 기록된 전문가 발언이 없습니다._")
+        return "\n\n".join(parts) + "\n"
+
     def _extract_artifacts_from_synthesis(
         self,
         session_id: str,
@@ -2228,88 +2408,79 @@ class OrchestratorEngine:
         synthesis_failed: bool = False,
         completed_at: Optional[datetime] = None,
         turn_started_at: Optional[datetime] = None,
+        failure_reason: str = "LLM 연결 끊김",
     ) -> List[ArtifactItem]:
-        """Extracts markdown, code, and mermaid artifacts from the synthesis text.
+        """이 턴의 산출물: 최종 결론, 종합 다이어그램, 전문가 코드, 요약 JSON.
 
-        `completed_at` 이 주어지면 종합 보고서 끝에 완료 시각을 적고, `turn_started_at`
-        까지 있으면 그 오른쪽에 이 턴의 총 경과 시간을 붙입니다. 합성이 실패했으면
-        적지 않습니다 — 그 아티팩트는 실패 안내이지 완료된 보고서가 아니므로,
-        "보고서 완료" 라고 적으면 거짓입니다.
+        제목 앞에 턴이 끝난 시각(`MM-DD HH:MM`)을 붙입니다. 산출물은 턴마다 쌓이고 화면은
+        지난 턴 것을 지우지 않으므로, 같은 제목의 탭이 여러 개일 때 어느 턴의 것인지 보여야
+        합니다.
+
+        `completed_at` 이 주어지면 보고서 끝에 완료 시각과 총 경과를 적습니다. 합성이
+        실패했으면 적지 않습니다 — 실패 안내를 "보고서 완료" 라고 부르면 거짓입니다.
         """
+        stamp = to_local(completed_at).strftime("%m-%d %H:%M") if completed_at else ""
         artifacts: List[ArtifactItem] = []
 
-        # 1. Full Synthesized Markdown Document
-        report = synth_text
-        completed_line = (
-            "" if synthesis_failed else report_completed_line(completed_at, turn_started_at)
-        )
-        if completed_line:
-            # 본문에만 붙입니다. 아래의 코드·다이어그램 추출은 원문(`synth_text`)으로
-            # 하므로 이 줄이 다른 아티팩트에 섞이지 않습니다.
-            report = f"{synth_text.rstrip()}\n\n---\n\n{completed_line}\n"
-        artifacts.append(
-            ArtifactItem(
+        # 1. 최종 결론 — 실패했으면 전문가별 마지막 발언으로 대신합니다.
+        if synthesis_failed:
+            artifacts.append(ArtifactItem(
                 artifact_type="markdown",
-                title=(
-                    "합성 실패 (LLM 연결 끊김)" if synthesis_failed
-                    else "종합 아키텍처 & 산출물 보고서 (Final Synthesis Report)"
-                ),
+                title=f"{stamp} 합성 실패 ({failure_reason or 'LLM 연결 끊김'})".strip(),
+                content=self._synthesis_fallback_report(state, failure_reason, synth_text),
+                language="markdown",
+            ))
+        else:
+            completed_line = report_completed_line(completed_at, turn_started_at)
+            report = (
+                f"{synth_text.rstrip()}\n\n---\n\n{completed_line}\n" if completed_line else synth_text
+            )
+            artifacts.append(ArtifactItem(
+                artifact_type="markdown",
+                title=f"{stamp} 최종 결론".strip(),
                 content=report,
                 language="markdown",
-            )
-        )
+            ))
 
-        # 2. Extract code blocks
-        code_blocks = extract_code_blocks(synth_text)
-        code_idx = 1
+        # 2. 종합 다이어그램 — 합성 원문에서. 코드는 뽑지 않습니다 (오케스트레이터가 쓰지
+        #    않도록 했고, 그래도 썼다면 보고서 본문에 남아 있습니다).
         mermaid_idx = 1
-        for block in code_blocks:
-            lang = block["language"]
-            code = block["code"]
-            if lang == "mermaid":
-                artifacts.append(
-                    ArtifactItem(
-                        artifact_type="mermaid",
-                        title=f"시스템 아키텍처 다이어그램 #{mermaid_idx}",
-                        content=normalize_mermaid(code),
-                        language="mermaid",
-                    )
-                )
+        if not synthesis_failed:
+            for block in extract_code_blocks(synth_text):
+                if block["language"] != "mermaid":
+                    continue
+                artifacts.append(ArtifactItem(
+                    artifact_type="mermaid",
+                    title=f"{stamp} 종합 다이어그램" + (f" #{mermaid_idx}" if mermaid_idx > 1 else ""),
+                    content=normalize_mermaid(block["code"]),
+                    language="mermaid",
+                ))
                 mermaid_idx += 1
-            elif lang in CODE_LANGUAGES:
-                artifacts.append(
-                    ArtifactItem(
-                        artifact_type="code",
-                        title=f"핵심 구현 소스코드 ({lang}) #{code_idx}",
-                        content=code,
-                        language=lang if lang not in ["py"] else "python",
-                    )
-                )
-                code_idx += 1
 
-        # 2-b. 합성 보고서에 다이어그램이 없으면 토론 본문에서 찾습니다.
-        #      아키텍트가 그린 다이어그램이 최종 보고서에 다시 실리지 않는 경우가
-        #      잦고 (답변 길이 제한), 그때마다 다이어그램 탭이 통째로 비었습니다.
+        # 2-b. 합성에 다이어그램이 없으면 이번 턴 토론 본문에서 찾습니다. 합성이 실패한
+        #      턴에도 다이어그램 탭이 비지 않게 합니다. 이전 턴 다이어그램은 그 턴의
+        #      산출물로 이미 남아 있어 다시 올리지 않습니다.
         if mermaid_idx == 1:
-            for msg in reversed(state.messages):
+            for msg in reversed(state.messages[state.turn_message_start:]):
                 if msg.msg_type == "error" or msg.sender_key == "user":
                     continue
                 found = [b for b in extract_code_blocks(msg.content) if b["language"] == "mermaid"]
                 if not found:
                     continue
                 for block in found:
-                    artifacts.append(
-                        ArtifactItem(
-                            artifact_type="mermaid",
-                            title=f"시스템 아키텍처 다이어그램 #{mermaid_idx} ({msg.sender_name} 제안)",
-                            content=normalize_mermaid(block["code"]),
-                            language="mermaid",
-                        )
-                    )
+                    artifacts.append(ArtifactItem(
+                        artifact_type="mermaid",
+                        title=f"{stamp} 다이어그램 #{mermaid_idx} ({msg.sender_name} 제안)".strip(),
+                        content=normalize_mermaid(block["code"]),
+                        language="mermaid",
+                    ))
                     mermaid_idx += 1
                 break
 
-        # 3. JSON Summary Artifact
+        # 3. 전문가 코드 — 이번 턴 발언에서.
+        artifacts.extend(self._debate_code_artifacts(state, stamp))
+
+        # 4. 요약 JSON
         json_summary = {
             "session_id": session_id,
             "goal": state.user_prompt,
@@ -2317,20 +2488,18 @@ class OrchestratorEngine:
             "total_rounds": state.current_round,
             "participating_agents": state.active_agent_keys,
             "failed_agents": list(state.failed_agent_keys),
+            "synthesis_failed": synthesis_failed,
             "total_messages": len(state.messages),
-            "consensus_reached": not state.failed_agent_keys,
+            "consensus_reached": not state.failed_agent_keys and not synthesis_failed,
         }
-        artifacts.append(
-            ArtifactItem(
-                artifact_type="json",
-                title="세션 메타데이터 & 토론 요약 (JSON)",
-                content=json.dumps(json_summary, indent=2, ensure_ascii=False),
-                language="json",
-            )
-        )
+        artifacts.append(ArtifactItem(
+            artifact_type="json",
+            title=f"{stamp} 토론 요약 (JSON)".strip(),
+            content=json.dumps(json_summary, indent=2, ensure_ascii=False),
+            language="json",
+        ))
 
         return artifacts
-
 
 _orchestrator_engine: Optional[OrchestratorEngine] = None
 

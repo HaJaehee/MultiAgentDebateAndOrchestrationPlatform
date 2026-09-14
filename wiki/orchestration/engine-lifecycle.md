@@ -56,7 +56,7 @@ time. Every `call_agent()` in the turn is handed that runtime explicitly. See
 1. **Multi-Turn Context Restoration**: At the start of a turn, the engine loads all previous `MessageModel` records for the session from SQLite into `state.messages`. This ensures previous user prompts and agent remarks are fully restored.
 2. The user's input is saved as a `MessageModel` with `sender_key = "user"` and `round_number = 0`.
 3. The engine invokes the **Master Orchestrator** with a planning prompt (which incorporates a summary of past session history if multiple turns have occurred).
-4. The Orchestrator deconstructs the request, identifies system constraints, and assigns specific responsibilities to each participating specialist (Architect, Coder, Critic).
+4. The Orchestrator deconstructs the request, identifies system constraints, and assigns specific responsibilities to each participating specialist. The planning prompt carries a **roster** of this turn's active specialists (the orchestrator excluded), built by `format_roster()`: one line per agent with name, role and MCP tool server names, e.g. `- Senior Python Engineer (Implementation) · 도구: filesystem`. System prompts are deliberately left out — a few dozen tokens per agent is enough to divide work, while personas cost thousands per call. Tool servers are listed so work that needs a tool (writing files) goes to an agent that has it; the sequential-thinking server is omitted because it does no work. The orchestrator is told to address each specialist by the listed name and not to assign roles outside the list. Previously the first-turn prompt hard-coded "(Architect, Coder, Critic)", so a session with a different roster had work handed to agents that did not exist, and later turns had no roster at all. Speaker selection and parallel dispatch use the same function with `with_keys=True`, since they return agent keys as JSON.
 5. The plan is streamed incrementally to the UI and committed to the database.
 
 ### Phase 2: Multi-Round Specialist Debate Loop
@@ -106,7 +106,7 @@ async def on_event(event: Dict[str, Any]) -> None:
 | `tool_executed` | `agent_key`, `agent_name`, `tool_call` | Appends collapsible accordion item showing input & output. |
 | `mermaid_repair_started` | `agent_name`, `broken`, `total`, `attempt`, `max_attempts` | Progress banner: a diagram failed the syntax check and is being redrawn. |
 | `mermaid_repair_finished` | `agent_name`, `resolved`, `attempts`, `remaining` | Positive toast when fixed; warning toast naming how many diagrams still fail. |
-| `artifacts_synthesized` | `artifacts` list | Populates code, markdown, and Mermaid tabs in Artifact Viewer. |
+| `artifacts_synthesized` | `artifacts` list (this turn only) | Appended to the Artifact Viewer's tabs (`add_artifacts`); earlier turns' tabs stay. |
 | `turn_completed` | `status`, `failed_agents`, `error_message` | Re-enables user input and marks personas locked; names any agent that never answered. |
 | `run_finished` | `status` (`completed` / `failed` / `cancelled`), `error` | Emitted by `DebateRunner`, not the engine. Detaches the page's subscription. |
 

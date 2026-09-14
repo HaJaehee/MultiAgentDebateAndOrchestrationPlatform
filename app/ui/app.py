@@ -24,7 +24,7 @@ from app.database.session import get_session_factory
 from app.orchestration.runner import TurnRun, get_debate_runner
 from app.orchestration.strategies import resolve_strategy_name
 from app.session_ops import discard_turn
-from app.ui.components.artifact_viewer import ArtifactViewer
+from app.ui.components.artifact_viewer import ArtifactViewer, merge_artifacts
 from app.ui.components.chat_feed import ChatFeed, clip_tool_output
 from app.ui.components.quiet_splitter import SPLITTER_FREEZE_JS, QuietSplitter
 from app.ui.components.roster import AgentRosterControl
@@ -116,7 +116,8 @@ def create_ui() -> None:
                         type="warning", position="bottom-right", close_button="확인",
                     )
             elif etype == "artifacts_synthesized":
-                artifact_viewer.render_artifacts(event.get("artifacts", []))
+                # 교체가 아니라 덧붙이기입니다. 이 이벤트에는 이번 턴 산출물만 옵니다.
+                artifact_viewer.add_artifacts(event.get("artifacts", []))
             elif etype == "stop_requested":
                 # 정지를 누른 화면뿐 아니라 같은 세션을 보고 있는 모든 화면이
                 # 같은 상태를 보아야 합니다.
@@ -777,7 +778,8 @@ def create_ui() -> None:
                 formatted_msgs.extend(m for m in snapshot["messages"] if m.get("id") not in known)
                 streaming_ids = snapshot["streaming_ids"]
                 if snapshot["artifacts"]:
-                    formatted_arts = snapshot["artifacts"]
+                    # 스냅샷은 이번 턴 것뿐입니다. 덮어쓰면 이전 턴 산출물이 화면에서 사라집니다.
+                    formatted_arts = merge_artifacts(formatted_arts, snapshot["artifacts"])
 
             if formatted_msgs:
                 chat_feed.render_all(formatted_msgs, streaming_ids=streaming_ids)

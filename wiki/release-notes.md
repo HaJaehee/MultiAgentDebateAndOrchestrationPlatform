@@ -8,6 +8,34 @@ changed*, not a second copy of the documentation.
 
 ## v0.7.2
 
+**Debate results no longer disappear as turns accumulate.** Two bugs combined. The artifact viewer
+replaced its tabs with each finished turn's artifacts (and a reload during a run did the same), so a
+long session showed only the latest turn. And when the orchestrator's synthesis came back empty, the
+empty body was saved under the normal report title — so that one empty tab was all that remained on
+screen. Earlier reports were still in the database.
+
+Now tabs are appended, titles carry the turn's finish time, and the latest report opens. An empty
+synthesis — including one that is only a limit notice or only a reasoning block — is recorded as
+`합성 실패 (빈 응답)` and filled with each specialist's latest speech from the turn, gathered without an
+LLM; the turn is not marked as consensus.
+
+**The orchestrator writes the conclusion and one overall diagram, not code.** The synthesis prompt and
+the default orchestrator persona used to demand complete runnable source code; the orchestrator
+re-emitted the specialists' code, exhausting its response limit and feeding the next turn's transcript
+a code dump. Code tabs now come from this turn's specialist speeches (latest per specialist, de-duplicated,
+at most 12). Update `system_prompt` in an existing `conf.json` if it still asks the orchestrator for code.
+
+→ [Artifact Synthesis §1, §2, §5](orchestration/artifact-generation.md)
+
+**The round-0 plan knows who is in the debate.** The planning prompt now lists this turn's specialists
+— name, role and MCP tool server names, no system prompts — and asks the orchestrator to give each one,
+by that name, a task and a deliverable, sending tool work to an agent that has the tool. The first-turn
+prompt used to hard-code "(Architect, Coder, Critic)" regardless of the session's roster, and later
+turns had no list. Speaker selection and parallel dispatch now build their roster with the same
+function and also show tool servers.
+
+→ [Engine Lifecycle, Phase 1](orchestration/engine-lifecycle.md)
+
 **Streaming a long speech no longer makes the page reload itself.**
 
 Each LLM token redrew its whole card: NiceGUI converted the card's entire Markdown to HTML on the

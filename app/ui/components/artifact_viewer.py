@@ -20,6 +20,38 @@ def _clean_title_for_filename(title: str, default: str = "artifact") -> str:
     return cleaned or default
 
 
+def merge_artifacts(
+    existing: List[Dict[str, Any]], incoming: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """산출물을 **덧붙입니다** — 이미 있는 것은 그대로, 새 것은 뒤에.
+
+    턴이 끝날 때 오는 산출물은 그 턴의 것뿐입니다. 예전에는 그것으로 뷰어를 통째로 바꿔,
+    라운드가 쌓인 세션에서 이전 턴의 보고서와 코드가 화면에서 사라졌습니다 (DB 에는
+    남아 있었습니다). 합성이 빈 답을 낸 턴이면 남는 것이 빈 보고서 하나였습니다.
+
+    같은 id 는 한 번만 둡니다. 실행 중 재접속하면 DB 기록과 실행 스냅샷이 같은 산출물을
+    양쪽에서 가져옵니다. id 가 없는 것은 비교할 방법이 없어 그대로 붙입니다.
+    """
+    merged = list(existing)
+    seen = {a.get("id") for a in existing if a.get("id")}
+    for art in incoming:
+        art_id = art.get("id")
+        if art_id and art_id in seen:
+            continue
+        if art_id:
+            seen.add(art_id)
+        merged.append(art)
+    return merged
+
+
+def default_tab_index(artifacts: List[Dict[str, Any]]) -> int:
+    """처음 열어 둘 탭 — 가장 최근 보고서(마크다운). 없으면 마지막 산출물."""
+    for i in range(len(artifacts) - 1, -1, -1):
+        if artifacts[i].get("artifact_type", "markdown") == "markdown":
+            return i
+    return max(len(artifacts) - 1, 0)
+
+
 class ArtifactViewer:
     """Tabbed artifact viewer for Synthesized Markdown, Code, Mermaid diagrams, and JSON exports."""
 
@@ -58,7 +90,14 @@ class ArtifactViewer:
             ui.label("합성된 산출물이 없습니다").classes("text-sm font-bold text-slate-400")
             ui.label("멀티 에이전트 토론이 종료되면 최종 보고서, 다이어그램, 코드가 이곳에 렌더링됩니다.").classes("text-xs max-w-xs mt-1")
 
+    def add_artifacts(self, artifacts: List[Dict[str, Any]]) -> None:
+        """새 턴의 산출물을 지금 보이는 것 뒤에 붙이고, 그 턴의 보고서를 엽니다."""
+        if not artifacts:
+            return
+        self.render_artifacts(merge_artifacts(self.artifacts, artifacts))
+
     def render_artifacts(self, artifacts: List[Dict[str, Any]]) -> None:
+        """뷰어를 이 목록으로 다시 그립니다. 턴 결과를 받을 때는 `add_artifacts` 를 쓰세요."""
         if not self.alive:
             return
 
@@ -90,7 +129,7 @@ class ArtifactViewer:
 
             # keep-alive 를 켜면 Quasar 가 이전 패널을 DOM 에 남겨 두 패널이 겹쳐
             # 보입니다. 끄면 탭을 열 때마다 Mermaid 가 다시 렌더되는데, 그 편이 낫습니다.
-            with ui.tab_panels(tabs, value="tab_0").classes(
+            with ui.tab_panels(tabs, value=f"tab_{default_tab_index(artifacts)}").classes(
                 "w-full flex-grow bg-transparent p-0 mt-2 min-h-0 overflow-hidden flex flex-col"
             ):
                 for i, art in enumerate(artifacts):

@@ -258,19 +258,30 @@ selector = orchestrator.model_copy(update={...})   # 도구·단계적 사고를
 _build_synthesis_prompt(state, orchestrator)
    │  전체 전사 + 도구 실행 결과 + 실패한 에이전트 목록
    │  (컨텍스트 한도에 맞춰 자르되 지시문은 반드시 남김)
+   │  요구: 최종 합의 결론 + 종합 Mermaid 다이어그램 하나. 코드 재작성 금지
    ▼
 오케스트레이터 호출
    │
    ▼
-_extract_artifacts_from_synthesis()
-   │  ```로 감싼 코드 블록을 파싱
-   │  language 로 종류 판정: code / mermaid / json / markdown
+synthesis_has_content()  ── 비었으면 "합성 실패 (빈 응답)"
+   │
    ▼
-ArtifactModel 로 DB 저장 → 산출물 뷰어 탭
+_extract_artifacts_from_synthesis()
+   │  결론 / 종합 다이어그램 / 이번 턴 전문가 코드 / 요약 JSON
+   │  실패면 결론 대신 전문가별 마지막 발언
+   ▼
+ArtifactModel 로 DB 저장 → 산출물 뷰어에 덧붙임
 ```
 
-`is_consensus_reached` 는 **실패한 에이전트가 없고 조기 중단도 아닐 때만** `True`
-입니다. 세 명 중 두 명이 침묵했는데 "합의 도달" 로 표시되면 안 됩니다.
+오케스트레이터의 몫은 **결론과 종합 다이어그램까지**입니다. 코드는 전문가 발언과 작업 공간
+파일에 이미 있고, 파일 경로·모듈·함수 이름으로만 가리키게 합니다. 합성이 코드를 다시 쓰면
+응답 한도를 채우고, 다음 턴 전사에 코드 덤프로 다시 들어가 컨텍스트를 빠르게 채웁니다.
+
+`is_consensus_reached` 는 **실패한 에이전트가 없고, 조기 중단도 아니고, 합성이 결론을
+냈을 때만** `True` 입니다. 세 명 중 두 명이 침묵했거나 결론이 비었는데 "합의 도달" 로
+표시되면 안 됩니다.
+
+→ [산출물 생성과 내보내기](../04-workflows/04-artifact-and-export.md)
 
 ---
 

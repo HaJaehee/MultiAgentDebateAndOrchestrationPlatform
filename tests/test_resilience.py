@@ -225,7 +225,7 @@ async def test_synthesis_failure_still_produces_honest_artifacts():
     state = await engine.run_turn(session_id=sid, user_prompt="설계해줘")
 
     titles = [a.title for a in state.artifacts]
-    assert "합성 실패 (LLM 연결 끊김)" in titles
+    assert any("합성 실패 (LLM 연결 끊김)" in t for t in titles)
     summary = next(a for a in state.artifacts if a.artifact_type == "json")
     assert '"consensus_reached": false' in summary.content
     assert '"orchestrator"' in summary.content

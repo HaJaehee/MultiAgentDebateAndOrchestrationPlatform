@@ -368,7 +368,7 @@ async def test_the_final_report_says_when_it_was_completed():
         session_id=sid, user_prompt="캐시를 설계해 주세요."
     )
 
-    report = next(a for a in await _artifacts(sid) if "Final Synthesis Report" in a.title)
+    report = next(a for a in await _artifacts(sid) if "최종 결론" in a.title)
     synthesis = [r for r in await _rows(sid) if r.msg_type == "orchestrator"][-1]
 
     total = format_duration((synthesis.finished_at - synthesis.turn_started_at).total_seconds())
@@ -387,7 +387,7 @@ async def test_the_completion_line_does_not_leak_into_extracted_artifacts():
         session_id=sid, user_prompt="캐시를 설계해 주세요."
     )
 
-    others = [a for a in await _artifacts(sid) if "Final Synthesis Report" not in a.title]
+    others = [a for a in await _artifacts(sid) if "최종 결론" not in a.title]
     assert others, "코드나 다이어그램 아티팩트가 뽑히지 않았습니다"
     for art in others:
         assert "보고서 완료" not in art.content, art.title

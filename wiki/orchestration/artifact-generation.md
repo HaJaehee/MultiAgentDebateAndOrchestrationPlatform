@@ -1,27 +1,45 @@
 # Artifact Synthesis & Extraction
 
-At the conclusion of a debate turn, the Master Orchestrator generates a comprehensive consensus synthesis. The engine parses this synthesis into discrete, typed **Artifacts** saved in the database and rendered interactively in the web UI.
+At the conclusion of a debate turn, the Master Orchestrator writes the **final conclusion and one
+overall diagram** — nothing more. The engine turns that, together with the code the specialists wrote
+during the turn, into discrete, typed **Artifacts** saved in the database and **appended** to the
+viewer.
+
+> **Role reduction.** Until this change the synthesis prompt (and the default orchestrator persona)
+> demanded "complete runnable source code". The orchestrator re-emitted the specialists' code in full,
+> filling its response limit, and that synthesis then re-entered the next turn's transcript as a code
+> dump, so the context saturated a little faster every turn — one of the ways a synthesis came back
+> empty. The prompt now asks for (1) the conclusion — decisions and their grounds, rejected
+> alternatives, open issues and risks — and (2) one overall Mermaid diagram, and explicitly forbids
+> rewriting or pasting source code: code is to be referred to by file path, module or function name.
+> The prompt keeps the phrase `최종 합의 보고서`, which the rest of the pipeline and the test fake use
+> to recognise a synthesis request.
 
 ---
 
 ## 1. Artifact Extraction Architecture
 
-The extraction logic in [`_extract_artifacts_from_synthesis()`](file:///d:/MultiAgentOrchestrator/app/orchestration/engine.py#L372-L436) parses the Orchestrator's raw markdown text using regex tokenizers and categorizes outputs into four structured types:
+[`_extract_artifacts_from_synthesis()`](file:///d:/MultiAgentOrchestrator/app/orchestration/engine.py)
+produces four kinds of artifact. Every title starts with the local time the turn finished
+(`MM-DD HH:MM`), because artifacts now accumulate across turns and identical titles must be told apart.
 
 ```mermaid
 flowchart LR
-    SynthText["Orchestrator Final Synthesis Text"] --> Parser["Regex Extractor (engine.py)"]
-    
-    Parser --> ArtMD["1. Comprehensive Report (Markdown)"]
-    Parser --> ArtMM["2. Architecture Diagrams (Mermaid)"]
-    Parser --> ArtCode["3. Executable Code Files (Code)"]
-    Parser --> ArtJSON["4. Session Metadata (JSON)"]
-    
+    SynthText["Orchestrator synthesis<br/>(conclusion + diagram)"] --> Check{"synthesis_has_content()"}
+    Speeches["This turn's specialist speeches"] --> ArtCode
+    Check -- yes --> ArtMD["1. 최종 결론 (Markdown)"]
+    Check -- "no / connection lost" --> ArtFail["1. 합성 실패 (…)<br/>specialists' latest speeches"]
+    SynthText --> ArtMM["2. 종합 다이어그램 (Mermaid)"]
+    ArtCode["3. Specialist code (Code)"]
+    SynthText --> ArtJSON["4. 토론 요약 (JSON)"]
+
+    ArtFail --> DB
+
     ArtMD --> DB[(ArtifactModel in SQLite)]
     ArtMM --> DB
     ArtCode --> DB
     ArtJSON --> DB
-    
+
     DB --> UI["ArtifactViewer (UI Tabs & Actions)"]
 ```
 
@@ -29,10 +47,25 @@ flowchart LR
 
 ## 2. Supported Artifact Types
 
-### 2.1. Comprehensive Report (`markdown`)
+### 2.1. Final Conclusion (`markdown`)
 - **Type**: `markdown`
-- **Title**: `종합 아키텍처 & 산출물 보고서 (Final Synthesis Report)`
-- **Content**: The full narrative report written by the Master Orchestrator, including executive summaries, decision matrices, edge-case audit findings, and verification steps.
+- **Title**: `MM-DD HH:MM 최종 결론` (was `종합 아키텍처 & 산출물 보고서 (Final Synthesis Report)`)
+- **Content**: The orchestrator's conclusion — decisions, grounds, rejected alternatives, open issues
+  and risks — with its overall diagram inline.
+- **Empty or failed synthesis**: `synthesis_has_content()` decides whether the synthesis actually
+  concluded anything. It ignores notice lines (`> ⚠️ …`, e.g. the response-limit notice) and a native
+  reasoning block with nothing after it (`strip_reasoning_trace` deliberately keeps such a block as the
+  "content", so it is removed separately here). If nothing is left, the synthesis is treated as failed:
+  - the title becomes `MM-DD HH:MM 합성 실패 (빈 응답)` — or `합성 실패 (LLM 연결 끊김)` when the
+    endpoint was unreachable;
+  - the content is an explanation followed by `## 전문가별 마지막 발언`: each specialist's latest
+    speech of **this turn**, reasoning stripped, gathered without calling an LLM;
+  - `is_consensus_reached` is false, `error_message` says the conclusion was empty, and the JSON
+    summary carries `"synthesis_failed": true`.
+
+  Before this, an empty synthesis was stored under the normal report title with an empty body. Combined
+  with the viewer replacing its tabs (§5), a session with many turns appeared to lose its whole debate
+  result; the earlier reports were still in the database.
 - **Completion time** (v0.6.1.2): the report ends with a rule and
   `*보고서 완료: YYYY-MM-DD HH:MM:SS · 총 경과 12분 5초*` — the turn's total elapsed time to the right
   of the completion time, measured from the recorded opening request (`messages.turn_started_at`).
@@ -45,9 +78,10 @@ flowchart LR
   artifact is a failure notice, and calling it a completed report would be false.
 - **Rendering**: Rendered as GitHub-flavored Markdown with table styling and syntax-highlighted code blocks.
 
-### 2.2. Architecture Diagrams (`mermaid`)
+### 2.2. Overall Diagram (`mermaid`)
 - **Type**: `mermaid`
-- **Title**: `시스템 아키텍처 다이어그램 #1`, `#2`, etc.
+- **Title**: `MM-DD HH:MM 종합 다이어그램` (`#2`, … if the synthesis drew more than one); from the
+  transcript fallback, `MM-DD HH:MM 다이어그램 #1 ({author} 제안)`.
 - **Extraction Pattern**: Blocks fenced with ` ```mermaid ... ``` `, plus three fallbacks
   that exist because the diagram tab kept coming up empty:
   - **Unterminated fences** are extracted to end of text. A synthesis report truncated by
@@ -55,9 +89,11 @@ flowchart LR
     a matching closing fence.
   - **Unlabelled blocks** whose first line starts with a diagram keyword (`graph`,
     `flowchart`, `sequenceDiagram`, …) are treated as Mermaid.
-  - **Transcript fallback**: if the synthesis report contains no diagram, the most recent
-    diagram in the debate transcript is promoted to an artifact, titled with its author.
-    Models routinely draw the architecture during the debate and omit it from the summary.
+  - **Transcript fallback**: if the synthesis report contains no diagram (or the synthesis
+    failed), the most recent diagram in **this turn's** transcript is promoted to an artifact,
+    titled with its author. Models routinely draw the architecture during the debate and omit it
+    from the summary. Earlier turns' diagrams are not re-promoted — they are already that turn's
+    artifacts.
 - **Normalisation**: [`normalize_mermaid()`](file:///d:/MultiAgentOrchestrator/app/orchestration/engine.py)
   normalises line endings and quotes bracket labels containing parentheses
   (`A[결제 (Payment)]` → `A["결제 (Payment)"]`), the most common way an LLM-authored diagram
@@ -70,15 +106,21 @@ flowchart LR
   event and shows the parse error plus the raw source instead of a blank panel.
 - **Supported Diagrams**: Flowcharts (`graph TD/LR`), Sequence Diagrams (`sequenceDiagram`), State Diagrams (`stateDiagram-v2`), and Entity-Relationship Diagrams (`erDiagram`).
 
-### 2.3. Executable Code Files (`code`)
+### 2.3. Specialist Code (`code`)
 - **Type**: `code`
-- **Title**: `핵심 구현 소스코드 ({language}) #1`, `#2`, etc.
-- **Extraction Pattern**: Code blocks matching languages: `python`, `py`, `typescript`, `javascript`, `bash`, `shell`, `json`, `toml`, `sql`.
+- **Title**: `MM-DD HH:MM {language} · {speaker} R{round}` (was `핵심 구현 소스코드 ({language}) #n`,
+  taken from the synthesis).
+- **Source**: this turn's specialist speeches (`state.messages[state.turn_message_start:]`, excluding
+  the user, the orchestrator and failure notices). For each specialist only the **latest** speech that
+  contained code is used, with reasoning stripped so drafts written while thinking are not picked up.
+  Identical code is kept once and at most `MAX_DEBATE_CODE_ARTIFACTS` (12) are produced. Code in the
+  synthesis is no longer extracted; if the orchestrator writes some anyway it stays in the report body.
+- **Languages**: `python`, `py`, `typescript`, `javascript`, `bash`, `shell`, `json`, `toml`, `sql`.
 - **Rendering**: Displayed with language-specific syntax highlighting, line numbers, and a dedicated **"Copy Code"** button.
 
 ### 2.4. Session Metadata & Summary (`json`)
 - **Type**: `json`
-- **Title**: `세션 메타데이터 & 토론 요약 (JSON)`
+- **Title**: `MM-DD HH:MM 토론 요약 (JSON)`
 - **Content**: Auto-generated structured session record:
   ```json
   {
@@ -87,6 +129,8 @@ flowchart LR
     "strategy": "sequential_debate",
     "total_rounds": 3,
     "participating_agents": ["orchestrator", "architect", "coder", "critic"],
+    "failed_agents": [],
+    "synthesis_failed": false,
     "total_messages": 11,
     "consensus_reached": true
   }
@@ -218,3 +262,11 @@ with an apostrophe no longer lands as `&#x27;` in the file name.
 
 - **Database Entity**: Each extracted item is committed as an [`ArtifactModel`](file:///d:/MultiAgentOrchestrator/app/database/models.py#L80-L92) record linked via foreign key to `sessions.id`.
 - **UI Viewer**: Rendered in [`ArtifactViewer`](file:///d:/MultiAgentOrchestrator/app/ui/components/artifact_viewer.py) as tabbed cards on the right-hand panel of the workspace. Users can switch between tabs, copy snippets, or download raw files with a single click.
+- **Append, never replace.** The `artifacts_synthesized` event carries only the finished turn's
+  artifacts. The viewer used to render exactly that list, so every turn wiped the previous turns' tabs
+  from the screen; reloading during a run did the same, because the running turn's snapshot overwrote
+  the list loaded from the database. Now the event goes through `ArtifactViewer.add_artifacts()` and
+  the reload path through `merge_artifacts(db_rows, snapshot)` — existing tabs stay in order, new ones
+  are appended, and an id already shown is skipped. `default_tab_index()` opens the latest Markdown
+  report. Verified in a browser: three tabs from turn 1, `add_artifacts(turn 2)` → six tabs with
+  `12:00 최종 결론` active, adding turn 2 again → still six.

@@ -331,9 +331,13 @@ The shipped rules make the report and its Markdown `width: 100%`, estimate only
 > cost back to ~45 ms, confirming the method.
 
 ### 1.4. Artifact Viewer ([app/ui/components/artifact_viewer.py](file:///d:/MultiAgentOrchestrator/app/ui/components/artifact_viewer.py))
+- **Tabs accumulate across turns.** `add_artifacts()` appends a finished turn's artifacts (skipping ids
+  already shown) and opens that turn's report; `render_artifacts()` is only for rebuilding from a full
+  list. See [Artifact Synthesis §5](../orchestration/artifact-generation.md).
 - **Tabbed Interface**:
-  - **Comprehensive Report Tab**: Markdown rendering of the final synthesis report.
-  - **Source Code Tab**: Language-highlighted code viewer for extracted scripts.
+  - **Final Conclusion Tab**: Markdown rendering of the orchestrator's conclusion, or — if the
+    synthesis was empty or failed — each specialist's latest speech.
+  - **Source Code Tab**: Language-highlighted code from this turn's specialist speeches.
   - **Architecture Diagram Tab**: Interactive SVG rendering of Mermaid diagrams. If Mermaid rejects
     the source, the panel shows the parse error and the raw diagram text rather than going blank.
   - **JSON Summary Tab**: Structured session metadata.
