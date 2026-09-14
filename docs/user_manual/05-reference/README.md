@@ -46,7 +46,7 @@
 | 응답 토큰 | `4096` | `max_tokens` |
 | 컨텍스트 창 | `128000` | `max_context_window` |
 | 도구 루프 한도 | `30` | `max_tool_iterations` |
-| 타임아웃 | `120`초 | `timeout` |
+| 타임아웃 | `600`초 (조각 사이 공백) | `timeout` |
 | 재시도 | `2` | `num_retries` |
 | 발언 우선순위 | `100` (미지정 시) | `debate_priority` |
 | 우선순위 간격 | `10` | 드래그 시 재부여 |

@@ -36,6 +36,14 @@ function and also show tool servers.
 
 → [Engine Lifecycle, Phase 1](orchestration/engine-lifecycle.md)
 
+**The example `timeout` is 600 s, not 120.** It is the wait between response chunks, not a limit on the
+whole response. A tool call writing a long file can stream nothing until its arguments are complete, so
+with `max_tokens` at the recommended 16,000 a 120 s wait cut speeches mid-generation with
+`MidStreamFallbackError … Timeout on reading data from socket`. Raise `timeout` in an existing
+`conf.json` the same way (above `max_tokens ÷ tokens per second`).
+
+→ [conf.json Reference](configuration/conf-json-reference.md)
+
 **Streaming a long speech no longer makes the page reload itself.**
 
 Each LLM token redrew its whole card: NiceGUI converted the card's entire Markdown to HTML on the

@@ -90,7 +90,7 @@ JSON 에는 주석 문법이 없습니다. 이 프로젝트는 **키가 `//` 로
 | `top_p` | float | – | 뉴클리어스 샘플링 |
 | `max_tokens` | int | `4096` | 응답 토큰 상한 |
 | `max_context_window` | int | `128000` | **엔드포인트의 실제 한도로 맞추세요** |
-| `timeout` | float | `120` | 요청 타임아웃(초) |
+| `timeout` | float | `600` | 응답 조각 사이를 기다리는 최대 초 — 전체 응답 시간이 아닙니다. 긴 파일을 쓰는 도구 호출은 서버가 인자를 다 만들 때까지 아무것도 보내지 않을 수 있어 `max_tokens ÷ 초당 생성 토큰`보다 크게 잡으세요 |
 | `num_retries` | int | `2` | 재시도 횟수 |
 | `drop_params` | bool | `true` | 엔드포인트가 모르는 파라미터 자동 제거 |
 | `max_tool_iterations` | int | `30` | 한 턴의 MCP 도구 루프 상한 (1~100) |

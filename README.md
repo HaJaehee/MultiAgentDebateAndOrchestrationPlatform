@@ -306,8 +306,8 @@ python docs/render_user_manual.py
     "전사가 이 값에 맞춰 잘립니다. 실제보다 크게 잡으면 잘리지 않은 채 나가 400 을 받습니다."
   ],
   "max_context_window": 128000,
-  "// timeout": "요청 타임아웃(초)",
-  "timeout": 120,
+  "// timeout": "응답 조각 사이를 기다리는 최대 초. 긴 파일 쓰기 도구 호출은 인자를 다 만들 때까지 조용하니 max_tokens ÷ 초당 생성 토큰보다 크게",
+  "timeout": 600,
   "// num_retries": "재시도 횟수",
   "num_retries": 2,
   "// drop_params": "엔드포인트가 모르는 파라미터 자동 제거 (로컬 모델 호환성)",

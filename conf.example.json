@@ -81,12 +81,16 @@
     "max_context_window": 128000,
 
     "// 안정성": [
-      "timeout             : 요청 타임아웃(초)",
+      "timeout             : 응답 조각 사이를 기다리는 최대 초. 전체 응답 시간 한도가 아닙니다.",
+      "                      긴 파일을 쓰는 도구 호출은 서버가 인자를 다 만들 때까지 아무것도",
+      "                      보내지 않을 수 있어, max_tokens ÷ 초당 생성 토큰 수보다 크게 잡으세요",
+      "                      (16000 토큰 ÷ 초당 30 ≈ 530초 → 600). 짧으면 생성 도중",
+      "                      'Timeout on reading data from socket' 으로 끊깁니다.",
       "num_retries         : 실패 시 재시도 횟수",
       "drop_params         : 엔드포인트가 지원하지 않는 파라미터는 조용히 제거 (로컬 모델 호환성↑)",
       "max_tool_iterations : 한 턴에서 허용하는 MCP 도구 호출 루프 횟수 (1~100)"
     ],
-    "timeout": 120,
+    "timeout": 600,
     "num_retries": 2,
     "drop_params": true,
     "max_tool_iterations": 30,

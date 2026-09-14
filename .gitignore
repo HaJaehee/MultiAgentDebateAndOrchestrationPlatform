@@ -36,6 +36,9 @@ htmlcov/
 
 # --- Runtime data ---
 *.db
+# SQLite WAL 모드(v0.7.1)가 DB 옆에 두는 파일
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 *.log

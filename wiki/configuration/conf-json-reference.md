@@ -101,7 +101,7 @@ Defines system-wide defaults. Any agent that does not explicitly set an attribut
 | `top_p` | `float` | `null` | Nucleus sampling probability cutoff. |
 | `max_tokens` | `int` | `4096` | Maximum generation token budget per response. |
 | `max_context_window`| `int` | `128000` | The model's context window. The transcript is trimmed to fit before every call — **set this to the endpoint's real limit**, or the endpoint answers with 400 instead. |
-| `timeout` | `float` | `120.0` | HTTP request timeout in seconds. |
+| `timeout` | `float` | `600.0` (example) | Seconds to wait **between response chunks** (LiteLLM passes it to aiohttp as `sock_read`), not a limit on the whole response. A tool call that writes a long file can stream nothing until its arguments are complete, so set it above `max_tokens ÷ generation tokens per second` (16,000 ÷ 30 ≈ 530 s → 600). Too short, and the speech is cut mid-generation with `MidStreamFallbackError … Timeout on reading data from socket`. Unset, LiteLLM's own default applies. |
 | `num_retries` | `int` | `2` | Number of automatic retries on network/rate-limit failure. |
 | `drop_params` | `bool` | `true` | Silently drops unsupported parameters for local model compatibility. |
 | `max_tool_iterations`| `int` | `30` | Maximum number of consecutive tool-call loops per agent turn (1-100). Exhausting it raises `LLMUnavailableError` rather than returning a placeholder answer. |
