@@ -6,6 +6,32 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.8.0
+
+**Mention workspace files and specialists with `@`.** Typing `@` in the input lists this
+conversation's workspace files and folders and the turn's active specialists; arrow keys and
+Enter/Tab pick (Enter picks rather than sends while the list is open), Esc closes. On send, the
+mentions become a `[@참조]` block at the end of the message: the workspace path, each file's relative
+path and size, folders, and the named specialists. **Only paths are sent, never file contents** — a
+user message is copied into every transcript and the synthesis each round, so contents would saturate
+the context. Any file type can be mentioned, PDFs and Office documents included; reading them is up to
+the MCP server that handles the format.
+
+Safeguards: paths outside the workspace (absolute, `..`, outward symlinks) are refused; missing paths
+and specialists switched off for the conversation are dropped with a warning; `@` inside code and
+e-mail addresses is not a mention; the listing skips heavy folders and simple top-level `.gitignore`
+rules, stops at 20,000 entries, is filtered on the server (30 results) and cached for 5 s; text
+returned by abort-and-edit loses its block so re-sending does not duplicate it. Naming a specialist is
+passed on as text and does not override the strategy's speaking order.
+
+**Upload files into the workspace.** A button left of the input saves files to
+`<workspace>/uploads/` (never overwriting — `name (2).ext`; 100 MB per file) and inserts `@path`.
+The listing cache is cleared, so the file is offered immediately.
+
+→ [UI Components §1.3.4](ui/components.md) · [Debate turn (manual)](../docs/user_manual/04-workflows/01-debate-turn.md)
+
+---
+
 ## v0.7.2
 
 **Debate results no longer disappear as turns accumulate.** Two bugs combined. The artifact viewer

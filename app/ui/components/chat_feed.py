@@ -6,8 +6,21 @@ from nicegui import ui
 from app.agents.base import style_for_agent
 from app.timestamps import format_duration, speech_time_text, speech_timing
 from app.ui.clipboard import copy_to_clipboard
+from app.ui.mention_input import MENTION_INPUT_CLASS, MENTION_QUERY_EVENT
+from app.workspace_files import (
+    MAX_UPLOAD_BYTES,
+    UPLOAD_SUBDIR,
+    format_size,
+    mention_token,
+    strip_reference_block,
+)
 
 logger = logging.getLogger(__name__)
+
+# @언급 후보를 고르는 쪽. 친 글자를 받아 [{kind, label, detail, insert}] 를 돌려줍니다.
+MentionProvider = Callable[[str], Coroutine[None, None, List[Dict[str, str]]]]
+# 올린 파일을 작업 공간에 넣는 쪽. (파일 이름, 내용) → 작업 공간 기준 경로.
+UploadHandler = Callable[[str, bytes], Coroutine[None, None, str]]
 
 # 스트리밍 중인 카드를 다시 그리는 간격(초).
 #
@@ -178,8 +191,19 @@ class ChatFeed:
         on_abort: Optional[Callable[[], Coroutine[None, None, None]]] = None,
         on_decision: Optional[Callable[[int, str], Coroutine[None, None, None]]] = None,
         on_tool_budget: Optional[Callable[[int, str], Coroutine[None, None, None]]] = None,
+        mention_provider: Optional[MentionProvider] = None,
+        on_upload_file: Optional[UploadHandler] = None,
+        upload_destination: Optional[Callable[[], str]] = None,
     ):
         self.on_send_message = on_send_message
+        # 입력창의 @언급과 작업 공간 업로드. 주어지지 않으면 둘 다 없습니다.
+        self.mention_provider = mention_provider
+        self.on_upload_file = on_upload_file
+        self.upload_destination = upload_destination
+        self.upload_button: Optional[ui.button] = None
+        # 브라우저의 언급 창이 이 입력창을 가리키는 이름. 전역 이벤트라 페이지의 다른
+        # 입력창과 섞이지 않게 합니다.
+        self._mention_id = f"feed-{id(self):x}"
         # 토론이 도는 중에 들어온 입력과 정지 버튼의 행선지. 주어지지 않으면
         # 예전처럼 토론 중에는 입력을 잠그고 정지 버튼도 숨깁니다.
         self.on_interject = on_interject
@@ -422,9 +446,25 @@ class ChatFeed:
 
             # 3. Input Bar
             with ui.row().classes("w-full items-center gap-2 p-2 bg-slate-900 border border-slate-800 rounded-xl shadow-lg flex-shrink-0"):
+                if self.on_upload_file is not None:
+                    self.upload_button = (
+                        ui.button(icon="upload_file", on_click=self._open_upload_dialog)
+                        .props("flat round dense color=slate-4")
+                        .tooltip(
+                            f"워크스페이스에 파일 업로드 — 작업 공간의 {UPLOAD_SUBDIR}/ 에 저장되고, "
+                            f"입력창에 @경로가 들어갑니다. 파일 내용은 대화에 붙지 않습니다."
+                        )
+                    )
+                # `mado-mention-input`: @ 를 치면 작업 공간 파일·전문가 목록이 뜹니다
+                # (mention_input.py). 창이 열려 있을 때의 Enter 는 보내기가 아니라 고르기입니다.
                 self.input_field = ui.input(
                     placeholder=IDLE_PLACEHOLDER,
-                ).props("outlined dark dense autogrow").classes("flex-grow text-sm").on(SUBMIT_KEY_EVENT, self._handle_enter)
+                ).props("outlined dark dense autogrow").classes(
+                    f"flex-grow text-sm {MENTION_INPUT_CLASS}"
+                ).on(SUBMIT_KEY_EVENT, self._handle_enter)
+                self.input_field.props(f'data-mado-mention="{self._mention_id}"')
+                if self.mention_provider is not None:
+                    ui.on(MENTION_QUERY_EVENT, self._handle_mention_query)
 
                 self.send_button = ui.button(
                     icon="send",
@@ -470,6 +510,74 @@ class ChatFeed:
         self.input_field.value = ""
         self.set_busy(True, "토론 준비 중...")
         await self.on_send_message(text)
+
+    # ------------------------------------------------------------ @언급·업로드
+
+    async def _handle_mention_query(self, e) -> None:
+        """브라우저가 커서 앞의 `@조각` 을 보냈습니다. 후보를 골라 돌려줍니다."""
+        if not self.alive or self.input_field is None or self.mention_provider is None:
+            return
+        args = e.args if isinstance(e.args, dict) else {}
+        if args.get("id") != self._mention_id:
+            return
+        try:
+            items = await self.mention_provider(str(args.get("query") or ""))
+        except Exception as exc:  # noqa: BLE001 - 목록을 못 구해도 입력은 계속됩니다
+            logger.warning(f"Could not build mention suggestions: {exc}")
+            items = []
+        ui.run_javascript(
+            f"window.MadoMention && window.MadoMention.show("
+            f"{json.dumps(args.get('id'))}, {int(args.get('seq') or 0)}, {json.dumps(items, ensure_ascii=False)})"
+        )
+
+    def _open_upload_dialog(self) -> None:
+        if self.on_upload_file is None:
+            return
+        destination = self.upload_destination() if self.upload_destination else UPLOAD_SUBDIR
+        with ui.dialog() as dialog, ui.card().classes(
+            "p-4 w-[460px] max-w-full bg-slate-900 text-white border border-slate-700 gap-2"
+        ):
+            ui.label("워크스페이스에 파일 업로드").classes("text-sm font-bold")
+            ui.label(
+                f"저장 위치: {destination}\n"
+                f"파일 하나 최대 {format_size(MAX_UPLOAD_BYTES)}. 같은 이름이 있으면 덮어쓰지 않고 "
+                f"'이름 (2)' 로 저장합니다. 올린 파일은 입력창에 @경로로 들어가며, 내용은 대화에 "
+                f"붙지 않고 에이전트가 필요할 때 도구로 읽습니다."
+            ).classes("text-[11px] text-slate-400 leading-snug whitespace-pre-line")
+
+            async def handle_upload(ev) -> None:
+                try:
+                    content = await ev.file.read()
+                    rel = await self.on_upload_file(ev.file.name, content)
+                except Exception as exc:  # noqa: BLE001 - 올린 파일 문제는 화면에 그대로
+                    logger.warning(f"Could not store the uploaded workspace file: {exc}")
+                    ui.notify(f"{ev.file.name}: {exc}", type="negative", position="bottom-right")
+                    return
+                self.insert_mention(rel)
+                ui.notify(f"{rel} 에 저장했습니다.", type="positive", position="bottom-right")
+
+            ui.upload(
+                on_upload=handle_upload,
+                auto_upload=True,
+                multiple=True,
+                max_file_size=MAX_UPLOAD_BYTES,
+                on_rejected=lambda _: ui.notify(
+                    f"파일이 너무 큽니다 (최대 {format_size(MAX_UPLOAD_BYTES)}).",
+                    type="warning", position="bottom-right",
+                ),
+            ).props("dark flat bordered color=indigo-6").classes("w-full")
+            with ui.row().classes("w-full justify-end"):
+                ui.button("닫기", on_click=dialog.close).props("flat dense no-caps color=grey-4")
+        dialog.open()
+
+    def insert_mention(self, rel_path: str) -> None:
+        """입력창 커서 자리에 `@경로` 를 넣습니다."""
+        if not self.alive or self.input_field is None:
+            return
+        ui.run_javascript(
+            f"window.MadoMention && window.MadoMention.insert("
+            f"{json.dumps(self._mention_id)}, {json.dumps(mention_token(rel_path), ensure_ascii=False)})"
+        )
 
     async def _handle_stop(self) -> None:
         if not self.is_busy or self.on_stop is None or self._stop_pending:
@@ -761,7 +869,8 @@ class ChatFeed:
             return False
         if (self.input_field.value or "").strip():
             return False
-        self.input_field.value = text
+        # 앱이 붙인 참조 블록은 떼고 사람이 쓴 글만 돌려줍니다. 다시 보내면 새로 붙습니다.
+        self.input_field.value = strip_reference_block(text)
         return True
 
     def set_stop_pending(self, pending: bool) -> None:

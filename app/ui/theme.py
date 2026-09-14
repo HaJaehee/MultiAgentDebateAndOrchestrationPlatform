@@ -106,6 +106,62 @@ body {
     height: auto;
 }
 
+/* --- 입력창의 @언급 창 (mention_input.py) -----------------------------------
+   입력창 바로 위에 뜹니다. 위치는 스크립트가 입력창 좌표로 정합니다(fixed). */
+.mado-mention-popup {
+    position: fixed;
+    z-index: 6000;
+    max-height: 300px;
+    overflow-y: auto;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    padding: 4px;
+    font-size: 12px;
+    color: #e2e8f0;
+}
+.mado-mention-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    min-width: 0;
+}
+.mado-mention-item.active,
+.mado-mention-item:hover {
+    background: #312e81;
+}
+.mado-mention-icon {
+    font-size: 16px;
+    flex-shrink: 0;
+    color: #94a3b8;
+}
+.mado-mention-icon.mado-mention-agent { color: #a5b4fc; }
+.mado-mention-icon.mado-mention-dir { color: #fbbf24; }
+.mado-mention-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mado-mention-detail {
+    flex-shrink: 0;
+    color: #64748b;
+    font-size: 11px;
+    max-width: 40%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mado-mention-empty {
+    padding: 6px 8px;
+    color: #64748b;
+}
+
 /* 이미지로 바꾼 다이어그램 (mermaid_export.py 의 MERMAID_IMAGE_JS).
    원본 SVG 는 복사·다운로드를 위해 남기되 숨깁니다 — 숨긴 요소는 배치도 칠하기도 하지 않습니다. */
 .mado-mermaid > svg.mado-mermaid-source {

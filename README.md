@@ -1,12 +1,12 @@
 # 🤖 MADO — Multi-Agent Debate & Orchestration Platform
 
-`v0.7.2` · `LGPL-3.0-or-later` · `Python 3.11+`
+`v0.8.0` · `LGPL-3.0-or-later` · `Python 3.11+`
 
 > **MCP 도구를 활용하는 반응형 멀티 에이전트 협업 & 토론 웹 애플리케이션**  
 > Dynamic Agent Profiling via `conf.json`, MCP Tool Integration, Multi-Model LLM Abstraction (LiteLLM), StateGraph Orchestration, and NiceGUI + FastAPI Reactive Web Interface.
 
 ```
-Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v0.7.2
+Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v0.8.0
 ```
 
 같은 내용을 웹 UI 우측 상단의 **ⓘ** 버튼으로도 볼 수 있습니다.
@@ -49,6 +49,7 @@ Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v0.7.2
    - **좌측 사이드바**: 세션 히스토리, 신규 생성(`+ New Chat`), 이름 변경, 삭제, 그리고 대화 전체를 마크다운 파일로 저장(💾).
    - **상단 제어 패널**: 에이전트 온/오프 토글, 라운드 제한 슬라이더, 전략 선택, 동시 실행 상한(병렬 지시 전략에서만), 세션별 커스텀 지침, 그리고 앱 재기동 없이 `conf.json` 을 다시 읽어 에이전트 목록을 갱신하는 버튼.
    - **메인 토론 피드**: 에이전트별 색상/아바타 구분 대화창, 접이식(Accordion) MCP 도구 호출 로그. 색을 직접 정한 에이전트는 카드 테두리까지 그 색으로 칠해집니다.
+   - **입력창 @언급**: `@` 를 치면 작업 공간의 파일·폴더와 이번 토론의 전문가 목록이 뜹니다. 파일은 **내용이 아니라 경로만** 전달되고(PDF·오피스 문서 포함, 읽기는 해당 MCP 의 몫), 전문가는 지목으로 전달됩니다. 입력창 왼쪽 버튼으로 **작업 공간에 파일을 업로드**하면 바로 목록에 나옵니다.
    - **우측 산출물 뷰어**: 최종 종합 보고서(Markdown), 소스코드(Code), Mermaid 아키텍처 다이어그램 탭 및 원클릭 복사/다운로드.
 8. **SQLite 영구 저장소 (SQLAlchemy Async)**:
    - 세션, 메시지, 도구 호출 기록, 최종 아티팩트 영구 보존.
@@ -107,6 +108,7 @@ MultiAgentOrchestrator/
 │   ├── main.py               # FastAPI + NiceGUI 실행 엔트리포인트
 │   ├── about.py              # 앱 이름·버전·저작자 (단일 출처)
 │   ├── config.py             # JSON 로더/기록기, 환경변수 치환 및 Pydantic 검증
+│   ├── workspace_files.py    # 작업 공간 파일 목록·@언급 해석·업로드 저장 (경로 안전장치)
 │   ├── database/             # SQLite & SQLAlchemy 비동기 ORM
 │   │   ├── models.py         # Session, Message, ToolCallRecord, Artifact, SessionAgent 모델
 │   │   └── session.py        # Async Engine 및 세션 관리
@@ -127,6 +129,7 @@ MultiAgentOrchestrator/
 │       ├── app.py            # UI 페이지 레이아웃 및 리액티브 바인딩
 │       ├── personas_page.py  # /personas/{session_id} 페르소나 편집 페이지
 │       ├── theme.py          # Quasar CSS 스타일 & 컬러 팔레트
+│       ├── mention_input.py  # 입력창 @언급 창 (브라우저 스크립트)
 │       └── components/       # UI 컴포넌트
 │           ├── sidebar.py    # 세션 히스토리 사이드바
 │           ├── roster.py     # 에이전트 로스터 및 토론 제어판
@@ -142,6 +145,7 @@ MultiAgentOrchestrator/
     ├── test_speaker_selection.py # 오케스트레이터 지명 전략 (지명·해석·실패 시 물러서기)
     ├── test_parallel_dispatch.py # 병렬 지시 전략 (동시 실행·과업 분배·취합·상한)
     ├── test_abort_turn.py       # 긴급 종료 (그 턴만 지우기, 시작 전으로 되돌리기)
+    ├── test_workspace_mentions.py # @언급 (경로만 전달·경로 안전·코드 블록 제외) & 업로드
     ├── test_remote_mcp.py       # 원격(HTTP) MCP 서버 (설정 규칙·전송 방식·토큰 보관)
     ├── test_llm_settings.py   # llm 상속, 엔드포인트/단계적 사고 설정
     ├── test_db.py
@@ -220,7 +224,7 @@ pytest -v tests/
 |------|-----|
 | Author | Ha, Jaehee |
 | Email | lovesm135@naver.com |
-| Version | **v0.7.2** |
+| Version | **v0.8.0** |
 | License | LGPL-3.0-or-later ([LICENSE.md](LICENSE.md)) |
 
 버전 문자열의 정본은 [`app/about.py`](app/about.py) 한 곳입니다. FastAPI 메타데이터,
@@ -234,7 +238,7 @@ curl -s localhost:8000/api/health | python -m json.tool
 ```json
 {
   "status": "healthy",
-  "version": "v0.7.2",
+  "version": "v0.8.0",
   "author": { "name": "Ha, Jaehee", "email": "lovesm135@naver.com" }
 }
 ```
@@ -769,6 +773,39 @@ MCP 서버는 허용 경로를 기동 시점에 받으므로(`filesystem` 은 ar
 살아 있어, 연달아 돌릴 때 다시 기다리지 않습니다.
 
 토론 중에는 그 대화의 작업 공간 변경만 막습니다.
+
+#### 파일 언급 (@) 과 업로드
+
+입력창에서 `@` 를 치면 **이 대화의 작업 공간** 파일·폴더와 이번 토론에 참여하는 전문가가
+뜹니다. ↑↓ 로 고르고 Enter·Tab 으로 넣으며, Esc 로 닫습니다. 창이 열려 있는 동안의 Enter 는
+보내기가 아니라 고르기입니다. 공백이 있는 이름은 `@"docs/요구사항 정의서.pdf"` 처럼 들어갑니다.
+
+보낼 때 앱이 언급을 풀어 메시지 끝에 참조 블록을 붙입니다.
+
+```text
+[@참조]
+참조 파일 — 작업 공간: D:\work\proj
+- docs/요구사항 정의서.pdf (1.2 MB · 큼, 필요한 부분만 읽으세요)
+- src/ (폴더)
+파일 내용은 붙이지 않았습니다. 필요하면 그 형식을 다루는 파일 도구로 이 경로를 직접 읽으세요.
+
+지목한 전문가
+- System Architect (High-Level Architecture & Tech Stack)
+```
+
+- **내용이 아니라 경로만.** 사용자 메시지는 모든 발언자의 전사와 합성에 라운드마다
+  복사되므로, 내용을 붙이면 컨텍스트가 금방 찹니다. 파일 종류는 가리지 않습니다 — PDF·오피스
+  문서는 그 형식을 읽는 MCP 서버(예: office MCP)를 에이전트에 붙여 두세요.
+- **안전장치.** 작업 공간 밖(절대 경로·`..`·바깥을 가리키는 링크)은 참조하지 않습니다.
+  없는 경로와 참여하지 않는 전문가는 빼고 알림으로 알려 줍니다. 코드 블록·인라인 코드 안의
+  `@`(데코레이터 등)와 메일 주소는 언급이 아닙니다. 목록은 `.git`·`node_modules`·가상환경과
+  최상위 `.gitignore` 의 단순한 규칙을 건너뛰고, 2만 항목에서 멈추며, 5초만 기억합니다.
+- **전문가 지목은 글로 전달됩니다.** 오케스트레이터와 발언자들이 참조 블록을 읽고 반영합니다.
+  발언 순서를 강제로 바꾸지는 않습니다.
+
+입력창 왼쪽의 **워크스페이스에 파일 업로드** 버튼은 파일을 `<작업 공간>/uploads/` 에 저장하고
+입력창에 `@경로` 를 넣습니다. 목록 기억을 즉시 비우므로 올린 파일이 바로 언급 목록에 나옵니다.
+같은 이름은 덮어쓰지 않고 `이름 (2).확장자` 로 저장하며, 파일 하나는 100 MB 까지입니다.
 
 #### 대화별 지식 그래프
 

@@ -183,6 +183,12 @@ the persona editor — because two copies would drift on how a value is picked o
   inserts a newline; `.prevent` then stops plain Enter from leaving a stray newline behind in
   the box it is about to clear. The order matters: `.prevent.exact` would call preventDefault
   before the modifier is checked, killing the line break it is supposed to allow.
+- **@mentions** (v0.8.0, [app/workspace_files.py](file:///d:/MultiAgentOrchestrator/app/workspace_files.py),
+  [app/ui/mention_input.py](file:///d:/MultiAgentOrchestrator/app/ui/mention_input.py)): typing `@` in the
+  input opens a list of this conversation's workspace files and folders plus the turn's active
+  specialists. See §1.3.4.
+- **Workspace upload button** (`upload_file`, left of the input): saves files into
+  `<workspace>/uploads/` and inserts `@path` into the input. See §1.3.4.
 - **Abort & edit** (`긴급 종료`): sits next to `정지` while a turn runs, and does the opposite —
   `정지` asks for a conclusion from what has been said, while this one is for a request that was
   wrong to begin with (a typo, the wrong paste, a prompt meant for another conversation).
@@ -329,6 +335,74 @@ The shipped rules make the report and its Markdown `width: 100%`, estimate only
 > nothing painted. A hidden page also skips *visible* cards under `content-visibility`, so the cards
 > within one viewport height were forced to render before measuring; forcing all cards brought the
 > cost back to ~45 ms, confirming the method.
+
+### 1.3.4. @mentions and workspace upload (v0.8.0)
+
+**Paths, never contents.** A user message is copied into every speaker's transcript and the
+synthesis each round. Inlining a file there would recreate, on the input side, the context saturation
+removed from the synthesis. So a mention sends only a path and the agent reads what it needs with its
+own tools. File type is therefore irrelevant: PDFs and Office documents are listed and can be
+mentioned; reading them is the job of whichever MCP server handles the format (e.g. an office MCP).
+
+**Flow.**
+
+1. The browser script (`MENTION_JS`) watches `input`, `click` and `compositionend` on the element with
+   class `mado-mention-input`. When the text before the caret ends in `@fragment` (preceded by the
+   start of text, whitespace or an opening bracket), it sends `emitEvent('mado_mention_query',
+   {id, seq, query})`.
+2. `ChatFeed._handle_mention_query` checks `id` against its own `data-mado-mention` value and asks
+   the page's provider. The provider scans the workspace off the event loop
+   (`run.io_bound(WorkspaceIndex.get)`), and `suggest_mentions()` returns at most 30 items — active
+   specialists first, then files and folders ranked by name prefix, name substring, path prefix, path
+   substring and subsequence. The full list never goes to the browser.
+3. `MadoMention.show(id, seq, items)` renders a fixed-position list above the input; answers with an
+   old `seq` are dropped.
+4. On send — a new turn or an interjection — `with_references()` in `app.py` runs `expand_mentions()`
+   and appends a `[@참조]` block with the workspace's absolute path, each file's relative path and size
+   (plus "read only the parts you need" at 1 MB or more), folders, and named specialists. Anything
+   dropped is reported with a warning toast.
+
+**Keyboard.** The input's Enter is already bound to send (`keydown.enter.exact.prevent`), and Vue
+attaches that listener to the native element. While the list is open, Enter must pick instead, so the
+script listens for `keydown` on `document` **in the capture phase** and stops propagation before the
+event reaches the element. With no candidates it does not intercept, so Enter still sends. Keys during
+IME composition (`isComposing` / keyCode 229) are left alone, so the Enter that commits Hangul is not
+turned into a pick. Esc closes the list and suppresses it for that same `@`.
+
+**Identity.** NiceGUI 3 does not render DOM ids on elements, and QInput forwards attributes to the
+inner `<textarea>` rather than the outer `<label>`. The feed sets `data-mado-mention="feed-…"` via
+props, and the script reads it from the native input first. The first browser run found both issues:
+the popup never opened because `host.id` was empty.
+
+**Safety.**
+
+| Case | Handling |
+| :--- | :--- |
+| Absolute path, drive letter, `..`, symlink leading outside | `safe_workspace_path()` refuses it (compares after `resolve()`); reported as outside the workspace |
+| Path-like token that does not exist | Dropped, reported |
+| Specialist switched off for this conversation | Dropped, reported; not offered in the list |
+| `@` inside fenced or inline code, e-mail addresses | Not a mention (`@app.get` in pasted code stays text) |
+| Text restored by abort-and-edit | `strip_reference_block()` removes the block; re-sending rebuilds it, never duplicates it |
+| Heavy folders | `.git`, `node_modules`, virtualenvs, `dist`, `build`, … and simple rules from the top-level `.gitignore` (negations ignored) are skipped |
+| Huge workspace | Scan stops at 20,000 entries (`truncated`) |
+| Stale list | Cached for 5 s per workspace; an upload invalidates it immediately |
+
+**Specialist mentions are text.** The block tells the orchestrator and speakers who was named; the
+strategy's speaking order is not overridden. The orchestrator is not a mention target.
+
+**Upload.** `store_workspace_upload()` writes to `<workspace>/uploads/`. The name is stripped of path
+components, characters Windows forbids and reserved device names; an existing name becomes
+`name (2).ext` and the file is opened with `xb`, so a concurrent upload that took the same name fails
+instead of overwriting. Files are capped at 100 MB (also enforced by `ui.upload`). After writing, the
+workspace's cached listing is invalidated and `ChatFeed.insert_mention()` puts `@path` at the caret.
+
+**Verified in a browser** with the real `ChatFeed` against a temporary workspace (events dispatched by
+script because the preview window was hidden, so real keystrokes and IME composition were not
+exercised): `@sp` listed `docs/spec.md`, `src/cache.py` and the PDF; `@` listed the specialist, both
+folders and all files; ArrowDown + Enter on `@src` inserted `@src/cache.py ` and sent nothing; picking
+`@sys` inserted `@"System Architect"`; Esc closed the list; the next Enter sent, and the server received
+the typed value with the reference block attached; a simulated upload inserted
+`@"uploads/새 설계서.docx"` and `@새` listed it at once.
 
 ### 1.4. Artifact Viewer ([app/ui/components/artifact_viewer.py](file:///d:/MultiAgentOrchestrator/app/ui/components/artifact_viewer.py))
 - **Tabs accumulate across turns.** `add_artifacts()` appends a finished turn's artifacts (skipping ids

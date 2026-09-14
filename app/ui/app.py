@@ -2,7 +2,7 @@ import asyncio
 import logging
 import uuid
 from typing import Any, Dict, List, Optional, Set
-from nicegui import ui
+from nicegui import run as ng_run, ui
 from sqlalchemy import desc, select
 from app.about import (
     ABOUT_LINE,
@@ -19,6 +19,7 @@ from app.agents.personas import (
     resync_agent_configs,
     session_roster_agents,
 )
+from app.config import resolve_workspace_dir
 from app.database.models import ArtifactModel, MessageModel, SessionModel
 from app.database.session import get_session_factory
 from app.orchestration.runner import TurnRun, get_debate_runner
@@ -30,8 +31,17 @@ from app.ui.components.quiet_splitter import SPLITTER_FREEZE_JS, QuietSplitter
 from app.ui.components.roster import AgentRosterControl
 from app.ui.components.sidebar import SessionSidebar, event_changes_session_list
 from app.ui.clipboard import copy_to_clipboard
+from app.ui.mention_input import MENTION_JS
 from app.ui.mermaid_export import MERMAID_EXPORT_JS, MERMAID_IMAGE_JS
 from app.ui.theme import CUSTOM_CSS, FAVICON_SVG
+from app.workspace_files import (
+    UPLOAD_SUBDIR,
+    agents_for_mentions,
+    expand_mentions,
+    get_workspace_index,
+    store_workspace_upload,
+    suggest_mentions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +57,7 @@ def create_ui() -> None:
             f"<script>{MERMAID_EXPORT_JS}</script>"
             f"<script>{MERMAID_IMAGE_JS}</script>"
             f"<script>{SPLITTER_FREEZE_JS}</script>"
+            f"<script>{MENTION_JS}</script>"
         )
 
         session_factory = get_session_factory()
@@ -423,6 +434,40 @@ def create_ui() -> None:
                     type="warning", position="bottom-right", multi_line=True,
                 )
 
+        # ------------------------------------------------------------ @언급·업로드
+
+        def workspace_root():
+            """이 대화의 작업 공간. 엔진이 턴을 열 때 쓰는 것과 같은 해석입니다."""
+            return resolve_workspace_dir(roster_control.workspace_dir or None)
+
+        def mention_agents():
+            return agents_for_mentions(
+                roster_control.roster_agents(), roster_control.get_active_agent_keys()
+            )
+
+        async def mention_provider(query: str) -> List[Dict[str, str]]:
+            # 폴더를 훑는 일은 디스크를 읽으므로 이벤트 루프 밖에서 합니다.
+            scan = await ng_run.io_bound(get_workspace_index().get, workspace_root())
+            return [s.to_dict() for s in suggest_mentions(query, scan.entries, mention_agents())]
+
+        async def on_upload_file(filename: str, content: bytes) -> str:
+            return await ng_run.io_bound(store_workspace_upload, workspace_root(), filename, content)
+
+        def upload_destination() -> str:
+            return str(workspace_root() / UPLOAD_SUBDIR)
+
+        async def with_references(text: str) -> str:
+            """보낼 글의 @언급을 풀어 참조 블록을 붙입니다. 뺀 언급은 알려 줍니다.
+
+            파일 내용은 붙이지 않습니다 — 경로만. 전문가 지목도 글로만 전달합니다.
+            """
+            expanded, report = await ng_run.io_bound(
+                expand_mentions, text, workspace_root(), mention_agents()
+            )
+            for warning in report.warnings():
+                ui.notify(warning, type="warning", position="bottom-right", multi_line=True)
+            return expanded
+
         async def on_send_message(prompt: str) -> None:
             """토론을 시작하고 이 화면을 붙입니다. 실제 실행은 러너가 맡습니다.
 
@@ -431,6 +476,7 @@ def create_ui() -> None:
             """
             nonlocal current_session_id
             try:
+                prompt = await with_references(prompt)
                 if not current_session_id:
                     current_session_id = await create_new_session_db(title=prompt[:30])
                     sidebar.current_session_id = current_session_id
@@ -486,7 +532,8 @@ def create_ui() -> None:
             새 턴을 열지 않고(러너는 세션당 하나만 돌립니다) 진행 중인 토론의
             다음 발언 차례에 유저 발언으로 끼워 넣습니다.
             """
-            if not current_session_id or not runner.interject(current_session_id, text):
+            outgoing = await with_references(text) if current_session_id else text
+            if not current_session_id or not runner.interject(current_session_id, outgoing):
                 # 마지막 발언과 화면 갱신 사이에 눌린 경우. 글을 삼키지 않습니다.
                 chat_feed.restore_input(text)
                 chat_feed.set_busy(False, "진행 중인 토론이 없습니다", "Ready")
@@ -562,6 +609,9 @@ def create_ui() -> None:
         chat_feed = ChatFeed(
             on_send_message, on_interject=on_interject, on_stop=on_stop, on_abort=on_abort,
             on_decision=on_decision,
+            mention_provider=mention_provider,
+            on_upload_file=on_upload_file,
+            upload_destination=upload_destination,
         )
         artifact_viewer = ArtifactViewer()
 
