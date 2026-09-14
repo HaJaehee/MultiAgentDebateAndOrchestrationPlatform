@@ -23,6 +23,9 @@ For servers already bound to `0.0.0.0` without a token, the first page opened on
 saves it to `.env` and shows it in a popup ("외부 유저 인증 토큰이 없어 새 토큰(`…`)으로 서버를 시작했습니다.
 `.env`에 저장하였습니다."). A malformed token written by the owner is never overwritten.
 
+The key dialog also lists IPs locked after failed logins and lets the server PC's owner lift a lock
+immediately instead of waiting 15 minutes.
+
 → [UI Components §1.3.6](ui/components.md) · [Environment Variables §3.1](configuration/environment-variables.md)
 
 ---

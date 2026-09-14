@@ -354,7 +354,7 @@ def test_the_middleware_is_the_outermost_layer_and_buttons_are_wired():
     app_src = io.open(ROOT / "app" / "ui" / "app.py", encoding="utf-8").read()
     assert app_src.index('info_btn = ui.button(icon="info"') < app_src.index("build_access_buttons()")
     button_src = io.open(ROOT / "app" / "ui" / "components" / "access_token.py", encoding="utf-8").read()
-    assert button_src.count("if not _caller_is_loopback():") == 3, "버튼 생성과 두 처리 함수 모두 루프백을 확인"
+    assert button_src.count("if not _caller_is_loopback():") == 4, "버튼 생성과 세 처리 함수(적용·생성·잠금 해제) 모두 루프백을 확인"
 
 
 # ------------------------------------------------------------------ 하위 호환: 토큰 없이 외부에 연 서버
@@ -450,3 +450,46 @@ def test_a_failed_save_leaves_remote_access_closed(tmp_path, no_os_token, monkey
 def test_the_popup_message_is_the_one_the_owner_asked_for():
     src = io.open(ROOT / "app" / "ui" / "components" / "access_token.py", encoding="utf-8").read()
     assert 'f"외부 유저 인증 토큰이 없어 새 토큰(`{token}`)으로 서버를 시작했습니다. `.env`에 저장하였습니다."' in src
+
+
+# ------------------------------------------------------------------ 잠긴 IP 해제 (루프백 관리자)
+
+
+def test_locked_ips_are_listed_with_remaining_time_and_expire_from_the_list():
+    clock = Clock()
+    control = AccessControl(TOKEN, clock=clock)
+    for _ in range(MAX_FAILURES):
+        control.record_failure("10.0.0.5")
+    clock.now += 60
+    for _ in range(MAX_FAILURES):
+        control.record_failure("10.0.0.6")
+    locked = control.locked_ips()
+    assert [ip for ip, _ in locked] == ["10.0.0.6", "10.0.0.5"], "남은 시간이 긴 것부터"
+    assert locked[1][1] == pytest.approx(LOCKOUT_SECONDS - 60)
+    clock.now += LOCKOUT_SECONDS
+    assert control.locked_ips() == []
+
+
+def test_unlocking_lets_the_right_token_in_immediately_and_resets_the_count():
+    clock = Clock()
+    control = AccessControl(TOKEN, clock=clock)
+
+    async def go():
+        async with _client(control, REMOTE, host="10.0.0.1:8000") as c:
+            for _ in range(MAX_FAILURES):
+                await c.post("/login", data={"token": "x" * 24})
+            locked = (await c.post("/login", data={"token": TOKEN})).status_code
+            assert control.unlock(REMOTE[0]) is True
+            assert control.unlock(REMOTE[0]) is False, "이미 풀린 IP"
+            # 실패 횟수도 비웠으므로 한 번 더 틀려도 곧바로 잠기지 않습니다.
+            once_more = (await c.post("/login", data={"token": "x" * 24})).status_code
+            ok = await c.post("/login", data={"token": TOKEN})
+            return locked, once_more, ok.status_code
+    assert run(go()) == (429, 401, 303)
+    assert control.locked_ips() == []
+
+
+def test_unlock_is_loopback_only_in_the_ui():
+    src = io.open(ROOT / "app" / "ui" / "components" / "access_token.py", encoding="utf-8").read()
+    handler = src[src.index("def unlock_ips("):src.index("def render_locks(")]
+    assert "if not _caller_is_loopback():" in handler.split("control.unlock")[0]

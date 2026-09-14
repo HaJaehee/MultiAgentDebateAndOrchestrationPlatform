@@ -20,13 +20,15 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from nicegui import run, ui
 
 from app.config import PROJECT_ROOT
 from app.security import (
+    LOCKOUT_SECONDS,
     LOGOUT_PATH,
+    MAX_FAILURES,
     TOKEN_ENV,
     TOKEN_LENGTH,
     AccessControl,
@@ -241,6 +243,54 @@ def build_access_buttons(env_path: Path = ENV_PATH, bind_host: Optional[str] = N
             ui.button("② 새 토큰 생성 후 .env 에 저장", icon="key", on_click=on_generate).props(
                 "unelevated dense no-caps color=indigo-6"
             ).classes("w-full")
+
+        # 로그인 실패로 잠긴 IP. 주인이 토큰을 잘못 친 경우 15분을 기다리지 않고 풉니다.
+        ui.separator().classes("bg-slate-700 my-1")
+        with ui.row().classes("w-full items-center justify-between no-wrap"):
+            ui.label(
+                f"로그인 실패로 잠긴 IP ({MAX_FAILURES}회 실패 시 {LOCKOUT_SECONDS // 60}분)"
+            ).classes("text-xs font-semibold text-slate-300")
+            ui.button(icon="refresh", on_click=lambda: render_locks()).props(
+                "flat dense round size=sm color=grey-4"
+            ).tooltip("목록 새로고침")
+        locks_box = ui.column().classes("w-full gap-1")
+
+        def unlock_ips(ips: List[str]) -> None:
+            if not _caller_is_loopback():
+                ui.notify("잠금은 서버 PC 에서만 풀 수 있습니다.", type="negative", position="bottom-right")
+                return
+            released = [ip for ip in ips if control.unlock(ip)]
+            if released:
+                logger.warning("Login lockout lifted by a loopback user for %s", ", ".join(released))
+                ui.notify(f"잠금을 풀었습니다: {', '.join(released)}", type="positive", position="bottom-right")
+            else:
+                ui.notify("이미 풀려 있습니다.", type="info", position="bottom-right")
+            render_locks()
+
+        def render_locks() -> None:
+            locks_box.clear()
+            locked = control.locked_ips()
+            with locks_box:
+                if not locked:
+                    ui.label("잠긴 IP 가 없습니다.").classes("text-[11px] text-slate-500")
+                    return
+                for ip, remaining in locked:
+                    with ui.row().classes(
+                        "w-full items-center justify-between no-wrap bg-slate-950 border border-slate-800 "
+                        "rounded px-2 py-1"
+                    ):
+                        ui.label(ip).classes("font-mono text-xs text-slate-200")
+                        with ui.row().classes("items-center gap-2 no-wrap"):
+                            ui.label(f"{int(remaining // 60) + 1}분 남음").classes("text-[11px] text-slate-500")
+                            ui.button("해제", icon="lock_open", on_click=lambda _, ip=ip: unlock_ips([ip])).props(
+                                "flat dense no-caps size=sm color=amber-4"
+                            )
+                if len(locked) > 1:
+                    ui.button("모두 해제", icon="lock_open",
+                              on_click=lambda: unlock_ips([ip for ip, _ in control.locked_ips()])).props(
+                        "flat dense no-caps size=sm color=amber-4"
+                    ).classes("self-end")
+
         with ui.row().classes("w-full justify-end"):
             ui.button("닫기", on_click=lambda: (token_box.set_visibility(False), dialog.close())).props(
                 "flat dense no-caps color=grey-4"
@@ -248,6 +298,7 @@ def build_access_buttons(env_path: Path = ENV_PATH, bind_host: Optional[str] = N
 
     def open_dialog() -> None:
         refresh()
+        render_locks()
         token_box.set_visibility(False)
         dialog.open()
 

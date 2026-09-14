@@ -304,6 +304,25 @@ class AccessControl:
             self._failures.pop(ip, None)
             self._locked_until.pop(ip, None)
 
+    def locked_ips(self) -> List[Tuple[str, float]]:
+        """지금 잠겨 있는 IP 와 남은 초. 풀린 것은 목록에서 치웁니다."""
+        now = self._clock()
+        with self._lock:
+            for ip in [ip for ip, until in self._locked_until.items() if until <= now]:
+                del self._locked_until[ip]
+            return sorted(((ip, until - now) for ip, until in self._locked_until.items()),
+                          key=lambda item: -item[1])
+
+    def unlock(self, ip: str) -> bool:
+        """잠긴 IP 를 풉니다. 실패 횟수도 비워, 한 번 틀렸다고 곧바로 다시 잠기지 않게 합니다.
+
+        서버 PC 의 주인만 부릅니다 (`access_token.py` 가 루프백을 확인). 잠겨 있지 않았으면 False.
+        """
+        with self._lock:
+            was_locked = self._locked_until.pop(ip, None) is not None
+            self._failures.pop(ip, None)
+            return was_locked
+
 
 _control: Optional[AccessControl] = None
 

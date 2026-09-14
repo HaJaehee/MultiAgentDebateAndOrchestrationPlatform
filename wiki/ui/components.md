@@ -493,6 +493,14 @@ only (stray `\r` from a bad editor would otherwise become blank lines), and writ
 `os.replace`. After either option `disconnect_remote_clients()` tells open remote pages to reload (→
 login) and disconnects their sockets, because cookies are only checked when a connection is made.
 
+**Lifting a login lockout (loopback only).** Below the two options the key dialog lists the IPs locked by
+failed logins with the minutes left (`AccessControl.locked_ips()`, longest first, expired entries dropped),
+each with `해제` and, for several, `모두 해제`. `AccessControl.unlock(ip)` removes the lock **and** the failure
+window, so one more typo does not relock at once; the handler re-checks that the caller is loopback and logs
+the IPs released. Verified in a browser: five wrong tokens from the LAN address gave 401×5 and then 429 for
+the right token; the loopback dialog listed `192.168.45.104 · 15분 남음`, `해제` emptied the list with a
+notice, and the remote browser then logged in (API 200).
+
 **Backward compatibility: a public bind with no token.** A server that was already bound to `0.0.0.0`
 before tokens existed has none after the update, so every remote user would be locked out. On the first
 loopback page load, `bootstrap_missing_token()` — when `bind_is_public(app.host)` (`0.0.0.0`, `::`, empty
