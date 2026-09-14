@@ -23,7 +23,27 @@ it passed the diagram and no repair was requested — and a diagram taken from a
 - Every diagram artifact is checked after that; one that still fails is titled `⚠ …`, including
   specialist diagrams that never get LLM repair.
 
-→ [Artifact Synthesis §2.2, §3.1](orchestration/artifact-generation.md)
+**An edge-case pass over the Mermaid pipeline.** 121 cases were checked against the real parser, raw
+and normalised; defects found and fixed:
+
+- Valid diagrams flagged: YAML front matter or a BOM before the declaration, asymmetric shapes `A>x]`,
+  `opt:::red` class shorthand, `end;`.
+- Normalisation changed visible text: `[결제 (PG)]` was quoted in sequence, state, gantt, class, ER,
+  journey and timeline diagrams, where it is valid. Label quoting now runs only for flowcharts and
+  mindmaps.
+- A backtick in a converted note broke it; re-normalising reused `mado_note_1`.
+- Now fixed or flagged: `rgb()`/`rgba()` in `style`/`classDef`/`linkStyle` (converted to hex),
+  parentheses inside cylinder, slanted, double-circle and asymmetric shapes and bare subgraph titles,
+  and `subgraph id "title"`.
+- **Code-block extraction:** a fence with an info string (```` ```mermaid title="…" ````) was not
+  recognised and shifted every later fence, losing the following block; `~~~` fences were ignored;
+  untagged blocks starting with front matter, `%%{init}%%` or a newer kind (`kanban`) were not seen as
+  Mermaid. Extraction is now a line-based scanner.
+
+The final run had no false positives, no diagram made worse, no text changed outside flowcharts and
+mindmaps, and normalisation is idempotent. The table is frozen as `tests/test_mermaid_edge_cases.py`.
+
+→ [Artifact Synthesis §2.2, §3.1, §3.1.1](orchestration/artifact-generation.md)
 
 ---
 

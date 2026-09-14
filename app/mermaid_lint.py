@@ -74,7 +74,8 @@ _SEQUENCE_KEYWORDS = (
     "par", "critical", "break", "rect", "else", "and",
 )
 _SEQUENCE_LINE_RE = re.compile(
-    r"^(" + "|".join(_SEQUENCE_KEYWORDS) + r")(?:\s+[^\s\-=.&~]|\s*:)",
+    # `:::` 는 flowchart 의 클래스 붙이기(`opt:::red --> B`)라 정상입니다 (파서 확인).
+    r"^(" + "|".join(_SEQUENCE_KEYWORDS) + r")(?:\s+[^\s\-=.&~:]|\s*:(?!::))",
     re.IGNORECASE,
 )
 # 시퀀스 화살표. `A ->> B` `A -->> B` 는 flowchart 에서 거부됩니다. `A --x B`(flowchart 의
@@ -104,9 +105,43 @@ class MermaidIssue:
         return text
 
 
+# 비대칭 모양 `A>라벨]`. 여는 대괄호 없이 닫혀 괄호 짝 세기가 틀어지므로 따로 봅니다.
+# 앞 글자가 단어 문자여야 `-->` 의 `>` 와 헷갈리지 않습니다.
+_ASYMMETRIC_SPAN_RE = re.compile(r"(?<=\w)>([^\[\]\n>]*)\]")
+# 스타일 문장 안의 `rgb(…)` 류. 쉼표로 속성을 나누는 문장이라 거부됩니다 (파서 확인).
+_STYLE_LINE_RE = re.compile(r"^\s*(?:style|classDef|linkStyle)\b", re.IGNORECASE)
+_STYLE_FUNCTION_RE = re.compile(r"\b(?:rgba?|hsla?)\s*\(", re.IGNORECASE)
+_BARE_SUBGRAPH_RE = re.compile(r'^\s*subgraph\s+([^"\[\]]*)$', re.IGNORECASE)
+# `subgraph pay "결제"` — 아이디 뒤에 따옴표 제목은 거부됩니다 (파서 확인).
+_SUBGRAPH_ID_QUOTED_RE = re.compile(r'^\s*subgraph\s+[A-Za-z0-9_]+\s+"[^"]*"\s*$', re.IGNORECASE)
+
+
+def _front_matter_lines(lines: List[str]) -> int:
+    """맨 앞 YAML 머리말(`---` … `---`)이 차지하는 줄 수. 없으면 0.
+
+    Mermaid 는 다이어그램 선언 앞에 `title:`·`config:` 머리말을 받습니다. 이것을 선언이
+    없는 것으로 보면 멀쩡한 다이어그램에 `no-header` 를 붙입니다.
+    """
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i >= len(lines) or lines[i].strip() != "---":
+        return 0
+    for j in range(i + 1, len(lines)):
+        if lines[j].strip() == "---":
+            return j + 1
+    return 0
+
+
+def _clean(code: str) -> str:
+    """BOM 과 줄바꿈 차이를 없앱니다. BOM 이 첫 줄에 붙으면 선언을 못 읽습니다."""
+    return (code or "").replace("\ufeff", "").replace("\r\n", "\n").replace("\r", "\n")
+
+
 def diagram_kind(code: str) -> Optional[str]:
     """첫 의미 있는 줄에서 다이어그램 종류를 읽습니다. 못 읽으면 None."""
-    for line in (code or "").splitlines():
+    all_lines = _clean(code).split("\n")
+    for line in all_lines[_front_matter_lines(all_lines):]:
         stripped = line.strip()
         if not stripped or _COMMENT_RE.match(stripped):
             continue
@@ -126,17 +161,19 @@ def _strip_quoted(line: str) -> str:
 
 
 def _meaningful_lines(code: str) -> List[tuple]:
-    """(1부터 센 줄번호, 원문) 중 빈 줄과 주석을 뺀 것."""
+    """(1부터 센 줄번호, 원문) 중 빈 줄·주석·YAML 머리말을 뺀 것."""
+    all_lines = (code or "").split("\n")
+    skip = _front_matter_lines(all_lines)
     return [
         (i, raw)
-        for i, raw in enumerate((code or "").splitlines(), start=1)
-        if raw.strip() and not _COMMENT_RE.match(raw)
+        for i, raw in enumerate(all_lines, start=1)
+        if i > skip and raw.strip() and not _COMMENT_RE.match(raw)
     ]
 
 
 def _balance_issues(line_no: int, line: str, pairs: str) -> List[MermaidIssue]:
     """한 줄 안에서 짝이 맞지 않는 괄호를 지적합니다."""
-    text = _strip_quoted(line)
+    text = _ASYMMETRIC_SPAN_RE.sub("", _strip_quoted(line))
     issues: List[MermaidIssue] = []
     for opener, closer in zip(pairs[0::2], pairs[1::2]):
         if text.count(opener) != text.count(closer):
@@ -178,6 +215,17 @@ def _round_node_paren_issue(line_no: int, line: str) -> Optional[MermaidIssue]:
             return None  # 짝이 안 맞는 것은 bracket-balance 가 봅니다.
         inner = text[start + 1:i]
         if _is_shape_wrapper(inner):
+            body = inner.strip()[1:-1]
+            if inner.strip()[0] == "(" and ("(" in body or ")" in body):
+                return MermaidIssue(
+                    line=line_no,
+                    rule="paren-in-label",
+                    message=(
+                        f"이중 원 라벨 `(({body.strip()}))` 안에 괄호가 따옴표 없이 들어 있습니다. "
+                        f'`(("{body.strip()}"))` 처럼 큰따옴표로 감싸세요.'
+                    ),
+                    snippet=line,
+                )
             continue
         if "(" in inner or ")" in inner:
             return MermaidIssue(
@@ -201,6 +249,19 @@ def _paren_in_label_issues(line_no: int, line: str) -> List[MermaidIssue]:
         for match in re.finditer(pattern, scan):
             inner = match.group(1)
             if _is_shape_wrapper(inner):
+                # 원통 `[(DB (주))]` 안의 괄호는 거부됩니다. `[("DB (주)")]` 는 정상 (파서 확인).
+                body = inner.strip()[1:-1]
+                if opener == "[" and inner.strip()[0] in "(/\\" and ("(" in body or ")" in body):
+                    issues.append(MermaidIssue(
+                        line=line_no,
+                        rule="paren-in-label",
+                        message=(
+                            f"원통 라벨 `[({body.strip()})]` 안에 괄호가 따옴표 없이 들어 있습니다. "
+                            f'`[("{body.strip()}")]` 처럼 큰따옴표로 감싸세요.'
+                        ),
+                        snippet=line,
+                    ))
+                    break
                 continue
             if "(" in inner or ")" in inner:
                 issues.append(MermaidIssue(
@@ -213,6 +274,19 @@ def _paren_in_label_issues(line_no: int, line: str) -> List[MermaidIssue]:
                     snippet=line,
                 ))
                 break
+    for match in _ASYMMETRIC_SPAN_RE.finditer(scan):
+        inner = match.group(1)
+        if "(" in inner or ")" in inner:
+            issues.append(MermaidIssue(
+                line=line_no,
+                rule="paren-in-label",
+                message=(
+                    f"비대칭 라벨 `>{inner.strip()}]` 안에 괄호가 따옴표 없이 들어 있습니다. "
+                    f'`>"{inner.strip()}"]` 처럼 큰따옴표로 감싸세요.'
+                ),
+                snippet=line,
+            ))
+            break
     round_issue = _round_node_paren_issue(line_no, line)
     if round_issue is not None:
         issues.append(round_issue)
@@ -225,7 +299,7 @@ def lint_mermaid(code: str) -> List[MermaidIssue]:
     빈 목록이 "문법이 완벽하다" 는 뜻은 아닙니다. "우리가 아는 확실한 오류는
     없다" 는 뜻입니다 (모듈 docstring 의 설계 원칙 참고).
     """
-    text = (code or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = _clean(code)
     lines = _meaningful_lines(text)
 
     if not lines:
@@ -252,6 +326,47 @@ def lint_mermaid(code: str) -> List[MermaidIssue]:
         for line_no, raw in lines:
             body = _strip_quoted(raw).strip()
             lowered = body.lower()
+
+            if _STYLE_LINE_RE.match(body):
+                # 스타일 문장은 노드·라벨 문법이 아니라 괄호 검사 대상이 아닙니다.
+                if _STYLE_FUNCTION_RE.search(raw):
+                    issues.append(MermaidIssue(
+                        line=line_no,
+                        rule="style-color-function",
+                        message=(
+                            "`style`·`classDef` 의 색에 `rgb()` 같은 함수를 쓸 수 없습니다 "
+                            "(쉼표가 속성 구분자로 읽힙니다). `#ff0000` 처럼 16진수로 쓰세요."
+                        ),
+                        snippet=raw,
+                    ))
+                continue
+
+            if _SUBGRAPH_ID_QUOTED_RE.match(raw):
+                issues.append(MermaidIssue(
+                    line=line_no,
+                    rule="subgraph-title",
+                    message=(
+                        '`subgraph 아이디 "제목"` 형태는 쓸 수 없습니다. '
+                        '`subgraph 아이디["제목"]` 처럼 대괄호로 쓰세요.'
+                    ),
+                    snippet=raw,
+                ))
+                depth += 1
+                continue
+
+            bare = _BARE_SUBGRAPH_RE.match(body)
+            if bare and ("(" in bare.group(1) or ")" in bare.group(1)):
+                issues.append(MermaidIssue(
+                    line=line_no,
+                    rule="paren-in-label",
+                    message=(
+                        f"subgraph 제목 `{bare.group(1).strip()}` 에 괄호가 따옴표 없이 들어 있습니다. "
+                        f'`subgraph "{bare.group(1).strip()}"` 처럼 감싸세요.'
+                    ),
+                    snippet=raw,
+                ))
+                depth += 1
+                continue
 
             # 따옴표가 이 줄에서 닫히지 않으면 여러 줄 라벨입니다
             # (`A["첫줄` / `두번째"] --> B`). 정상 문법이므로 괄호를 세지
@@ -293,7 +408,7 @@ def lint_mermaid(code: str) -> List[MermaidIssue]:
 
             if lowered.startswith("subgraph"):
                 depth += 1
-            elif lowered == "end":
+            elif lowered.rstrip(";").strip() == "end":
                 depth -= 1
                 if depth < 0:
                     issues.append(MermaidIssue(

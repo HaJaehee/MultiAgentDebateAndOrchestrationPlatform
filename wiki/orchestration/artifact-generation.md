@@ -87,8 +87,18 @@ flowchart LR
   - **Unterminated fences** are extracted to end of text. A synthesis report truncated by
     `max_tokens` mid-diagram used to yield no artifact at all, since the old regex needed
     a matching closing fence.
-  - **Unlabelled blocks** whose first line starts with a diagram keyword (`graph`,
-    `flowchart`, `sequenceDiagram`, …) are treated as Mermaid.
+  - **Unlabelled blocks** whose declaration `diagram_kind()` can read are treated as Mermaid —
+    including a declaration after YAML front matter, `%%{init}%%` or comments, and newer kinds
+    such as `kanban` and `packet-beta`. (Before the edge-case pass this was a prefix test on the first
+    line against a shorter list, which missed those and accepted prose starting with `pie…`.)
+  - **Fence scanning** (`_iter_code_fences`, line based). The old one-line regex missed an info
+    string (```` ```mermaid title="…" ````) — it then read that block's *closing* fence as an
+    opening one, shifting every later pair and losing the Python block that followed — and ignored
+    `~~~` fences and longer outer fences. The scanner accepts ```` ``` ```` or `~~~` (three or more)
+    at the start of a line with an info string, and a ```` ```lang ```` that ends a line mid-text as
+    before; closes on a line starting with an equal or longer run of the same character (text after
+    it tolerated) or on a code line ending in the fence; and runs to the end when unterminated. Inline
+    ```` ``` ```` in prose does not open a block.
   - **Transcript fallback**: if the synthesis report contains no diagram (or the synthesis
     failed), the most recent diagram in **this turn's** transcript is promoted to an artifact,
     titled with its author. Models routinely draw the architecture during the debate and omit it
@@ -231,6 +241,38 @@ otherwise: **shape wrappers** (`[(cylinder)]`, `[[subroutine]]`, `[/parallelogra
 
 Calibration result against the real renderer: **30 valid diagrams — zero flagged; 13 diagrams
 the renderer rejected — all caught.**
+
+### 3.1.1. Edge-case pass (after v0.8.1)
+
+121 edge cases were run through normalisation and the linter, and both the raw and the normalised text
+were given to the parser NiceGUI ships. A case is a defect if the linter flags what the parser accepts,
+normalisation turns an accepted diagram into a rejected one, normalisation changes accepted text in a
+diagram kind it has no business touching, normalisation is not idempotent, or the parser rejects what
+we pass silently. The final run: **68 accepted and untouched, 40 fixed by normalisation, 13 rejected and
+flagged, 0 defects.** The table is frozen in `tests/test_mermaid_edge_cases.py` (raw text, the parser's
+verdict on raw and normalised text, and the exact normalised text it judged).
+
+Defects found and fixed:
+
+| Found | Kind | Fix |
+| :--- | :--- | :--- |
+| YAML front matter (`---`/`title:`/`---`) before the declaration → `no-header` | false positive | `_front_matter_lines()` skipped by `diagram_kind` and the linter |
+| Leading BOM → `no-header` | false positive | BOM removed in normalisation and linting |
+| Asymmetric shape `A>text]` → `bracket-balance` | false positive | its span is excluded from bracket counting |
+| `opt:::red --> B` (class shorthand) → `sequence-syntax-in-flowchart` | false positive | `:::` excluded from the keyword-colon form |
+| `end;` not counted as closing a subgraph → `subgraph-unclosed` | false positive | trailing `;` ignored |
+| `[결제 (PG)]` quoted in sequence, state, gantt, class, ER, journey and timeline diagrams | visible text changed | label quoting now runs only for `graph`/`flowchart` (and `mindmap`, where the raw form is rejected) |
+| Backtick in a converted note breaks the label | normalisation made it worse | backticks become `'` |
+| Re-normalising a diagram that already has `mado_note_1` reuses the id | note attached to the wrong node | numbering skips ids already present; `classDef madoNote` added only once |
+| `style A fill:rgb(255,0,0)`, `classDef … rgba(…)`, `linkStyle … rgb(…)` | missed | converted to `#rrggbb` / `#rrggbbaa`; anything left (`hsl()`, out-of-range values) flagged as `style-color-function` |
+| `A[(DB (주))]` cylinder, `A[/입력 (x)/]` slanted shapes, `A((원 (x)))` double circle | missed | quoted inside the wrapper (`[("…")]`, `[/"…"/]`, `(("…"))`); linter flags the unquoted forms |
+| `A>결제 (PG)]` asymmetric label with parentheses | missed | quoted as `>"…"]` |
+| `subgraph 결제 영역 (PG)` bare title with parentheses | missed | quoted as `subgraph "…"` |
+| `subgraph pay "결제"` (id followed by a quoted title) | missed | rewritten as `subgraph pay["결제"]`; flagged as `subgraph-title` |
+
+Accepted misses (the parser rejects them, the linter flags them, normalisation does not attempt a fix
+because the intent is ambiguous): `A{{육각 (x)}}`, `A -->|[x] (y)| B`, `A[a|b (c)]`, notes on non-identifier
+targets (`검증기`, `api-gw`), `end-node`, `hsl()` colours.
 
 ### 3.2. Repair mechanics
 

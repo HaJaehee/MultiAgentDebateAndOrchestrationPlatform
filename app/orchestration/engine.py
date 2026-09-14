@@ -46,18 +46,79 @@ logger = logging.getLogger(__name__)
 
 EventCallback = Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]
 
-# 닫는 펜스가 없어도 (max_tokens 로 답변이 잘렸을 때) 마지막 블록을 건집니다.
-# 예전 정규식은 ``` 짝이 맞을 때만 매칭돼서, 다이어그램 도중에 잘린 답변은
-# 아티팩트가 통째로 사라졌습니다.
-CODE_FENCE_RE = re.compile(r"```([a-zA-Z0-9_\-\+]*)[ \t]*\r?\n(.*?)(?:```|\Z)", re.DOTALL)
+# 코드 펜스를 여는 줄. 줄 머리(들여쓰기 허용)의 ``` 또는 ~~~ 세 개 이상, 언어, 그리고
+# 뒤따르는 정보 문자열(```` ```mermaid title="흐름" ````). 백틱 펜스의 정보에는 백틱이
+# 올 수 없습니다 — 그래야 본문 속 "``` 가" 같은 인라인 표기를 여는 펜스로 잘못 읽지 않습니다.
+_FENCE_OPEN_RE = re.compile(r"^[ \t]*(?P<fence>`{3,}|~{3,})(?P<lang>[A-Za-z0-9_+\-]*)(?P<info>[^\n]*)$")
+# 줄 중간에서 여는 펜스 ("다음과 같습니다: ```mermaid"). 예전 정규식이 받던 모양이라, 언어가
+# 붙고 줄이 거기서 끝날 때만 받습니다.
+_FENCE_MIDLINE_OPEN_RE = re.compile(r"(?P<fence>```)(?P<lang>[A-Za-z0-9_+\-]+)[ \t]*$")
 
-# 언어 태그 없이 열린 블록이라도 첫 줄이 이 키워드면 Mermaid 로 취급합니다.
-MERMAID_HEADERS = (
-    "graph", "flowchart", "sequencediagram", "classdiagram", "statediagram",
-    "erdiagram", "journey", "gantt", "pie", "gitgraph", "mindmap", "timeline",
-    "quadrantchart", "requirementdiagram", "c4context", "sankey-beta",
-    "block-beta", "architecture-beta", "xychart-beta",
-)
+
+def _iter_code_fences(text: str) -> List[Dict[str, Any]]:
+    """본문의 코드 블록을 줄 단위로 찾습니다: [{lang, start, end}] (`text[start:end]` 가 코드).
+
+    예전에는 정규식 한 줄(```` ```lang\\n(.*?)``` ````)이었고, 세 가지를 놓쳤습니다.
+
+    * 정보 문자열이 붙은 펜스(```` ```mermaid title="흐름" ````) — 여는 펜스로 못 읽고, 그 블록의
+      **닫는** 펜스를 여는 펜스로 읽어 짝이 한 칸씩 밀렸습니다. 뒤따르던 python 블록까지 사라졌습니다.
+    * `~~~` 펜스.
+    * 바깥 펜스가 더 긴 경우(```` ```` ```` 안의 ```` ``` ````) — 안쪽 줄에서 닫혔습니다.
+
+    닫는 펜스가 없으면(응답 한도로 잘린 답변) 끝까지를 코드로 봅니다. 닫는 줄 뒤에 글이
+    붙어 있거나(```` ``` 끝 ````) 코드 줄 끝에 펜스가 붙은 경우(```` A-->B``` ````)도 닫힌 것으로
+    봅니다 — 모델이 흔히 그렇게 씁니다.
+    """
+    text = text or ""
+    blocks: List[Dict[str, Any]] = []
+    lines = text.splitlines(keepends=True)
+    offsets, pos = [], 0
+    for line in lines:
+        offsets.append(pos)
+        pos += len(line)
+
+    i = 0
+    while i < len(lines):
+        body = lines[i].rstrip("\r\n")
+        m = _FENCE_OPEN_RE.match(body)
+        if m and not (m.group("fence")[0] == "`" and "`" in m.group("info")):
+            fence, lang = m.group("fence"), m.group("lang")
+        else:
+            mid = _FENCE_MIDLINE_OPEN_RE.search(body)
+            if not mid:
+                i += 1
+                continue
+            fence, lang = mid.group("fence"), mid.group("lang")
+
+        start = offsets[i] + len(lines[i])
+        end = len(text)
+        j = i + 1
+        next_i = len(lines)
+        while j < len(lines):
+            line_body = lines[j].rstrip("\r\n")
+            stripped = line_body.lstrip(" \t")
+            run = len(stripped) - len(stripped.lstrip(fence[0]))
+            if run >= len(fence):
+                end = offsets[j]
+                next_i = j + 1
+                break
+            tail = line_body.rstrip()
+            if fence[0] == "`" and tail.endswith(fence) and not tail.endswith(fence[0] * (len(fence) + 1)):
+                end = offsets[j] + len(tail) - len(fence)
+                next_i = j + 1
+                break
+            j += 1
+        blocks.append({"lang": lang, "start": start, "end": end})
+        i = next_i
+    return blocks
+
+
+def _is_untagged_mermaid(code: str) -> bool:
+    """언어 태그 없이 열린 블록이 Mermaid 인가. 선언을 `diagram_kind` 로 읽습니다.
+
+    YAML 머리말·`%%{init}%%`·주석 뒤의 선언도 읽고, `kanban`·`packet-beta` 같은 새 종류도 압니다.
+    """
+    return diagram_kind(code) is not None
 
 CODE_LANGUAGES = ("python", "py", "typescript", "javascript", "bash", "shell", "json", "toml", "sql")
 
@@ -98,6 +159,10 @@ def _convert_flowchart_notes(lines: List[str]) -> List[str]:
     """
     out: List[str] = []
     converted: List[str] = []
+    joined = "\n".join(lines)
+    # 이미 있는 이름과 겹치지 않게 번호를 고릅니다. 수선 결과를 다시 정규화하거나 모델이
+    # 앞서 변환된 노드를 베껴 오면, 1번부터 다시 세는 순간 남의 노트에 붙어 버립니다.
+    next_index = 1
     for line in lines:
         m = _FLOWCHART_NOTE_RE.match(line)
         if not m:
@@ -107,19 +172,94 @@ def _convert_flowchart_notes(lines: List[str]) -> List[str]:
         if not targets or not all(_SIMPLE_NODE_ID_RE.match(t) for t in targets):
             out.append(line)
             continue
-        text = (m.group("text") or "").strip().replace('"', "'")
+        # 큰따옴표는 라벨을 닫고, 백틱은 마크다운 문자열로 읽혀 라벨을 깨뜨립니다 (파서 확인).
+        text = (m.group("text") or "").strip().replace('"', "'").replace("`", "'")
         if not text:
             continue
-        node = f"mado_note_{len(converted) + 1}"
+        while re.search(rf"\bmado_note_{next_index}\b", joined):
+            next_index += 1
+        node = f"mado_note_{next_index}"
+        next_index += 1
         converted.append(node)
         indent = m.group("indent")
         out.append(f'{indent}{targets[0]} -.- {node}["{text}"]')
         for extra in targets[1:]:
             out.append(f"{indent}{extra} -.- {node}")
     if converted:
-        out.append(f"  {_NOTE_CLASS_DEF}")
+        # 같은 classDef 가 두 번 있어도 파서는 받지만, 이미 있으면 덧붙이지 않습니다.
+        if not re.search(r"^\s*classDef\s+madoNote\b", joined, re.M):
+            out.append(f"  {_NOTE_CLASS_DEF}")
         out.append(f"  class {','.join(converted)} madoNote")
     return out
+
+
+# `style`·`classDef`·`linkStyle` 의 `rgb(…)`·`rgba(…)`. 이 문장들은 쉼표로 속성을 나누므로
+# 괄호 안의 쉼표 때문에 렌더러가 거부합니다 (파서 확인: `fill:rgb(255,0,0)` 오류,
+# `fill:#ff0000`·`#00000080` 정상). 숫자로 된 것만 16진수로 바꿉니다.
+_STYLE_LINE_RE = re.compile(r"^\s*(?:style|classDef|linkStyle)\b", re.IGNORECASE)
+_RGB_RE = re.compile(
+    r"rgba?\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*(?:[,/]\s*([\d.]+%?)\s*)?\)",
+    re.IGNORECASE,
+)
+# `subgraph 그룹 (A)` — 따옴표·대괄호 없는 제목에 괄호. `subgraph "그룹 (A)"` 는 정상.
+_BARE_SUBGRAPH_PAREN_RE = re.compile(r'^(?P<head>\s*subgraph\s+)(?P<title>[^"\[\]\n]*[()][^"\[\]\n]*?)\s*$', re.IGNORECASE)
+# `A>결제 (PG)]` — 비대칭 모양 라벨에 괄호. `A>"결제 (PG)"]` 는 정상. 앞 글자가 단어
+# 문자여야 `-->` 같은 화살표의 `>` 와 헷갈리지 않습니다.
+_ASYMMETRIC_PAREN_RE = re.compile(r'(?<=[\w])>(?P<inner>[^"\[\]\n>]*[()][^"\[\]\n>]*)\]')
+# `A[/입력 (x)/]` 평행사변형·사다리꼴(`/` `\` 조합) 안의 괄호. `[/"입력 (x)"/]` 는 정상 (파서 확인).
+_SLANT_PAREN_RE = re.compile(r'\[(?P<o>[/\\])(?P<inner>[^"\[\]/\\\n]*[()][^"\[\]/\\\n]*)(?P<c>[/\\])\]')
+# `A((원 (x)))` 이중 원 안의 괄호 한 겹. `(("원 (x)"))` 는 정상 (파서 확인).
+_DOUBLE_CIRCLE_PAREN_RE = re.compile(r'(?<=[\w])\(\((?P<inner>[^()"\n]*\([^()"\n]*\)[^()"\n]*)\)\)')
+# `subgraph pay "결제"` — 아이디 뒤 따옴표 제목은 거부됩니다. `subgraph pay["결제"]` 는 정상 (파서 확인).
+_SUBGRAPH_ID_QUOTED_RE = re.compile(r'^(?P<head>\s*subgraph\s+)(?P<id>[A-Za-z0-9_]+)\s+"(?P<title>[^"\n]*)"\s*$', re.IGNORECASE)
+
+
+def _rgb_to_hex(m: re.Match) -> str:
+    r, g, b, alpha = m.group(1), m.group(2), m.group(3), m.group(4)
+    channels = [int(r), int(g), int(b)]
+    if any(c > 255 for c in channels):
+        return m.group(0)
+    hex_value = "#" + "".join(f"{c:02x}" for c in channels)
+    if alpha is not None:
+        try:
+            a = float(alpha[:-1]) / 100 if alpha.endswith("%") else float(alpha)
+        except ValueError:
+            return m.group(0)
+        if not 0 <= a <= 1:
+            return m.group(0)
+        if a < 1:
+            hex_value += f"{round(a * 255):02x}"
+    return hex_value
+
+
+def _quote_bracket_label(m: re.Match) -> str:
+    """`[라벨 (괄호)]` → `["라벨 (괄호)"]`. 모양 감싸개는 그대로 두되, 원통 `[(…)]` 안의 괄호는 감쌉니다."""
+    inner = m.group(1)
+    if not inner:
+        return m.group(0)
+    if _SHAPE_PAIRS.get(inner[0]) == inner[-1]:
+        # `[(DB (주))]` 는 거부되고 `[("DB (주)")]` 는 정상입니다 (파서 확인). 다른 모양
+        # (`[/…/]`, `[\…\]`)은 확인하지 않았으므로 건드리지 않습니다.
+        body = inner[1:-1]
+        if inner[0] == "(" and ("(" in body or ")" in body) and body.strip():
+            return f'[("{body.strip()}")]'
+        return m.group(0)
+    return f'["{inner.strip()}"]'
+
+
+def _normalize_flowchart_line(line: str) -> str:
+    if _STYLE_LINE_RE.match(line):
+        return _RGB_RE.sub(_rgb_to_hex, line)
+    sub = _SUBGRAPH_ID_QUOTED_RE.match(line)
+    if sub:
+        return f'{sub.group("head")}{sub.group("id")}["{sub.group("title")}"]'
+    sub = _BARE_SUBGRAPH_PAREN_RE.match(line)
+    if sub:
+        return f'{sub.group("head")}"{sub.group("title").strip()}"'
+    line = _ASYMMETRIC_PAREN_RE.sub(lambda m: f'>"{m.group("inner").strip()}"]', line)
+    line = _SLANT_PAREN_RE.sub(lambda m: f'[{m.group("o")}"{m.group("inner").strip()}"{m.group("c")}]', line)
+    line = _DOUBLE_CIRCLE_PAREN_RE.sub(lambda m: f'(("{m.group("inner").strip()}"))', line)
+    return _PAREN_LABEL_RE.sub(_quote_bracket_label, line)
 
 
 def normalize_mermaid(content: str) -> str:
@@ -127,9 +267,13 @@ def normalize_mermaid(content: str) -> str:
 
     다이어그램을 다시 써 주는 것이 아니라, 렌더러가 통째로 거부해서 화면이 비는
     경우만 막습니다: 잘못된 줄바꿈, 따옴표 없는 괄호 라벨, flowchart 에 섞인 시퀀스
-    다이어그램 노트 (v0.8.1).
+    다이어그램 노트 (v0.8.1), 스타일의 `rgb()`, 괄호가 든 원통·비대칭 모양과 subgraph 제목.
+
+    **라벨 손질은 flowchart 와 mindmap 에서만 합니다.** 시퀀스·상태·간트·클래스·ER·여정·
+    타임라인에서는 `[결제 (PG)]` 가 원래 정상이라(파서 확인), 따옴표를 씌우면 화면에 보이는
+    글자에 따옴표가 덧붙을 뿐입니다. 여러 번 적용해도 결과가 같습니다.
     """
-    text = content.replace("\r\n", "\n").replace("\r", "\n").strip()
+    text = (content or "").replace("﻿", "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not text:
         return text
 
@@ -138,23 +282,13 @@ def normalize_mermaid(content: str) -> str:
     if lines[0].strip().lower() == "mermaid":
         lines = lines[1:]
 
-    if diagram_kind("\n".join(lines)) in ("graph", "flowchart"):
-        lines = _convert_flowchart_notes(lines)
-
-    out: List[str] = []
-    for line in lines:
-        # `[(...)]`(원통), `[[...]]`(서브루틴), `[/.../]`·`[\...\]`(평행사변형) 같은
-        # 모양 문법은 라벨이 아니라 노드 종류입니다. 따옴표를 씌우면 안 됩니다.
-        def _quote(m: re.Match) -> str:
-            inner = m.group(1)
-            if not inner:
-                return m.group(0)
-            if _SHAPE_PAIRS.get(inner[0]) == inner[-1]:
-                return m.group(0)
-            return f'["{inner.strip()}"]'
-
-        out.append(_PAREN_LABEL_RE.sub(_quote, line))
-    return "\n".join(out).strip()
+    kind = diagram_kind("\n".join(lines))
+    if kind in ("graph", "flowchart"):
+        lines = [_normalize_flowchart_line(line) for line in _convert_flowchart_notes(lines)]
+    elif kind == "mindmap":
+        # `가지[항목 (A)]` 는 거부되고 `가지["항목 (A)"]` 는 정상입니다 (파서 확인).
+        lines = [_PAREN_LABEL_RE.sub(_quote_bracket_label, line) for line in lines]
+    return "\n".join(lines).strip()
 
 
 def find_mermaid_blocks(text: str) -> List[Dict[str, Any]]:
@@ -165,22 +299,22 @@ def find_mermaid_blocks(text: str) -> List[Dict[str, Any]]:
     같은 코드가 두 번 나올 때 엉뚱한 곳을 바꿉니다.
     """
     blocks: List[Dict[str, Any]] = []
-    for match in CODE_FENCE_RE.finditer(text or ""):
-        lang = match.group(1).strip().lower() or "text"
-        code = match.group(2).strip()
+    source = text or ""
+    for fence in _iter_code_fences(source):
+        lang = fence["lang"].strip().lower() or "text"
+        raw = source[fence["start"]:fence["end"]]
+        code = raw.strip()
         if not code:
             continue
         if lang == "text":
-            first = code.split("\n", 1)[0].strip().lower()
-            if not any(first.startswith(h) for h in MERMAID_HEADERS):
+            if not _is_untagged_mermaid(code):
                 continue
         elif lang != "mermaid":
             continue
         # 범위는 **다듬은 코드**의 것이어야 합니다. 원본 그대로의 범위를 쓰면
         # 끝의 줄바꿈까지 포함되고, 그 자리를 줄바꿈 없는 코드로 갈아 끼우는
         # 순간 닫는 ``` 가 마지막 코드 줄에 붙어 펜스가 깨집니다.
-        raw = match.group(2)
-        start = match.start(2) + (len(raw) - len(raw.lstrip()))
+        start = fence["start"] + (len(raw) - len(raw.lstrip()))
         blocks.append({"code": code, "start": start, "end": start + len(code)})
     return blocks
 
@@ -188,15 +322,14 @@ def find_mermaid_blocks(text: str) -> List[Dict[str, Any]]:
 def extract_code_blocks(text: str) -> List[Dict[str, str]]:
     """Extracts markdown code blocks from text."""
     matches = []
-    for match in CODE_FENCE_RE.finditer(text or ""):
-        lang = match.group(1).strip().lower() or "text"
-        code = match.group(2).strip()
+    source = text or ""
+    for fence in _iter_code_fences(source):
+        lang = fence["lang"].strip().lower() or "text"
+        code = source[fence["start"]:fence["end"]].strip()
         if not code:
             continue
-        if lang == "text":
-            first = code.split("\n", 1)[0].strip().lower()
-            if any(first.startswith(h) for h in MERMAID_HEADERS):
-                lang = "mermaid"
+        if lang == "text" and _is_untagged_mermaid(code):
+            lang = "mermaid"
         matches.append({"language": lang, "code": code})
     return matches
 
