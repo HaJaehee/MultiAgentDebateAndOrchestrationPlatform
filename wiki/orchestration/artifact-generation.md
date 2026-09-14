@@ -99,8 +99,21 @@ flowchart LR
   (`A[결제 (Payment)]` → `A["결제 (Payment)"]`), the most common way an LLM-authored diagram
   fails to parse. Shape syntax (`[(cylinder)]`, `[[subroutine]]`, `[/parallelogram/]`) is
   left alone.
+  - **Sequence-diagram notes in a flowchart** (v0.8.1): `Note right of X: text`,
+    `Note left of X: text` and `Note over X,Y: text` inside a `graph`/`flowchart` are rewritten as
+    `X -.- mado_note_1["text"]` (one dotted link per target), with a `classDef madoNote` and
+    `class … madoNote` appended. A note means "a remark attached to this node", which a dotted
+    node expresses without changing the diagram, so no LLM is needed. Targets that are not plain
+    identifiers (e.g. contain spaces) are left for repair, a note with no text is dropped, inner
+    `"` become `'`, and sequence/state/class diagrams — where `note` is valid — are untouched. The
+    converted form was checked with the real parser.
+- **Marking** (v0.8.1): every diagram artifact is linted after normalisation. One that still fails
+  gets `⚠ ` in front of its title, so the problem is visible before the tab is opened. This matters
+  most for the transcript fallback below, which never goes through LLM repair.
 - **Syntax check & self-repair** (v0.5.0): before the synthesis is committed, every diagram
-  is linted and the orchestrator is asked to fix what fails. See §3 below.
+  is linted and the orchestrator is asked to fix what fails. See §3 below. **Only the synthesis is
+  repaired**; a diagram taken from a specialist's speech (transcript fallback) gets normalisation
+  and the ⚠ mark only.
 - **Rendering**: Rendered into interactive SVG diagrams via NiceGUI's embedded Mermaid.js
   renderer. If Mermaid rejects the source anyway, the viewer catches the renderer's `error`
   event and shows the parse error plus the raw source instead of a blank panel.
@@ -194,6 +207,23 @@ Rules that survived calibration:
 | `block-unclosed` | `classDiagram` blocks with unbalanced `{}` |
 | `bad-sequence-arrow` | `==>` in a sequence diagram (valid in a flowchart) |
 | `nested-quotes` | `A["그는 "안녕" 이라 했다"]` |
+| `sequence-syntax-in-flowchart` (v0.8.1) | Sequence-diagram syntax inside `graph`/`flowchart`: a line starting with `note`, `participant`, `actor`, `activate`, `deactivate`, `loop`, `alt`, `opt`, `par`, `critical`, `break`, `rect`, `else` or `and` (any case) followed by whitespace and a character that does not start a link (`-` `=` `.` `&` `~`), or by `:`; and the arrows `->>`, `-->>`, ` -x `, ` -) ` |
+
+**Why `sequence-syntax-in-flowchart` exists (v0.8.1).** A user reported
+`Parse error on line 46: …실패 시| LLM Note right of Validator: Expecting 'SEMI', 'NEWLINE', 'EOF',
+'AMP', 'START_LINK', 'LINK', 'LINK_ID', got 'NODE_STRING'`. The expected-token list is the flowchart
+grammar's: the model had put a sequence-diagram `Note` into a flowchart. In a flowchart these words
+are not keywords but ordinary node ids, so `Note right …` is two node strings with no link between
+them. None of the existing rules covered mixing diagram kinds, so the linter returned nothing and no
+repair ran. Reproduced with the parser NiceGUI ships, which gave the identical message.
+
+The rule's boundary was calibrated against that parser. Rejected: `Note right of A: x`,
+`Note over A,B: x`, `note left of A`, `participant V as X`, `actor User`, `activate A`, `loop 재시도`,
+`LOOP retry`, `loop A --> B`, `alt 성공`, `opt: x`, `rect rgb(0,0,0)`, `else x`, `and B --> C`,
+`A ->> B`, `A -->> B`, `A -x B`, `A -) B`. Accepted, and therefore not flagged: `Note --> B`,
+`Note[메모] --> C`, `Note` alone, `participant --> B`, `loop --> C`, `par & A --> C`, `alt` and `rect`
+alone, `note.x --> B`, `activate;`, `autonumber`, `A --x B`; and `note` in `stateDiagram-v2` and
+`classDiagram`. All of these are now entries in the oracle tables of `tests/test_mermaid_repair.py`.
 
 Two constructs are explicitly *not* flagged because they are valid and naive counting says
 otherwise: **shape wrappers** (`[(cylinder)]`, `[[subroutine]]`, `[/parallelogram/]`) and

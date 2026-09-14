@@ -56,6 +56,31 @@ _END_AS_NODE_RE = re.compile(r"(?:^|[\s>|)\]}])end(?:$|[\s<(\[{-])")
 # flowchart 의 라벨 자리: [..] {..} |..|. `(..)` 는 중첩이 있어 따로 봅니다.
 _LABEL_SPANS = (("[", "]"), ("{", "}"), ("|", "|"))
 
+# flowchart 에 섞여 들어온 **시퀀스 다이어그램 문법**. 모델이 순서도를 그리다 `Note right
+# of X: ...` 나 `loop 재시도 ... end` 를 끼워 넣는 일이 잦습니다. flowchart 에서 이 단어들은
+# 예약어가 아니라 그냥 노드 이름이라, **뒤에 공백과 다른 글이 이어지면** 노드 두 개가 연결
+# 없이 붙은 셈이 되어 거부됩니다 (`Expecting ... 'START_LINK', 'LINK' ... got 'NODE_STRING'`).
+#
+# 실제 `mermaid.parse()` 로 확인한 경계 (v0.8.1):
+#   오류: `Note right of A: x` `Note over A,B: x` `note left of A` `participant V as X`
+#         `actor User` `activate A` `deactivate A` `loop 재시도` `alt 성공` `opt 캐시`
+#         `par 병렬` `critical x` `break x` `rect rgb(0,0,0)` `else x` `and x`
+#         `loop A --> B` `opt: x` (대소문자 무관)
+#   정상: `Note --> B` `Note[메모] --> C` `Note` 단독 `loop --> C` `par & A --> C` `alt`
+#         `rect` 단독 `note.x --> B` `activate;` `autonumber`
+# 그래서 "키워드 + 공백 + 연결 기호(`-` `=` `.` `&` `~`)가 아닌 글자" 또는 "키워드 + `:`" 만 봅니다.
+_SEQUENCE_KEYWORDS = (
+    "note", "participant", "actor", "activate", "deactivate", "loop", "alt", "opt",
+    "par", "critical", "break", "rect", "else", "and",
+)
+_SEQUENCE_LINE_RE = re.compile(
+    r"^(" + "|".join(_SEQUENCE_KEYWORDS) + r")(?:\s+[^\s\-=.&~]|\s*:)",
+    re.IGNORECASE,
+)
+# 시퀀스 화살표. `A ->> B` `A -->> B` 는 flowchart 에서 거부됩니다. `A --x B`(flowchart 의
+# 끝이 X 인 연결)는 정상이고 `A -x B` `A -) B` 는 오류라, 대시 하나짜리만 봅니다.
+_SEQUENCE_ARROW_RE = re.compile(r"->>|(?:^|\s)-[x)](?:\s|$)")
+
 # 여는 문자 -> 닫는 문자. `A[(DB)]`(원통) `B[[Sub]]`(서브루틴) `E[/Para/]`(평행사변형)
 # 처럼 **모양을 나타내는 감싸개**입니다. 안쪽 괄호는 라벨의 일부가 아니므로
 # 지적하면 안 됩니다 — `normalize_mermaid` 가 따옴표를 씌우지 않는 것과 같은 이유.
@@ -237,6 +262,34 @@ def lint_mermaid(code: str) -> List[MermaidIssue]:
                 # `||--o{` 와 classDiagram 의 여러 줄 블록은 여기 오지 않습니다.
                 issues.extend(_balance_issues(line_no, raw, "{}"))
                 issues.extend(_paren_in_label_issues(line_no, raw))
+
+            keyword = _SEQUENCE_LINE_RE.match(body)
+            if keyword:
+                word = keyword.group(1).lower()
+                hint = (
+                    '노트는 점선으로 붙인 노드로 바꾸세요: `A -.- note1["설명"]`.'
+                    if word == "note" else
+                    "순서도에서는 노드와 화살표로 표현하세요 (반복·분기는 `subgraph` 나 조건 노드 `{}`)."
+                )
+                issues.append(MermaidIssue(
+                    line=line_no,
+                    rule="sequence-syntax-in-flowchart",
+                    message=(
+                        f"`{keyword.group(1)}` 는 시퀀스 다이어그램 문법이라 flowchart 에서 쓸 수 없습니다. "
+                        + hint
+                    ),
+                    snippet=raw,
+                ))
+            elif _SEQUENCE_ARROW_RE.search(body):
+                issues.append(MermaidIssue(
+                    line=line_no,
+                    rule="sequence-syntax-in-flowchart",
+                    message=(
+                        "`->>` `-x` `-)` 는 시퀀스 다이어그램 화살표입니다. flowchart 에서는 "
+                        "`-->` `-.->` `==>` `--x` 를 쓰세요."
+                    ),
+                    snippet=raw,
+                ))
 
             if lowered.startswith("subgraph"):
                 depth += 1

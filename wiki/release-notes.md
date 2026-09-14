@@ -6,6 +6,27 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.8.1
+
+**Flowcharts with sequence-diagram syntax no longer slip through.** A diagram failed to render with
+`Parse error … Note right of Validator: Expecting 'SEMI', … got 'NODE_STRING'`: the model had put a
+sequence-diagram `Note` inside a flowchart. The syntax checker had no rule for mixed diagram kinds, so
+it passed the diagram and no repair was requested — and a diagram taken from a specialist's speech
+(when the synthesis has none or fails) was never checked at all.
+
+- New lint rule `sequence-syntax-in-flowchart` (`note`/`participant`/`actor`/`activate`/`loop`/`alt`/
+  `opt`/`par`/`critical`/`break`/`rect`/`else`/`and` followed by text, and `->>`, `-x`, `-)`),
+  calibrated case by case against the Mermaid parser NiceGUI ships so that these words used as node
+  names are not flagged.
+- `Note right of|left of|over X: text` in a flowchart is rewritten without an LLM as
+  `X -.- mado_note_1["text"]`; the converted form parses.
+- Every diagram artifact is checked after that; one that still fails is titled `⚠ …`, including
+  specialist diagrams that never get LLM repair.
+
+→ [Artifact Synthesis §2.2, §3.1](orchestration/artifact-generation.md)
+
+---
+
 ## v0.8.0
 
 **Mention workspace files and specialists with `@`.** Typing `@` in the input lists this

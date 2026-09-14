@@ -184,3 +184,38 @@ def test_the_screen_appends_instead_of_replacing():
     assert 'artifact_viewer.add_artifacts(event.get("artifacts", []))' in source
     assert 'formatted_arts = snapshot["artifacts"]' not in source
     assert 'merge_artifacts(formatted_arts, snapshot["artifacts"])' in source
+
+
+# ------------------------------------------------------------------ v0.8.1 전문가 다이어그램 검사
+
+
+@pytest.mark.asyncio
+async def test_a_specialist_diagram_gets_the_mechanical_fix_without_repair():
+    """합성에 다이어그램이 없으면 전문가 발언의 것을 씁니다. 이 경로는 LLM 수선을 거치지 않습니다."""
+    sid = await _make_session()
+    architect = (
+        "### 설계\n\n```mermaid\nflowchart TD\n  Validator -->|실패 시| LLM\n"
+        "  Note right of Validator: 최대 2회 재시도\n```\n"
+    )
+    engine = _engine(llm_caller=SynthesisCaller("## 결론\n\n다이어그램 없이 결론만.", replies={"architect": architect}))
+
+    state = await engine.run_turn(session_id=sid, user_prompt="검증기를 설계해 주세요.")
+
+    diagram = next(a for a in state.artifacts if a.artifact_type == "mermaid")
+    assert "System Architect 제안" in diagram.title
+    assert not diagram.title.startswith("⚠"), "기계적 수선으로 고쳐졌으니 표시하지 않습니다"
+    assert "Note right of" not in diagram.content
+    assert 'Validator -.- mado_note_1["최대 2회 재시도"]' in diagram.content
+
+
+@pytest.mark.asyncio
+async def test_a_specialist_diagram_that_still_fails_is_marked():
+    sid = await _make_session()
+    architect = "```mermaid\nflowchart LR\n  A --> B\n  loop 재시도\n  A --> C\n  end\n```"
+    engine = _engine(llm_caller=SynthesisCaller("## 결론\n\n결론만.", replies={"architect": architect}))
+
+    state = await engine.run_turn(session_id=sid, user_prompt="설계해 주세요.")
+
+    diagram = next(a for a in state.artifacts if a.artifact_type == "mermaid")
+    assert diagram.title.startswith("⚠ "), "탭을 열기 전에 문법 오류가 있다는 것을 보여야 합니다"
+    assert "loop 재시도" in diagram.content, "지어낸 다이어그램으로 바꾸지 않고 원문을 둡니다"

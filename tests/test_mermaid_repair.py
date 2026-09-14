@@ -73,6 +73,28 @@ RENDERS = {
     "amp-label": "graph TD\n    A[인증 & 세션] --> B",
     "colon-label": "graph TD\n    A[주의: 여기] --> B",
     "cylinder-korean": "graph TD\n    PG[(🏦 외부 결제 PG사 API)] --> B",
+    # v0.8.1 — flowchart 에서 시퀀스 키워드가 **노드 이름**으로 쓰인 경우는 정상.
+    # (NiceGUI 동봉 mermaid 의 parse() 로 확인)
+    "kw-note-as-node": "flowchart LR\n  Note --> B\n  Note[메모] --> C",
+    "kw-note-alone": "flowchart LR\n  Note\n  Note --> B",
+    "kw-participant-arrow": "flowchart LR\n  participant --> B",
+    "kw-loop-arrow": "flowchart LR\n  A --> B\n  loop --> C",
+    "kw-opt-label": "flowchart LR\n  A --> B\n  opt[옵션] --> C",
+    "kw-par-amp": "flowchart LR\n  A --> B\n  par & A --> C",
+    "kw-alt-alone": "flowchart LR\n  A --> B\n  alt",
+    "kw-rect-alone": "flowchart LR\n  A --> B\n  rect",
+    "kw-note-dot": "flowchart LR\n  A --> B\n  note.x --> B",
+    "kw-activate-semicolon": "flowchart LR\n  A --> B\n  activate;",
+    "kw-autonumber": "flowchart LR\n  A --> B\n  autonumber",
+    "flow-cross-edge": "flowchart LR\n  A --x B",
+    "state-note": "stateDiagram-v2\n  A --> B\n  note right of A: x",
+    "class-note": 'classDiagram\n  class A\n  note for A "x"',
+    "sequence-note": "sequenceDiagram\n  participant V as Validator\n  V->>L: 호출\n  Note right of V: 최대 2회",
+    # 기계적 수선이 만든 모양 — 그 자체로 통과해야 합니다.
+    "converted-note": (
+        'flowchart LR\n  A --> B\n  A -.- mado_note_1["설명: A와 B"]\n  B -.- mado_note_1\n'
+        "  classDef madoNote fill:#fef9c3,stroke:#ca8a04,color:#713f12\n  class mado_note_1 madoNote"
+    ),
 }
 
 # 실제 `mermaid.parse()` 가 거부한 것들 중, 린터가 잡기로 한 것.
@@ -90,7 +112,74 @@ FAILS = {
     "paren-in-round-node": ("graph TD\n    A(결제 (PG)) --> B", "paren-in-label"),
     "paren-in-brace-node": ("graph TD\n    A{결제 (PG)} --> B", "paren-in-label"),
     "nested-quotes": ('graph TD\n    A["그는 "안녕" 이라 했다"] --> B', "nested-quotes"),
+    # v0.8.1 — flowchart 에 섞인 시퀀스 다이어그램 문법. 실제 오류 보고:
+    # "Parse error on line 46: 실패 시| LLM Note right of Validator: Expecting 'SEMI', ... got 'NODE_STRING'"
+    # 노트는 기계적 수선이 먼저 고치므로, 여기에는 수선이 손대지 못하는 모양만 둡니다.
+    "seq-note-spaced-target": ("flowchart LR\n  A --> B\n  Note over 사용자 서비스: x", "sequence-syntax-in-flowchart"),
+    "seq-participant": ("flowchart LR\n  participant A\n  A --> B", "sequence-syntax-in-flowchart"),
+    "seq-participant-as": ("flowchart LR\n  A --> B\n  participant V as Validator", "sequence-syntax-in-flowchart"),
+    "seq-actor": ("flowchart LR\n  actor User\n  User --> B", "sequence-syntax-in-flowchart"),
+    "seq-activate": ("flowchart LR\n  A --> B\n  activate A", "sequence-syntax-in-flowchart"),
+    "seq-deactivate": ("flowchart LR\n  A --> B\n  deactivate A", "sequence-syntax-in-flowchart"),
+    "seq-loop": ("flowchart LR\n  A --> B\n  loop 재시도\n  A --> C\n  end", "sequence-syntax-in-flowchart"),
+    "seq-loop-english": ("flowchart LR\n  A --> B\n  LOOP retry", "sequence-syntax-in-flowchart"),
+    "seq-loop-node-arrow": ("flowchart LR\n  A --> B\n  loop A --> B", "sequence-syntax-in-flowchart"),
+    "seq-alt": ("flowchart LR\n  alt 성공\n  A --> B\n  end", "sequence-syntax-in-flowchart"),
+    "seq-opt": ("flowchart LR\n  A --> B\n  opt 캐시 있음", "sequence-syntax-in-flowchart"),
+    "seq-opt-colon": ("flowchart LR\n  A --> B\n  opt: x", "sequence-syntax-in-flowchart"),
+    "seq-par": ("flowchart LR\n  A --> B\n  par 병렬", "sequence-syntax-in-flowchart"),
+    "seq-critical": ("flowchart LR\n  A --> B\n  critical 중요", "sequence-syntax-in-flowchart"),
+    "seq-break": ("flowchart LR\n  A --> B\n  break 실패", "sequence-syntax-in-flowchart"),
+    "seq-rect": ("flowchart LR\n  A --> B\n  rect rgb(0,0,0)", "sequence-syntax-in-flowchart"),
+    "seq-else": ("flowchart LR\n  A --> B\n  else 다른 경우", "sequence-syntax-in-flowchart"),
+    "seq-and": ("flowchart LR\n  A --> B\n  and B --> C", "sequence-syntax-in-flowchart"),
+    "seq-arrow": ("flowchart LR\n  A->>B: 호출", "sequence-syntax-in-flowchart"),
+    "seq-arrow-dashed": ("flowchart LR\n  A -->> B", "sequence-syntax-in-flowchart"),
+    "seq-arrow-x": ("flowchart LR\n  A -x B", "sequence-syntax-in-flowchart"),
+    "seq-arrow-paren": ("flowchart LR\n  A -) B", "sequence-syntax-in-flowchart"),
 }
+
+
+# --------------------------------------------------------------------- v0.8.1 노트 기계적 수선
+
+
+def test_the_reported_note_in_a_flowchart_is_fixed_without_an_llm():
+    raw = (
+        "flowchart TD\n  Validator{검증} -->|성공| Out[결과]\n  Validator -->|실패 시| LLM\n"
+        "  Note right of Validator: 최대 2회 재시도 (백오프)"
+    )
+    assert lint_mermaid(raw), "원문은 검사에 걸려야 합니다 (실제 렌더러가 거부)"
+    fixed = normalize_mermaid(raw)
+    assert 'Validator -.- mado_note_1["최대 2회 재시도 (백오프)"]' in fixed
+    assert "Note right of" not in fixed
+    assert "class mado_note_1 madoNote" in fixed
+    assert lint_mermaid(fixed) == []
+
+
+def test_note_over_several_nodes_links_each_and_keeps_indentation():
+    raw = 'graph LR\n  A --> B\n  subgraph S\n    B --> C\n    note over B,C: "묶음" 설명\n  end'
+    fixed = normalize_mermaid(raw)
+    assert "    B -.- mado_note_1[\"'묶음' 설명\"]" in fixed, "안쪽 따옴표는 겹치지 않게 바꿉니다"
+    assert "    C -.- mado_note_1" in fixed
+    assert lint_mermaid(fixed) == []
+
+
+def test_a_note_without_text_is_dropped_and_unclear_targets_are_left_for_repair():
+    assert "Note" not in normalize_mermaid("flowchart LR\n  A --> B\n  Note left of A")
+    spaced = normalize_mermaid("flowchart LR\n  A --> B\n  Note over 사용자 서비스: x")
+    assert "Note over 사용자 서비스: x" in spaced
+
+
+def test_notes_are_only_converted_in_flowcharts():
+    seq = "sequenceDiagram\n  A->>B: hi\n  Note right of A: x"
+    state = "stateDiagram-v2\n  A --> B\n  note right of A: x"
+    assert normalize_mermaid(seq) == seq
+    assert normalize_mermaid(state) == state
+
+
+def test_the_repair_message_suggests_a_dotted_node_for_notes():
+    issues = lint_mermaid("flowchart LR\n  A --> B\n  Note over 사용자 서비스: x")
+    assert any("-.-" in i.message for i in issues)
 
 
 @pytest.mark.parametrize("name", sorted(RENDERS))

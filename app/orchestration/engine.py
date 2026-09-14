@@ -25,7 +25,7 @@ from app.timestamps import report_completed_line, to_local
 from app.config import DATA_DIR, TOOL_ITERATION_CEILING, resolve_workspace_dir
 from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
-from app.mermaid_lint import format_issues, lint_mermaid
+from app.mermaid_lint import diagram_kind, format_issues, lint_mermaid
 from app.database.models import (
     ArtifactModel,
     MessageModel,
@@ -75,11 +75,59 @@ _PAREN_LABEL_RE = re.compile(r"\[([^\[\]{}\"|]*[()][^\[\]{}\"|]*)\]")
 _SHAPE_PAIRS = {"(": ")", "[": "]", "/": "/", "\\": "\\", "{": "}"}
 
 
+# flowchart 에 섞여 들어온 시퀀스 다이어그램의 노트. `Note right of A: 글`, `Note over A,B: 글`.
+_FLOWCHART_NOTE_RE = re.compile(
+    r"^(?P<indent>\s*)note\s+(?:right\s+of|left\s+of|over)\s+(?P<targets>[^:]+?)\s*(?::\s*(?P<text>.*))?$",
+    re.IGNORECASE,
+)
+_SIMPLE_NODE_ID_RE = re.compile(r"^[A-Za-z0-9_]+$")
+# 변환한 노트에 입히는 모양. 파서로 확인했습니다 (`classDef` + `class`).
+_NOTE_CLASS_DEF = "classDef madoNote fill:#fef9c3,stroke:#ca8a04,color:#713f12"
+
+
+def _convert_flowchart_notes(lines: List[str]) -> List[str]:
+    """flowchart 안의 `Note right of A: 글` 을 `A -.- mado_note_1["글"]` 로 바꿉니다.
+
+    모델이 순서도에 시퀀스 다이어그램의 노트를 끼워 넣으면 렌더러가 다이어그램을 통째로
+    거부합니다. 노트는 "이 노드에 붙은 설명" 이라 점선으로 붙인 노드와 뜻이 같아, LLM 을
+    다시 부르지 않고 기계적으로 바꿀 수 있습니다. `loop`·`alt`·`participant` 는 구조를 바꿔야
+    해서 여기서 손대지 않고 수선 요청(`sequence-syntax-in-flowchart`)으로 남깁니다.
+
+    대상 노드 이름이 단순한 식별자(영숫자·밑줄)가 아니면 건드리지 않습니다 — 공백이 든
+    이름은 어느 노드를 뜻하는지 확신할 수 없습니다. 글이 없는 노트는 전할 것이 없어 지웁니다.
+    """
+    out: List[str] = []
+    converted: List[str] = []
+    for line in lines:
+        m = _FLOWCHART_NOTE_RE.match(line)
+        if not m:
+            out.append(line)
+            continue
+        targets = [t.strip() for t in m.group("targets").split(",") if t.strip()]
+        if not targets or not all(_SIMPLE_NODE_ID_RE.match(t) for t in targets):
+            out.append(line)
+            continue
+        text = (m.group("text") or "").strip().replace('"', "'")
+        if not text:
+            continue
+        node = f"mado_note_{len(converted) + 1}"
+        converted.append(node)
+        indent = m.group("indent")
+        out.append(f'{indent}{targets[0]} -.- {node}["{text}"]')
+        for extra in targets[1:]:
+            out.append(f"{indent}{extra} -.- {node}")
+    if converted:
+        out.append(f"  {_NOTE_CLASS_DEF}")
+        out.append(f"  class {','.join(converted)} madoNote")
+    return out
+
+
 def normalize_mermaid(content: str) -> str:
     """LLM 이 흔히 내는 Mermaid 문법 오류를 최소한만 손봅니다.
 
     다이어그램을 다시 써 주는 것이 아니라, 렌더러가 통째로 거부해서 화면이 비는
-    두 가지 경우만 막습니다: 잘못된 줄바꿈과 따옴표 없는 괄호 라벨.
+    경우만 막습니다: 잘못된 줄바꿈, 따옴표 없는 괄호 라벨, flowchart 에 섞인 시퀀스
+    다이어그램 노트 (v0.8.1).
     """
     text = content.replace("\r\n", "\n").replace("\r", "\n").strip()
     if not text:
@@ -89,6 +137,9 @@ def normalize_mermaid(content: str) -> str:
     lines = text.split("\n")
     if lines[0].strip().lower() == "mermaid":
         lines = lines[1:]
+
+    if diagram_kind("\n".join(lines)) in ("graph", "flowchart"):
+        lines = _convert_flowchart_notes(lines)
 
     out: List[str] = []
     for line in lines:
@@ -2444,22 +2495,35 @@ class OrchestratorEngine:
 
         # 2. 종합 다이어그램 — 합성 원문에서. 코드는 뽑지 않습니다 (오케스트레이터가 쓰지
         #    않도록 했고, 그래도 썼다면 보고서 본문에 남아 있습니다).
+        def diagram_item(title: str, raw_code: str, source: str) -> ArtifactItem:
+            # 기계적 수선(`normalize_mermaid`) 뒤에도 검사에 걸리면 제목 앞에 ⚠ 를 붙입니다.
+            # 합성 다이어그램은 이미 수선을 거쳤고, 전문가 발언에서 가져온 것은 수선할
+            # 사람이 없어 여기서 처음 검사합니다. 탭을 열기 전에 알 수 있어야 합니다.
+            code = normalize_mermaid(raw_code)
+            issues = lint_mermaid(code)
+            if issues:
+                logger.warning(
+                    f"Diagram '{title}' from {source} still fails the syntax check: "
+                    f"{[i.rule for i in issues]}"
+                )
+                title = f"⚠ {title}"
+            return ArtifactItem(artifact_type="mermaid", title=title, content=code, language="mermaid")
+
         mermaid_idx = 1
         if not synthesis_failed:
             for block in extract_code_blocks(synth_text):
                 if block["language"] != "mermaid":
                     continue
-                artifacts.append(ArtifactItem(
-                    artifact_type="mermaid",
-                    title=f"{stamp} 종합 다이어그램" + (f" #{mermaid_idx}" if mermaid_idx > 1 else ""),
-                    content=normalize_mermaid(block["code"]),
-                    language="mermaid",
+                artifacts.append(diagram_item(
+                    f"{stamp} 종합 다이어그램" + (f" #{mermaid_idx}" if mermaid_idx > 1 else ""),
+                    block["code"], "the synthesis",
                 ))
                 mermaid_idx += 1
 
         # 2-b. 합성에 다이어그램이 없으면 이번 턴 토론 본문에서 찾습니다. 합성이 실패한
         #      턴에도 다이어그램 탭이 비지 않게 합니다. 이전 턴 다이어그램은 그 턴의
-        #      산출물로 이미 남아 있어 다시 올리지 않습니다.
+        #      산출물로 이미 남아 있어 다시 올리지 않습니다. 이 경로는 LLM 수선을 거치지
+        #      않으므로 기계적 수선과 ⚠ 표시가 전부입니다.
         if mermaid_idx == 1:
             for msg in reversed(state.messages[state.turn_message_start:]):
                 if msg.msg_type == "error" or msg.sender_key == "user":
@@ -2468,11 +2532,9 @@ class OrchestratorEngine:
                 if not found:
                     continue
                 for block in found:
-                    artifacts.append(ArtifactItem(
-                        artifact_type="mermaid",
-                        title=f"{stamp} 다이어그램 #{mermaid_idx} ({msg.sender_name} 제안)".strip(),
-                        content=normalize_mermaid(block["code"]),
-                        language="mermaid",
+                    artifacts.append(diagram_item(
+                        f"{stamp} 다이어그램 #{mermaid_idx} ({msg.sender_name} 제안)".strip(),
+                        block["code"], msg.sender_name,
                     ))
                     mermaid_idx += 1
                 break
