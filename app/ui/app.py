@@ -26,6 +26,7 @@ from app.orchestration.strategies import resolve_strategy_name
 from app.session_ops import discard_turn
 from app.ui.components.artifact_viewer import ArtifactViewer
 from app.ui.components.chat_feed import ChatFeed, clip_tool_output
+from app.ui.components.quiet_splitter import QuietSplitter
 from app.ui.components.roster import AgentRosterControl
 from app.ui.components.sidebar import SessionSidebar, event_changes_session_list
 from app.ui.clipboard import copy_to_clipboard
@@ -638,7 +639,8 @@ def create_ui() -> None:
                 info_btn.tooltip(f"만든 사람 · 버전 — {APP_VERSION_LABEL}")
 
         # Main Splitter Workspace (58% Debate Feed / 42% Artifact Viewer)
-        with ui.splitter(value=58).classes("w-full h-[calc(100vh-65px)] overflow-hidden") as splitter:
+        # 드래그하는 동안 서버가 값을 되돌려 보내지 않는 스플리터 (`QuietSplitter`).
+        with QuietSplitter(value=58).classes("w-full h-[calc(100vh-65px)] overflow-hidden") as splitter:
             with splitter.before:
                 # flex-nowrap 이 없으면 NiceGUI 컬럼 기본값(flex-wrap: wrap) 때문에
                 # 로스터가 커졌을 때 채팅 카드가 다음 열로 줄바꿈되어 화면 밖으로 밀려납니다.

@@ -6,6 +6,34 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.7.2
+
+**Streaming a long speech no longer makes the page reload itself.**
+
+Each LLM token redrew its whole card: NiceGUI converted the card's entire Markdown to HTML on the
+server's event loop and resent all of it, plus a separate scroll message per token. A 20,000-character
+report cost 82 s of server CPU. With server and browser both saturated the websocket dropped, and
+NiceGUI reloads on reconnect when the server has already let the page go (3 s) or when more than 1,000
+messages went out during the gap — which at ~200 messages per second is about five seconds.
+
+The feed now appends chunks and redraws changed cards every 0.25 s; the engine coalesces chunk events
+to one per 0.1 s (with a delayed flush so text before a slow tool still appears, drained before the
+message is finalised); and the server waits 30 s for a reconnect instead of 3. For the same stream,
+renders fell from 2,668 to 56 and browser messages from 3,556 to 173, stretching the gap the reconnect
+history can bridge from 5 s to 81 s. Formatting still renders live.
+
+Database writes were checked and left alone — one row per speech, after the stream ends.
+
+**A long feed no longer stutters when the drawer or splitter moves.** Any width change re-laid out
+every card, off-screen and collapsed ones in full: 45–95 ms per change with 150 cards. Cards now use
+`content-visibility: auto`, so only those near the viewport are laid out (1–6 ms on the same feed).
+The main splitter no longer has the server echo each drag value back (`QuietSplitter`,
+`LOOPBACK = False`), which triggered a second layout of both panes 20 times a second.
+
+→ [UI Components §1.3.1](ui/components.md)
+
+---
+
 ## v0.7.1
 
 **A locked database no longer costs a final report.**

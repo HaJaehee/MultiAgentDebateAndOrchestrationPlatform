@@ -212,6 +212,69 @@ the persona editor — because two copies would drift on how a value is picked o
   falls back to a hidden textarea and `execCommand('copy')`; the artifact viewer's copy button uses
   the same helper.
 
+### 1.3.1. Streaming without taking the page down (v0.7.2)
+
+Long speeches used to make the page reload itself. Every LLM token reached `append_stream_chunk()`,
+which called `markdown.set_content()` with the card's **entire** content and scrolled. NiceGUI converts
+Markdown to HTML on the server, synchronously on the event loop (Pygments included for code blocks),
+and sends the whole HTML again; a scroll is a separate `run_javascript` message that is never merged.
+For a 20,000-character report that was 6,667 full conversions and 82 s of server CPU, over half the
+event loop near the end.
+
+A busy server and a busy browser drop the websocket, and NiceGUI reloads the page on reconnect in two
+cases: the server already deleted the client (`reconnect_timeout`, 3 s by default), or more messages
+were sent during the gap than `message_history_length` (1,000) can replay — the browser logs
+`reloading because outbox rewind failed`.
+
+Three changes, each closing a different link:
+
+| Where | Change |
+| :--- | :--- |
+| `ChatFeed` | A chunk only appends and raises a flag. `_flush_streams()`, on a `STREAM_RENDER_INTERVAL` (0.25 s) timer created in `build_ui`, redraws each changed card once and scrolls once. (A timer created from the background consumer never runs — the same reason `_settle_scroll` uses a flag.) The final `message_added` still draws immediately. |
+| `OrchestratorEngine._speak` | Chunk events are coalesced to one per `STREAM_EVENT_INTERVAL` (0.1 s), so a briefly slow page no longer overflows its subscriber queue and gets silently dropped mid-stream. A short delayed flush is armed on the first pending chunk — "send when the next chunk arrives" would hide the line written before a 30-second tool call — and it is drained or cancelled on every exit path, so no chunk lands after the message is final (the runner's snapshot would append it to the final text a second time). |
+| `app/main.py` | `reconnect_timeout=30.0`: a few seconds of busyness, a monitor switching off, or waking from sleep resumes the page instead of rebuilding it. |
+
+Database writes were not touched: they were already one row per speech, written after the stream ends.
+Nothing writes per chunk.
+
+Measured in a browser, same 8,000-character report fed at 200 chunks/s on a wall clock:
+
+| | Before | After |
+| :--- | ---: | ---: |
+| Full Markdown renders | 2,668 | 56 |
+| Messages to the browser | 3,556 (194/s) | 173 (12/s) |
+| Gap the 1,000-message history can bridge | 5.1 s | 81 s |
+| Worst event-loop stall | 41 ms | 14 ms |
+| Stream duration (target 13.3 s) | 18.3 s | 14.0 s |
+
+The old version could not even keep pace with its own feed.
+
+### 1.3.2. Many cards, a resize, and a splitter drag (v0.7.2)
+
+With many speech cards in the feed, collapsing the session drawer or dragging the artifact
+splitter stuttered. Any width change makes the browser re-lay out **every** card — off-screen ones
+included, and collapsed ones in full, because `.chat-body-clamped` only caps `max-height`. With 150
+cards (37,011 DOM nodes) one width change cost 45–95 ms; the drawer animation and a drag pay that per
+frame.
+
+* **`content-visibility: auto`** on `.debate-timeline > .q-card` lets the browser lay out only the
+  cards near the viewport. On the same 150 cards a width change dropped to 1.3 ms at the latest
+  speech, 3.6 ms in the middle and 6.1 ms at the top, and barely grows with more cards.
+  `contain-intrinsic-size: auto 220px` estimates never-rendered cards and remembers real heights
+  afterwards so the scrollbar jumps less. Off-screen text stays in the DOM, so copy and find are
+  unaffected.
+* **`QuietSplitter`** ([app/ui/components/quiet_splitter.py](file:///d:/MultiAgentOrchestrator/app/ui/components/quiet_splitter.py))
+  sets `LOOPBACK = False`. NiceGUI's splitter sends its value every 50 ms while dragging and, with
+  loopback on, the server sent each value straight back, triggering another layout of both panes.
+  Driving NiceGUI's own change handler with three drag values produced 3 echoed updates from
+  `ui.splitter` and 0 from `QuietSplitter`, while `splitter.value` still tracked the drag. Values set
+  from the server still reach the browser — only the echo is gone.
+
+> Measured with a forced synchronous layout, not animation frames: the preview window was hidden, so
+> nothing painted. A hidden page also skips *visible* cards under `content-visibility`, so the cards
+> within one viewport height were forced to render before measuring; forcing all cards brought the
+> cost back to ~45 ms, confirming the method.
+
 ### 1.4. Artifact Viewer ([app/ui/components/artifact_viewer.py](file:///d:/MultiAgentOrchestrator/app/ui/components/artifact_viewer.py))
 - **Tabbed Interface**:
   - **Comprehensive Report Tab**: Markdown rendering of the final synthesis report.

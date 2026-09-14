@@ -9,6 +9,19 @@ from app.ui.clipboard import copy_to_clipboard
 
 logger = logging.getLogger(__name__)
 
+# 스트리밍 중인 카드를 다시 그리는 간격(초).
+#
+# 예전에는 조각이 올 때마다 카드 **전체 내용**으로 `set_content()` 를 불렀습니다.
+# NiceGUI 는 그때마다 서버의 이벤트 루프 위에서 마크다운 전체를 HTML 로 다시 바꾸고
+# (코드 블록이면 하이라이팅까지), 전체 HTML 을 브라우저로 다시 보냅니다. 스크롤도
+# 조각마다 따로 한 통씩 나갔습니다. 20,000자 보고서 한 편이면 전체 변환 6,667번에
+# 서버 CPU 82초였고, 뒤로 갈수록 이벤트 루프의 절반 이상을 먹었습니다.
+#
+# 그러면 서버와 브라우저가 둘 다 바빠 웹소켓이 끊기고, NiceGUI 는 다시 붙을 때 이미
+# 지운 화면이거나(3초 초과) 끊긴 사이 보낸 메시지가 1,000통을 넘으면 **페이지를
+# 새로고침**합니다. 0.25초마다 한 번이면 변환은 10분의 1, 서식은 그대로 보입니다.
+STREAM_RENDER_INTERVAL = 0.25
+
 
 # DB 에서 다시 그릴 때 도구 출력의 상한(글자).
 #
@@ -230,6 +243,9 @@ class ChatFeed:
         # 바닥 재조정이 예약돼 있는지, 그리고 그것이 사람이 요청한 것인지
         # (`_scroll_to_bottom` 주석 참고).
         self._scroll_settle_pending: bool = False
+        # 다시 그려야 할 스트리밍 카드가 있는지. 조각은 내용에 덧붙이기만 하고,
+        # 실제 그리기는 화면의 시계(`_flush_streams`)가 모아서 합니다.
+        self._stream_dirty: bool = False
         self._scroll_settle_forced: bool = False
         self.follow_button: Optional[ui.button] = None
 
@@ -375,6 +391,10 @@ class ChatFeed:
             ui.timer(1.0, self._tick_elapsed)
             # 바닥 재조정. 예약이 없으면 아무것도 하지 않습니다.
             ui.timer(0.2, self._settle_scroll)
+            # 스트리밍 카드 그리기. 조각마다 그리지 않고 여기서 모아 그립니다.
+            # 조각을 받는 쪽은 백그라운드 태스크라 거기서 타이머를 만들면 돌지 않으므로
+            # (`_scroll_to_bottom` 주석), 여기 만든 시계가 깃발을 보고 처리합니다.
+            ui.timer(STREAM_RENDER_INTERVAL, self._flush_streams)
 
             # 되돌릴 수 없는 삭제라 한 번 묻습니다. 정지(합성까지 진행)와 헷갈리기
             # 쉬운 자리에 나란히 있으므로, 차이를 문장으로 적어 둡니다.
@@ -825,9 +845,30 @@ class ChatFeed:
         info = self._active_streams.get(msg_id)
         if not info:
             return
+        # 여기서 그리지 않습니다. 덧붙이기만 하고 깃발을 세웁니다 (`STREAM_RENDER_INTERVAL`).
         info["content"] += delta
-        info["markdown"].set_content(info["content"])
-        self._scroll_to_bottom()
+        info["dirty"] = True
+        self._stream_dirty = True
+
+    def _flush_streams(self) -> None:
+        """바뀐 스트리밍 카드만 한 번씩 다시 그리고, 스크롤도 한 번만 합니다."""
+        if not self._stream_dirty:
+            return
+        self._stream_dirty = False
+        if not self.alive:
+            return
+        drew = False
+        for info in list(self._active_streams.values()):
+            if not info.get("dirty"):
+                continue
+            info["dirty"] = False
+            markdown = info.get("markdown")
+            if markdown is None or markdown.is_deleted:
+                continue
+            markdown.set_content(info["content"])
+            drew = True
+        if drew:
+            self._scroll_to_bottom()
 
     def append_message(self, msg: Dict[str, Any]) -> None:
         if not self.alive:

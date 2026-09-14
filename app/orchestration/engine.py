@@ -157,6 +157,16 @@ def extract_code_blocks(text: str) -> List[Dict[str, str]]:
 # 바깥 프로그램이 파일을 오래 잡고 있는 것입니다. 조금 간격을 두고 다시 두드립니다.
 PERSIST_RETRY_DELAYS = (2.0, 5.0)
 
+# ---------------------------------------------------------------- 스트리밍 조각
+
+# 스트리밍 조각 이벤트를 모아 보내는 간격(초).
+#
+# 예전에는 LLM 토큰 하나마다 이벤트를 한 통씩 보냈습니다. 초당 수십 통이 러너를 거쳐
+# 모든 화면의 구독 큐로 퍼지고, 화면이 잠깐만 느려도 큐(`MAX_QUEUED_EVENTS`)가 차서
+# 그 화면이 조용히 구독에서 빠졌습니다 — 카드가 스트리밍 도중 멈춘 채 남았습니다.
+# 0.1초는 사람 눈에 끊겨 보이지 않을 만큼 짧고, 이벤트 수는 10분의 1 아래로 줄입니다.
+STREAM_EVENT_INTERVAL = 0.1
+
 # DB 에 끝내 기록하지 못한 발언·산출물을 남기는 폴더.
 #
 # 예전에는 기록 실패를 로그 한 줄로 남기고 넘어갔습니다. 화면에는 이미 흘러갔으니
@@ -464,14 +474,57 @@ class OrchestratorEngine:
         trimmed_here: List[int] = []
         streamed: List[str] = []
 
-        async def _on_chunk(delta: str) -> None:
-            streamed.append(delta)
-            if on_event:
+        # 조각은 모았다가 `STREAM_EVENT_INTERVAL` 마다 한 통으로 보냅니다.
+        #
+        # "다음 조각이 올 때 간격이 지났으면 보낸다" 로 하면 안 됩니다. 모델이 한 줄
+        # 쓰고 30초 걸리는 도구를 부르면, 그 한 줄은 다음 조각이 올 때까지 30초 동안
+        # 화면에 나오지 않습니다. 그래서 첫 조각이 쌓이는 순간 짧은 예약을 걸어, 뒤에
+        # 무엇이 오든 오지 않든 그 간격 안에 내보냅니다.
+        pending_chunks: List[str] = []
+        flush_task: Optional[asyncio.Task] = None
+        flush_lock = asyncio.Lock()
+
+        async def _flush_chunks() -> None:
+            # 순서를 지키려고 한 번에 하나만 내보냅니다. 모은 것을 꺼내는 데에는
+            # await 가 없어, 꺼낸 뒤에 들어온 조각은 다음 통에 실립니다.
+            async with flush_lock:
+                if not pending_chunks or not on_event:
+                    return
+                delta = "".join(pending_chunks)
+                pending_chunks.clear()
                 await on_event({
                     "type": "message_stream_chunk",
                     "message_id": msg_id,
                     "delta": delta,
                 })
+
+        async def _flush_later() -> None:
+            await asyncio.sleep(STREAM_EVENT_INTERVAL)
+            await _flush_chunks()
+
+        def _cancel_flush() -> None:
+            # 기다리지 않고 취소만 합니다. 예약은 sleep 에서 멈춰 있거나 아직 시작하지
+            # 않았으므로, 취소하면 내보내기 전에 끝납니다.
+            if flush_task is not None and not flush_task.done():
+                flush_task.cancel()
+
+        async def _drain_chunks() -> None:
+            """남은 조각을 지금 내보냅니다. 발언을 확정하기 전에 반드시 부릅니다.
+
+            예약을 남겨 두면 `message_added` 로 발언이 확정된 **뒤에** 조각이 한 통 더
+            도착하고, 러너의 스냅샷은 그것을 확정본 끝에 한 번 더 붙입니다.
+            """
+            _cancel_flush()
+            await _flush_chunks()
+
+        async def _on_chunk(delta: str) -> None:
+            nonlocal flush_task
+            streamed.append(delta)
+            if not on_event:
+                return
+            pending_chunks.append(delta)
+            if flush_task is None or flush_task.done():
+                flush_task = asyncio.create_task(_flush_later())
 
         try:
             content, tool_logs = await self.llm_caller.call_agent(
@@ -483,6 +536,9 @@ class OrchestratorEngine:
                 on_context_trim=_on_context_trim,
                 mcp=self._mcp_for(state),
             )
+            # 다이어그램 교정 같은 후처리는 시간이 걸립니다. 그동안 카드가 마지막 조각
+            # 직전에서 멈춰 보이지 않게, 흘러온 글을 먼저 다 내보냅니다.
+            await _drain_chunks()
             # 확정본이 비었는데 화면에는 글이 흘러갔다면 그 글을 남깁니다.
             # 여기서 정하는 `content` 가 DB 에 들어가는 값이라, 비워 둔 채로
             # 넘어가면 사람이 방금 읽던 발언이 새로고침 뒤에도 돌아오지 않습니다
@@ -515,6 +571,7 @@ class OrchestratorEngine:
         except asyncio.CancelledError:
             # 사용자가 토론을 끊었거나 서버가 내려가는 중입니다. 실패로 적지 않고
             # 그대로 올려 보냅니다 — 여기서 삼키면 취소가 먹지 않습니다.
+            _cancel_flush()
             raise
         except BaseException as exc:  # noqa: BLE001 - 한 발언의 사고로 토론을 끝내지 않습니다
             logger.error(
@@ -526,6 +583,9 @@ class OrchestratorEngine:
             final_type = "error"
             if agent.key not in state.failed_agent_keys:
                 state.failed_agent_keys.append(agent.key)
+
+        # 실패로 끝났어도 예약된 조각이 확정본 뒤에 도착하면 안 됩니다.
+        await _drain_chunks()
 
         # 응답이 끝난 시각. 실패로 끝난 발언도 여기서 잽니다 — 언제 포기했는지는
         # 그 자체로 쓸모 있는 기록입니다 (엔드포인트가 몇 초 만에 끊었는지, 한도까지
