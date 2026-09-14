@@ -331,3 +331,77 @@ MERMAID_EXPORT_JS = """
     };
 })();
 """
+
+
+# 산출물 창의 Mermaid 다이어그램을 **이미지로** 보여줍니다.
+#
+# Mermaid 는 SVG 를 DOM 에 그대로 넣고, 노드 글자는 SVG 안의 HTML(`foreignObject`)로
+# 그립니다. 그래서 창 폭이 바뀔 때마다 다이어그램 전체를 다시 줄이고 늘리면서 노드마다
+# 글자 배치를 다시 했습니다. 서랍을 여닫거나 스플리터를 놓을 때 그 비용이 다이어그램
+# 크기만큼 들었습니다.
+#
+# 같은 SVG 를 `<img>` 로 넣으면 브라우저는 그림 한 장으로 다루어, 크기가 바뀌어도 안쪽을
+# 다시 배치하지 않습니다.
+#
+# **원본 SVG 는 지우지 않고 `display:none` 으로 둡니다.** 숨긴 요소는 배치도 칠하기도 하지
+# 않으니 비용이 없고, 복사·다운로드(`MadoMermaid.getSvgData`)는 여전히 그 SVG 를 찾아
+# `viewBox` 로 크기를 잽니다. 그래서 `viewBox` 가 없는 SVG 는 이미지로 바꾸지 않습니다 —
+# 숨기면 내보내기가 크기를 잴 방법이 없습니다.
+#
+# 원본은 **이미지가 실제로 불러와진 뒤에** 숨깁니다. 불러오기에 실패하면 이미지를 치우고
+# 원본을 그대로 보여 줍니다. 대가는 다이어그램 안 글자를 끌어서 선택할 수 없다는 것입니다.
+#
+# Mermaid 는 그리기를 비동기로 끝내므로 DOM 변화를 지켜보다가 `.mado-mermaid` 바로 아래에
+# SVG 가 들어오는 순간 바꿉니다. 다이어그램을 다시 그리면 NiceGUI 가 그 안을 통째로 갈아
+# 끼우므로 이전 이미지도 함께 사라지고, 새 SVG 가 다시 이미지로 바뀝니다.
+MERMAID_IMAGE_JS = """
+(function () {
+    if (window.__madoMermaidImage) return;
+    window.__madoMermaidImage = true;
+
+    function toImage(svg) {
+        var box = svg.parentElement;
+        if (!box || !box.classList.contains('mado-mermaid')) return;
+        if (svg.dataset.madoImaged === '1') return;
+        var vb = svg.viewBox && svg.viewBox.baseVal;
+        if (!vb || !(vb.width > 0) || !(vb.height > 0)) return;
+        svg.dataset.madoImaged = '1';
+
+        var clone = svg.cloneNode(true);
+        clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        clone.setAttribute('width', String(vb.width));
+        clone.setAttribute('height', String(vb.height));
+        var xml = new XMLSerializer().serializeToString(clone);
+
+        var img = new Image();
+        img.className = 'mado-mermaid-image';
+        img.alt = 'Mermaid diagram';
+        img.decoding = 'async';
+        img.onload = function () {
+            if (img.isConnected) svg.classList.add('mado-mermaid-source');
+        };
+        img.onerror = function () {
+            img.remove();
+            svg.classList.remove('mado-mermaid-source');
+        };
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
+        svg.insertAdjacentElement('afterend', img);
+    }
+
+    function scan(node) {
+        if (node.nodeType !== 1) return;
+        if (node.tagName.toLowerCase() === 'svg') { toImage(node); return; }
+        if (node.querySelectorAll) node.querySelectorAll('.mado-mermaid > svg').forEach(toImage);
+    }
+
+    function start() {
+        new MutationObserver(function (records) {
+            records.forEach(function (record) { record.addedNodes.forEach(scan); });
+        }).observe(document.body, { childList: true, subtree: true });
+        document.querySelectorAll('.mado-mermaid > svg').forEach(toImage);
+    }
+
+    if (document.body) start();
+    else document.addEventListener('DOMContentLoaded', start);
+})();
+"""

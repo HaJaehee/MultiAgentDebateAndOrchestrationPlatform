@@ -264,11 +264,66 @@ frame.
   afterwards so the scrollbar jumps less. Off-screen text stays in the DOM, so copy and find are
   unaffected.
 * **`QuietSplitter`** ([app/ui/components/quiet_splitter.py](file:///d:/MultiAgentOrchestrator/app/ui/components/quiet_splitter.py))
-  sets `LOOPBACK = False`. NiceGUI's splitter sends its value every 50 ms while dragging and, with
-  loopback on, the server sent each value straight back, triggering another layout of both panes.
-  Driving NiceGUI's own change handler with three drag values produced 3 echoed updates from
-  `ui.splitter` and 0 from `QuietSplitter`, while `splitter.value` still tracked the drag. Values set
-  from the server still reach the browser — only the echo is gone.
+  sets `LOOPBACK = False`. Quasar's `QSplitter` writes the panel's `style.width` directly on every
+  mouse move and emits `update:modelValue` **once, on release** (it is not `emit-immediately`). With
+  loopback on, the server sent that value straight back, laying out both panes once more at the moment
+  of release. Driving NiceGUI's change handler with three values gave 3 echoed updates from
+  `ui.splitter` and 0 from `QuietSplitter`, with `splitter.value` still up to date; values set from the
+  server still reach the browser.
+
+  > **Correction.** An earlier version of this page, and of the v0.7.2 notes, said the value went to
+  > the server every 50 ms during a drag (NiceGUI's `throttle=0.05`) and was echoed 20 times a second.
+  > Quasar's `pan()` handler shows otherwise: during a drag nothing is emitted. The echo removed here is
+  > one per drag, so its effect is far smaller than claimed.
+
+### 1.3.3. Dragging the splitter without re-laying out the panes
+
+`content-visibility` made drawer toggles smooth, but a splitter drag still stuttered, because every
+mouse move changes `style.width` and the browser re-lays out whatever is inside both panes — and the
+artifact pane is not a list of cards, so `content-visibility` on cards does nothing for it.
+
+**A. Freeze the panes while dragging** (`SPLITTER_FREEZE_JS`, class `mado-freeze-on-drag` on
+`QuietSplitter`). On `mousedown` on the separator (listened for in the capture phase — Quasar's pan
+directive stops propagation) each pane's content is pinned to its current pixel width and the panels
+clip overflow; on `mouseup`, `touchend`, `touchcancel` or window `blur` the original inline widths are
+restored and the browser lays out once. The trade-off is that content does not follow the drag: the
+shrinking side is clipped and the growing side shows empty space until release.
+
+In the browser the freeze engaged and released exactly (pinned `905.953px` / `655.047px`, restored to
+`""`, `overflow` back to `auto`). Per-move layout with every card forced to render fell from 11.7 to
+5.8 ms at 60 cards and from 35.4 to 15.5 ms at 180. It did **not** reach zero: hiding the frozen
+subtree drops the cost to 0 ms and setting the same width every time costs 0 ms, yet neither a pinned
+height nor `contain: strict` let Blink reuse the frozen feed's layout. The remainder is entirely in the
+feed pane (artifact pane frozen: 0.3 ms) and scales with *rendered* cards, which `content-visibility`
+keeps to the few near the viewport on a real screen.
+
+**B. Show Mermaid diagrams as images** (`MERMAID_IMAGE_JS`). Mermaid inserts its SVG into the DOM and
+draws node labels as HTML inside `foreignObject`, so each width change rescaled the diagram and re-laid
+out every label. When an SVG appears directly under `.mado-mermaid`, a serialised copy with explicit
+`width`/`height` from its `viewBox` is added as an `<img>`; the original SVG is hidden with
+`display:none` **only after the image loads** (on error the image is removed and the SVG stays).
+Hiding rather than removing keeps copy/download working — `MadoMermaid.getSvgData` still finds the SVG
+and sizes it from `viewBox`, which is why an SVG without a `viewBox` is left alone. Verified with a
+60-node flowchart (1,015 SVG nodes, 133 `foreignObject` labels): the image loaded at 215×7646, the SVG
+was hidden, `getSvgData` returned export data, and a screenshot showed the Korean labels rendered in
+the image. The artifact pane's per-move layout while frozen was 0.3 ms. Text inside a diagram can no
+longer be selected by dragging.
+
+**C. Skip off-screen blocks of a long report.** Markdown artifacts get `artifact-report`, and every
+top-level block of their rendered Markdown (paragraph, heading, list, code block) gets
+`content-visibility: auto`. On a 135-block report a width change dropped from 6.2 to 3.5 ms with the top
+15 blocks rendered; the gap grows with length. Code and JSON artifacts are a single `<pre>` and have
+nothing to split.
+
+The first version of C used `contain-intrinsic-size: auto 3em`, which estimates **width** as well. The
+report sits in a NiceGUI column with `align-items: flex-start`, which sizes to content — so the whole
+report **collapsed from 539 px to 52 px** while its blocks were skipped, and on a real screen its width
+would have shifted as different blocks rendered. It also clipped long code lines: a skipped block paints
+only inside its own box, and the `<pre>` did not scroll on its own (a 600-character line in a 52 px box).
+The shipped rules make the report and its Markdown `width: 100%`, estimate only
+`contain-intrinsic-block-size: auto 3em`, and give `pre` `overflow-x: auto`; re-measured, the report is
+539 px either way and the long line is reachable by scrolling.
+
 
 > Measured with a forced synchronous layout, not animation frames: the preview window was hidden, so
 > nothing painted. A hidden page also skips *visible* cards under `content-visibility`, so the cards

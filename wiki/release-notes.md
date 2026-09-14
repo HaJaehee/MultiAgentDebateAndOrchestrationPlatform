@@ -27,10 +27,20 @@ Database writes were checked and left alone — one row per speech, after the st
 **A long feed no longer stutters when the drawer or splitter moves.** Any width change re-laid out
 every card, off-screen and collapsed ones in full: 45–95 ms per change with 150 cards. Cards now use
 `content-visibility: auto`, so only those near the viewport are laid out (1–6 ms on the same feed).
-The main splitter no longer has the server echo each drag value back (`QuietSplitter`,
-`LOOPBACK = False`), which triggered a second layout of both panes 20 times a second.
+The main splitter no longer has the server echo its value back (`QuietSplitter`, `LOOPBACK = False`).
+Quasar emits the value once, on release, so this removes one extra layout per drag — not "20 times a
+second" as first written here; that claim was wrong.
 
-→ [UI Components §1.3.1](ui/components.md)
+**Splitter drags do far less work per move.** The panes' content is pinned to its width while dragging
+and laid out properly once on release (it does not follow the drag live). This roughly halves per-move
+layout even with every card rendered — not zero, as Blink still revisits the frozen feed — and on a real
+screen `content-visibility` keeps that remainder to the few cards near the viewport. Mermaid diagrams
+in the artifact pane are shown as images — the SVG stays hidden for copy and download — so a width
+change no longer re-lays out every node label. Long Markdown reports skip layout for blocks off screen;
+a first version of that rule collapsed the report to 52 px wide and clipped long code lines, both
+caught in the browser and fixed before shipping.
+
+→ [UI Components §1.3.1, §1.3.2, §1.3.3](ui/components.md)
 
 ---
 

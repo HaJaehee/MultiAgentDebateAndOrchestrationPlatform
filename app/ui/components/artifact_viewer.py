@@ -179,7 +179,8 @@ class ArtifactViewer:
                 elif art_type == "json":
                     ui.code(content, language="json").classes("w-full text-xs")
                 else:
-                    with ui.column().classes("prose prose-invert max-w-none text-xs text-slate-200"):
+                    # `artifact-report`: 문단·섹션 단위로 화면 밖 것을 건너뜁니다 (theme.py).
+                    with ui.column().classes("prose prose-invert max-w-none text-xs text-slate-200 artifact-report"):
                         ui.markdown(content)
 
     def _render_mermaid(self, content: str, wrapper_id: Optional[str] = None) -> None:

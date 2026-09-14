@@ -106,6 +106,57 @@ body {
     height: auto;
 }
 
+/* 이미지로 바꾼 다이어그램 (mermaid_export.py 의 MERMAID_IMAGE_JS).
+   원본 SVG 는 복사·다운로드를 위해 남기되 숨깁니다 — 숨긴 요소는 배치도 칠하기도 하지 않습니다. */
+.mado-mermaid > svg.mado-mermaid-source {
+    display: none !important;
+}
+.mado-mermaid > img.mado-mermaid-image {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 0 auto;
+}
+
+/* --- 긴 보고서 산출물은 문단 단위로 건너뛰기 -------------------------------
+   피드 카드에 쓴 것과 같은 방법을 보고서의 문단·제목·목록·코드 블록 하나하나에 겁니다.
+   카드와 달리 보고서는 요소 하나에 글 전체가 들어 있어, 요소 단위로는 건너뛸 것이
+   없었습니다. 폭이 바뀌면 보고서 전체의 줄바꿈을 다시 계산했습니다. 이제는 화면 근처
+   문단만 다시 배치합니다. 코드·JSON 산출물은 `<pre>` 하나라 나눌 단위가 없어 해당이
+   없습니다. `auto 3em` — 아직 그리지 않은 문단은 높이를 3em 으로 치고, 그린 뒤에는 실제
+   높이를 기억합니다.
+
+   **높이만** 추정합니다. `contain-intrinsic-size: auto 3em` 은 폭까지 3em 으로 치는데,
+   보고서를 담은 NiceGUI 컬럼은 `align-items: flex-start` 라 내용 폭에 맞춰 줄어듭니다.
+   그래서 건너뛴 문단들의 폭(3em)을 따라 보고서 전체가 52px 로 쪼그라들었습니다(실측,
+   원래 539px). 화면에서는 스크롤할 때마다 그려진 문단에 따라 폭이 들쭉날쭉했을 것입니다.
+   보고서와 그 마크다운이 폭을 **채우도록** 명시하고, 추정은 높이에만 겁니다.
+
+   코드 블록은 자기 상자 안에서 가로로 스크롤하게 합니다. 건너뛰기를 켠 블록은 넘치는
+   부분을 자기 상자에서 잘라 버리므로(`contain: paint`), `<pre>` 가 스스로 스크롤하지
+   않으면 긴 줄의 뒷부분에 닿을 수 없습니다(실측: 600자 줄이 52px 상자에서 잘림). */
+.artifact-report,
+.artifact-report .nicegui-markdown {
+    width: 100%;
+    align-self: stretch;
+}
+.artifact-report .nicegui-markdown > * {
+    content-visibility: auto;
+    contain-intrinsic-block-size: auto 3em;
+}
+.artifact-report .nicegui-markdown pre {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+/* --- 스플리터를 끄는 동안 창 내용 고정 -----------------------------------------
+   quiet_splitter.py 의 SPLITTER_FREEZE_JS 가 잡는 순간 창 안 요소의 폭을 묶습니다. 묶은
+   내용이 창보다 넓어지면 스크롤 막대가 생겼다 사라지며 다시 배치하므로, 끄는 동안에는
+   창 밖을 잘라 보이지 않게 합니다. */
+.mado-splitter-frozen > .q-splitter__panel {
+    overflow: hidden !important;
+}
+
 /* --- 세션 목록의 가로 폭 -------------------------------------------------
    Quasar 스크롤 영역의 내용 상자(.q-scrollarea__content)는 width:auto 라, 그 안의
    `w-full` 이 "보이는 너비" 가 아니라 "내용 너비" 가 됩니다. 그래서 세션 이름이
