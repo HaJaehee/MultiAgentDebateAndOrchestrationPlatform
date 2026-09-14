@@ -1,6 +1,9 @@
 fastapi>=0.115.0
 uvicorn>=0.30.0
-nicegui>=2.0.0
+# NiceGUI 가 Mermaid 렌더러를 동봉합니다(3.16 → mermaid 11.x). 다이어그램 검사·자동 수정
+# 규칙과 tests/test_mermaid_edge_cases.py 의 파서 판정표가 이 버전으로 확인됐으므로 범위를
+# 좁힙니다. 올리면 판정표를 실제 파서로 다시 확인하세요. 2.x 는 mermaid 10 계열입니다.
+nicegui>=3.16,<4
 pydantic>=2.8.0
 pydantic-settings>=2.4.0
 sqlalchemy>=2.0.30
