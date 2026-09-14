@@ -55,6 +55,8 @@ By defaulting `PYTHON_BIN` to `sys.executable`, the child MCP process inherits t
 | :--- | :--- | :--- |
 | `APP_HOST` (or `HOST`) | `127.0.0.1` | Network interface to bind Uvicorn server to (`${APP_HOST:-${HOST:-127.0.0.1}}`). |
 | `APP_PORT` (or `PORT`) | `8000` | Port for the web interface and REST API (`${APP_PORT:-${PORT:-8000}}`). |
+| `MADO_ACCESS_TOKEN` | — (read from `.env`, not conf.json) | Owner token for **remote** access: exactly 24 characters `[A-Za-z0-9]`. Missing or malformed → every non-loopback request is refused. Loopback needs no token. Rotated from the key button next to the info button (loopback only). See [UI Components §1.3.6](../ui/components.md). |
+| `MADO_ALLOWED_HOSTS` | empty | Extra `Host` names accepted for loopback connections (comma separated). Anything else arriving on loopback is refused as DNS rebinding. |
 
 ### 3.2. Global LLM Gateway & Provider Defaults
 

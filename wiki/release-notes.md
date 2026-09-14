@@ -6,6 +6,27 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.8.2
+
+**Remote access now requires the owner token.** MADO had no authentication: bound to `0.0.0.0`, anyone on the
+network could read conversations, change MCP commands, run code through the sandbox and download files. Now
+the server PC itself (loopback) needs nothing, while other PCs log in at `/login` with `MADO_ACCESS_TOKEN`
+from `.env` (exactly 24 letters/digits) and stay logged in for 7 days. Without a valid token remote access is
+refused entirely. One outer ASGI layer covers pages, NiceGUI's websocket, `/api/*` and downloads; cookies are
+signed with a key derived from the token, logins lock after five failures, and Origin/Host are checked even on
+loopback against malicious local pages and DNS rebinding. A key button next to the info button — shown and
+honoured only on the server PC — applies the token from `.env` (keeping the current one if that value is
+invalid) or generates and saves a new one; either way every remote login is ended. No HTTPS yet; use an SSH
+tunnel when the network is not trusted, and do not put MADO behind a reverse proxy.
+
+For servers already bound to `0.0.0.0` without a token, the first page opened on the server PC generates one,
+saves it to `.env` and shows it in a popup ("외부 유저 인증 토큰이 없어 새 토큰(`…`)으로 서버를 시작했습니다.
+`.env`에 저장하였습니다."). A malformed token written by the owner is never overwritten.
+
+→ [UI Components §1.3.6](ui/components.md) · [Environment Variables §3.1](configuration/environment-variables.md)
+
+---
+
 ## v0.8.1
 
 **Download workspace files.** A `작업 공간 파일 다운로드` button under the workspace input, and a
@@ -13,8 +34,7 @@ changed*, not a second copy of the documentation.
 workspace's files, newest first. One file downloads as is; several download as a zip with
 workspace-relative paths (max 5,000 files / 1 GB). Paths are re-checked on the server, so nothing outside
 the workspace is packed. A stale-content bug in NiceGUI's default download (path-derived URL cached for an
-hour) was found in the browser and avoided: each download gets a fresh, single-use, uncached URL. There is
-still no authentication — keep the app on `127.0.0.1` until token access lands.
+hour) was found in the browser and avoided: each download gets a fresh, single-use, uncached URL.
 
 → [UI Components §1.3.5](ui/components.md)
 

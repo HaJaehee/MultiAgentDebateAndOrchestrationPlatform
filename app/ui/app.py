@@ -25,6 +25,7 @@ from app.database.session import get_session_factory
 from app.orchestration.runner import TurnRun, get_debate_runner
 from app.orchestration.strategies import resolve_strategy_name
 from app.session_ops import discard_turn
+from app.ui.components.access_token import build_access_buttons
 from app.ui.components.artifact_viewer import ArtifactViewer, merge_artifacts
 from app.ui.components.chat_feed import ChatFeed, clip_tool_output
 from app.ui.components.quiet_splitter import SPLITTER_FREEZE_JS, QuietSplitter
@@ -697,6 +698,8 @@ def create_ui() -> None:
                 info_btn = ui.button(icon="info", on_click=about_dialog.open)
                 info_btn.props("flat dense round color=grey-4")
                 info_btn.tooltip(f"만든 사람 · 버전 — {APP_VERSION_LABEL}")
+                # 정보 버튼 오른쪽: 서버 PC 화면이면 토큰 버튼, 원격 화면이면 로그아웃.
+                build_access_buttons()
 
         # Main Splitter Workspace (58% Debate Feed / 42% Artifact Viewer)
         # 드래그하는 동안 서버가 값을 되돌려 보내지 않는 스플리터 (`QuietSplitter`).

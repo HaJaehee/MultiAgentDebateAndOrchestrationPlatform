@@ -442,8 +442,90 @@ files downloaded as a zip starting `PK` whose entries were `uploads/요구사항
 hint, was enabled for an existing folder, and opened the dialog. Real clicks and the browser's save
 dialog were not exercised (hidden preview window).
 
-**Not yet protected.** There is no authentication; with a non-loopback bind anyone on the network can
-download workspace files. Token-based remote access is the next task.
+**Protection.** Downloads sit behind the remote access token (§1.3.6); remote users must be logged in.
+
+### 1.3.6. Remote access token (v0.8.2)
+
+[app/security.py](file:///d:/MultiAgentOrchestrator/app/security.py) and
+[app/ui/components/access_token.py](file:///d:/MultiAgentOrchestrator/app/ui/components/access_token.py).
+Until now MADO had no authentication at all: bound to `0.0.0.0`, anyone on the network could read every
+conversation (`/api/sessions/{id}/personas`, `/personas/{id}`), see MCP commands (`/api/mcp`), add an MCP
+server with an arbitrary command, run code through the sandbox MCP, and download workspace files.
+
+**Policy (the owner's decisions).** Loopback (`127.0.0.1`, `::1`, IPv4-mapped loopback) needs no token.
+Remote clients must log in with the owner token and stay logged in for 7 days. The token is
+`MADO_ACCESS_TOKEN` in `.env`, exactly 24 `[A-Za-z0-9]` characters; only length and alphabet are checked,
+not strength. No HTTPS for now. Without a valid token every remote request is refused (fail-closed).
+
+**One gate.** `AccessMiddleware` is a pure ASGI middleware added to the FastAPI `server` *after*
+`ui.run_with` — Starlette makes the last-added middleware the outermost — so it wraps NiceGUI pages,
+NiceGUI's socket.io mount (`/_nicegui_ws/`), `/api/*`, `/agent-icon` and `/_mado/download/*`. A test asserts
+`server.user_middleware[0].cls is AccessMiddleware`. For every HTTP and websocket scope:
+
+1. An `Origin` header that does not match `Host` → 403 / websocket close 1008, **including loopback**.
+   socket.io is configured with `cors_allowed_origins='*'`, so without this a page opened in the server
+   PC's browser could drive MADO with loopback rights.
+2. Loopback with a `Host` other than `localhost`/`127.0.0.1`/`::1` (+ `MADO_ALLOWED_HOSTS`) → 403: DNS
+   rebinding. Otherwise loopback passes.
+3. Remote `/login`: GET renders a static form (no NiceGUI, no websocket); POST reads at most 4 KB,
+   compares with `hmac.compare_digest`, and on success sets
+   `mado_session=v1.<issued>.<HMAC>; Max-Age=604800; HttpOnly; SameSite=Strict`, then redirects to a
+   `next` path restricted to this server (`//evil`, absolute URLs and backslashes fall back to `/`). The
+   HMAC key is derived from the token, so changing the token invalidates every cookie. Five failures from
+   one IP within 15 minutes lock it for 15 minutes (429), even for the right token. The token never
+   appears in a URL, cookie or response.
+4. Remote without a valid token configured → 403 page explaining how to enable it.
+5. Remote with a valid, unexpired cookie passes; otherwise HTML GETs are redirected to
+   `/login?next=…` and everything else gets 401 (websocket close 1008). `/logout` clears the cookie.
+
+`X-Forwarded-For` is ignored on purpose; behind a reverse proxy every client would look like loopback.
+
+**Rotation (loopback only).** `build_access_buttons()` puts a key button right of the info button on
+loopback pages and a logout button on remote pages. Hiding is convenience: both handlers re-check
+`ui.context.client.ip` on every click. The dialog offers (1) *apply the `.env` token*: re-reads the file
+itself with `dotenv_values` (`load_dotenv` only ran at startup, so `os.environ` is stale); a missing or
+malformed value is **not applied** and the current token stays, so one mis-click cannot lock the owner
+out. (2) *generate and store*: `secrets`-based 24 characters, written to `.env` **first** and applied only
+if the write succeeded (otherwise memory and file would diverge and the next restart would silently
+switch tokens), shown once in the dialog, never logged. `write_env_token()` replaces only the token line
+(duplicates collapsed, `export` prefix handled), keeps other lines, comments and CRLF, splits on `\n`
+only (stray `\r` from a bad editor would otherwise become blank lines), and writes via a temp file +
+`os.replace`. After either option `disconnect_remote_clients()` tells open remote pages to reload (→
+login) and disconnects their sockets, because cookies are only checked when a connection is made.
+
+**Backward compatibility: a public bind with no token.** A server that was already bound to `0.0.0.0`
+before tokens existed has none after the update, so every remote user would be locked out. On the first
+loopback page load, `bootstrap_missing_token()` — when `bind_is_public(app.host)` (`0.0.0.0`, `::`, empty
+or a non-loopback address), no usable token is applied, `.env` has the key missing or empty, and no OS
+environment variable sets it — generates a token, writes it to `.env` (then applies it, same order as the
+rotate button), and `show_bootstrap_popup()` shows exactly: "외부 유저 인증 토큰이 없어 새 토큰(`<token>`)으로
+서버를 시작했습니다. `.env`에 저장하였습니다." A malformed value the owner wrote is never overwritten, a
+lock makes concurrent first pages create one token, and a failed write leaves remote access closed with a
+persistent notice. Until that first loopback page, remote requests get the "remote access is off" page,
+which now says so. `app.host` is read at page time; with `--host` plus auto-reload the child process sees
+conf/`.env` values, not the CLI flag. Verified in a browser against a harness bound to `0.0.0.0` with a
+`.env` holding only another key: the remote tab first got the 403 page; opening `127.0.0.1` showed the
+popup with the token, `.env` became `LLM_API_KEY=keep-me\r\nMADO_ACCESS_TOKEN=<token>\r\n`; reloading showed
+no popup; the remote browser then logged in with that token (page and API 200). 18 unit tests cover the
+conditions (public/loopback binds, missing/empty/malformed values, OS variable, 8 concurrent threads,
+failed save).
+
+**Verified.** 45 unit tests drive the middleware through `httpx.ASGITransport` with real client addresses
+and a fake clock (loopback/remote, rebinding, cross-origin HTTP and websocket, fail-closed, redirects, cookie
+flags, open-redirect, lockout and unlock, tampered/expired/rotated cookies, oversized body, `.env` writing).
+In a browser, against a harness assembled like `main.py` and bound to the LAN address so the browser was a
+genuine remote client: unauthenticated `/` redirected to the login form and `/api/ping` and the socket.io
+endpoint returned 401; a wrong token gave 401 with a message; the right token set a cookie invisible to
+JavaScript, after which the NiceGUI page worked over socket.io (button clicks round-tripped) and showed a
+logout button but no key button. From a loopback tab on the same server the key button generated a new token,
+`.env` kept the other key, the notice reported the remote screens sent back, and afterwards the remote
+browser's old cookie landed on the login page with 401 from the API, the old token was refused and the new
+one accepted. Two defects found this way were fixed: `write_env_token` read the file in text mode, turning
+CRLF into LF, and the "screens sent back" count included clients without a connection.
+
+**Limits.** No HTTPS: the token and cookie cross the network in clear text at login (use an SSH tunnel for
+encryption). One token is one owner; there are no per-user accounts or per-session ownership. An already open
+websocket is not re-checked when a cookie reaches its 7-day expiry; the next reconnect or page load is.
 
 ### 1.4. Artifact Viewer ([app/ui/components/artifact_viewer.py](file:///d:/MultiAgentOrchestrator/app/ui/components/artifact_viewer.py))
 - **Tabs accumulate across turns.** `add_artifacts()` appends a finished turn's artifacts (skipping ids

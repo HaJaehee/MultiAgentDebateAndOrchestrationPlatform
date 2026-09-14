@@ -288,6 +288,16 @@ ui.run_with(
     reconnect_timeout=30.0,
 )
 
+# 3. 원격 접속 토큰 (app/security.py)
+#
+# 맨 바깥에 붙입니다. NiceGUI 와 그 socket.io 가 `server` 안에 붙어 있어, 페이지·웹소켓·
+# /api/*·다운로드가 모두 이 계층을 지납니다. Starlette 는 마지막에 더한 미들웨어를 가장
+# 바깥에 두므로 반드시 `ui.run_with` 뒤에 둡니다.
+from app.security import AccessMiddleware, get_access_control
+
+get_access_control()
+server.add_middleware(AccessMiddleware)
+
 
 def start():
     import argparse
