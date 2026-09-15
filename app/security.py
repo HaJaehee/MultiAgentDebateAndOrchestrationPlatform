@@ -514,7 +514,9 @@ async def _respond(send: Send, status: int, body: bytes, *,
         (b"content-length", str(len(body)).encode()),
         (b"cache-control", b"no-store"),
         (b"x-frame-options", b"DENY"),
-        (b"referrer-policy", b"no-referrer"),
+        # `no-referrer` 는 안 됩니다: 그 페이지의 폼 POST 에 브라우저가 `Origin: null` 을 실어
+        # 로그인이 교차 출처로 거부됩니다. `same-origin` 은 이 서버 밖으로는 Referer 를 보내지 않습니다.
+        (b"referrer-policy", b"same-origin"),
     ] + [(k.encode(), v.encode()) for k, v in headers]
     await send({"type": "http.response.start", "status": status, "headers": raw})
     await send({"type": "http.response.body", "body": body})

@@ -247,6 +247,15 @@ def test_login_redirect_never_leaves_the_server():
     assert run(go()) == ["/", "/", "/", "/"]
 
 
+def test_login_page_keeps_the_origin_on_its_form_post():
+    """`Referrer-Policy: no-referrer` 이면 브라우저가 폼 POST 에 `Origin: null` 을 실어 로그인이 403 이 됩니다."""
+    async def go():
+        async with _client(AccessControl(TOKEN), REMOTE, host="10.0.0.1:8000") as c:
+            return (await c.get("/login")).headers["referrer-policy"]
+    assert run(go()) in ("same-origin", "strict-origin", "strict-origin-when-cross-origin", "origin",
+                         "origin-when-cross-origin")
+
+
 def test_cross_origin_login_post_is_refused():
     async def go():
         async with _client(AccessControl(TOKEN), REMOTE, host="10.0.0.1:8000") as c:
