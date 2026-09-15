@@ -418,7 +418,9 @@ conversation's applied workspace, resolved exactly as the engine does.
 
 **Listing.** The cached index is invalidated first so files an agent just wrote appear. Files are shown
 newest first (`WorkspaceEntry.mtime` was added to the scan), filtered on the server by words that must all
-appear in the path, in a paginated `ui.table` with multiple selection. "Select visible" adds the current
+appear in the path, in a paginated `ui.table` with multiple selection. Every column header sorts: size and modified time sort
+on the numeric `size`/`mtime` fields (the labels are only shown through `:format`, so `9 KB` never lands
+after `10 MB`), and their first click is largest/newest first. "Select visible" adds the current
 filter's rows; selecting one row offers `파일 받기`, several offer `zip 으로 받기 (n개)`.
 
 **Packing.** `plan_download()` re-resolves every submitted path with `safe_workspace_path()` — the browser's

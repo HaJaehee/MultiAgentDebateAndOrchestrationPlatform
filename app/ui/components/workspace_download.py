@@ -7,6 +7,7 @@
 어디서 열든 **이 대화에 적용된 작업 공간**의 파일입니다.
 
 * 목록은 최근에 바뀐 파일부터 보여 줍니다. 토론이 방금 만든 결과물이 맨 위에 옵니다.
+  열 제목을 눌러 경로·크기·수정 시각으로 다시 정렬할 수 있습니다.
 * 하나를 고르면 그 파일을 그대로, 여럿을 고르면 zip 으로 묶어 내려줍니다.
 * 화면이 보낸 경로를 믿지 않습니다. 내려주기 직전에 작업 공간 안인지 다시 확인합니다
   (`workspace_files.plan_download`).
@@ -66,6 +67,22 @@ def _row(entry) -> Dict[str, object]:
     }
 
 
+def table_columns() -> List[Dict[str, object]]:
+    """표의 열. 세 열 모두 제목을 눌러 정렬합니다.
+
+    크기·수정은 **숫자 값(`size`, `mtime`)으로 정렬**하고 글자(`size_label`, `mtime_label`)는
+    `:format` 으로 보여 주기만 합니다. 글자로 정렬하면 `9 KB` 가 `10 MB` 보다 뒤에 옵니다.
+    크기·수정은 처음 누르면 큰 것·최근 것부터(`sortOrder: da`) 봅니다.
+    """
+    return [
+        {"name": "path", "label": "경로", "field": "path", "align": "left", "sortable": True},
+        {"name": "size", "label": "크기", "field": "size", "align": "right", "sortable": True,
+         "sortOrder": "da", ":format": "(val, row) => row.size_label"},
+        {"name": "mtime", "label": "수정", "field": "mtime", "align": "right", "sortable": True,
+         "sortOrder": "da", ":format": "(val, row) => row.mtime_label"},
+    ]
+
+
 def filter_rows(rows: List[Dict[str, object]], query: str) -> List[Dict[str, object]]:
     """경로에 검색어가 들어 있는 행. 공백으로 나눈 낱말이 모두 들어 있어야 합니다."""
     words = [w for w in (query or "").lower().split() if w]
@@ -102,7 +119,7 @@ class WorkspaceDownloadDialog:
                 ui.button(icon="close", on_click=dialog.close).props("flat round dense size=sm color=grey-5")
             ui.label(str(root)).classes("text-[11px] text-slate-400 break-all")
             note = (
-                f"최근에 바뀐 파일부터 보입니다. 하나를 고르면 그대로, 여럿이면 zip 으로 받습니다 "
+                f"최근에 바뀐 파일부터 보입니다 (열 제목을 눌러 경로·크기·수정 시각으로 정렬). 하나를 고르면 그대로, 여럿이면 zip 으로 받습니다 "
                 f"(최대 {MAX_ZIP_FILES:,}개 · {format_size(MAX_ZIP_BYTES)})."
             )
             if scan.truncated:
@@ -114,15 +131,12 @@ class WorkspaceDownloadDialog:
             ).classes("w-full text-xs")
 
             table = ui.table(
-                columns=[
-                    {"name": "path", "label": "경로", "field": "path", "align": "left", "sortable": True},
-                    {"name": "size", "label": "크기", "field": "size_label", "align": "right"},
-                    {"name": "mtime", "label": "수정", "field": "mtime_label", "align": "right"},
-                ],
+                columns=table_columns(),
                 rows=all_rows,
                 row_key="path",
                 selection="multiple",
-                pagination=ROWS_PER_PAGE,
+                # 처음에는 최근에 바뀐 파일부터. 정렬 표시도 수정 열에 보입니다.
+                pagination={"rowsPerPage": ROWS_PER_PAGE, "sortBy": "mtime", "descending": True},
             ).props("dense flat dark").classes("w-full max-h-[420px] text-xs")
 
             with ui.row().classes("w-full items-center justify-between gap-2"):

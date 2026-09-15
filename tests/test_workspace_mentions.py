@@ -265,7 +265,7 @@ def test_the_main_screen_wires_mentions_and_upload():
 import time  # noqa: E402
 import zipfile  # noqa: E402
 
-from app.ui.components.workspace_download import filter_rows  # noqa: E402
+from app.ui.components.workspace_download import filter_rows, table_columns  # noqa: E402
 from app.workspace_files import (  # noqa: E402
     WorkspaceDownloadError,
     build_workspace_zip,
@@ -277,6 +277,14 @@ from app.workspace_files import (  # noqa: E402
 def test_scan_records_modified_time_for_recent_first_listing(ws):
     entry = next(e for e in scan_workspace(ws).entries if e.path == "docs/spec.md")
     assert entry.mtime > 0
+
+
+def test_download_table_sorts_by_path_size_and_modified_time_as_numbers():
+    columns = {c["name"]: c for c in table_columns()}
+    assert all(c["sortable"] for c in columns.values())
+    # 글자(`size_label`)로 정렬하면 "9 KB" 가 "10 MB" 뒤에 옵니다. 숫자로 정렬하고 글자는 보여 주기만.
+    assert (columns["size"]["field"], columns["mtime"]["field"]) == ("size", "mtime")
+    assert "size_label" in columns["size"][":format"] and "mtime_label" in columns["mtime"][":format"]
 
 
 def test_zip_keeps_relative_paths_and_korean_names(ws, tmp_path_factory):
