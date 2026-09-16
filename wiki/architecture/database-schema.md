@@ -102,7 +102,7 @@ Represents a single multi-agent collaboration workspace or discussion thread.
 | `active_agents` | `JSON` | No | `[]` | Array of agent keys participating in this session. |
 | `known_agents` | `JSON` | No | `[]` | Every agent that existed when this roster was last saved. `active_agents` is an allow-list, so without this a key missing from it cannot be told apart from an agent that did not exist yet — which made every conversation show newly added agents as switched off. |
 | `custom_instructions` | `TEXT` | No | `''` | User-defined custom instructions injected into every agent prompt. |
-| `decision_ledger` | `TEXT` | No | `''` | Decision ledger the orchestrator rewrites after rounds and synthesis; injected right after the custom instructions. Written only when a turn completes. See [Conversation Memory](../orchestration/context-memory.md). |
+| `decision_ledger` | `TEXT` | No | `''` | Decision ledger the orchestrator rewrites after rounds and synthesis; placed directly before each call's turn instruction. Written only when a turn completes. See [Conversation Memory](../orchestration/context-memory.md). |
 | `ledger_through_id` | `VARCHAR(36)` | Yes | `NULL` | Id of the last message folded into the ledger. |
 | `transcript_summary` | `TEXT` | No | `''` | Rolling summary of old messages folded when the context window filled. |
 | `summary_through_id` | `VARCHAR(36)` | Yes | `NULL` | Id of the last message the summary covers; a summary whose anchor is missing is discarded. |

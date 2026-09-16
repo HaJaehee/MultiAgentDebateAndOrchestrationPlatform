@@ -23,8 +23,8 @@
    참조로 바꿔 토큰을 두 번 쓰지 않습니다. 이번 턴 오케스트레이터 계획도 같은 자리에
    고정합니다 (`build_plan_pin`).
 2. **결정 장부** (`ledger_prompt`, `parse_ledger`) — 오케스트레이터가 라운드마다
-   요구사항·결정·기각안·미해결 쟁점·담당을 구조화해 갱신합니다. 시스템 프롬프트의
-   세션 커스텀 지침 **바로 뒤**에 들어갑니다 (`LLMCaller.build_system_prompt`).
+   요구사항·결정·기각안·미해결 쟁점·담당을 구조화해 갱신합니다. 매 호출의 **마지막 사용자
+   메시지(이번 차례 지시) 바로 앞**에 들어갑니다 (`llm.place_ledger_last`, 아래 "프롬프트 캐싱").
 3. **버리는 대신 요약** (`summary_prompt`, `choose_fold_cut`) — 기록이 창을 넘기 전에
    오래된 구간을 누적 요약으로 접습니다. 요약도 목표 메시지에 들어가 잘리지 않습니다.
    기존의 버리기는 마지막 안전장치로 남습니다.
@@ -40,13 +40,37 @@
 적어 두어(`ledger_through_id`, `summary_through_id`), 턴이 오류로 끊겨 저장을 못 했더라도
 다음 턴이 거기서부터 이어 접습니다.
 
+## 발언을 얼마나 넘길까 (v0.8.3)
+
+모든 발언이 원문으로 모든 발언자에게 가면 호출 한 번의 입력이 발언 수에 비례해 늘고, 코드가
+든 발언은 라운드마다 통째로 다시 실립니다. 발언자마다 기록을 세 층으로 나눕니다
+(`OrchestratorEngine._build_context_for_agent`).
+
+* **새 발언** — 이 발언자가 마지막으로 말한 뒤에 나온 것. 아직 응답하지 않은 내용이라 원문
+  그대로, 코드도 그대로 줍니다. 비평가는 방금 나온 코드를 읽어야 검토할 수 있습니다.
+* **오래된 긴 발언** — 발언자가 끝에 붙인 `## 요지` 만 줍니다 (`extract_digest`). 요지가 없으면
+  긴 코드 블록만 참조로 바꾼 원문을 줍니다 (`reference_code_blocks`).
+* **그 밖** — 짧은 발언, 이 발언자를 `@이름` 으로 지목한 발언, 자기 발언은 원문을 주되 긴 코드
+  블록은 참조로 바꿉니다. 코드는 작업 공간 파일과 산출물 탭에 남아 있습니다.
+
+요지는 발언자가 발언과 함께 쓰므로 추가 호출이 없습니다.
+
+## 프롬프트 캐싱
+
+OpenAI·Gemini·vLLM 등은 **앞부분이 같은** 요청을 싸고 빠르게 처리합니다. 그래서 자주 바뀌는
+것은 뒤로 보냅니다. 결정 장부와 라운드 표시는 시스템 프롬프트·목표 메시지가 아니라 **마지막
+사용자 메시지(이번 차례 지시) 바로 앞**에 붙습니다 (`LLMCaller.call_agent` 의 `place_ledger_last`).
+시스템 프롬프트(페르소나 + 커스텀 지침)와 목표 메시지는 한 턴 동안 그대로이고, 기록은 뒤에만
+붙습니다. 새 발언이 오래된 발언이 되며 요지로 바뀌는 자리부터는 캐시가 다시 쓰입니다.
+
 이 모듈은 LLM 을 부르지 않습니다. 부르는 쪽은 `OrchestratorEngine` 입니다.
 """
 
+import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from app.agents.llm import estimate_tokens, strip_reasoning_trace
+from app.agents.llm import estimate_tokens, is_file_writing_call, strip_reasoning_trace
 from app.orchestration.state import DebateMessage, DebateState
 
 # 토론 도중 들어온 사용자 발언의 머리표 (`OrchestratorEngine._apply_interjections`).
@@ -69,7 +93,7 @@ ROUTING_RECORD_SHARE = 0.1
 # ---------------------------------------------------------------- 2. 장부
 
 LEDGER_MAX_CHARS = 5000
-# 장부는 모든 호출의 시스템 프롬프트에 실립니다. 창이 작은 에이전트에서 장부가 창을 먹지
+# 장부는 모든 호출에 실립니다 (마지막 메시지 앞). 창이 작은 에이전트에서 장부가 창을 먹지
 # 않도록, 이번 턴 참여자 중 **가장 작은** 예산에 비례해 상한을 둡니다 (`memory_cap`).
 LEDGER_SHARE = 0.1
 LEDGER_SECTIONS = ("요구사항·제약", "결정 사항", "기각된 대안", "미해결 쟁점", "담당·다음 할 일")
@@ -136,14 +160,119 @@ def clip_chars(text: str, limit: int, note: str) -> str:
 def render_message(msg: DebateMessage, body: Optional[str] = None) -> str:
     """요약·장부 입력용 한 덩어리. 사고 과정은 뗍니다 (다른 프롬프트와 같은 규칙).
 
-    `body` 를 주면 본문 대신 씁니다 — 이미 고정된 발언을 참조로 바꿀 때.
+    `body` 를 주면 본문 대신 씁니다 — 이미 고정된 발언을 참조로 바꿀 때. 긴 코드 블록은
+    참조로 바꿉니다. 장부와 요약에 필요한 것은 무엇을 만들었는지이지 코드 전문이 아닙니다.
     """
     if msg.sender_key == "user":
         return f"### [User] · Round {msg.round_number}\n{body or msg.content}"
     return (
         f"### {msg.sender_name} ({msg.sender_role}) · Round {msg.round_number}\n"
-        f"{body or strip_reasoning_trace(msg.content)}"
+        f"{body or reference_code_blocks(strip_reasoning_trace(msg.content), msg.tool_calls)}"
     )
+
+
+# ---------------------------------------------------------------- 코드는 참조로
+
+# 이보다 긴 코드 블록만 참조로 바꿉니다 (줄 수나 글자 수 중 하나라도 넘으면).
+CODE_REF_MIN_LINES = 15
+CODE_REF_MIN_CHARS = 800
+# 다이어그램은 토론의 내용 자체라 그대로 둡니다 (비평가가 구조를 검토합니다).
+CODE_REF_KEEP_LANGS = frozenset({"mermaid"})
+
+_PATH_HINT = re.compile(r"`([\w.\-/\\]+\.[A-Za-z0-9]{1,8})`")
+_TITLE_HINT = re.compile(r"""title=["']([^"']+)["']""")
+
+
+def _written_paths(tool_calls: Sequence[Dict[str, Any]]) -> List[str]:
+    """이 발언이 파일 쓰기 도구로 쓴 경로 (이번 턴 발언만 도구 기록을 들고 있습니다)."""
+    paths: List[str] = []
+    for call in tool_calls or []:
+        name = str(call.get("tool_name") or call.get("name") or "")
+        args = call.get("arguments") or {}
+        if not is_file_writing_call(name) or not isinstance(args, dict):
+            continue
+        path = args.get("path") or args.get("file_path") or args.get("filename")
+        if isinstance(path, str) and path and path not in paths:
+            paths.append(path)
+    return paths
+
+
+def reference_code_blocks(text: str, tool_calls: Sequence[Dict[str, Any]] = ()) -> str:
+    """긴 코드 블록의 내용을 한 줄 참조로 바꿉니다. 펜스는 남겨 마크다운 모양을 지킵니다.
+
+    참조에는 줄 수, 첫 줄, 짐작되는 파일 경로(펜스 바로 위 줄의 `` `경로` `` 나 펜스의 title,
+    이 발언이 쓴 파일)를 적습니다. 다음 발언자는 그 경로를 파일 도구로 읽을 수 있습니다.
+    """
+    from app.orchestration.engine import _iter_code_fences
+
+    text = text or ""
+    blocks = _iter_code_fences(text)
+    if not blocks:
+        return text
+    written = _written_paths(tool_calls)
+    out: List[str] = []
+    cursor = 0
+    for block in blocks:
+        code = text[block["start"]:block["end"]]
+        lang = (block.get("lang") or "").lower()
+        lines = code.strip("\n").splitlines()
+        if lang in CODE_REF_KEEP_LANGS or (
+            len(lines) < CODE_REF_MIN_LINES and len(code) < CODE_REF_MIN_CHARS
+        ):
+            continue
+        # 코드 바로 앞 몇 줄. 마지막 줄이 여는 펜스입니다.
+        before = text[max(0, block["start"] - 400):block["start"]].splitlines()
+        hints = _TITLE_HINT.findall(before[-1]) if before else []
+        hints += [p for p in _PATH_HINT.findall("\n".join(before[-3:])) if p not in hints]
+        for path in written:
+            if path not in hints:
+                hints.append(path)
+        first = next((line.strip() for line in lines if line.strip()), "")
+        first = first[:80] + ("…" if len(first) > 80 else "")
+        where = f" · 관련 파일: {', '.join(hints[:3])}" if hints else ""
+        stub = (
+            f"[코드 {len(lines)}줄 생략{(' · ' + lang) if lang else ''} · 첫 줄: {first}{where}. "
+            f"원문은 작업 공간 파일(있다면)과 작성자의 발언 기록에 있습니다]\n"
+        )
+        out.append(text[cursor:block["start"]])
+        out.append(stub)
+        cursor = block["end"]
+    out.append(text[cursor:])
+    return "".join(out)
+
+
+# ---------------------------------------------------------------- 요지
+
+# 발언자에게 붙이는 지시. 다른 에이전트가 나중에 읽는 것이 이것뿐일 수 있다는 사실을 알려야
+# 요지에 결론·근거·요청이 제대로 담깁니다.
+DIGEST_HEADING = "## 요지"
+DIGEST_INSTRUCTION = (
+    f"발언 맨 끝에 `{DIGEST_HEADING}` 제목으로 3~5줄을 붙이세요 — 핵심 결론, 근거, 다른 "
+    f"에이전트에게 요청하거나 넘기는 것, 작성·수정한 파일 경로. 다음 라운드부터 다른 에이전트는 "
+    f"이 발언의 요지만 읽을 수 있으니, 요지만 읽어도 무엇이 결정·제안됐는지 알 수 있게 쓰세요."
+)
+DIGEST_MAX_CHARS = 800
+# 이보다 짧은 발언은 요지로 바꿔도 얻는 것이 없어 원문을 줍니다.
+DIGEST_MIN_BODY_CHARS = 700
+
+_DIGEST_HEAD = re.compile(r"^\s{0,3}(?:#{1,4}\s*요지\s*:?\s*|\*\*요지\*\*\s*:?\s*)$", re.MULTILINE)
+_NEXT_HEAD = re.compile(r"^\s{0,3}#{1,2}\s+\S", re.MULTILINE)
+
+
+def extract_digest(content: str) -> Optional[str]:
+    """발언 끝의 `## 요지` 섹션. 없거나 비었으면 None."""
+    text = strip_reasoning_trace(content or "")
+    heads = list(_DIGEST_HEAD.finditer(text))
+    if not heads:
+        return None
+    body = text[heads[-1].end():]
+    following = _NEXT_HEAD.search(body)
+    if following:
+        body = body[:following.start()]
+    body = body.strip()
+    if not body:
+        return None
+    return clip_chars(body, DIGEST_MAX_CHARS, "…(요지가 길어 뒷부분을 생략했습니다)")
 
 
 # ---------------------------------------------------------------- 1. 사용자 발언 고정

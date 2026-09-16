@@ -20,14 +20,24 @@ layers now keep what matters:
   push the head out of the window. Later turns' plan prompts, speaker selection, parallel dispatch and
   the synthesis prompt carry the record too.
 - **Decision ledger.** After each round (except the last) and after synthesis the orchestrator rewrites
-  requirements, decisions, rejected alternatives, open issues and owners. It rides in every system
-  prompt **right after the session custom instructions**, which are injected exactly as before. It is
-  saved only when a turn completes, so an aborted turn leaves nothing behind; a failed update keeps the
+  requirements, decisions, rejected alternatives, open issues and owners. It is placed **directly before
+  the turn instruction** in every call — not in the system prompt, whose custom instructions are
+  injected exactly as before — so ledger updates do not break the provider's prompt cache. It is saved
+  only when a turn completes, so an aborted turn leaves nothing behind; a failed update keeps the
   previous ledger. It is shown read-only under the custom instructions box and carried over when a
   session is continued.
 - **Summaries instead of drops.** When a request would exceed the window, the oldest messages are
   folded into a rolling summary pinned in the goal message; an agent whose window fits the original
   keeps reading it. Dropping remains the fallback when summarizing fails.
+
+**Speeches are passed on in proportion to what the listener needs.** Speakers end with a short
+`## 요지` (no extra call). Each agent receives speeches made since it last spoke in full; older long
+speeches by others arrive as their digest; its own speeches, short ones and ones that `@`-mention it
+arrive in full with long code blocks replaced by a one-line reference (lines, first line, likely file).
+Diagrams are never replaced, and the synthesis still reads everything verbatim. In a test with three
+specialists over three rounds the critic's last prompt shrank to about 54 % of the verbatim transcript.
+The round counter moved from the goal message to the end as well, so the transcript prefix stays
+cacheable between rounds.
 
 Reproduced as a test: 8k window, ~2,100-token speeches, a turn-1 constraint, a three-round turn 2. Before,
 the constraint reached the endpoint in none of the nine turn-2 speeches; now in all nine, with nothing

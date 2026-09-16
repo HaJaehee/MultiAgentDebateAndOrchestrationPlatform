@@ -35,6 +35,7 @@ from app.database.models import (
 )
 from app.database.session import get_session_factory
 from app.orchestration import context_memory as memory
+from app.workspace_files import mention_token
 from app.orchestration.control import TurnControl
 from app.orchestration.state import ArtifactItem, DebateMessage, DebateState
 from app.orchestration.strategies import (
@@ -1247,8 +1248,7 @@ class OrchestratorEngine:
                     # 통째로 "Thought 1: ..." 머리말로 채워져, 정작 결론은 한 글자도
                     # 안 실립니다.
                     history_snippets.append(
-                        f"{m.sender_name}({m.sender_role}): "
-                        f"{strip_reasoning_trace(m.content)[:250]}"
+                        f"{m.sender_name}({m.sender_role}): {self._snippet(m, 250)}"
                     )
                 history_text = "\n".join(history_snippets[-6:])
                 orch_plan_prompt = [
@@ -1700,8 +1700,7 @@ class OrchestratorEngine:
 
         roster = format_roster(candidates, with_keys=True)
         recent = [
-            # 자르기 전에 사고 과정을 뗍니다 (계획 프롬프트와 같은 이유).
-            f"{m.sender_name}({m.sender_role}): {strip_reasoning_trace(m.content)[:300]}"
+            f"{m.sender_name}({m.sender_role}): {self._snippet(m, 300)}"
             for m in state.messages if m.msg_type != "error"
         ][-8:]
 
@@ -1991,8 +1990,7 @@ class OrchestratorEngine:
 
         roster = format_roster(candidates, with_keys=True)
         recent = [
-            # 자르기 전에 사고 과정을 뗍니다 (계획 프롬프트와 같은 이유).
-            f"{m.sender_name}({m.sender_role}): {strip_reasoning_trace(m.content)[:300]}"
+            f"{m.sender_name}({m.sender_role}): {self._snippet(m, 300)}"
             for m in state.messages if m.msg_type != "error"
         ][-8:]
 
@@ -2192,6 +2190,17 @@ class OrchestratorEngine:
         return memory.memory_cap(
             memory.SUMMARY_SHARE, memory.SUMMARY_MAX_CHARS, state.memory_budget or budget
         )
+
+    @staticmethod
+    def _snippet(msg: DebateMessage, limit: int) -> str:
+        """짧게 옮길 때의 한 조각. 요지가 있으면 요지, 없으면 앞부분.
+
+        앞 N자만 자르면 긴 발언은 서론만 남습니다. 요지는 발언자가 결론을 추려 둔 것입니다.
+        자르기 전에 사고 과정을 뗍니다 — 그러지 않으면 N자가 "Thought 1: ..." 로 채워집니다.
+        """
+        digest = memory.extract_digest(msg.content) if msg.sender_key != "user" else None
+        text = digest or strip_reasoning_trace(msg.content)
+        return text[:limit]
 
     def _routing_record(self, state: DebateState, agent: Agent) -> str:
         """발언자 지명·과업 분배 프롬프트에 넣을 사용자 발언 기록 (짧은 몫)."""
@@ -2541,17 +2550,47 @@ class OrchestratorEngine:
         placeholders = memory.placeholders_for(state, record, bool(plan_pin))
         summary = memory.summary_block(state)
 
+        # 라운드 표시는 맨 끝에 둡니다. 목표 메시지에 있으면 라운드마다 두 번째 메시지가 바뀌어,
+        # 그 뒤의 기록 전체가 프롬프트 캐시에서 빠집니다 (모듈 설명의 "프롬프트 캐싱").
         turn_prompt = (
+            f"[Debate Progress]: Round {state.current_round} of {state.max_rounds}.\n\n"
             f"이제 {agent.name}({agent.role})님의 차례입니다. 앞선 전체 논의 맥락과 직전 "
             f"발언들을 충실히 반영하여 전문적인 의견을 발언하고 필요시 도구를 활용해 주세요."
         )
         if turn_instruction:
             turn_prompt += f"\n\n{turn_instruction}"
+        turn_prompt += f"\n\n{memory.DIGEST_INSTRUCTION}"
+
+        # 이 발언자가 마지막으로 말한 뒤에 나온 발언은 원문으로 (모듈 설명의 "발언을 얼마나
+        # 넘길까"). 이번 턴에 아직 말하지 않았으면 이번 턴 전체가 새 발언입니다.
+        fresh_start = state.turn_message_start
+        for index in range(len(state.messages) - 1, -1, -1):
+            msg = state.messages[index]
+            if msg.sender_key == agent.key and msg.msg_type != "error":
+                fresh_start = max(fresh_start, index + 1)
+                break
+        mentions = {mention_token(agent.name), f"@{agent.key}"}
+
+        def body_for(index: int, msg: DebateMessage) -> str:
+            pinned = placeholders.get(index)
+            if pinned:
+                return pinned
+            body = strip_reasoning_trace(msg.content)
+            if index >= fresh_start and msg.sender_key != agent.key:
+                return body
+            if (
+                msg.sender_key != agent.key
+                and len(body) > memory.DIGEST_MIN_BODY_CHARS
+                and not any(token in body for token in mentions)
+            ):
+                digest = memory.extract_digest(msg.content)
+                if digest:
+                    return f"{memory.DIGEST_HEADING} (전문 {len(body):,}자 중 요지만 싣습니다)\n{digest}"
+            return memory.reference_code_blocks(body, msg.tool_calls)
 
         def assemble(start: int, with_summary: bool) -> List[Dict[str, Any]]:
             head = [f"[User Goal / Current Request]:\n{state.user_prompt}"]
             head += [part for part in (record.text, plan_pin, summary if with_summary else "") if part]
-            head.append(f"[Debate Progress]: Round {state.current_round} of {state.max_rounds}.")
             context: List[Dict[str, Any]] = [{"role": "user", "content": "\n\n".join(head)}]
 
             for index in range(start, len(state.messages)):
@@ -2572,10 +2611,7 @@ class OrchestratorEngine:
                         # 사고 과정은 기록과 화면에만 남기고 프롬프트에는 싣지 않습니다.
                         # 자기 발언도 같습니다 — `show_steps` 는 사람이 무엇을 볼지를
                         # 정하는 스위치이지, 모델이 무엇을 읽을지를 정하는 것이 아닙니다.
-                        "content": (
-                            f"{role_label}:\n"
-                            f"{placeholders.get(index) or strip_reasoning_trace(msg.content)}"
-                        )
+                        "content": f"{role_label}:\n{body_for(index, msg)}",
                     })
 
             context.append({"role": "user", "content": turn_prompt})

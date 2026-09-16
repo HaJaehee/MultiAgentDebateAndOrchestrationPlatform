@@ -248,20 +248,47 @@ async def test_synthesis_keeps_the_user_record_even_when_the_transcript_is_trimm
 # =============================================================== 2. 결정 장부
 
 
-def test_the_ledger_goes_right_after_the_custom_instructions_which_stay_as_they_were():
-    caller = LLMCaller()
-    agent = Agent(key="coder", name="C", role="R", system_prompt="페르소나")
-    with_ledger = caller.build_system_prompt(
-        agent, custom_instructions="Pydantic v2 기준", ledger="## 결정 사항\n- FastAPI"
-    )
-    without = caller.build_system_prompt(agent, custom_instructions="Pydantic v2 기준")
+@pytest.mark.asyncio
+async def test_the_ledger_goes_before_the_last_instruction_and_the_system_prompt_stays_put():
+    """장부는 라운드마다 바뀝니다. 시스템 프롬프트에 있으면 그 뒤 전체가 프롬프트 캐시에서 빠집니다."""
+    from unittest.mock import AsyncMock
 
-    assert "[Session Custom Instructions]:\nPydantic v2 기준" in with_ledger
-    assert with_ledger.startswith(without), "커스텀 지침까지의 주입은 장부가 있어도 똑같습니다"
-    tail = with_ledger[len(without):]
-    assert tail.startswith("\n\n[Session Decision Ledger]:")
-    assert tail.rstrip().endswith("- FastAPI")
-    assert "[Session Decision Ledger]" not in without
+    caller = LLMCaller()
+    sent: List[List[Dict[str, Any]]] = []
+
+    async def capture(agent, messages, *args, **kwargs):
+        sent.append(messages)
+        return "ok", []
+
+    caller._run_litellm_loop = AsyncMock(side_effect=capture)  # noqa: SLF001
+    agent = Agent(key="coder", name="C", role="R", system_prompt="페르소나",
+                  model="fake/model", api_key="k")
+    prompt = [
+        {"role": "user", "content": "목표"},
+        {"role": "assistant", "content": "내 발언"},
+        {"role": "user", "content": "이제 C 님의 차례입니다"},
+    ]
+    await caller.call_agent(agent, prompt, "Pydantic v2 기준", ledger="## 결정 사항\n- FastAPI")
+    await caller.call_agent(agent, prompt, "Pydantic v2 기준", ledger="## 결정 사항\n- Flask")
+    await caller.call_agent(agent, prompt, "Pydantic v2 기준")
+
+    with_a, with_b, without = sent
+    assert with_a[0] == with_b[0] == without[0], "시스템 프롬프트는 장부와 무관하게 같습니다"
+    assert "[Session Custom Instructions]:\nPydantic v2 기준" in with_a[0]["content"]
+    assert "Decision Ledger" not in with_a[0]["content"]
+    assert with_a[:-1] == with_b[:-1], "장부가 바뀌어도 마지막 메시지 앞까지는 같습니다"
+    last = with_a[-1]["content"]
+    assert last.startswith("[Session Decision Ledger]") and "- FastAPI" in last
+    assert last.endswith("이제 C 님의 차례입니다"), "지시는 맨 끝에 남습니다"
+    assert "Decision Ledger" not in without[-1]["content"]
+
+
+def test_a_ledger_after_a_non_user_message_becomes_its_own_message():
+    from app.agents.llm import place_ledger_last
+
+    out = place_ledger_last([{"role": "assistant", "content": "a"}], "## 결정 사항\n- A")
+    assert [m["role"] for m in out] == ["assistant", "user"]
+    assert place_ledger_last([{"role": "user", "content": "x"}], "  ") == [{"role": "user", "content": "x"}]
 
 
 @pytest.mark.parametrize("reply,expected", [
@@ -553,3 +580,128 @@ async def test_a_stop_at_the_end_of_a_round_skips_that_rounds_ledger_update():
         session_id=sid, user_prompt="설계해줘", on_event=on_event, control=control,
     )
     assert [e["reason"] for e in events if e["type"] == "ledger_updated"] == ["최종 합성"]
+
+
+# =============================================================== 발언 전파: 참조 · 요지 · 캐시
+
+
+LONG_CODE = "\n".join(f"    value_{i} = compute({i})" for i in range(30))
+
+
+def _speech(body_code: bool = True, digest: str = "- LRU 캐시로 결정\n- 코더에게 테스트 요청") -> str:
+    code = f"`src/cache.py` 에 다음과 같이 씁니다.\n```python\nclass LRUCache:\n{LONG_CODE}\n```\n" if body_code else ""
+    prose = "캐시 계층은 읽기 경로에 둡니다. " * 40
+    tail = f"\n## 요지\n{digest}\n" if digest else ""
+    return f"{prose}\n{code}{tail}"
+
+
+def test_long_code_becomes_a_reference_with_its_path_but_diagrams_and_short_code_stay():
+    text = (
+        "`src/cache.py` 에 씁니다.\n```python\nclass LRUCache:\n" + LONG_CODE + "\n```\n"
+        "```mermaid\ngraph TD\n" + "A-->B\n" * 40 + "```\n"
+        "```py\nx = 1\n```\n"
+    )
+    out = memory.reference_code_blocks(
+        text, [{"tool_name": "filesystem__write_file", "arguments": {"path": "src/other.py"}}]
+    )
+    assert "compute(29)" not in out
+    assert "[코드 31줄 생략 · python · 첫 줄: class LRUCache:" in out
+    assert "관련 파일: src/cache.py, src/other.py" in out
+    assert out.count("A-->B") == 40, "다이어그램은 토론 내용이라 그대로 둡니다"
+    assert "x = 1" in out
+    assert out.count("```") == text.count("```"), "펜스는 남겨 마크다운 모양을 지킵니다"
+
+
+def test_a_truncated_answer_with_an_unclosed_fence_is_still_referenced():
+    out = memory.reference_code_blocks("앞\n```python\n" + LONG_CODE)
+    assert "compute(29)" not in out and "[코드 30줄 생략" in out
+
+
+@pytest.mark.parametrize("content,expected", [
+    ("본문\n## 요지\n- A\n- B", "- A\n- B"),
+    ("본문\n### 요지\n- A", "- A"),
+    ("본문\n**요지**\n- A", "- A"),
+    ("본문\n## 요지\n- A\n\n## 부록\n긴 표", "- A"),
+    ("## 요지\n- 옛 요지\n본문\n## 요지\n- 마지막 요지", "- 마지막 요지"),
+    ("> **[Sequential Thinking]**\n> ## 요지 흉내\n\n본문\n## 요지\n- 진짜", "- 진짜"),
+    ("요지가 없는 발언", None),
+    ("본문\n## 요지\n\n", None),
+])
+def test_extract_digest(content, expected):
+    assert memory.extract_digest(content) == expected
+
+
+def _debate_state() -> Tuple[DebateState, Agent]:
+    """코더가 한 번 말한 뒤, 아키텍트가 새로 말한 시점의 기록."""
+    state = DebateState(session_id="s", user_prompt="캐시 설계", current_round=2, max_rounds=3)
+    state.messages = [
+        _msg("user", "캐시 설계", round_number=0),                                   # 0 요청
+        _msg("architect", _speech(), round_number=1),                                # 1 오래된 긴 발언 (요지 있음)
+        _msg("critic", _speech(digest=""), round_number=1),                          # 2 오래된 긴 발언 (요지 없음)
+        _msg("critic", "짧은 동의입니다.", round_number=1),                            # 3 짧은 발언
+        _msg("architect", _speech() + "\n@Coder 테스트 부탁합니다", round_number=1),  # 4 지목
+        _msg("coder", _speech(), round_number=1),                                    # 5 코더 자신
+        _msg("architect", _speech(), round_number=2),                                # 6 새 발언
+    ]
+    state.turn_message_start = 0
+    coder = Agent(key="coder", name="Coder", role="R", model="fake/model")
+    return state, coder
+
+
+def test_each_speaker_gets_new_speeches_verbatim_and_older_ones_as_digests_or_references():
+    state, coder = _debate_state()
+    engine = OrchestratorEngine(agent_pool=_pool(), llm_caller=FakeLLMCaller())
+    context = engine._build_context_for_agent(state, coder, "지시")
+    # context[0] 은 목표 메시지, context[1] 은 요청 자리(참조)입니다. 발언 i 는 context[i + 1].
+    by_index = {i: context[i + 1]["content"] for i in range(1, 7)}
+
+    assert "요지만 싣습니다" in by_index[1] and "LRU 캐시로 결정" in by_index[1]
+    assert "compute(29)" not in by_index[1] and "읽기 경로" not in by_index[1]
+    assert "읽기 경로" in by_index[2] and "compute(29)" not in by_index[2], "요지가 없으면 코드만 참조로"
+    assert "짧은 동의입니다." in by_index[3]
+    assert "읽기 경로" in by_index[4] and "compute(29)" not in by_index[4], "지목한 발언은 원문 (코드는 참조)"
+    assert context[6]["role"] == "assistant" and "compute(29)" not in by_index[5], "자기 발언도 코드는 참조"
+    assert "compute(29)" in by_index[6], "마지막으로 말한 뒤의 새 발언은 코드까지 원문"
+
+
+def test_the_prompt_prefix_does_not_change_between_rounds():
+    """라운드 표시가 목표 메시지에 있으면 라운드마다 두 번째 메시지가 바뀌어 기록 전체의 캐시가 깨집니다."""
+    state, coder = _debate_state()
+    engine = OrchestratorEngine(agent_pool=_pool(), llm_caller=FakeLLMCaller())
+    first = engine._build_context_for_agent(state, coder, "지시")
+    state.current_round = 3
+    second = engine._build_context_for_agent(state, coder, "지시")
+
+    assert first[:-1] == second[:-1]
+    assert "Round 2 of 3" in first[-1]["content"] and "Round 3 of 3" in second[-1]["content"]
+    assert "Debate Progress" not in first[0]["content"]
+    assert first[-1]["content"].rstrip().endswith(memory.DIGEST_INSTRUCTION)
+
+
+def test_short_routing_snippets_use_the_digest():
+    speech = _msg("architect", _speech())
+    assert OrchestratorEngine._snippet(speech, 300).startswith("- LRU 캐시로 결정")
+    assert OrchestratorEngine._snippet(_msg("critic", "짧은 말"), 300) == "짧은 말"
+
+
+@pytest.mark.asyncio
+async def test_digests_and_references_shrink_later_prompts():
+    """세 라운드 뒤 비평가의 요청이 원문을 다 싣던 때보다 얼마나 작은가."""
+    speech = _speech()
+    llm = Recorder(replies={"architect": speech, "coder": speech, "critic": speech})
+    sid = await _make_session(max_rounds=3)
+    await OrchestratorEngine(agent_pool=_pool(), llm_caller=llm).run_turn(session_id=sid, user_prompt="캐시 설계")
+
+    last = [m for a, m, _l in llm.sent if a.key == "critic"][-1]
+    text = "\n".join(m["content"] for m in last)
+    # 앞선 전문가 발언 8개 = 아키텍트·코더 3개씩 + 비평가 자신 2개.
+    # 원문 본문이 실리는 것은 비평가가 마지막으로 말한 뒤의 새 발언 2개와 자기 발언 2개뿐이고,
+    # 나머지 4개는 요지만 갑니다. 코드 원문은 새 발언 2개에만 있습니다.
+    assert text.count("읽기 경로") == 4 * 40
+    assert text.count("요지만 싣습니다") == 4
+    assert text.count("compute(29)") == 2
+
+    one = estimate_tokens("fake/model", [{"role": "user", "content": speech}])
+    sent_tokens = estimate_tokens("fake/model", last)
+    # 실측: 원문을 전부 실었을 때(발언 8개)의 약 54%. 요지·참조가 빠지면 100% 를 넘습니다.
+    assert sent_tokens < one * 8 * 0.6, (sent_tokens, one * 8)

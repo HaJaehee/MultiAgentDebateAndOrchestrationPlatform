@@ -115,6 +115,36 @@ class LLMUnavailableError(RuntimeError):
         super().__init__(f"{agent.name} ({agent.model} @ {self.endpoint}): {self.reason}")
 
 
+LEDGER_HEADER = (
+    "[Session Decision Ledger]: 오케스트레이터가 이 대화의 토론을 라운드마다 정리한 결정 "
+    "장부입니다. 앞선 발언이 컨텍스트에서 생략돼도 남습니다. 사용자 발언이나 세션 지침과 "
+    "어긋나면 그쪽을 따르세요."
+)
+
+
+def place_ledger_last(messages: List[Dict[str, Any]], ledger: str) -> List[Dict[str, Any]]:
+    """결정 장부를 **마지막 사용자 메시지의 맨 앞**에 붙입니다. 장부가 없으면 그대로.
+
+    프롬프트 캐싱(OpenAI·Gemini·vLLM 의 접두 캐시)은 앞부분이 같은 요청만 싸게 처리합니다.
+    장부는 라운드마다 바뀌므로, 시스템 프롬프트에 두면 그 뒤의 기록 전체가 매번 새로
+    계산됩니다. 끝에 두면 시스템 프롬프트와 기록은 그대로 캐시를 탑니다.
+
+    마지막 사용자 메시지는 대개 "이번 차례" 지시라, 장부 → 지시 순서가 됩니다. 지시가 맨
+    끝에 남아야 모델이 무엇을 하라는지 놓치지 않습니다. 마지막이 사용자 메시지가 아니면
+    장부를 새 사용자 메시지로 덧붙입니다. `fit_context_window` 는 마지막 메시지를 남기므로
+    장부도 잘리지 않습니다.
+    """
+    if not ledger or not ledger.strip():
+        return list(messages)
+    block = f"{LEDGER_HEADER}\n{ledger.strip()}"
+    out = [dict(m) for m in messages]
+    if out and out[-1].get("role") == "user" and isinstance(out[-1].get("content"), str):
+        out[-1]["content"] = f"{block}\n\n{out[-1]['content']}"
+    else:
+        out.append({"role": "user", "content": block})
+    return out
+
+
 def merge_consecutive_roles(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """같은 role 이 연달아 오면 하나로 합칩니다.
 
@@ -1184,16 +1214,14 @@ class LLMCaller:
         agent: Agent,
         custom_instructions: str = "",
         tools: Optional[List[Dict[str, Any]]] = None,
-        ledger: str = "",
     ) -> str:
-        """System prompt = persona + sequential thinking + file-writing rule + session instructions + ledger.
+        """System prompt = persona + sequential thinking + file-writing rule + session instructions.
 
         세션 지침이 맨 뒤인 것은 그것이 가장 구체적인 지시이기 때문입니다. 파일 쓰기
         지침은 그 앞에 두어, 사람이 세션 지침으로 다르게 시키면 그쪽이 뒤에 옵니다.
 
-        결정 장부(`ledger`)는 세션 지침 **바로 뒤**, 별도 섹션입니다. 사람이 쓴 지침과
-        오케스트레이터가 토론에서 정리한 상태를 섞지 않습니다 — 지침은 사람이 고치고,
-        장부는 라운드마다 다시 쓰입니다 (`app/orchestration/context_memory.py`).
+        결정 장부는 여기 넣지 않습니다. 라운드마다 바뀌는 글이 시스템 프롬프트에 있으면
+        그 뒤 전체가 프롬프트 캐시에서 빠집니다 (`place_ledger_last`).
         """
         parts = [agent.system_prompt]
 
@@ -1211,13 +1239,6 @@ class LLMCaller:
 
         if custom_instructions:
             parts.append(f"[Session Custom Instructions]:\n{custom_instructions}")
-
-        if ledger and ledger.strip():
-            parts.append(
-                "[Session Decision Ledger]: 오케스트레이터가 이 대화의 토론을 라운드마다 정리한 "
-                "결정 장부입니다. 앞선 발언이 컨텍스트에서 생략돼도 남습니다. 사용자 발언이나 "
-                "세션 지침과 어긋나면 그쪽을 따르세요.\n" + ledger.strip()
-            )
 
         return "\n\n".join(p for p in parts if p)
 
@@ -1264,7 +1285,8 @@ class LLMCaller:
         `context_arbiter` 는 컨텍스트 창이 넘쳐 기록을 버려야 할 때의 같은 통로이고,
         `on_context_trim` 은 실제로 생략이 일어났음을 화면에 알리는 콜백입니다.
 
-        `ledger` 는 이 대화의 결정 장부입니다. 시스템 프롬프트의 세션 지침 뒤에 붙습니다.
+        `ledger` 는 이 대화의 결정 장부입니다. 마지막 사용자 메시지 앞에 붙습니다
+        (`place_ledger_last`) — 시스템 프롬프트에 두면 갱신될 때마다 캐시가 깨집니다.
         """
         # Retrieve available tools for this agent
         #
@@ -1279,9 +1301,9 @@ class LLMCaller:
 
         formatted_messages: List[Dict[str, Any]] = [
             {"role": "system",
-             "content": self.build_system_prompt(agent, custom_instructions, tools, ledger)}
+             "content": self.build_system_prompt(agent, custom_instructions, tools)}
         ]
-        formatted_messages.extend(messages)
+        formatted_messages.extend(place_ledger_last(messages, ledger))
 
         # 순서 주의: 먼저 한도에 맞춰 자르고, 그 다음 role 을 합칩니다. 생략 안내가
         # user 로 들어가므로 합치기를 나중에 해야 교대가 보장됩니다.

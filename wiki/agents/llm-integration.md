@@ -488,9 +488,10 @@ oldest-first until the estimate fits the budget. The model is told how many turn
 does not invent them.
 
 Since v0.8.3 this is the **last resort**. What must survive is placed where this trim never reaches:
-the user record, this turn's plan and the rolling summary in the goal message, the decision ledger in
-the system prompt right after the custom instructions. Before a speech the engine folds old messages
-into the summary so the trim rarely fires. See
+the user record, this turn's plan and the rolling summary in the goal message, the decision ledger at
+the start of the last message (`place_ledger_last`, kept out of the system prompt so it does not break
+prompt caching). Before a speech the engine folds old messages into the summary, and older speeches
+arrive as digests with long code referenced, so the trim rarely fires. See
 [Conversation Memory](../orchestration/context-memory.md).
 
 **The budget** ([`context_budget()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py)) is

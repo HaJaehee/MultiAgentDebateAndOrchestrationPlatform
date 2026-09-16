@@ -67,7 +67,8 @@ For each round $r \in [1, \text{max\_rounds}]$:
    - The engine emits `message_stream_start` and streams response tokens via `message_stream_chunk` events in real time.
    - If the agent calls MCP tools (e.g. reading files or executing code in the sandbox), every tool invocation is stored in the database (`ToolCallRecordModel`) and streamed to the UI as a real-time event.
    - Once completed, the agent's full text response is finalized in the database (`MessageModel`) and emitted via `message_added`.
-3. After every round except the last (and not after a stop request) the orchestrator updates the **decision ledger**, which every later call carries in its system prompt right after the session custom instructions.
+3. After every round except the last (and not after a stop request) the orchestrator updates the **decision ledger**, which every later call carries directly before its turn instruction (not in the system prompt, to keep the prompt cache).
+4. Each speaker receives speeches made since it last spoke in full; older long speeches by others as their `## 요지` digest; its own, short and `@`-mentioning speeches with long code blocks referenced. See [Conversation Memory §2.4](context-memory.md).
 
 ### Phase 3: Consensus & Synthesis
 

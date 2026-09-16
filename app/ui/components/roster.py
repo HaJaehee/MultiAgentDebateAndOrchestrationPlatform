@@ -421,14 +421,14 @@ class AgentRosterControl:
                         on_change=self._on_instructions_change,
                     ).props("outlined dark dense autogrow rows=2").classes("w-full text-xs")
 
-                # 결정 장부 — 커스텀 지침 바로 아래. 프롬프트에서도 지침 바로 뒤에 들어갑니다.
+                # 결정 장부 — 커스텀 지침 바로 아래. 프롬프트에서는 이번 차례 지시 바로 앞에 들어갑니다.
                 with ui.expansion("결정 장부", icon="fact_check", value=False).classes(
                     "w-full mt-1 bg-slate-800/40 rounded-lg border border-slate-800 text-xs"
                 ) as self.ledger_expansion:
                     ui.label(
                         "오케스트레이터가 라운드마다, 그리고 최종 합성 뒤에 요구사항·결정·기각안·"
-                        "미해결 쟁점·담당을 정리합니다. 모든 에이전트의 시스템 프롬프트에서 세션 "
-                        "커스텀 지침 바로 뒤에 들어가, 앞선 기록이 생략돼도 남습니다. 읽기 전용이며, "
+                        "미해결 쟁점·담당을 정리합니다. 모든 에이전트에게 매번 이번 차례 지시 바로 "
+                        "앞에 실려, 앞선 기록이 생략돼도 남습니다. 읽기 전용이며, "
                         "틀린 항목은 채팅으로 바로잡으면 다음 갱신에 반영됩니다."
                     ).classes("text-[10px] text-slate-500 leading-snug px-2")
                     self.ledger_view = ui.markdown("").classes(
