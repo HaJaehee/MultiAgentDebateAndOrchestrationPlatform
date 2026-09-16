@@ -39,6 +39,12 @@ specialists over three rounds the critic's last prompt shrank to about 54 % of t
 The round counter moved from the goal message to the end as well, so the transcript prefix stays
 cacheable between rounds.
 
+**Long tool loops keep the ledger and the turn instruction.** A speech's last user message (ledger +
+"your turn" instruction with the strategy guidance, parallel task and digest request) was pushed behind
+the tool results and dropped once the loop overflowed the window. It is now restored into the elision
+notice when that happens — once, clipped to fit if the window is nearly full, and never at the cost of
+an overflowing request.
+
 Reproduced as a test: 8k window, ~2,100-token speeches, a turn-1 constraint, a three-round turn 2. Before,
 the constraint reached the endpoint in none of the nine turn-2 speeches; now in all nine, with nothing
 dropped.

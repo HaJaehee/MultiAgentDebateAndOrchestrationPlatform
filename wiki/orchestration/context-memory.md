@@ -66,7 +66,9 @@ The orchestrator rewrites a structured ledger with five fixed sections — `요�
   directly before "this is your turn" — added in one place, `LLMCaller.call_agent` →
   `place_ledger_last()`. If the last message is not a user message the block becomes its own user
   message. `fit_context_window` always keeps the last message, so the ledger is not trimmed before a
-  speech; a very long tool loop that has to trim its own blocks can drop it. It is kept out of the
+  speech. Inside a long tool loop that message is pushed back behind the tool blocks and can be
+  dropped — together with the turn instruction (strategy guidance, the parallel task, the digest
+  request); when that happens it is restored (§2.2.1). It is kept out of the
   system prompt, which holds persona + custom instructions exactly as before, so the system prompt
   never changes when the ledger does (see §2.5). A first version put the ledger right after the custom
   instructions in the system prompt; every ledger update then invalidated the provider's prompt cache
@@ -84,9 +86,28 @@ The orchestrator rewrites a structured ledger with five fixed sections — `요�
   dropped. No `## ` heading at all means it is not a ledger → **the previous ledger is kept** and a
   `ledger_update_failed` event is sent. The debate never stops over the ledger.
 - **Size**: `min(LEDGER_MAX_CHARS = 5000, 10 % of the smallest budget among this turn's agents)`
-  (`memory_cap`, `state.memory_budget`), because it rides in every agent's system prompt.
+  (`memory_cap`, `state.memory_budget`), because it rides in every call of every agent.
 - **Order of events after synthesis**: `artifacts_synthesized` is sent as soon as the artifacts are
   saved, *before* the ledger update — otherwise the artifact tabs would lag the report by one LLM call.
+
+#### 2.2.1. Keeping the ledger and the turn instruction through a long tool loop
+
+The last user message at the start of a speech — ledger + turn instruction — is remembered by
+`call_agent` as the *turn anchor* and passed to `fit_tool_loop_context(keep=)`. That trim keeps the head
+(system + goal) and the latest tool block and drops older blocks. If a dropped block held the anchor,
+the anchor is appended verbatim to the elision notice under
+`[생략된 기록에 있던 이번 차례 지시와 결정 장부를 다시 붙입니다. 여전히 유효합니다]`.
+
+- The notice is merged into the goal message, which no later trim drops, so one restoration lasts for
+  the rest of the speech. A later trim recognizes it by that header and does not add a second copy.
+- Its size is reserved first: blocks keep being dropped until the anchor fits. When only the latest
+  block is left and there is still not enough room, the anchor is clipped in the middle (the ledger's
+  start and the instruction's end survive); with fewer than 48 tokens of room it is not restored at all
+  and the log says so — an overflowing request would be a 400 and lose the whole speech.
+- Nothing changes when the anchor survives. On a first speech the anchor is merged into the goal
+  message anyway (no earlier `assistant` message separates them), and a request that is not trimmed
+  keeps its shape — trimming already breaks the prompt cache, so restoring costs nothing extra there.
+- Before this, the same loss applied to the turn instruction regardless of the ledger.
 
 ### 2.3. Summarize instead of drop
 

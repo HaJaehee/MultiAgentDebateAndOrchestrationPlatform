@@ -613,6 +613,7 @@ def fit_tool_loop_context(
     memory_tool: Optional[str] = None,
     *,
     tools: Optional[List[Dict[str, Any]]] = None,
+    keep: str = "",
 ) -> Tuple[List[Dict[str, Any]], int]:
     """도구 루프의 대화를 창 안에 맞춥니다. `(messages, 생략된 덩어리 수)`.
 
@@ -634,6 +635,14 @@ def fit_tool_loop_context(
     시작 전 경로(`fit_context_window` 의 호출부)가 자르기 뒤에 합치기를 두는 것과
     같은 이유입니다. 그쪽은 지켜졌는데 루프 안쪽만 빠져 있어서, OpenAI 호환 셔임에서
     긴 도구 루프가 400 으로 끊겼습니다.
+
+    `keep` 은 발언을 시작할 때의 마지막 사용자 메시지 — 결정 장부와 이번 차례 지시입니다
+    (`place_ledger_last`). 도구를 한 번 부르면 그 뒤로 도구 묶음이 쌓여 이 메시지가 버릴 수
+    있는 쪽으로 밀려나, 도구를 많이 부르는 긴 발언에서 장부와 지시(전략 지침·병렬 과업·요지
+    작성 요구)가 함께 사라졌습니다. 그래서 버린 것 중에 이것이 있었으면 **생략 안내에 원문
+    그대로 다시 붙입니다.** 생략 안내는 목표 메시지에 합쳐지고 그 자리는 다음 자르기에서도
+    버려지지 않으므로, 한 번 되살리면 그 뒤로 계속 남습니다. 잘리지 않았으면 아무것도 바꾸지
+    않습니다 — 평소 요청의 모양(과 프롬프트 캐시)은 그대로입니다.
     """
     budget = context_budget(agent, window, tools)
     if budget <= 0 or len(messages) <= 3:
@@ -655,25 +664,79 @@ def fit_tool_loop_context(
         else:
             blocks.append([msg])
 
+    def still_has_keep() -> bool:
+        # 앞선 자르기에서 이미 다시 붙였으면(자리가 모자라 줄여 붙였을 수도 있어 원문과 다를
+        # 수 있습니다) 그 표시로 알아봅니다. 그 자리는 목표 메시지라 버려지지 않습니다.
+        return any(
+            isinstance(m.get("content"), str)
+            and (keep in m["content"] or KEPT_TURN_NOTICE in m["content"])
+            for m in head + [m for b in blocks for m in b]
+        )
+
     dropped = 0
+    reserve = 0
     # 마지막 덩어리는 남깁니다 — 그것이 지금 판단의 근거입니다.
     while len(blocks) > 1:
         probe = head + [m for b in blocks for m in b]
-        if estimate_tokens(agent.model, probe) <= budget:
+        if estimate_tokens(agent.model, probe) + reserve <= budget:
             break
         blocks.pop(0)
         dropped += 1
+        if keep and not reserve and not still_has_keep():
+            # 다시 붙일 몫만큼 더 비웁니다. 붙이고 나서 넘치면 400 입니다.
+            reserve = estimate_tokens(agent.model, [{"role": "user", "content": keep}])
 
     if not dropped:
         return messages, 0
 
+    notice_text = context_trim_notice(dropped, memory_tool)
+    restored = ""
+    if reserve:
+        # 더 버릴 것이 없을 수 있습니다(마지막 묶음 하나만 남은 경우). 남은 자리에 맞춰
+        # 가운데를 덜어 붙입니다 — 앞은 장부, 끝은 이번 차례 지시입니다. 자리가 거의 없으면
+        # 붙이지 않습니다. 넘친 요청은 400 이라, 붙여서 발언 전체를 잃는 것보다 낫습니다.
+        base = head + [{"role": "user", "content": f"{notice_text}\n\n{KEPT_TURN_NOTICE}"}]
+        room = budget - estimate_tokens(agent.model, base + [m for b in blocks for m in b])
+        if room >= KEPT_TURN_MIN_TOKENS:
+            restored = _clip_middle_to_tokens(agent.model, keep, room)
+            notice_text += f"\n\n{KEPT_TURN_NOTICE}\n{restored}"
+
     logger.warning(
         f"Tool-loop context trim for {agent.name}: dropped {dropped} block(s) "
         f"(max_context_window={window or agent.max_context_window})"
+        + (
+            ("; restored the turn instruction and ledger" + (" (clipped)" if restored != keep else ""))
+            if restored else ("; no room to restore the turn instruction and ledger" if reserve else "")
+        )
     )
-    notice = {"role": "user", "content": context_trim_notice(dropped, memory_tool)}
+    notice = {"role": "user", "content": notice_text}
     trimmed = head + [notice] + [m for b in blocks for m in b]
     return merge_consecutive_roles(trimmed), dropped
+
+
+KEPT_TURN_NOTICE = (
+    "[생략된 기록에 있던 이번 차례 지시와 결정 장부를 다시 붙입니다. 여전히 유효합니다]"
+)
+# 이보다 자리가 없으면 다시 붙이지 않습니다. 몇 단어로 줄인 지시는 오히려 오해를 부릅니다.
+KEPT_TURN_MIN_TOKENS = 48
+
+
+def _clip_middle_to_tokens(model: str, text: str, cap: int) -> str:
+    """토큰 상한에 맞게 가운데를 덜어냅니다. 앞(장부)과 끝(이번 차례 지시)을 남깁니다."""
+    def cost(value: str) -> int:
+        return estimate_tokens(model, [{"role": "user", "content": value}])
+
+    if cost(text) <= cap:
+        return text
+    marker = "\n…(자리가 모자라 가운데를 생략했습니다)…\n"
+    keep = len(text)
+    while keep > 0:
+        keep = int(keep * 0.8)
+        head, tail = text[: keep // 2], text[len(text) - keep // 2:] if keep // 2 else ""
+        clipped = f"{head}{marker}{tail}"
+        if cost(clipped) <= cap:
+            return clipped
+    return ""
 
 
 CONTEXT_WIDENED_INSTRUCTION = (
@@ -1303,7 +1366,15 @@ class LLMCaller:
             {"role": "system",
              "content": self.build_system_prompt(agent, custom_instructions, tools)}
         ]
-        formatted_messages.extend(place_ledger_last(messages, ledger))
+        prompt = place_ledger_last(messages, ledger)
+        formatted_messages.extend(prompt)
+        # 발언을 시작할 때의 마지막 사용자 메시지(장부 + 이번 차례 지시). 도구 루프가 넘쳐
+        # 이것을 버리게 되면 다시 붙입니다 (`fit_tool_loop_context` 의 `keep`).
+        turn_anchor = (
+            prompt[-1]["content"]
+            if prompt and prompt[-1].get("role") == "user" and isinstance(prompt[-1].get("content"), str)
+            else ""
+        )
 
         # 순서 주의: 먼저 한도에 맞춰 자르고, 그 다음 role 을 합칩니다. 생략 안내가
         # user 로 들어가므로 합치기를 나중에 해야 교대가 보장됩니다.
@@ -1327,7 +1398,7 @@ class LLMCaller:
                 agent, formatted_messages, tools, on_tool_call, on_chunk=on_chunk,
                 session_id=session_id, budget_arbiter=budget_arbiter,
                 context_arbiter=context_arbiter, on_context_trim=on_context_trim,
-                mcp=mcp,
+                mcp=mcp, turn_anchor=turn_anchor,
             )
         except LLMUnavailableError:
             raise
@@ -2039,6 +2110,7 @@ class LLMCaller:
         context_arbiter: Optional[ContextArbiter] = None,
         on_context_trim: Optional[Callable[[int], Any]] = None,
         mcp: Optional[MCPManager] = None,
+        turn_anchor: str = "",
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """도구 루프. 상한은 두 겹의 안전장치와 함께 돕니다.
 
@@ -2111,7 +2183,8 @@ class LLMCaller:
                         # 넓히지 않고 여기서 접겠다는 뜻입니다. 마무리 호출도 넘친
                         # 메시지로 나가면 400 이므로 먼저 창 안에 맞춥니다.
                         current_messages, dropped = fit_tool_loop_context(
-                            agent, current_messages, window, memory_search, tools=tools
+                            agent, current_messages, window, memory_search, tools=tools,
+                            keep=turn_anchor,
                         )
                         if dropped and on_context_trim:
                             on_context_trim(dropped)
@@ -2122,7 +2195,8 @@ class LLMCaller:
 
                 if over:
                     current_messages, dropped = fit_tool_loop_context(
-                        agent, current_messages, window, memory_search, tools=tools
+                        agent, current_messages, window, memory_search, tools=tools,
+                        keep=turn_anchor,
                     )
                     if dropped and on_context_trim:
                         on_context_trim(dropped)

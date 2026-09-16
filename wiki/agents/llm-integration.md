@@ -562,6 +562,11 @@ result went straight out to the endpoint. That is exactly the consecutive-`user`
 reappearing only in long tool loops on the endpoints least able to tolerate it. The return value
 now goes through `merge_consecutive_roles()`, so the notice folds into the goal message.
 
+Since v0.8.3 the trim also receives the speech's *turn anchor* — the last user message at the start,
+holding the decision ledger and the turn instruction. Tool blocks push it back, so a long loop used to
+drop both. If a dropped block held it, it is restored inside the notice (clipped to fit if needed). See
+[Conversation Memory §2.2.1](../orchestration/context-memory.md).
+
 **The wrap-up call dropped `tools` while the history still held tool blocks.** When the tool
 budget runs out — or when the user declines to widen the context and chooses to wrap up —
 [`_wrap_up_without_tools()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) asks for a

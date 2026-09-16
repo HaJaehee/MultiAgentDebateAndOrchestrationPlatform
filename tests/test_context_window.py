@@ -22,6 +22,8 @@ from app.agents.llm import (
     context_headroom,
     context_pressure_notice,
     context_trim_notice,
+    context_budget,
+    estimate_tokens,
     fit_tool_loop_context,
     memory_search_tool,
     memory_write_tool,
@@ -243,6 +245,173 @@ def test_the_trim_notice_carries_the_memory_hint():
     )
     assert dropped > 0
     assert "memory__search_nodes" in fitted[1]["content"]
+
+
+# --------------------------------------------------------------- 3-b. 장부와 이번 차례 지시는 남는다
+
+ANCHOR = (
+    "[Session Decision Ledger]: 장부\n## 결정 사항\n- LEDGER-7731 FastAPI 로 간다\n\n"
+    "[Debate Progress]: Round 2 of 3.\n\n이제 Coder 님의 차례입니다. TURN-4412 과업: 캐시 구현"
+)
+
+
+def _second_speech_loop(rounds: int = 12):
+    """두 번째 발언의 도구 루프. 자기 이전 발언(assistant) 뒤에 장부+지시가 오고 도구 묶음이 쌓입니다."""
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "목표"},
+        {"role": "assistant", "content": "[Coder]: 1라운드 발언"},
+        {"role": "user", "content": ANCHOR},
+    ]
+    return messages + _tool_loop_messages(rounds=rounds)[2:]
+
+
+def _count(messages, needle):
+    return sum(m["content"].count(needle) for m in messages if isinstance(m.get("content"), str))
+
+
+def test_a_trim_that_drops_the_turn_instruction_puts_it_back_with_the_ledger():
+    """도구를 많이 부르면 장부와 지시가 든 메시지가 버릴 수 있는 쪽으로 밀려납니다."""
+    agent = _agent(max_context_window=2600)
+    messages = _second_speech_loop(rounds=16)
+
+    without_keep, _ = fit_tool_loop_context(agent, messages)
+    assert _count(without_keep, "LEDGER-7731") == 0, "이 테스트의 전제: 예전에는 사라졌습니다"
+
+    fitted, dropped = fit_tool_loop_context(agent, messages, keep=ANCHOR)
+    assert dropped > 0
+    assert _count(fitted, "LEDGER-7731") == 1 and _count(fitted, "TURN-4412") == 1
+    assert "다시 붙입니다" in fitted[1]["content"], "생략 안내와 함께 목표 메시지에 합쳐집니다"
+    assert ANCHOR in fitted[1]["content"], "자리가 있으면 원문 그대로 붙입니다"
+    assert "결과 15" in fitted[-1]["content"], "가장 최근 관측은 그대로 남습니다"
+    assert _orphan_tool_messages(fitted) == []
+    roles = [m["role"] for m in fitted]
+    assert all(not (a == b and a in ("user", "assistant")) for a, b in zip(roles, roles[1:]))
+    assert estimate_tokens(agent.model, fitted) <= context_budget(agent), "다시 붙인 몫까지 창 안에"
+
+
+def test_with_no_room_left_the_restored_instruction_is_clipped_to_fit():
+    """마지막 도구 묶음 하나만 남아도 창이 거의 찬 경우. 붙여서 넘기면 발언 전체가 400 입니다."""
+    agent = _agent()
+    fitted, dropped = fit_tool_loop_context(agent, _second_speech_loop(), keep=ANCHOR)
+
+    assert dropped > 0
+    assert estimate_tokens(agent.model, fitted) <= context_budget(agent)
+    text = fitted[1]["content"]
+    if "다시 붙입니다" in text:
+        assert "TURN-4412" in text, "줄이더라도 끝의 지시는 남깁니다"
+
+
+def test_nothing_is_restored_when_there_is_no_room_at_all():
+    agent = _agent(max_context_window=1900)
+    before, _ = fit_tool_loop_context(agent, _second_speech_loop())
+    fitted, dropped = fit_tool_loop_context(agent, _second_speech_loop(), keep=ANCHOR)
+    assert dropped > 0
+    assert estimate_tokens(agent.model, fitted) <= max(
+        estimate_tokens(agent.model, before), context_budget(agent)
+    ), "붙이지 못하더라도 예전보다 커지지는 않습니다"
+
+
+def test_a_clipped_restoration_is_not_restored_again_on_the_next_trim():
+    """좁은 창에서 줄여 붙인 것은 원문과 달라, 원문만 찾으면 다음 자르기에서 또 붙였습니다."""
+    agent = _agent(max_context_window=2040)
+    fitted, _ = fit_tool_loop_context(agent, _second_speech_loop(), keep=ANCHOR)
+    assert "다시 붙입니다" in fitted[1]["content"] and ANCHOR not in fitted[1]["content"], (
+        "이 테스트의 전제: 줄여서 붙였습니다"
+    )
+    more = fitted + [
+        {**m, **({"tool_calls": [{**m["tool_calls"][0], "id": "late_" + m["tool_calls"][0]["id"]}]} if m.get("tool_calls") else {}),
+         **({"tool_call_id": "late_" + m["tool_call_id"]} if m.get("tool_call_id") else {})}
+        for m in _tool_loop_messages(rounds=6)[2:]
+    ]
+    again, dropped = fit_tool_loop_context(agent, more, keep=ANCHOR)
+    assert dropped > 0
+    assert again[1]["content"].count("다시 붙입니다") == 1
+
+
+def test_nothing_is_added_while_the_turn_instruction_survives():
+    """첫 발언처럼 지시가 목표 메시지에 합쳐져 있으면 버려지지 않으니 붙일 것도 없습니다."""
+    agent = _agent()
+    messages = _tool_loop_messages(rounds=12)
+    messages[1] = {"role": "user", "content": f"목표\n\n{ANCHOR}"}
+
+    fitted, dropped = fit_tool_loop_context(agent, messages, keep=ANCHOR)
+    assert dropped > 0
+    assert _count(fitted, "LEDGER-7731") == 1
+    assert "다시 붙입니다" not in fitted[1]["content"]
+
+
+def test_the_restored_instruction_survives_later_trims_without_piling_up():
+    agent = _agent()
+    fitted, _ = fit_tool_loop_context(agent, _second_speech_loop(), keep=ANCHOR)
+    more = fitted + _tool_loop_messages(rounds=20)[2:]
+    for m in more[len(fitted):]:
+        if m.get("tool_calls"):
+            m["tool_calls"][0]["id"] = "late_" + m["tool_calls"][0]["id"]
+        if m.get("tool_call_id"):
+            m["tool_call_id"] = "late_" + m["tool_call_id"]
+
+    again, dropped = fit_tool_loop_context(agent, more, keep=ANCHOR)
+    assert dropped > 0
+    assert _count(again, "LEDGER-7731") == 1 and _count(again, "TURN-4412") == 1
+
+
+@pytest.mark.asyncio
+async def test_every_request_of_a_long_tool_loop_carries_the_ledger_and_the_instruction():
+    """실제 호출 경로: 발언 시작부터 결론까지 엔드포인트에 나간 모든 요청을 봅니다."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from app.agents.llm import LLMCaller
+
+    sent = []
+    calls = {"n": 0}
+
+    def _message(with_tools: bool):
+        tc = SimpleNamespace(id=f"call_{calls['n']}", function=SimpleNamespace(name="read_file", arguments="{}"))
+        return SimpleNamespace(
+            content="확인 중입니다." if with_tools else "정리합니다.",
+            tool_calls=[tc] if with_tools else None,
+            model_dump=lambda: {
+                "role": "assistant", "content": "확인 중입니다.",
+                "tool_calls": [{"id": tc.id, "type": "function",
+                                "function": {"name": "read_file", "arguments": "{}"}}],
+            },
+        )
+
+    async def fake_acompletion(**kwargs):
+        if kwargs.get("stream"):
+            raise RuntimeError("streaming unsupported")
+        calls["n"] += 1
+        sent.append([dict(m) for m in kwargs["messages"]])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=_message(calls["n"] <= 8 and bool(kwargs.get("tools"))))]
+        )
+
+    agent = Agent(key="coder", name="Coder", role="Engineer", model="fake/model",
+                  api_key="k", max_context_window=3000, max_tokens=500, max_tool_iterations=20)
+    caller = LLMCaller()
+    caller.mcp_manager = SimpleNamespace(
+        get_openai_tools_for_servers=lambda servers: [
+            {"type": "function", "function": {"name": "read_file", "parameters": {}}}
+        ],
+        execute_tool=AsyncMock(return_value=("파일 내용 " + "가" * 800, "success")),
+    )
+    prompt = [
+        {"role": "user", "content": "목표"},
+        {"role": "assistant", "content": "[Coder]: 1라운드 발언"},
+        {"role": "user", "content": "이제 Coder 님의 차례입니다. TURN-4412 과업: 캐시 구현"},
+    ]
+    trims = []
+    with patch("litellm.acompletion", side_effect=fake_acompletion):
+        await caller.call_agent(agent, prompt, ledger="## 결정 사항\n- LEDGER-7731",
+                                on_context_trim=trims.append)
+
+    assert trims, "이 테스트의 전제: 도구 결과로 창이 넘쳐 잘렸습니다"
+    for messages in sent:
+        assert _count(messages, "LEDGER-7731") == 1
+        assert _count(messages, "TURN-4412") == 1
+        assert _orphan_tool_messages(messages) == []
 
 
 # --------------------------------------------------------------- 4. 실제 한도 조회
