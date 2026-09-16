@@ -1,8 +1,11 @@
 import asyncio
+import json
 import logging
-from datetime import datetime
-from typing import Any, Callable, Coroutine, Dict, List, Optional
-from nicegui import ui
+import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Sequence
+from nicegui import background_tasks, ui
 from sqlalchemy import desc, func, select, delete
 from app.agents.pool import get_agent_pool
 from app.database.models import ArtifactModel, MessageModel, SessionModel, ToolCallRecordModel
@@ -31,6 +34,125 @@ async def first_user_message_times(db) -> Dict[str, datetime]:
     )
     result = await db.execute(stmt)
     return {session_id: started for session_id, started in result.all() if started}
+
+
+async def last_completion_times(db) -> Dict[str, datetime]:
+    """대화별로 **가장 최근 턴이 끝난 시각** — 그 턴을 마무리한 합성 발언의 `finished_at`.
+
+    합성 발언에만 `turn_started_at` 이 채워지므로 그것이 "턴을 끝낸 발언" 의 표시입니다
+    (`MessageModel.turn_started_at`). 발언 행의 `created_at` 은 정렬 키라 끝난 시각이
+    아니고, 토론 중 개입이나 합성 뒤에 도착한 개입도 발언이라 "마지막 발언 시각" 으로는
+    완료를 알 수 없습니다.
+
+    시각 컬럼이 생기기 전의 대화에는 그 표시가 없습니다. 그런 대화는 마지막 오케스트레이터
+    발언의 `created_at` 을 씁니다 — 그때의 턴은 합성으로 끝났고, 합성이 마지막
+    오케스트레이터 발언입니다. 합성으로 끝난 턴이 하나도 없으면 목록에 없습니다 ("완료 전").
+    """
+    finished = await db.execute(
+        select(MessageModel.session_id, func.max(MessageModel.finished_at))
+        .where(MessageModel.turn_started_at.is_not(None))
+        .group_by(MessageModel.session_id)
+    )
+    times = {sid: when for sid, when in finished.all() if when}
+
+    legacy = await db.execute(
+        select(MessageModel.session_id, func.max(MessageModel.created_at))
+        .where(MessageModel.msg_type == "orchestrator", MessageModel.started_at.is_(None))
+        .group_by(MessageModel.session_id)
+    )
+    for sid, when in legacy.all():
+        if when and sid not in times:
+            times[sid] = when
+    return times
+
+
+# ---------------------------------------------------------------------------- 정렬
+
+# (키, 표시 이름, 기본 방향이 내림차순인가)
+#
+# 기본 방향은 사람이 그 기준으로 찾을 때 먼저 보고 싶은 쪽입니다. 이름은 가나다순,
+# 시각은 최근 것부터.
+SORT_KEYS = (
+    ("updated", "최근 변경", True),
+    ("title", "이름순", False),
+    ("started", "시작 시간순", True),
+    ("completed", "완료 시간순", True),
+)
+SORT_LABELS = {key: label for key, label, _desc in SORT_KEYS}
+SORT_DEFAULT_DESC = {key: descending for key, _label, descending in SORT_KEYS}
+# 정렬 선택은 보는 사람의 취향이라 DB 가 아니라 그 브라우저에 둡니다.
+SORT_STORAGE_KEY = "mado.sessionSort"
+
+
+@dataclass(frozen=True)
+class SessionSort:
+    key: str = "updated"
+    descending: bool = True
+
+    @classmethod
+    def default_for(cls, key: str) -> "SessionSort":
+        return cls(key, SORT_DEFAULT_DESC.get(key, True))
+
+    def to_json(self) -> str:
+        return json.dumps({"key": self.key, "desc": self.descending})
+
+    @classmethod
+    def from_json(cls, raw: Any) -> Optional["SessionSort"]:
+        """브라우저에 남긴 값. 모양이 틀렸거나 모르는 키면 None (기본값을 씁니다)."""
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(data, dict) or data.get("key") not in SORT_LABELS:
+            return None
+        return cls(str(data["key"]), bool(data.get("desc", SORT_DEFAULT_DESC[data["key"]])))
+
+
+# 제목 앞의 이모지·기호. 이름순에서는 건너뜁니다 — "🛒 이커머스 …" 를 찾는 사람은 "이" 에서 찾습니다.
+_LEADING_SYMBOLS = re.compile(r"^[\W_]+")
+
+
+def title_sort_key(title: Optional[str]) -> str:
+    """이름순 정렬 키. 대소문자를 가리지 않고, 앞쪽의 이모지·기호는 무시합니다."""
+    text = (title or "Untitled Debate").strip()
+    return (_LEADING_SYMBOLS.sub("", text) or text).casefold()
+
+
+def _aware(value: Optional[datetime]) -> Optional[datetime]:
+    """SQLite 는 시간대를 떼고 돌려주기도 합니다. 섞여서 비교가 터지지 않게 UTC 로 맞춥니다."""
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def sort_sessions(
+    sessions: Sequence[Any],
+    sort: SessionSort,
+    *,
+    started: Dict[str, datetime],
+    completed: Dict[str, datetime],
+) -> List[Any]:
+    """세션을 고른 기준으로 늘어놓습니다.
+
+    기준 값이 없는 세션(시작 전·완료 전)은 **방향과 상관없이 맨 뒤**에 둡니다. 오름차순으로
+    바꿨다고 "시작 전" 세션들이 목록 맨 위를 채우면 찾던 것이 밀려납니다. 값이 같으면
+    최근에 바뀐 것이 먼저입니다.
+    """
+    def value(s: Any) -> Any:
+        if sort.key == "title":
+            return title_sort_key(s.title)
+        if sort.key == "started":
+            return _aware(started.get(s.id))
+        if sort.key == "completed":
+            return _aware(completed.get(s.id))
+        return _aware(s.updated_at)
+
+    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    # 동점 정리를 먼저 하고(안정 정렬), 그 위에 기준으로 한 번 더 정렬합니다.
+    by_recent = sorted(sessions, key=lambda s: _aware(s.updated_at) or epoch, reverse=True)
+    present = [s for s in by_recent if value(s) is not None]
+    missing = [s for s in by_recent if value(s) is None]
+    return sorted(present, key=value, reverse=sort.descending) + missing
 
 
 # `to_local()` 은 저장 문서와 같은 규칙을 써야 해서 app.export 에 둡니다.
@@ -72,6 +194,10 @@ class SessionSidebar:
         self.container: Optional[ui.column] = None
         self.drawer: Optional[ui.left_drawer] = None
         self.session_factory = get_session_factory()
+        self.sort = SessionSort()
+        self.sort_select: Optional[ui.select] = None
+        self.sort_direction_btn: Optional[ui.button] = None
+        self.sort_direction_tip: Optional[ui.tooltip] = None
 
     # ------------------------------------------------------------------ 수명
 
@@ -118,7 +244,27 @@ class SessionSidebar:
 
                 ui.separator().classes("bg-slate-800 mb-2.5")
 
-                ui.label("세션 목록").classes("text-xs font-semibold text-slate-400 mb-2 px-1 tracking-wider")
+                with ui.row().classes("w-full items-center justify-between no-wrap mb-2 px-1 gap-1"):
+                    ui.label("세션 목록").classes("text-xs font-semibold text-slate-400 tracking-wider")
+                    with ui.row().classes("items-center gap-0.5 no-wrap"):
+                        self.sort_select = ui.select(
+                            {key: label for key, label, _desc in SORT_KEYS},
+                            value=self.sort.key,
+                            on_change=self._on_sort_key_change,
+                        ).props("dense borderless dark options-dense").classes(
+                            "text-[11px] text-slate-300 min-w-[92px]"
+                        )
+                        self.sort_select.tooltip("세션 목록 정렬 기준")
+                        self.sort_direction_btn = ui.button(
+                            on_click=lambda: self._set_sort(
+                                SessionSort(self.sort.key, not self.sort.descending)
+                            ),
+                        ).props("flat round dense size=sm color=grey-4")
+                        # 툴팁은 한 번만 만들고 글자만 바꿉니다. `.tooltip()` 은 부를 때마다
+                        # 새 요소를 만들어 쌓고, 페이지가 사라진 뒤에 부르면 예외가 납니다.
+                        with self.sort_direction_btn:
+                            self.sort_direction_tip = ui.tooltip("")
+                        self._sync_sort_controls()
 
                 # Scrollable session list with adequate right padding so borders never clip
                 # session-list: Quasar 스크롤 영역의 내용 상자가 카드를 서랍보다
@@ -128,7 +274,65 @@ class SessionSidebar:
                 ):
                     self.container = ui.column().classes("w-full gap-2.5 p-0.5")
 
+        self._restore_sort_later()
         return self.drawer
+
+    # ------------------------------------------------------------------ 정렬
+
+    def _sync_sort_controls(self) -> None:
+        if self.sort_select is not None and self.sort_select.value != self.sort.key:
+            self.sort_select.set_value(self.sort.key)
+        if self.sort.key == "title":
+            label = "가나다 역순 (Z→A)" if self.sort.descending else "가나다순 (A→Z)"
+        else:
+            label = "최근 것부터" if self.sort.descending else "오래된 것부터"
+        if self.sort_direction_btn is not None:
+            self.sort_direction_btn.props(
+                f"icon={'arrow_downward' if self.sort.descending else 'arrow_upward'}"
+            )
+        if self.sort_direction_tip is not None:
+            self.sort_direction_tip.set_text(f"정렬 방향: {label} — 눌러서 뒤집기")
+
+    async def _on_sort_key_change(self, e) -> None:
+        """기준을 바꾸면 그 기준의 기본 방향으로. 코드가 값을 맞춘 경우(되살리기)는 무시합니다."""
+        if e.value == self.sort.key:
+            return
+        await self._set_sort(SessionSort.default_for(e.value))
+
+    async def _set_sort(self, sort: SessionSort) -> None:
+        if sort == self.sort:
+            return
+        self.sort = sort
+        self._sync_sort_controls()
+        if self.alive:
+            try:
+                ui.run_javascript(
+                    f"localStorage.setItem({json.dumps(SORT_STORAGE_KEY)}, {json.dumps(sort.to_json())})"
+                )
+            except Exception:  # noqa: BLE001 - 기억하지 못해도 정렬은 됩니다
+                logger.debug("Could not remember the session sort", exc_info=True)
+        await self.refresh_list()
+
+    def _restore_sort_later(self) -> None:
+        """이 브라우저가 기억한 정렬로 되돌립니다. 페이지가 연결된 뒤에야 물어볼 수 있습니다."""
+        client = ui.context.client
+
+        async def restore() -> None:
+            try:
+                await client.connected(timeout=15)
+                raw = await client.run_javascript(
+                    f"localStorage.getItem({json.dumps(SORT_STORAGE_KEY)})", timeout=5
+                )
+            except Exception:  # noqa: BLE001 - 못 읽으면 기본 정렬로 둡니다
+                return
+            saved = SessionSort.from_json(raw)
+            if saved is None or saved == self.sort or not self.alive:
+                return
+            self.sort = saved
+            self._sync_sort_controls()
+            await self.refresh_list()
+
+        background_tasks.create(restore(), name="sidebar-restore-sort")
 
     async def _handle_create_new(self) -> None:
         await self.on_new_session()
@@ -153,6 +357,12 @@ class SessionSidebar:
             res = await db.execute(stmt)
             sessions = res.scalars().all()
             started_times = await first_user_message_times(db)
+            completed_times = (
+                await last_completion_times(db) if self.sort.key == "completed" else {}
+            )
+        sessions = sort_sessions(
+            sessions, self.sort, started=started_times, completed=completed_times,
+        )
 
         # 읽는 동안 페이지가 사라졌을 수 있습니다.
         if not self.alive:
@@ -203,11 +413,20 @@ class SessionSidebar:
                         with ui.row().classes("items-center gap-1.5 min-w-0 cursor-pointer").on(
                             "click", lambda _, sid=s.id: self._select_session(sid)
                         ):
-                            started = started_times.get(s.id)
-                            date_str = (
-                                to_local(started).strftime("%m-%d %H:%M") if started
-                                else "시작 전"
-                            )
+                            if self.sort.key == "completed":
+                                # 완료 시간으로 늘어놓았으면 카드에도 그 시각을 적습니다.
+                                # 시작 시각이 찍혀 있으면 순서가 틀려 보입니다.
+                                completed = completed_times.get(s.id)
+                                date_str = (
+                                    f"완료 {to_local(completed).strftime('%m-%d %H:%M')}"
+                                    if completed else "완료 전"
+                                )
+                            else:
+                                started = started_times.get(s.id)
+                                date_str = (
+                                    to_local(started).strftime("%m-%d %H:%M") if started
+                                    else "시작 전"
+                                )
                             ui.label(date_str).classes("text-[10px]")
 
                             agents_count = len(s.active_agents) if s.active_agents else 0

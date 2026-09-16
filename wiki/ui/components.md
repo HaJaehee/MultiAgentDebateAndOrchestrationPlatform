@@ -43,7 +43,24 @@ The web application workspace is organized into four primary UI components in [a
 
 ### 1.1. Session Sidebar ([app/ui/components/sidebar.py](file:///d:/MultiAgentOrchestrator/app/ui/components/sidebar.py))
 - **`+ New Chat` Button**: Instantiates a fresh debate session and clears the workspace.
-- **Session List**: Displays historical sessions ordered by `updated_at` descending.
+- **Session List**: Displays historical sessions, by default ordered by `updated_at` descending.
+- **Sorting** (v0.8.3): a selector next to `세션 목록` — `최근 변경` (the old order, default), `이름순`,
+  `시작 시간순` (first user message, the time the card shows), `완료 시간순` — plus a direction
+  button. Each key starts in its natural direction (names A→Z, times newest first).
+  - *Completion* is when the latest turn's **synthesis** finished (`finished_at` of the newest row
+    with `turn_started_at`, which only synthesis rows carry). Interjections after the synthesis or a
+    turn in progress do not move it. Conversations older than the timing columns fall back to the
+    last orchestrator message. While sorting by completion the card shows `완료 MM-DD HH:MM` instead of
+    the start time, so the order does not look wrong.
+  - Sessions without the value (`시작 전`, `완료 전`) stay at the bottom in **both** directions; ties
+    fall back to most recently changed.
+  - Names compare case-insensitively and ignore leading emoji and symbols — `🛒 이커머스 …` sorts
+    under `이`, not after every letter.
+  - The choice is a viewer preference, so it lives in the browser (`localStorage["mado.sessionSort"]`),
+    restored once the page connects; a malformed value falls back to the default. There is no
+    `storage_secret`, so NiceGUI's per-user storage is not available.
+  - Pure logic in `sort_sessions()` / `title_sort_key()` / `last_completion_times()`, tested in
+    `tests/test_session_sort.py`.
 - **Badges & Metadata**: Displays the first user message time and colored chips for participating agents.
 - **Per-card actions**: ✏️ rename · 💾 export the whole conversation as Markdown ·
   **⑂ continue in a fresh session** · 🗑 delete.

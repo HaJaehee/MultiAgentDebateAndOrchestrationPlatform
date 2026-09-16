@@ -46,6 +46,12 @@ singleton fixed by whoever creates it first, and some tests created it with the 
   policy is now `same-origin` (still no Referer to other sites). → [UI Components §1.3.6](ui/components.md)
 - The workspace download list sorts by size and modified time as well as path, on the numeric values
   (`9 KB` no longer sorts after `10 MB`). → [UI Components §1.3.5](ui/components.md)
+- The session list can be sorted by name, start time, or completion time of the latest turn (when its
+  synthesis finished), in either direction, besides the previous most-recently-changed order. Sessions
+  not yet started or completed stay at the bottom; leading emoji are ignored for names; the choice is
+  remembered per browser. → [UI Components §1.1](ui/components.md)
+- `conf.example.json` defaults `max_tokens` to 16000 (`llm` and the orchestrator), so file-writing
+  agents and the final synthesis are not cut off at 4096.
 
 ---
 
