@@ -34,6 +34,10 @@ sessions ─────┬──▶ messages ──────▶ tool_calls
 | `custom_instructions` | Text | 이 대화의 커스텀 지침 |
 | `personas_locked` | bool | 첫 메시지에 `True` |
 | `workspace_dir` | Text | 이 대화의 작업 공간 (비면 기본값) |
+| `decision_ledger` | Text | 결정 장부 — 오케스트레이터가 라운드·합성 뒤에 갱신 (v0.8.3) |
+| `ledger_through_id` | str(36) | 장부에 반영된 마지막 발언 |
+| `transcript_summary` | Text | 컨텍스트가 차서 접은 앞선 기록의 누적 요약 |
+| `summary_through_id` | str(36) | 요약이 덮는 마지막 발언 |
 
 **`known_agents` 가 왜 필요한가.** `active_agents` 는 켜 둔 것만 담는 허용
 목록이라, 목록에 없는 키가 "사용자가 끈 에이전트" 인지 "그때는 없던 에이전트"
@@ -43,6 +47,10 @@ sessions ─────┬──▶ messages ──────▶ tool_calls
 
 **`workspace_dir` 은 잠기지 않습니다.** 페르소나와 달리 토론 도중에도 바꿀 수
 있어야 합니다.
+
+**장부와 요약은 턴이 끝까지 왔을 때만 저장합니다.** "요청 되돌리기" 는 턴을 취소한 뒤
+그 턴의 발언을 지웁니다. 그 발언을 반영한 장부가 이미 저장돼 있으면 아무도 내리지 않은
+결정이 남습니다. 어디까지 반영했는지는 개수가 아니라 발언 id 로 적습니다.
 
 ### `messages`
 

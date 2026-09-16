@@ -36,6 +36,24 @@ flowchart LR
 구현은 전문가 발언과 `app/main.py` 에 있습니다.
 """
 
+LEDGER_REPLY = """## 요구사항·제약
+- 사용자 요청을 따른다
+
+## 결정 사항
+- FastAPI 계층 구조로 간다 (아키텍트 제안, 이견 없음)
+
+## 기각된 대안
+- 없음
+
+## 미해결 쟁점
+- 없음
+
+## 담당·다음 할 일
+- 코더: 구현
+"""
+
+SUMMARY_REPLY = "앞선 라운드에서 아키텍트가 FastAPI 계층 구조를 제안했고 코더가 구현을 맡았습니다."
+
 
 class FakeLLMCaller:
     """`LLMCaller` 와 같은 시그니처로 결정적인 응답을 돌려줍니다."""
@@ -63,11 +81,17 @@ class FakeLLMCaller:
         self.scopes: List[Optional[str]] = []
         # 각 발언이 받은 MCP 런타임 (작업 공간별로 다른 객체여야 합니다)
         self.runtimes: List[Any] = []
+        # 각 호출이 시스템 프롬프트에 실을 결정 장부 (`LLMCaller.build_system_prompt`)
+        self.ledgers: List[str] = []
 
     def _reply_for(self, agent: Agent, messages: List[Dict[str, Any]]) -> str:
         if agent.key in self.replies:
             return self.replies[agent.key]
         last = messages[-1]["content"] if messages else ""
+        if "[결정 장부 갱신]" in last:
+            return LEDGER_REPLY
+        if "[대화 요약 갱신]" in last:
+            return SUMMARY_REPLY
         if "최종 합의 보고서" in last:
             return SYNTHESIS_REPLY
         if agent.key == "architect":
@@ -86,8 +110,10 @@ class FakeLLMCaller:
         context_arbiter: Optional[Callable[[Dict[str, Any]], Any]] = None,
         on_context_trim: Optional[Callable[[int], Any]] = None,
         mcp: Any = None,
+        ledger: str = "",
     ) -> Tuple[str, List[Dict[str, Any]]]:
         self.calls.append(agent.key)
+        self.ledgers.append(ledger)
         self.scopes.append(session_id)
         # 이 발언이 어느 MCP 런타임을 받았는지. 대화마다 작업 공간이 다르면
         # 런타임도 달라야 한다는 것을 확인하는 테스트가 읽습니다.

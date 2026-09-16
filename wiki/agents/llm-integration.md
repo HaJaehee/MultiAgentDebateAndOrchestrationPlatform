@@ -487,6 +487,12 @@ The system prompt, the goal, and the current turn instruction are kept; the midd
 oldest-first until the estimate fits the budget. The model is told how many turns were elided so it
 does not invent them.
 
+Since v0.8.3 this is the **last resort**. What must survive is placed where this trim never reaches:
+the user record, this turn's plan and the rolling summary in the goal message, the decision ledger in
+the system prompt right after the custom instructions. Before a speech the engine folds old messages
+into the summary so the trim rarely fires. See
+[Conversation Memory](../orchestration/context-memory.md).
+
 **The budget** ([`context_budget()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py)) is
 
 ```

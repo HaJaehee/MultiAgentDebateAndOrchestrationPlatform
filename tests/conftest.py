@@ -48,6 +48,23 @@ def real_mcp_runtimes():
 
 
 @pytest.fixture(autouse=True)
+def _never_touch_the_real_database():
+    """DB 엔진이 아직 없으면 메모리 DB 로 먼저 만들어 둡니다.
+
+    엔진은 프로세스에 하나뿐인 싱글턴이고, **처음 만든 쪽의 주소**로 굳습니다.
+    `OrchestratorEngine()` 이나 `get_session_factory()` 는 주소를 주지 않으면 기본값
+    `./multiagent.db` 를 씁니다. 그래서 테스트가 `init_db(":memory:")` 보다 엔진을 먼저
+    만들면(또는 앞 테스트가 싱글턴을 비워 두고 끝나면) 그 뒤의 모든 테스트가 **개발자의
+    실제 DB** 에 세션을 쓰고 있었습니다 (`resilience-*`, `verify-*`, `memory-*` 세션).
+    """
+    from app.database import session as db_session
+
+    if db_session._engine is None:  # noqa: SLF001
+        db_session.get_engine("sqlite+aiosqlite:///:memory:")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _fresh_runtime_pool():
     """테스트마다 빈 풀에서 시작합니다.
 

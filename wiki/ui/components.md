@@ -94,6 +94,11 @@ The web application workspace is organized into four primary UI components in [a
   never read it, and a control that does nothing is worse than no control. Lower it for a local
   single-GPU endpoint.
 - **Custom Instructions Box**: Allows injecting ad-hoc guidelines into all agent prompts for the current session.
+- **결정 장부 (Decision Ledger, v0.8.3)**: a read-only expansion directly under the custom instructions
+  box, captioned with its character count (`비어 있음` when empty). The orchestrator rewrites it after
+  rounds and synthesis; it goes into every system prompt right after the custom instructions. Updated
+  live from `ledger_updated`, or from the runner snapshot when a page attaches to a running turn (the
+  database only has it once the turn ends). See [Conversation Memory](../orchestration/context-memory.md).
 - **Persona Settings Button**: Links directly to `/personas/{session_id}`. Displays a lock icon if debate has commenced.
 - **MCP Server Chips**: Displays real-time connection states (Green/Orange/Red) and opens diagnostic tooltips on hover. The tooltip names the transport and shows `command:` for a local server, `url:` for a remote one.
 - **Add server dialog**: one button covers both kinds. A `로컬 프로세스 (stdio)` / `원격 (HTTP)`

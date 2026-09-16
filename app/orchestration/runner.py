@@ -88,6 +88,10 @@ class TurnRun:
         # 계속 보여주기 위해 스냅샷에 남깁니다.
         self.context_dropped: int = 0
 
+        # 이번 턴에 갱신된 결정 장부. None 이면 아직 갱신되지 않은 것이고, 화면은 DB 의
+        # 값을 그대로 씁니다 (장부는 턴이 끝날 때 저장됩니다).
+        self.decision_ledger: Optional[str] = None
+
     @property
     def budget_request(self) -> Optional[Dict[str, Any]]:
         """예전 이름. 도구 예산 전용이던 시절의 호출부를 깨뜨리지 않습니다."""
@@ -351,6 +355,41 @@ class TurnRun:
                 f"생략됐습니다 (누적 {self.context_dropped}건)."
             )
 
+        elif etype == "ledger_update_started":
+            self.busy = True
+            self.status_text = self._pending_prefix(
+                f"결정 장부 정리 중 ({event.get('reason', '')})..."
+            )
+
+        elif etype == "ledger_updated":
+            self.decision_ledger = str(event.get("ledger") or "")
+            self.status_text = self._pending_prefix(
+                f"결정 장부를 갱신했습니다 ({event.get('reason', '')})."
+            )
+
+        elif etype == "ledger_update_failed":
+            self.status_text = self._pending_prefix(
+                f"결정 장부를 갱신하지 못해 이전 장부를 유지합니다 ({event.get('reason', '')})."
+            )
+
+        elif etype == "context_summarizing":
+            self.busy = True
+            self.status_text = self._pending_prefix(
+                f"[{event.get('agent_name', '')}] 컨텍스트가 차서 앞선 기록 "
+                f"{event.get('messages', 0)}건을 요약으로 접는 중..."
+            )
+
+        elif etype == "context_summarized":
+            self.status_text = self._pending_prefix(
+                f"앞선 기록 {event.get('folded', 0)}건을 요약으로 접었습니다 "
+                f"(요약이 덮는 기록 누적 {event.get('total', 0)}건)."
+            )
+
+        elif etype == "context_summary_failed":
+            self.status_text = self._pending_prefix(
+                "앞선 기록을 요약하지 못해, 컨텍스트 한도를 넘는 오래된 기록은 생략합니다."
+            )
+
         elif etype == "artifacts_synthesized":
             self.artifacts = list(event.get("artifacts", []))
 
@@ -401,6 +440,7 @@ class TurnRun:
             # 예전 이름. 스냅샷을 읽는 오래된 코드가 있어도 깨지지 않게 둡니다.
             "budget_request": dict(self.decision_request) if self.decision_request else None,
             "context_dropped": self.context_dropped,
+            "decision_ledger": self.decision_ledger,
         }
 
 

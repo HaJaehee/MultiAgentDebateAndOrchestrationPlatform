@@ -36,6 +36,14 @@ class SessionModel(Base):
     # 그때 무엇이 있었는지를 함께 적어 두면 둘을 가릴 수 있습니다.
     known_agents: Mapped[List[str]] = mapped_column(JSON, default=list)
     custom_instructions: Mapped[str] = mapped_column(Text, default="")
+    # 결정 장부 — 오케스트레이터가 라운드마다 갱신하고, 시스템 프롬프트의 커스텀 지침 바로
+    # 뒤에 들어갑니다 (`app/orchestration/context_memory.py`). 턴이 정상 종료될 때만 씁니다.
+    decision_ledger: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # 장부에 반영된 마지막 발언. 비어 있으면 아직 아무것도 반영하지 않았습니다.
+    ledger_through_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    # 컨텍스트 한도로 접은 앞선 기록의 누적 요약과, 요약이 덮는 마지막 발언.
+    transcript_summary: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    summary_through_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     # 첫 유저 메시지가 기록되는 순간 True 가 되며, 이후 페르소나 수정이 금지됩니다.
     personas_locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # 이 대화가 쓸 작업 공간. 비어 있으면 conf.json 의 WORKSPACE_DIR 기본값을 씁니다.

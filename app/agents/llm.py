@@ -1184,11 +1184,16 @@ class LLMCaller:
         agent: Agent,
         custom_instructions: str = "",
         tools: Optional[List[Dict[str, Any]]] = None,
+        ledger: str = "",
     ) -> str:
-        """System prompt = persona + sequential thinking + file-writing rule + session instructions.
+        """System prompt = persona + sequential thinking + file-writing rule + session instructions + ledger.
 
         세션 지침이 맨 뒤인 것은 그것이 가장 구체적인 지시이기 때문입니다. 파일 쓰기
         지침은 그 앞에 두어, 사람이 세션 지침으로 다르게 시키면 그쪽이 뒤에 옵니다.
+
+        결정 장부(`ledger`)는 세션 지침 **바로 뒤**, 별도 섹션입니다. 사람이 쓴 지침과
+        오케스트레이터가 토론에서 정리한 상태를 섞지 않습니다 — 지침은 사람이 고치고,
+        장부는 라운드마다 다시 쓰입니다 (`app/orchestration/context_memory.py`).
         """
         parts = [agent.system_prompt]
 
@@ -1206,6 +1211,13 @@ class LLMCaller:
 
         if custom_instructions:
             parts.append(f"[Session Custom Instructions]:\n{custom_instructions}")
+
+        if ledger and ledger.strip():
+            parts.append(
+                "[Session Decision Ledger]: 오케스트레이터가 이 대화의 토론을 라운드마다 정리한 "
+                "결정 장부입니다. 앞선 발언이 컨텍스트에서 생략돼도 남습니다. 사용자 발언이나 "
+                "세션 지침과 어긋나면 그쪽을 따르세요.\n" + ledger.strip()
+            )
 
         return "\n\n".join(p for p in parts if p)
 
@@ -1229,6 +1241,7 @@ class LLMCaller:
         context_arbiter: Optional[ContextArbiter] = None,
         on_context_trim: Optional[Callable[[int], Any]] = None,
         mcp: Optional[MCPManager] = None,
+        ledger: str = "",
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Executes a turn for the given agent.
@@ -1250,6 +1263,8 @@ class LLMCaller:
 
         `context_arbiter` 는 컨텍스트 창이 넘쳐 기록을 버려야 할 때의 같은 통로이고,
         `on_context_trim` 은 실제로 생략이 일어났음을 화면에 알리는 콜백입니다.
+
+        `ledger` 는 이 대화의 결정 장부입니다. 시스템 프롬프트의 세션 지침 뒤에 붙습니다.
         """
         # Retrieve available tools for this agent
         #
@@ -1264,7 +1279,7 @@ class LLMCaller:
 
         formatted_messages: List[Dict[str, Any]] = [
             {"role": "system",
-             "content": self.build_system_prompt(agent, custom_instructions, tools)}
+             "content": self.build_system_prompt(agent, custom_instructions, tools, ledger)}
         ]
         formatted_messages.extend(messages)
 

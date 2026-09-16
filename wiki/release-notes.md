@@ -6,6 +6,49 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.8.3
+
+**Long conversations no longer forget what the user said.** Every speaker's context carried the whole
+session verbatim, and past the window `fit_context_window` dropped whole messages oldest-first — so
+feedback given in turn 1 ("don't use Redis") was the first thing to go, along with this turn's
+assignments and earlier decisions. Agents with smaller windows forgot more than the others. Three
+layers now keep what matters:
+
+- **Pinned user record.** Every user message of the session sits in the goal message, which neither
+  trim ever drops, and is replaced by a short reference in the transcript so it is not sent twice. This
+  turn's orchestrator plan is pinned the same way. Both have a share cap so a pasted document cannot
+  push the head out of the window. Later turns' plan prompts, speaker selection, parallel dispatch and
+  the synthesis prompt carry the record too.
+- **Decision ledger.** After each round (except the last) and after synthesis the orchestrator rewrites
+  requirements, decisions, rejected alternatives, open issues and owners. It rides in every system
+  prompt **right after the session custom instructions**, which are injected exactly as before. It is
+  saved only when a turn completes, so an aborted turn leaves nothing behind; a failed update keeps the
+  previous ledger. It is shown read-only under the custom instructions box and carried over when a
+  session is continued.
+- **Summaries instead of drops.** When a request would exceed the window, the oldest messages are
+  folded into a rolling summary pinned in the goal message; an agent whose window fits the original
+  keeps reading it. Dropping remains the fallback when summarizing fails.
+
+Reproduced as a test: 8k window, ~2,100-token speeches, a turn-1 constraint, a three-round turn 2. Before,
+the constraint reached the endpoint in none of the nine turn-2 speeches; now in all nine, with nothing
+dropped.
+
+The test suite also stopped writing into the developer's real `multiagent.db`: the database engine is a
+singleton fixed by whoever creates it first, and some tests created it with the default path.
+`tests/conftest.py` now creates it on `:memory:` before each test.
+
+→ [Conversation Memory](orchestration/context-memory.md) · [Database Schema §2.1](architecture/database-schema.md)
+
+**Also since v0.8.2**
+
+- Remote login was refused with `cross-origin request refused` even with the right token. The login page
+  sent `Referrer-Policy: no-referrer`, which makes browsers send `Origin: null` on its form POST. The
+  policy is now `same-origin` (still no Referer to other sites). → [UI Components §1.3.6](ui/components.md)
+- The workspace download list sorts by size and modified time as well as path, on the numeric values
+  (`9 KB` no longer sorts after `10 MB`). → [UI Components §1.3.5](ui/components.md)
+
+---
+
 ## v0.8.2
 
 **Remote access now requires the owner token.** MADO had no authentication: bound to `0.0.0.0`, anyone on the

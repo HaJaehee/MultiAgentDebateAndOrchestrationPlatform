@@ -132,6 +132,8 @@ class AgentRosterControl:
         # 다른 전략에서는 쓰이지 않으므로 그 전략일 때만 화면에 나옵니다.
         self.parallel_limit: int = 3
         self.custom_instructions: str = ""
+        # 이 대화의 결정 장부. 오케스트레이터가 쓰고 사람은 읽기만 합니다.
+        self.decision_ledger: str = ""
         # 이 대화의 작업 공간. 빈 문자열이면 conf.json 기본값을 씁니다.
         self.workspace_dir: str = ""
         # 작업 공간 파일 다운로드 창을 여는 쪽 (app.py 가 채웁니다).
@@ -147,6 +149,8 @@ class AgentRosterControl:
         self.parallel_row: Optional[ui.row] = None
         self.parallel_input: Optional[ui.number] = None
         self.custom_instr_input: Optional[ui.textarea] = None
+        self.ledger_expansion: Optional[ui.expansion] = None
+        self.ledger_view: Optional[ui.markdown] = None
         self.expansion: Optional[ui.expansion] = None
         self.summary_badge: Optional[ui.badge] = None
         self.session_id: Optional[str] = None
@@ -416,6 +420,21 @@ class AgentRosterControl:
                         value=self.custom_instructions,
                         on_change=self._on_instructions_change,
                     ).props("outlined dark dense autogrow rows=2").classes("w-full text-xs")
+
+                # 결정 장부 — 커스텀 지침 바로 아래. 프롬프트에서도 지침 바로 뒤에 들어갑니다.
+                with ui.expansion("결정 장부", icon="fact_check", value=False).classes(
+                    "w-full mt-1 bg-slate-800/40 rounded-lg border border-slate-800 text-xs"
+                ) as self.ledger_expansion:
+                    ui.label(
+                        "오케스트레이터가 라운드마다, 그리고 최종 합성 뒤에 요구사항·결정·기각안·"
+                        "미해결 쟁점·담당을 정리합니다. 모든 에이전트의 시스템 프롬프트에서 세션 "
+                        "커스텀 지침 바로 뒤에 들어가, 앞선 기록이 생략돼도 남습니다. 읽기 전용이며, "
+                        "틀린 항목은 채팅으로 바로잡으면 다음 갱신에 반영됩니다."
+                    ).classes("text-[10px] text-slate-500 leading-snug px-2")
+                    self.ledger_view = ui.markdown("").classes(
+                        "w-full px-2 pb-2 text-[11px] text-slate-300 break-words"
+                    )
+                self.set_decision_ledger(self.decision_ledger)
 
         return self.expansion
 
@@ -2131,6 +2150,18 @@ class AgentRosterControl:
         if self.on_config_changed:
             ui.timer(0.01, self.on_config_changed, once=True)
 
+    def set_decision_ledger(self, ledger: str) -> None:
+        """결정 장부를 보여 줍니다. 진행 중인 토론이 갱신할 때마다 불립니다."""
+        self.decision_ledger = ledger or ""
+        if self.ledger_view is not None:
+            self.ledger_view.set_content(
+                self.decision_ledger or "_아직 없음 — 첫 라운드나 최종 합성이 끝나면 채워집니다._"
+            )
+        if self.ledger_expansion is not None:
+            self.ledger_expansion.props(
+                f'caption="{len(self.decision_ledger):,}자"' if self.decision_ledger else 'caption="비어 있음"'
+            )
+
     def _on_instructions_change(self, e) -> None:
         self.custom_instructions = e.value
         if self.on_config_changed:
@@ -2198,6 +2229,7 @@ class AgentRosterControl:
         personas: Optional[Dict[str, Any]] = None,
         known_keys: Optional[List[str]] = None,
         session_agents: Optional[List[Agent]] = None,
+        decision_ledger: str = "",
     ) -> None:
         self.agent_pool = get_agent_pool()
         # 잠금 여부와 스냅샷이 선택 규칙과 카드 목록을 함께 정하므로 먼저 반영합니다.
@@ -2230,6 +2262,7 @@ class AgentRosterControl:
             self.rounds_label.set_text(str(max_rounds))
         if self.custom_instr_input:
             self.custom_instr_input.value = instructions
+        self.set_decision_ledger(decision_ledger)
         if self.workspace_input:
             self.workspace_input.value = self.workspace_dir
         self._refresh_workspace_hint()

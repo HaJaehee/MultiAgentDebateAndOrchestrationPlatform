@@ -245,6 +245,39 @@ def create_ui() -> None:
                         type="info",
                         position="bottom-right",
                     )
+            elif etype == "ledger_update_started":
+                chat_feed.set_busy(
+                    True, f"결정 장부 정리 중 ({event.get('reason', '')})...", "Ledger"
+                )
+            elif etype == "ledger_updated":
+                roster_control.set_decision_ledger(event.get("ledger", ""))
+            elif etype == "ledger_update_failed":
+                ui.notify(
+                    f"결정 장부를 갱신하지 못해 이전 장부를 유지합니다 ({event.get('reason', '')}): "
+                    f"{event.get('error', '')}",
+                    type="warning",
+                    position="bottom-right",
+                )
+            elif etype == "context_summarizing":
+                chat_feed.set_busy(
+                    True,
+                    f"[{event.get('agent_name', '')}] 컨텍스트가 차서 앞선 기록 "
+                    f"{event.get('messages', 0)}건을 요약으로 접는 중...",
+                    "Summarizing",
+                )
+            elif etype == "context_summarized":
+                ui.notify(
+                    f"컨텍스트가 차서 앞선 기록 {event.get('folded', 0)}건을 요약으로 접었습니다 "
+                    f"(누적 {event.get('total', 0)}건). 사용자 발언과 결정 장부는 원문 그대로 남습니다.",
+                    type="info",
+                    position="bottom-right",
+                )
+            elif etype == "context_summary_failed":
+                ui.notify(
+                    "앞선 기록을 요약하지 못해, 컨텍스트 한도를 넘는 오래된 기록은 생략합니다.",
+                    type="warning",
+                    position="bottom-right",
+                )
             elif etype == "context_trimmed":
                 # 답이 필요한 물음이 아니라 사후 통지입니다. 버튼 없는 알림으로만
                 # 띄웁니다 — 배너는 사람이 골라야 하는 자리에만 씁니다.
@@ -772,6 +805,7 @@ def create_ui() -> None:
                         personas=personas,
                         workspace_dir=s_obj.workspace_dir or "",
                         session_agents=frozen,
+                        decision_ledger=s_obj.decision_ledger or "",
                     )
 
                 # Load messages
@@ -854,6 +888,9 @@ def create_ui() -> None:
                 # 붙은 화면에서도 같은 선택지가 보여야, 새로고침 한 번으로 답할
                 # 곳을 잃지 않습니다.
                 chat_feed.set_decision_request(snapshot.get("decision_request"))
+                # 이번 턴에 갱신된 장부는 턴이 끝나야 DB 에 들어갑니다.
+                if snapshot.get("decision_ledger") is not None:
+                    roster_control.set_decision_ledger(snapshot["decision_ledger"])
                 attach_to_run(run)
             else:
                 chat_feed.set_busy(False, "대기 중", "Ready")

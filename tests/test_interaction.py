@@ -72,8 +72,10 @@ async def test_stop_request_skips_remaining_rounds_but_still_synthesizes():
     # 아키텍트까지만 발언하고 남은 발언자와 라운드는 건너뛰었습니다.
     assert "coder" not in caller.calls
     assert "critic" not in caller.calls
-    # 계획 발언과 최종 합성은 그대로 있습니다.
-    assert caller.calls.count("orchestrator") == 2
+    # 계획 발언과 최종 합성은 그대로 있고, 합성 뒤에 결정 장부를 한 번 갱신합니다.
+    # 정지로 건너뛴 라운드의 장부 갱신은 없습니다.
+    assert caller.calls.count("orchestrator") == 3
+    assert _contains(caller.prompt_for("orchestrator", occurrence=2), "[결정 장부 갱신]")
 
     snapshot = run.snapshot()
     assert snapshot["stop_requested"] is True
@@ -118,7 +120,9 @@ async def test_stop_requested_before_the_debate_still_yields_artifacts():
     )
 
     assert state.stopped_early is True
-    assert caller.calls == ["orchestrator", "orchestrator"]
+    # 계획 → 합성 → 결정 장부 갱신. 라운드가 없었으므로 라운드 장부 갱신도 없습니다.
+    assert caller.calls == ["orchestrator", "orchestrator", "orchestrator"]
+    assert _contains(caller.prompt_for("orchestrator", occurrence=2), "[결정 장부 갱신]")
     assert state.artifacts
 
 

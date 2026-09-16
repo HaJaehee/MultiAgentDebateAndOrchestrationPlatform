@@ -198,7 +198,7 @@ async def continue_session(
       경계는 호스트가 정하므로 옮기는 것도 호스트가 합니다.
     * 에이전트 구성 — 참여자, 페르소나 초안, 굳혀 둔 `config_snapshot` 까지.
       conf.json 에서 사라진 에이전트도 스냅샷으로 계속 발언합니다.
-    * 전략·라운드 수·동시 실행 상한·커스텀 지침.
+    * 전략·라운드 수·동시 실행 상한·커스텀 지침·결정 장부.
     * 이전 세션의 최종 결론 — 오케스트레이터의 첫 발언(인수인계 쪽지)으로 들어갑니다.
 
     물려받지 않는 것:
@@ -226,6 +226,10 @@ async def continue_session(
         active_agents=list(source.active_agents or []),
         known_agents=list(source.known_agents or []),
         custom_instructions=source.custom_instructions or "",
+        # 결정 장부는 따라옵니다 — 비우려던 것은 발언 기록이지 합의된 상태가 아닙니다.
+        # 반영 지점은 비워 둡니다 (새 대화에는 그 발언이 없습니다). 요약은 옛 발언을
+        # 덮는 것이라 따라오지 않습니다.
+        decision_ledger=source.decision_ledger or "",
         workspace_dir=source.workspace_dir or "",
         # 아직 시작하지 않은 대화입니다. 첫 요청이 들어올 때 그 시점의 구성으로
         # 다시 굳고 다시 잠깁니다.

@@ -61,6 +61,18 @@ class DebateState(BaseModel):
     # LLM 응답을 받지 못해 이번 턴에서 발언하지 못한 에이전트. 합성 프롬프트와
     # 요약 아티팩트가 "없는 의견"을 있는 것처럼 다루지 않도록 여기에 남깁니다.
     failed_agent_keys: List[str] = Field(default_factory=list)
+    # ---- 대화 기억 (`app/orchestration/context_memory.py`) ----
+    # 이번 턴 오케스트레이터 계획 발언의 자리. 목표 메시지에 고정합니다.
+    plan_index: Optional[int] = None
+    # 결정 장부와, 장부에 반영된 발언의 수 (`messages[:ledger_through]`).
+    decision_ledger: str = ""
+    ledger_through: int = 0
+    # 앞선 기록의 누적 요약과, 요약이 덮는 발언의 수 (`messages[:summary_through]`).
+    transcript_summary: str = ""
+    summary_through: int = 0
+    # 이번 턴 참여자 중 가장 작은 컨텍스트 예산. 장부·요약의 크기 상한이 여기에 맞춰집니다.
+    # 0 이면 모름 — 그때는 부르는 쪽의 예산을 씁니다.
+    memory_budget: int = 0
     artifacts: List[ArtifactItem] = Field(default_factory=list)
     status: str = "idle"  # 'idle', 'planning', 'debating', 'synthesizing', 'completed', 'error'
     current_speaker: Optional[str] = None

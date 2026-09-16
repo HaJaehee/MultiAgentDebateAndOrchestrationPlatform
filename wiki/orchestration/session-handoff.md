@@ -38,7 +38,8 @@ That guard exists so a model cannot read another conversation's graph by guessin
 | Workspace directory (same folder — files and git history intact) | **Message transcript** — this is the thing being cleared |
 | Knowledge graph (`<old>.jsonl` → `<new>.jsonl`) | `personas_locked` — the new session has not started yet |
 | Agent roster, persona drafts, and `config_snapshot` | Artifacts (left on the source session; only *listed* in the note) |
-| Strategy, `max_rounds`, `parallel_limit`, custom instructions | |
+| Strategy, `max_rounds`, `parallel_limit`, custom instructions | Transcript summary (v0.8.3) — it covers messages the new session does not have |
+| Decision ledger (v0.8.3), with its anchor cleared | |
 | The previous session's final conclusion (as a handoff note) | |
 
 Copying `config_snapshot` matters for one specific case: an agent that has since been deleted from `conf.json` keeps speaking in the new session from its frozen snapshot, exactly as it did in the old one. Agents that still exist are re-frozen from the current `conf.json` at the next lock, so a model swap between sessions is honoured.

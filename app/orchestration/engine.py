@@ -7,7 +7,7 @@ from contextlib import nullcontext
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
-from sqlalchemy import select
+from sqlalchemy import select, update
 from app.agents.base import Agent
 from app.agents.llm import (
     LLMCaller,
@@ -34,6 +34,7 @@ from app.database.models import (
     utc_now,
 )
 from app.database.session import get_session_factory
+from app.orchestration import context_memory as memory
 from app.orchestration.control import TurnControl
 from app.orchestration.state import ArtifactItem, DebateMessage, DebateState
 from app.orchestration.strategies import (
@@ -768,6 +769,7 @@ class OrchestratorEngine:
                 context_arbiter=self._make_context_arbiter(state, agent, control, on_event),
                 on_context_trim=_on_context_trim,
                 mcp=self._mcp_for(state),
+                ledger=state.decision_ledger,
             )
             # 다이어그램 교정 같은 후처리는 시간이 걸립니다. 그동안 카드가 마지막 조각
             # 직전에서 멈춰 보이지 않게, 흘러온 글을 먼저 다 내보냅니다.
@@ -1150,6 +1152,10 @@ class OrchestratorEngine:
                 (a for a in active_agents if a.key == "orchestrator"),
                 self.agent_pool.get_orchestrator(),
             )
+            # 장부와 요약은 모든 참여자의 프롬프트에 실립니다. 상한을 가장 작은 창에 맞춥니다.
+            memory_budget = min(
+                (context_budget(a) for a in active_agents), default=context_budget(orchestrator_agent)
+            )
 
             # 2. Initialize Debate State
             state = DebateState(
@@ -1162,6 +1168,7 @@ class OrchestratorEngine:
                 custom_instructions=custom_instructions,
                 active_agent_keys=active_keys,
                 status="planning",
+                memory_budget=memory_budget,
             )
 
             # 이전 턴의 대화 기록을 DB에서 로드하여 대화 맥락을 보존합니다.
@@ -1186,6 +1193,7 @@ class OrchestratorEngine:
                 )
             # 여기서부터가 이번 턴입니다. 산출물은 이 뒤의 발언에서만 모읍니다.
             state.turn_message_start = len(state.messages)
+            self._load_memory(state, session_model)
 
             # 3. Record User Message in DB
             #
@@ -1222,6 +1230,14 @@ class OrchestratorEngine:
                 if specialists else ""
             )
 
+            # 이전 턴의 사용자 발언은 250자 요약으로 넘기지 않고 전문을 고정합니다.
+            # 계획이 1턴의 제약을 모르면 그 턴 전체가 제약을 어긴 채 시작합니다.
+            plan_record = memory.build_user_record(
+                state, model=orchestrator_agent.model,
+                token_cap=int(context_budget(orchestrator_agent) * memory.USER_RECORD_SHARE),
+            ).text
+            plan_record_block = f"{plan_record}\n\n" if plan_record else ""
+
             if len(state.messages) > 1:
                 history_snippets = []
                 for m in state.messages[:-1]:
@@ -1238,6 +1254,7 @@ class OrchestratorEngine:
                 orch_plan_prompt = [
                     {"role": "user", "content": (
                         f"[이전 대화 맥락]:\n{history_text}\n\n"
+                        f"{plan_record_block}"
                         f"[신규 User Request]:\n{user_prompt}\n\n"
                         f"{roster_block}"
                         "위의 이전 세션 논의 맥락과 새로운 사용자 요청을 종합 분석하여 이번 토론의 핵심 목표, "
@@ -1255,7 +1272,7 @@ class OrchestratorEngine:
                     )}
                 ]
 
-            await self._speak(
+            plan_message = await self._speak(
                 db=db,
                 state=state,
                 agent=orchestrator_agent,
@@ -1266,6 +1283,9 @@ class OrchestratorEngine:
                 on_event=on_event,
                 control=control,
             )
+            if plan_message.msg_type != "error":
+                # 뒤쪽 발언자가 자기 몫을 잊지 않도록 목표 메시지에 고정합니다.
+                state.plan_index = len(state.messages) - 1
 
             # 5. Phase 2: Multi-Round Specialist Debate Loop
             strategy = get_strategy(strategy_name)
@@ -1308,6 +1328,11 @@ class OrchestratorEngine:
                     )
                     if stopped_early:
                         break
+                    if round_num < max_rounds and not (control is not None and control.stop_requested):
+                        await self._update_ledger(
+                            state=state, orchestrator=orchestrator_agent,
+                            on_event=on_event, reason=f"Round {round_num}",
+                        )
                     continue
 
                 speakers = await self._select_speakers(
@@ -1345,10 +1370,12 @@ class OrchestratorEngine:
                         db=db,
                         state=state,
                         agent=agent,
-                        prompt_messages=self._build_context_for_agent(
+                        prompt_messages=await self._context_for_speech(
                             state,
                             agent,
                             strategy.turn_instruction(agent, speakers, speaker_index, state),
+                            orchestrator=orchestrator_agent,
+                            on_event=on_event,
                         ),
                         custom_instructions=custom_instructions,
                         round_number=round_num,
@@ -1359,6 +1386,15 @@ class OrchestratorEngine:
 
                 if stopped_early:
                     break
+
+                # 마지막 라운드 뒤와 정지 요청 뒤에는 건너뜁니다. 곧바로 합성이 전사를 직접
+                # 읽고, 합성 뒤의 갱신이 이 라운드까지 함께 접습니다 — 같은 내용으로 두 번
+                # 부를 이유도, 정지를 원한 사람을 한 번 더 기다리게 할 이유도 없습니다.
+                if round_num < max_rounds and not (control is not None and control.stop_requested):
+                    await self._update_ledger(
+                        state=state, orchestrator=orchestrator_agent,
+                        on_event=on_event, reason=f"Round {round_num}",
+                    )
 
             # 정지 요청이 마지막 발언 도중에 들어왔더라도, 그때까지 쌓인 개입은
             # 합성 전사에 실어 보냅니다.
@@ -1460,6 +1496,20 @@ class OrchestratorEngine:
                     on_event=on_event,
                 )
 
+            # 산출물은 저장되는 대로 화면에 보냅니다. 아래 장부 갱신은 LLM 호출 한 번이라,
+            # 그 뒤로 미루면 보고서 발언은 떴는데 산출물 탭만 그만큼 늦게 채워집니다.
+            if on_event:
+                await on_event({
+                    "type": "artifacts_synthesized",
+                    "artifacts": [a.model_dump() for a in state.artifacts],
+                })
+
+            # 이번 턴의 결론까지 장부에 접습니다. 다음 턴은 이 장부를 들고 시작합니다.
+            await self._update_ledger(
+                state=state, orchestrator=orchestrator_agent,
+                on_event=on_event, reason="최종 합성",
+            )
+
             # 합성이 시작된 뒤에 도착한 개입은 이번 턴에 실을 자리가 없습니다.
             # 그대로 버리면 화면은 "다음 발언 차례에 반영됩니다" 라고 알린 채 턴이
             # 끝나 버립니다. 기록에 남겨 두면 다음 턴이 맥락으로 읽어 갑니다.
@@ -1469,6 +1519,9 @@ class OrchestratorEngine:
             )
             if deferred and on_event:
                 await on_event({"type": "interjections_deferred", "count": deferred})
+
+            # 장부와 요약은 턴이 끝까지 온 경우에만 저장합니다 (모듈 설명의 "저장").
+            await self._persist_memory(db, state, on_event)
 
             state.status = "completed"
             # 사용자가 도중에 끊었다면 합의에 이른 것이 아닙니다.
@@ -1487,10 +1540,6 @@ class OrchestratorEngine:
                 )
 
             if on_event:
-                await on_event({
-                    "type": "artifacts_synthesized",
-                    "artifacts": [a.model_dump() for a in state.artifacts],
-                })
                 await on_event({
                     "type": "turn_completed",
                     "status": "completed",
@@ -1647,12 +1696,7 @@ class OrchestratorEngine:
         시작하고, 단계적 사고 프로토콜이 주입되면 `Thought 1..N` 을 쓰다가 형식을
         놓칩니다.
         """
-        selector = orchestrator.model_copy(update={
-            "allowed_mcp_servers": [],
-            "sequential_thinking": orchestrator.sequential_thinking.model_copy(
-                update={"enabled": False}
-            ),
-        })
+        selector = self._tool_less(orchestrator)
 
         roster = format_roster(candidates, with_keys=True)
         recent = [
@@ -1663,6 +1707,7 @@ class OrchestratorEngine:
 
         prompt = [{"role": "user", "content": (
             f"[목표]\n{state.user_prompt}\n\n"
+            + self._routing_record(state, selector) +
             f"[지금까지의 토론]\n" + ("\n".join(recent) or "(아직 없음)") + "\n\n"
             f"[이번 라운드에 부를 수 있는 에이전트]\n{roster}\n\n"
             f"지금은 Round {round_num}/{state.max_rounds} 입니다. 논의를 진전시키기 위해 "
@@ -1674,7 +1719,7 @@ class OrchestratorEngine:
 
         content, _ = await self.llm_caller.call_agent(
             selector, prompt, custom_instructions, session_id=state.session_id,
-            mcp=self._mcp_for(state),
+            mcp=self._mcp_for(state), ledger=state.decision_ledger,
         )
         return self._parse_speaker_selection(content, candidates)
 
@@ -1768,8 +1813,9 @@ class OrchestratorEngine:
         # 발언이 늦게 시작한 쪽의 맥락에 섞여 들어가, 같은 라운드인데 누구는 남의
         # 답을 보고 누구는 못 보는 상태가 됩니다. 그건 병렬이 아닙니다.
         prompts = [
-            self._build_context_for_agent(
-                state, agent, self._parallel_turn_instruction(strategy, agent, task, board)
+            await self._context_for_speech(
+                state, agent, self._parallel_turn_instruction(strategy, agent, task, board),
+                orchestrator=orchestrator, on_event=on_event,
             )
             for agent, task in assignments
         ]
@@ -1941,12 +1987,7 @@ class OrchestratorEngine:
         발언자 지명(`_ask_orchestrator_for_speakers`)과 같은 이유로 도구와 단계적
         사고를 끈 사본으로 부릅니다. 이건 JSON 을 받는 호출이지 발언이 아닙니다.
         """
-        planner = orchestrator.model_copy(update={
-            "allowed_mcp_servers": [],
-            "sequential_thinking": orchestrator.sequential_thinking.model_copy(
-                update={"enabled": False}
-            ),
-        })
+        planner = self._tool_less(orchestrator)
 
         roster = format_roster(candidates, with_keys=True)
         recent = [
@@ -1957,6 +1998,7 @@ class OrchestratorEngine:
 
         prompt = [{"role": "user", "content": (
             f"[목표]\n{state.user_prompt}\n\n"
+            + self._routing_record(state, planner) +
             f"[지금까지의 토론]\n" + ("\n".join(recent) or "(아직 없음)") + "\n\n"
             f"[과업을 맡길 수 있는 에이전트]\n{roster}\n\n"
             f"지금은 Round {round_num}/{state.max_rounds} 이고, 지목된 에이전트는 "
@@ -1973,7 +2015,7 @@ class OrchestratorEngine:
 
         content, _ = await self.llm_caller.call_agent(
             planner, prompt, custom_instructions, session_id=state.session_id,
-            mcp=self._mcp_for(state),
+            mcp=self._mcp_for(state), ledger=state.decision_ledger,
         )
         return self._parse_assignments(content, candidates)
 
@@ -2103,7 +2145,9 @@ class OrchestratorEngine:
             db=db,
             state=state,
             agent=orchestrator,
-            prompt_messages=self._build_context_for_agent(state, orchestrator, instruction),
+            prompt_messages=await self._context_for_speech(
+                state, orchestrator, instruction, orchestrator=orchestrator, on_event=on_event,
+            ),
             custom_instructions=custom_instructions,
             round_number=round_num,
             msg_type="orchestrator",
@@ -2111,11 +2155,367 @@ class OrchestratorEngine:
             control=control,
         )
 
+    # ------------------------------------------------------------ 대화 기억
+    #
+    # 컨텍스트 창이 차도 잃으면 안 되는 것 — 사용자 발언, 이번 턴 계획, 결정 장부,
+    # 앞선 논의의 요약. 무엇을 왜 지키는지는 `app/orchestration/context_memory.py` 에 있습니다.
+
+    @staticmethod
+    def _tool_less(agent: Agent) -> Agent:
+        """도구와 단계적 사고를 끈 사본.
+
+        JSON 한 줄(발언자 지명·과업 분배)이나 정해진 형식의 글(장부·요약)을 받는 호출에
+        씁니다. 도구를 붙이면 파일을 읽기 시작하고, 단계적 사고 프로토콜이 주입되면
+        `Thought 1..N` 을 쓰다가 형식을 놓칩니다.
+        """
+        return agent.model_copy(update={
+            "allowed_mcp_servers": [],
+            "sequential_thinking": agent.sequential_thinking.model_copy(update={"enabled": False}),
+        })
+
+    def _speech_budget(self, agent: Agent, state: DebateState) -> int:
+        """이 발언자의 요청에서 시스템 프롬프트와 대화가 쓸 수 있는 토큰."""
+        return context_budget(agent, tools=self._tools_for(agent, state))
+
+    @staticmethod
+    def _system_tokens(agent: Agent, state: DebateState) -> int:
+        """시스템 프롬프트 몫의 어림값. 페르소나·세션 지침·장부에 고정 지침 몫을 더합니다."""
+        text = "\n\n".join(
+            part for part in (agent.system_prompt, state.custom_instructions, state.decision_ledger)
+            if part
+        )
+        return memory.text_tokens(agent.model, text) + 512
+
+    @staticmethod
+    def _summary_cap(state: DebateState, budget: int) -> int:
+        """요약의 글자 상한. 참여자 중 가장 작은 예산을 알면 그것에 맞춥니다."""
+        return memory.memory_cap(
+            memory.SUMMARY_SHARE, memory.SUMMARY_MAX_CHARS, state.memory_budget or budget
+        )
+
+    def _routing_record(self, state: DebateState, agent: Agent) -> str:
+        """발언자 지명·과업 분배 프롬프트에 넣을 사용자 발언 기록 (짧은 몫)."""
+        record = memory.build_user_record(
+            state, model=agent.model,
+            token_cap=int(context_budget(agent) * memory.ROUTING_RECORD_SHARE),
+        ).text
+        return f"{record}\n\n" if record else ""
+
+    def _load_memory(self, state: DebateState, session_model: SessionModel) -> None:
+        """저장된 장부·요약을 이번 턴 상태로 옮깁니다."""
+        ids = [m.id for m in state.messages]
+        state.decision_ledger = session_model.decision_ledger or ""
+        through = memory.through_index(ids, session_model.ledger_through_id)
+        # 반영 지점이 기록에서 사라졌으면 지금까지를 반영된 것으로 봅니다. 옛 기록 전체를
+        # 장부 갱신 한 번에 다시 밀어 넣지 않습니다.
+        state.ledger_through = len(ids) if through is None else through
+
+        summary = session_model.transcript_summary or ""
+        summary_through = memory.through_index(ids, session_model.summary_through_id)
+        # 요약은 덮는 자리를 모르면 쓸 수 없습니다 (원문과 겹치거나 빠집니다). 버리고,
+        # 필요하면 다시 접습니다.
+        if summary.strip() and summary_through:
+            state.transcript_summary = summary
+            state.summary_through = summary_through
+
+    async def _persist_memory(
+        self, db, state: DebateState, on_event: Optional[EventCallback]
+    ) -> None:
+        """장부와 요약을 저장합니다. 턴이 끝까지 왔을 때만 부릅니다.
+
+        긴급 종료(`session_ops.discard_turn`)는 턴 도중의 취소라 여기까지 오지 않습니다.
+        그래서 지워진 발언을 반영한 장부가 남지 않습니다.
+        """
+        values = {
+            "decision_ledger": state.decision_ledger,
+            "ledger_through_id": memory.through_id(state.messages, state.ledger_through),
+            "transcript_summary": state.transcript_summary if state.summary_through else "",
+            "summary_through_id": memory.through_id(state.messages, state.summary_through),
+            # 기억을 적었다고 대화 목록에서 "방금 바뀐 대화" 로 올라가지 않게 합니다.
+            "updated_at": SessionModel.updated_at,
+        }
+        try:
+            await db.execute(
+                update(SessionModel).where(SessionModel.id == state.session_id).values(**values)
+            )
+            await db.commit()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 기억을 못 적어도 턴은 끝납니다
+            logger.error(
+                f"Could not persist the decision ledger for session {state.session_id}: "
+                f"{type(exc).__name__}: {exc}",
+                exc_info=True,
+            )
+            try:
+                await db.rollback()
+            except Exception:  # noqa: BLE001
+                logger.debug("Rollback after a failed ledger commit also failed", exc_info=True)
+            if on_event:
+                await on_event({
+                    "type": "persist_failed",
+                    "what": "the decision ledger",
+                    "label": "결정 장부",
+                    "error": f"{type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''}",
+                    "saved_to": None,
+                })
+
+    async def _context_for_speech(
+        self,
+        state: DebateState,
+        agent: Agent,
+        turn_instruction: str,
+        *,
+        orchestrator: Agent,
+        on_event: Optional[EventCallback],
+    ) -> List[Dict[str, Any]]:
+        """발언 맥락. 창을 넘으면 먼저 앞선 기록을 요약으로 접은 뒤 만듭니다."""
+        prompt = self._build_context_for_agent(state, agent, turn_instruction)
+        total = self._system_tokens(agent, state) + estimate_tokens(agent.model, prompt)
+        folded = await self._ensure_room(
+            state, model=agent.model, total=total, budget=self._speech_budget(agent, state),
+            orchestrator=orchestrator, on_event=on_event, agent_name=agent.name,
+        )
+        if folded:
+            prompt = self._build_context_for_agent(state, agent, turn_instruction)
+        return prompt
+
+    async def _ensure_room(
+        self,
+        state: DebateState,
+        *,
+        model: str,
+        total: int,
+        budget: int,
+        orchestrator: Agent,
+        on_event: Optional[EventCallback],
+        agent_name: str,
+    ) -> bool:
+        """`total` 이 `budget` 을 넘으면 앞선 기록을 요약으로 접습니다. 접었으면 True.
+
+        접지 못해도 괜찮습니다 — `fit_context_window` 가 예전처럼 오래된 것부터 생략합니다.
+        """
+        if budget <= 0 or total <= budget:
+            return False
+        start = state.summary_through
+        costs = [
+            0 if m.msg_type == "error" else memory.text_tokens(model, memory.render_message(m))
+            for m in state.messages[start:]
+        ]
+        cut = memory.choose_fold_cut(
+            state,
+            message_tokens=costs,
+            total_tokens=total,
+            budget=budget,
+            summary_allowance=(
+                self._summary_cap(state, budget) - memory.text_tokens(model, state.transcript_summary)
+            ),
+        )
+        if cut <= start:
+            return False
+        return await self._fold_into_summary(
+            state, orchestrator=orchestrator, cut=cut, on_event=on_event, agent_name=agent_name,
+            max_chars=self._summary_cap(state, budget),
+        )
+
+    async def _fold_into_summary(
+        self,
+        state: DebateState,
+        *,
+        orchestrator: Agent,
+        cut: int,
+        on_event: Optional[EventCallback],
+        agent_name: str,
+        max_chars: int = memory.SUMMARY_MAX_CHARS,
+    ) -> bool:
+        """`messages[summary_through:cut]` 를 누적 요약에 접습니다. 조금이라도 접었으면 True.
+
+        묶음마다 상태에 반영합니다. 뒤 묶음이 실패해도 앞에서 접은 것은 남습니다.
+        """
+        writer = self._tool_less(orchestrator)
+        start = state.summary_through
+        items = [
+            (index, state.messages[index]) for index in range(start, cut)
+            if state.messages[index].msg_type != "error"
+        ]
+        if not items:
+            return False
+        room = (
+            context_budget(writer)
+            - memory.PROMPT_OVERHEAD_TOKENS
+            - memory.text_tokens(writer.model, state.transcript_summary)
+        )
+        if room <= 0:
+            logger.warning(
+                f"No room to summarize earlier messages with {writer.name} "
+                f"(max_context_window={writer.max_context_window}); older ones will be dropped instead"
+            )
+            return False
+        batches = memory.batch_blocks(
+            writer.model, [memory.render_message(m) for _index, m in items], room
+        )[: memory.SUMMARY_MAX_BATCHES]
+
+        if on_event:
+            await on_event({
+                "type": "context_summarizing",
+                "agent_name": agent_name,
+                "messages": cut - start,
+            })
+
+        consumed = 0
+        try:
+            for batch in batches:
+                content, _ = await self.llm_caller.call_agent(
+                    writer,
+                    memory.summary_prompt(
+                        previous=state.transcript_summary, blocks=batch,
+                        covered=state.summary_through, max_chars=max_chars,
+                    ),
+                    state.custom_instructions,
+                    session_id=state.session_id,
+                    mcp=self._mcp_for(state),
+                )
+                summary = memory.parse_summary(content, max_chars)
+                if not summary:
+                    raise ValueError("요약 응답이 비어 있습니다")
+                consumed += len(batch)
+                state.transcript_summary = summary
+                state.summary_through = cut if consumed == len(items) else items[consumed - 1][0] + 1
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 요약에 실패하면 예전처럼 생략합니다
+            logger.warning(
+                f"Could not summarize earlier messages for {agent_name}; older ones will be "
+                f"dropped instead: {type(exc).__name__}: {exc}"
+            )
+            if on_event:
+                await on_event({
+                    "type": "context_summary_failed",
+                    "agent_name": agent_name,
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+
+        folded = state.summary_through - start
+        if folded and on_event:
+            await on_event({
+                "type": "context_summarized",
+                "agent_name": agent_name,
+                "folded": folded,
+                "total": state.summary_through,
+            })
+        return folded > 0
+
+    async def _update_ledger(
+        self,
+        *,
+        state: DebateState,
+        orchestrator: Agent,
+        on_event: Optional[EventCallback],
+        reason: str,
+    ) -> bool:
+        """결정 장부를 갱신합니다. 갱신했으면 True.
+
+        새 발언이 없거나 실패하면 이전 장부를 그대로 둡니다. 장부는 토론의 부산물이라,
+        장부를 못 써서 토론이 멈추면 안 됩니다.
+        """
+        start, upto = state.ledger_through, len(state.messages)
+        fresh = [
+            (index, state.messages[index]) for index in range(start, upto)
+            if state.messages[index].msg_type != "error"
+        ]
+        if not any(m.sender_key != "user" for _index, m in fresh):
+            return False
+
+        writer = self._tool_less(orchestrator)
+        budget = context_budget(writer)
+        ledger_chars = memory.memory_cap(
+            memory.LEDGER_SHARE, memory.LEDGER_MAX_CHARS, state.memory_budget or budget
+        )
+        record = memory.build_user_record(
+            state, model=writer.model, token_cap=int(budget * memory.USER_RECORD_SHARE)
+        )
+        # 고정된 사용자 발언은 프롬프트에 기록으로 따로 들어가므로 참조로만 둡니다.
+        placeholders = {i: memory.user_placeholder(n) for i, n in record.refs.items()}
+        opening = memory.opening_index(state)
+        if opening is not None:
+            placeholders[opening] = "(이번 턴 요청 — 위 [이번 턴 요청]에 전문이 있습니다)"
+
+        room = (
+            budget
+            - memory.PROMPT_OVERHEAD_TOKENS
+            - memory.text_tokens(writer.model, state.decision_ledger)
+            - memory.text_tokens(writer.model, record.text)
+            - memory.text_tokens(writer.model, state.user_prompt)
+        )
+        if room <= 0:
+            logger.warning(
+                f"No room to update the decision ledger with {writer.name} "
+                f"(max_context_window={writer.max_context_window})"
+            )
+            return False
+
+        # 최근 것부터 채웁니다. 못 실은 앞쪽은 이전 장부에 반영돼 있는 경우가 대부분입니다.
+        kept: List[str] = []
+        used = 0
+        for index, msg in reversed(fresh):
+            block = memory.render_message(msg, placeholders.get(index))
+            cost = memory.text_tokens(writer.model, block)
+            if kept and used + cost > room:
+                break
+            if cost > room:
+                block = memory.clip_to_tokens(writer.model, block, room)
+                cost = room
+            kept.insert(0, block)
+            used += cost
+
+        if on_event:
+            await on_event({"type": "ledger_update_started", "reason": reason})
+        try:
+            content, _ = await self.llm_caller.call_agent(
+                writer,
+                memory.ledger_prompt(
+                    previous=state.decision_ledger,
+                    user_record=record.text,
+                    blocks=kept,
+                    skipped=len(fresh) - len(kept),
+                    user_prompt=state.user_prompt,
+                    max_chars=ledger_chars,
+                ),
+                state.custom_instructions,
+                session_id=state.session_id,
+                mcp=self._mcp_for(state),
+            )
+            ledger = memory.parse_ledger(content, ledger_chars)
+            if ledger is None:
+                raise ValueError("응답에 장부 형식(`## ` 제목)이 없습니다")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 장부를 못 써도 토론은 계속됩니다
+            logger.warning(
+                f"Could not update the decision ledger ({reason}) for session {state.session_id}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            if on_event:
+                await on_event({
+                    "type": "ledger_update_failed",
+                    "reason": reason,
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+            return False
+
+        state.decision_ledger = ledger
+        state.ledger_through = upto
+        if on_event:
+            await on_event({"type": "ledger_updated", "reason": reason, "ledger": ledger})
+        return True
+
     def _build_context_for_agent(
         self,
         state: DebateState,
         agent: Agent,
         turn_instruction: str = "",
+        *,
+        use_summary: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
         """Prepares discussion transcript for agent turn.
 
@@ -2123,32 +2523,23 @@ class OrchestratorEngine:
         정하던 시절에는 '자유 토론' 과 '순차 검증' 이 똑같은 프롬프트를 받아,
         발언 순서 말고는 다를 것이 없었습니다. 두 전략의 실제 차이가 여기서
         갈립니다.
-        """
-        context: List[Dict[str, Any]] = []
-        context.append({
-            "role": "user",
-            "content": f"[User Goal / Current Request]:\n{state.user_prompt}\n\n[Debate Progress]: Round {state.current_round} of {state.max_rounds}."
-        })
 
-        for msg in state.messages:
-            # 응답을 못 받은 자리는 맥락에 넣지 않습니다. 실패 안내문을 발언인 양
-            # 읽히게 하면 다음 에이전트가 그것을 논평하기 시작합니다.
-            if msg.msg_type == "error":
-                continue
-            if msg.sender_key == "user":
-                context.append({
-                    "role": "user",
-                    "content": f"[User]:\n{msg.content}"
-                })
-            else:
-                role_label = f"[{msg.sender_name} ({msg.sender_role})]"
-                context.append({
-                    "role": "assistant" if msg.sender_key == agent.key else "user",
-                    # 사고 과정은 기록과 화면에만 남기고 프롬프트에는 싣지 않습니다.
-                    # 자기 발언도 같습니다 — `show_steps` 는 사람이 무엇을 볼지를
-                    # 정하는 스위치이지, 모델이 무엇을 읽을지를 정하는 것이 아닙니다.
-                    "content": f"{role_label}:\n{strip_reasoning_trace(msg.content)}"
-                })
+        첫 메시지(목표)에는 잘리면 안 되는 것을 고정합니다 — 사용자 발언 기록, 이번 턴
+        계획, 앞선 논의 요약. 두 자르기 모두 이 자리를 남깁니다. 기록 안의 같은 발언은
+        참조로 바꿔 토큰을 두 번 쓰지 않습니다.
+
+        요약은 원문 전체가 이 발언자의 창에 들어가지 않을 때만 씁니다 (`use_summary`
+        를 주지 않으면 여기서 판단). 창이 큰 에이전트는 원문을 그대로 읽습니다.
+        """
+        budget = self._speech_budget(agent, state)
+        record = memory.build_user_record(
+            state, model=agent.model, token_cap=int(budget * memory.USER_RECORD_SHARE)
+        )
+        plan_pin = memory.build_plan_pin(
+            state, model=agent.model, token_cap=int(budget * memory.PLAN_PIN_SHARE)
+        )
+        placeholders = memory.placeholders_for(state, record, bool(plan_pin))
+        summary = memory.summary_block(state)
 
         turn_prompt = (
             f"이제 {agent.name}({agent.role})님의 차례입니다. 앞선 전체 논의 맥락과 직전 "
@@ -2156,8 +2547,49 @@ class OrchestratorEngine:
         )
         if turn_instruction:
             turn_prompt += f"\n\n{turn_instruction}"
-        context.append({"role": "user", "content": turn_prompt})
-        return context
+
+        def assemble(start: int, with_summary: bool) -> List[Dict[str, Any]]:
+            head = [f"[User Goal / Current Request]:\n{state.user_prompt}"]
+            head += [part for part in (record.text, plan_pin, summary if with_summary else "") if part]
+            head.append(f"[Debate Progress]: Round {state.current_round} of {state.max_rounds}.")
+            context: List[Dict[str, Any]] = [{"role": "user", "content": "\n\n".join(head)}]
+
+            for index in range(start, len(state.messages)):
+                msg = state.messages[index]
+                # 응답을 못 받은 자리는 맥락에 넣지 않습니다. 실패 안내문을 발언인 양
+                # 읽히게 하면 다음 에이전트가 그것을 논평하기 시작합니다.
+                if msg.msg_type == "error":
+                    continue
+                if msg.sender_key == "user":
+                    context.append({
+                        "role": "user",
+                        "content": f"[User]:\n{placeholders.get(index, msg.content)}"
+                    })
+                else:
+                    role_label = f"[{msg.sender_name} ({msg.sender_role})]"
+                    context.append({
+                        "role": "assistant" if msg.sender_key == agent.key else "user",
+                        # 사고 과정은 기록과 화면에만 남기고 프롬프트에는 싣지 않습니다.
+                        # 자기 발언도 같습니다 — `show_steps` 는 사람이 무엇을 볼지를
+                        # 정하는 스위치이지, 모델이 무엇을 읽을지를 정하는 것이 아닙니다.
+                        "content": (
+                            f"{role_label}:\n"
+                            f"{placeholders.get(index) or strip_reasoning_trace(msg.content)}"
+                        )
+                    })
+
+            context.append({"role": "user", "content": turn_prompt})
+            return context
+
+        full = assemble(0, False)
+        if not summary:
+            return full
+        if use_summary is None:
+            use_summary = (
+                budget > 0
+                and self._system_tokens(agent, state) + estimate_tokens(agent.model, full) > budget
+            )
+        return assemble(state.summary_through, True) if use_summary else full
 
     async def _synthesis_prompt_with_notice(
         self,
@@ -2170,6 +2602,8 @@ class OrchestratorEngine:
         최종 보고서가 초반 논의를 못 보고 쓰였다는 사실은 사람이 알아야 합니다 —
         예전에는 `logger.warning` 에만 남았습니다.
         """
+        if agent is not None:
+            await self._ensure_synthesis_room(state, agent, on_event)
         before = state.context_dropped
         prompt = self._build_synthesis_prompt(state, agent)
         dropped = state.context_dropped - before
@@ -2183,6 +2617,29 @@ class OrchestratorEngine:
                 "where": "synthesis",
             })
         return prompt
+
+    async def _ensure_synthesis_room(
+        self, state: DebateState, agent: Agent, on_event: Optional[EventCallback]
+    ) -> None:
+        """합성 전사가 창을 넘으면 앞선 기록을 요약으로 접습니다 (`_ensure_room`)."""
+        budget = context_budget(agent, tools=self._tools_for(agent, state)) - 512
+        record = memory.build_user_record(
+            state, model=agent.model, token_cap=int(budget * memory.USER_RECORD_SHARE)
+        )
+        summary = memory.summary_block(state)
+        start = state.summary_through if summary else 0
+        total = (
+            memory.text_tokens(agent.model, record.text)
+            + memory.text_tokens(agent.model, summary)
+            + sum(
+                memory.text_tokens(agent.model, memory.render_message(m))
+                for m in state.messages[start:] if m.msg_type != "error"
+            )
+        )
+        await self._ensure_room(
+            state, model=agent.model, total=total, budget=budget,
+            orchestrator=agent, on_event=on_event, agent_name=agent.name,
+        )
 
     def _memory_search_tool_for(
         self, agent: Optional[Agent], state: Optional[DebateState] = None,
@@ -2235,24 +2692,53 @@ class OrchestratorEngine:
         다시 들어가 컨텍스트가 턴마다 빠르게 포화됐습니다 — 결국 합성이 비어 돌아오는
         원인이 됐습니다. 코드 산출물은 전문가 발언에서 따로 모읍니다.
         """
-        usable = [m for m in state.messages if m.msg_type != "error"]
+        # 사용자 발언은 전사 앞에 고정합니다. 최신부터 채우는 전사에서 초반 요구사항이
+        # 빠지면, 보고서가 그 요구사항을 모른 채 결론을 씁니다.
+        model = agent.model if agent is not None else "gpt-4o"
+        budget = (
+            context_budget(agent, tools=self._tools_for(agent, state)) - 512
+            if agent is not None else 0
+        )
+        record = memory.build_user_record(
+            state, model=model,
+            token_cap=int(budget * memory.USER_RECORD_SHARE) if agent is not None else 10 ** 9,
+        )
+        placeholders = memory.placeholders_for(state, record, plan_pinned=False)
 
-        def render(msg: DebateMessage) -> str:
+        def render(index: int, msg: DebateMessage) -> str:
             prefix = "### [User]" if msg.sender_key == "user" else f"### {msg.sender_name} ({msg.sender_role})"
             body = msg.content if msg.sender_key == "user" else strip_reasoning_trace(msg.content)
-            return f"{prefix}:\n{body}\n"
+            return f"{prefix}:\n{placeholders.get(index) or body}\n"
+
+        # 원문이 창에 들어가지 않고 요약이 있으면, 요약이 덮는 앞쪽은 요약으로 읽습니다.
+        summary = memory.summary_block(state) if agent is not None else ""
+        start = 0
+        if summary:
+            full_cost = sum(
+                memory.text_tokens(model, render(i, m))
+                for i, m in enumerate(state.messages) if m.msg_type != "error"
+            )
+            if full_cost + memory.text_tokens(model, record.text) > budget:
+                start = state.summary_through
+            else:
+                summary = ""
+        usable = [
+            (i, m) for i, m in enumerate(state.messages)
+            if i >= start and m.msg_type != "error"
+        ]
 
         if agent is None:
-            kept, dropped = [render(m) for m in usable], 0
+            kept, dropped = [render(i, m) for i, m in usable], 0
         else:
             # 응답 분량(사고 예산이 더해진 실제 값), 요청마다 실리는 도구 정의, 지시문 몫을
             # 빼고 남는 것이 전사의 예산입니다. 예전에는 설정값 `max_tokens` 만 뺐습니다 —
             # 도구 정의 수천 토큰과 `native` 모드의 사고 예산이 빠져, 합성 요청이 창을 넘겼습니다.
-            budget = context_budget(agent, tools=self._tools_for(agent, state)) - 512
+            # 앞에 고정한 사용자 발언 기록과 요약의 몫도 뺍니다.
+            budget -= memory.text_tokens(model, record.text) + memory.text_tokens(model, summary)
             kept_rev: List[str] = []
             dropped = 0
-            for msg in reversed(usable):
-                block = render(msg)
+            for index, msg in reversed(usable):
+                block = render(index, msg)
                 probe = [{"role": "user", "content": "\n".join([block] + kept_rev)}]
                 if kept_rev and budget > 0 and estimate_tokens(agent.model, probe) > budget:
                     dropped = len(usable) - len(kept_rev)
@@ -2301,8 +2787,10 @@ class OrchestratorEngine:
                 f"보고서에 누락 사실을 명시하세요.\n"
             )
 
+        pinned = "".join(f"{part}\n\n" for part in (record.text, summary) if part)
         prompt = (
             f"[User Goal]: {state.user_prompt}\n\n"
+            f"{pinned}"
             f"[Full Multi-Agent Debate Transcript]:\n{full_transcript}\n"
             f"{early_stop}"
             f"{missing}\n"

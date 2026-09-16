@@ -31,6 +31,11 @@ _ADDED_COLUMNS = {
         "known_agents": "TEXT NOT NULL DEFAULT '[]'",
         # 병렬 지시 전략의 동시 실행 상한. 다른 전략에서는 읽히지 않습니다.
         "parallel_limit": "INTEGER NOT NULL DEFAULT 3",
+        # 대화 기억 (v0.8.3). 비어 있으면 장부·요약이 아직 없는 대화입니다.
+        "decision_ledger": "TEXT NOT NULL DEFAULT ''",
+        "ledger_through_id": "VARCHAR(36)",
+        "transcript_summary": "TEXT NOT NULL DEFAULT ''",
+        "summary_through_id": "VARCHAR(36)",
     },
     "session_agents": {
         # NULL 이면 "이 컬럼이 생기기 전에 잠긴 대화" 입니다. 그런 대화는 예전처럼

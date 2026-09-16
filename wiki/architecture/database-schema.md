@@ -23,6 +23,10 @@ erDiagram
         json active_agents "List of participating agent keys"
         json known_agents "Agents that existed when the roster was last saved"
         text custom_instructions "Session-specific prompt additions"
+        text decision_ledger "Orchestrator-maintained ledger (v0.8.3)"
+        string ledger_through_id "Last message folded into the ledger"
+        text transcript_summary "Rolling summary of folded messages"
+        string summary_through_id "Last message the summary covers"
         boolean personas_locked "True once first user message sent"
         text workspace_dir "Per-session workspace ('' = conf.json default)"
         datetime created_at "UTC timestamp"
@@ -98,6 +102,10 @@ Represents a single multi-agent collaboration workspace or discussion thread.
 | `active_agents` | `JSON` | No | `[]` | Array of agent keys participating in this session. |
 | `known_agents` | `JSON` | No | `[]` | Every agent that existed when this roster was last saved. `active_agents` is an allow-list, so without this a key missing from it cannot be told apart from an agent that did not exist yet — which made every conversation show newly added agents as switched off. |
 | `custom_instructions` | `TEXT` | No | `''` | User-defined custom instructions injected into every agent prompt. |
+| `decision_ledger` | `TEXT` | No | `''` | Decision ledger the orchestrator rewrites after rounds and synthesis; injected right after the custom instructions. Written only when a turn completes. See [Conversation Memory](../orchestration/context-memory.md). |
+| `ledger_through_id` | `VARCHAR(36)` | Yes | `NULL` | Id of the last message folded into the ledger. |
+| `transcript_summary` | `TEXT` | No | `''` | Rolling summary of old messages folded when the context window filled. |
+| `summary_through_id` | `VARCHAR(36)` | Yes | `NULL` | Id of the last message the summary covers; a summary whose anchor is missing is discarded. |
 | `personas_locked` | `BOOLEAN` | No | `False` | Locks session personas once the first user message is received. |
 | `workspace_dir` | `TEXT` | No | `''` | Workspace this conversation uses; empty means the `conf.json` default. Unlike personas it never locks — it must be changeable mid-debate. |
 | `created_at` | `DATETIME` | No | `utc_now` | UTC creation timestamp. |
@@ -256,7 +264,8 @@ skipped entirely for a table `create_all` just created.
 
 ```python
 _ADDED_COLUMNS = {
-    "sessions": {"personas_locked": ..., "workspace_dir": ..., "known_agents": ..., "parallel_limit": ...},
+    "sessions": {"personas_locked": ..., "workspace_dir": ..., "known_agents": ..., "parallel_limit": ...,
+                 "decision_ledger": ..., "ledger_through_id": ..., "transcript_summary": ..., "summary_through_id": ...},
     "session_agents": {"config_snapshot": "TEXT",
                        "card_color": "VARCHAR(40) NOT NULL DEFAULT ''",
                        "icon_path": "TEXT NOT NULL DEFAULT ''"},
