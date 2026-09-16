@@ -348,7 +348,7 @@ python docs/render_user_manual.py
   "// provider": "LiteLLM provider 강제 지정 (선택)",
   "provider": "openai",
   "temperature": 0.4,
-  "max_tokens": 4096,
+  "max_tokens": 16000,
   "// max_context_window": [
     "엔드포인트의 실제 한도로 맞추세요.",
     "전사가 이 값에 맞춰 잘립니다. 실제보다 크게 잡으면 잘리지 않은 채 나가 400 을 받습니다."
