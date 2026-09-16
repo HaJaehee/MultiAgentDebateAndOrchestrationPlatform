@@ -110,6 +110,7 @@ async def on_event(event: Dict[str, Any]) -> None:
 | `mermaid_repair_started` | `agent_name`, `broken`, `total`, `attempt`, `max_attempts` | Progress banner: a diagram failed the syntax check and is being redrawn. |
 | `mermaid_repair_finished` | `agent_name`, `resolved`, `attempts`, `remaining` | Positive toast when fixed; warning toast naming how many diagrams still fail. |
 | `artifacts_synthesized` | `artifacts` list (this turn only) | Appended to the Artifact Viewer's tabs (`add_artifacts`); earlier turns' tabs stay. |
+| `graph_started` / `graph_step_started` / `graph_gate_decided` / `graph_finished` | graph id and nodes; `step`, `max_steps`, active `nodes`; `node_id`, `decision`, `reason`, `fallback`; `reason` (`end` · `idle` · `step_cap` · `stopped`) | Graph debate only. Status line shows the step and its nodes; gate verdicts and early stops toast. `round_started` is also sent per step. |
 | `ledger_update_started` / `ledger_updated` / `ledger_update_failed` | `reason`; `ledger` on success; `error` on failure | Status line; `ledger_updated` refreshes the roster's 결정 장부 panel; failure toasts and keeps the previous ledger. |
 | `context_summarizing` / `context_summarized` / `context_summary_failed` | `agent_name`; `messages` / `folded`, `total` / `error` | Status line and toasts. On failure the oldest messages are dropped as before. |
 | `turn_completed` | `status`, `failed_agents`, `error_message` | Re-enables user input and marks personas locked; names any agent that never answered. |

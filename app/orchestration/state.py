@@ -27,6 +27,8 @@ class DebateMessage(BaseModel):
     finished_at: Optional[datetime] = None
     # 이 발언이 턴을 마무리한 합성 발언이면 그 턴이 시작된 시각 (`MessageModel.turn_started_at`).
     turn_started_at: Optional[datetime] = None
+    # 그래프 토론에서 이 발언을 낸 노드 (`MessageModel.graph_node_id`).
+    graph_node_id: Optional[str] = None
 
 
 class DebateState(BaseModel):

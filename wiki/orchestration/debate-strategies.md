@@ -173,6 +173,45 @@ graph TD
 > finishing order would otherwise reshuffle the transcript on every refresh; `_speak()` accepts
 > an explicit `created_at` stamped in dispatch order, and `state.messages` is re-sorted to match.
 
+### 2.5. Graph Debate (`graph_debate`) — engine (v0.9.0)
+- **Key**: `graph_debate` · **Display Name**: 그래프 토론 (Graph) · `runs_graph = True`
+- **Idea**: instead of an order derived from cards, a person draws **who feeds whom**. Parallel
+  branches, joins and review loops come from the drawing, not from strategy code. The card sort and
+  the other four strategies are untouched; the engine branches once, before the round loop
+  (`OrchestratorEngine._run_graph`), and shares planning, synthesis, artifacts and the ledger.
+- **Graph**: `data/graphs/<id>.json`, chosen per session (`sessions.graph_id`) and frozen at each turn
+  start into `sessions.graph_snapshot`. Nodes `start` · `agent` · `merge` · `gate` (yes/no) · `end`;
+  each wire carries `full`, `digest` (`## 요지` only) or `refs` (long code referenced). Schema,
+  validation and scheduling are pure code in
+  [app/orchestration/graph.py](file:///d:/MultiAgentOrchestrator/app/orchestration/graph.py), tested
+  without an LLM.
+- **Participants**: the agents placed in the graph — not the roster checkboxes.
+- **Execution — supersteps**: nodes that received new input run together in one step (bounded by
+  `parallel_limit`, same `db_lock`/`created_at` rules as parallel dispatch); outputs are delivered when
+  the step ends. A node with `wait: "all"` waits for every **forward** input once — loop (back) edges,
+  found by DFS from `start`, are never waited on, or a loop that has not run yet would stall the join
+  forever. A gate forwards its verdict note **plus the inputs it judged**, so a node sent back sees why
+  and what. A step is a round for the UI, interjections, stop and ledger updates.
+- **Context — wires are the scope**: a node gets the pinned goal (request, user record, plan), its
+  incoming wires rendered by their carry, its own previous speech if it runs again, and the node
+  instruction; the ledger is added before the instruction as for every call. `sees: "all"` gives an
+  agent node the regular three-tier transcript instead.
+- **Stopping**: `end` becomes ready (that step is not run) · no node can run (recorded, with any join
+  still waiting) · the step cap · a stop request. All but the last go on to synthesis. A node's visit
+  cap defaults to the session's **최대 라운드**, which in this strategy means "how often a node may run
+  again in one turn"; the step cap is the sum of all caps, so the graph is never cut short within them.
+- **Validation** (on turn start and in the roster): one `start`, at least one reachable `end`, agents
+  that exist and are enabled (and not the orchestrator), gate questions, valid ports, and **no loop
+  that bypasses every gate** — checked as "the graph without gate nodes is acyclic". A first version
+  checked whether a strongly connected component contained a gate and let `구현 → 취합 → 구현` through
+  whenever it shared a component with a gated loop. Invalid graphs raise `GraphTurnError` before the
+  user message is recorded; the roster shows the same report.
+- **Gate**: a tool-less orchestrator copy answers `{"decision": "yes"|"no", "reason"}`. Anything else —
+  including "no problem" in prose — takes the node's `default` branch and the note says so.
+- **UI today**: the roster shows a graph picker, the validation summary, the concurrency limit, and
+  **현재 카드 순서로 만들기** (a chain of the checked specialists in card order). The canvas editor and
+  live execution overlay are the next phases; see the design page.
+
 ---
 
 ## 3. Adding a Custom Debate Strategy

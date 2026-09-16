@@ -22,6 +22,8 @@ _ADDED_COLUMNS = {
         "finished_at": "DATETIME",
         # 턴을 마무리한 합성 발언에만 채워집니다 (`MessageModel.turn_started_at`).
         "turn_started_at": "DATETIME",
+        # 그래프 토론의 노드 (v0.9.0). 그 밖의 발언은 NULL.
+        "graph_node_id": "VARCHAR(64)",
     },
     "sessions": {
         "personas_locked": "BOOLEAN NOT NULL DEFAULT 0",
@@ -36,6 +38,9 @@ _ADDED_COLUMNS = {
         "ledger_through_id": "VARCHAR(36)",
         "transcript_summary": "TEXT NOT NULL DEFAULT ''",
         "summary_through_id": "VARCHAR(36)",
+        # 그래프 토론 (v0.9.0).
+        "graph_id": "VARCHAR(64) NOT NULL DEFAULT ''",
+        "graph_snapshot": "JSON",
     },
     "session_agents": {
         # NULL 이면 "이 컬럼이 생기기 전에 잠긴 대화" 입니다. 그런 대화는 예전처럼

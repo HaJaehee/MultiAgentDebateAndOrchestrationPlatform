@@ -164,6 +164,15 @@ Only what a running installation needs in order to be updated.
 The include list is an **allow-list**, not a deny-list. With a deny-list, a directory added
 later rides along silently; with an allow-list it is simply absent, and absence is visible.
 
+**Required paths** (`REQUIRED_PACKAGE_PATHS`). Some files live inside `app/` and are packed with it,
+but would break a feature silently if a later ignore or forbidden-name rule filtered them out. The
+script checks that each one is in the package and aborts otherwise. Today that is the graph editor's
+bundled [Vue Flow](https://vueflow.dev) — `app/ui/static/graph_editor/index.js`, `vue-flow.css`,
+`THIRD_PARTY_NOTICES.txt` (MIT · ISC · BSD-3-Clause) and `BUILD.md` (how to rebuild it). It is one ES
+module that imports nothing but `vue`, which NiceGUI already puts in the page's importmap, so the
+editor loads with no network access. The folder is deliberately **not** named `vendor`: that name is
+in `FORBIDDEN_NAMES` to keep runtimes out, and the files would have been dropped.
+
 ### Three things the script refuses to do
 
 1. **Overwrite the target's `conf.json`.** The local file is not shipped at all. The

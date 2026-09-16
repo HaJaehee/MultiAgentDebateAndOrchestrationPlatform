@@ -355,6 +355,21 @@ class TurnRun:
                 f"생략됐습니다 (누적 {self.context_dropped}건)."
             )
 
+        elif etype == "graph_step_started":
+            self.busy = True
+            nodes = " · ".join(n.get("label", "") for n in event.get("nodes", []))
+            self.status_text = self._pending_prefix(
+                f"그래프 {event.get('step', 0)}단계 — {nodes} 발언 중..."
+            )
+            self.round_info = f"Step {event.get('step', 0)}/{event.get('max_steps', 0)}"
+
+        elif etype == "graph_gate_decided":
+            verdict = "예" if event.get("decision") == "yes" else "아니오"
+            self.status_text = self._pending_prefix(
+                f"판정 “{event.get('label', '')}”: {verdict}"
+                + (" (응답을 읽지 못해 기본 갈래)" if event.get("fallback") else "")
+            )
+
         elif etype == "ledger_update_started":
             self.busy = True
             self.status_text = self._pending_prefix(

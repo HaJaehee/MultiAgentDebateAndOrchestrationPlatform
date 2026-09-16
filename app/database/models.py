@@ -49,6 +49,10 @@ class SessionModel(Base):
     # 이 대화가 쓸 작업 공간. 비어 있으면 conf.json 의 WORKSPACE_DIR 기본값을 씁니다.
     # 페르소나와 달리 잠기지 않습니다 — 토론 도중에도 바꿀 수 있어야 합니다.
     workspace_dir: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # 그래프 토론: 이 대화가 쓰는 그래프 파일 id (`data/graphs/<id>.json`), 그리고 **마지막 턴이
+    # 실제로 돈** 그래프. 턴이 시작될 때 굳혀, 토론 중에 파일을 고치거나 지워도 흔들리지 않습니다.
+    graph_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    graph_snapshot: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
@@ -101,6 +105,9 @@ class MessageModel(Base):
     # 요청과 구분되지 않습니다. 추론하면 개입이 있던 턴의 총 경과가 조용히 짧아집니다.
     # 다른 발언은 NULL 이고, 그래서 이 값이 곧 "이 행이 턴을 마무리했다" 는 표시입니다.
     turn_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 그래프 토론에서 이 발언을 낸 노드. 같은 에이전트가 여러 노드에 놓일 수 있어 발언자만으로는
+    # 어느 노드였는지 알 수 없습니다. 그래프 토론이 아니면 NULL.
+    graph_node_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     session: Mapped["SessionModel"] = relationship("SessionModel", back_populates="messages")
     tool_calls: Mapped[List["ToolCallRecordModel"]] = relationship(

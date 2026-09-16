@@ -245,6 +245,22 @@ def create_ui() -> None:
                         type="info",
                         position="bottom-right",
                     )
+            elif etype == "graph_gate_decided":
+                verdict = "예" if event.get("decision") == "yes" else "아니오"
+                ui.notify(
+                    f"판정 “{event.get('label', '')}”: {verdict}"
+                    + (" (응답을 읽지 못해 기본 갈래)" if event.get("fallback") else "")
+                    + (f" — {event.get('reason')}" if event.get("reason") else ""),
+                    type="warning" if event.get("fallback") else "info",
+                    position="bottom-right",
+                )
+            elif etype == "graph_finished" and event.get("reason") in ("idle", "step_cap"):
+                ui.notify(
+                    "그래프가 최종 합성 노드에 닿기 전에 멈춰, 지금까지의 발언으로 합성합니다."
+                    if event.get("reason") == "idle" else
+                    "그래프가 단계 상한에 닿아 지금까지의 발언으로 합성합니다.",
+                    type="warning", position="bottom-right",
+                )
             elif etype == "ledger_update_started":
                 chat_feed.set_busy(
                     True, f"결정 장부 정리 중 ({event.get('reason', '')})...", "Ledger"
@@ -432,6 +448,7 @@ def create_ui() -> None:
                     curr.parallel_limit = roster_control.parallel_limit
                     curr.custom_instructions = roster_control.custom_instructions
                     curr.workspace_dir = roster_control.workspace_dir
+                    curr.graph_id = roster_control.graph_id
                     await db.commit()
 
         async def on_resync_agents() -> None:
@@ -771,6 +788,7 @@ def create_ui() -> None:
                     known_agents=roster_control.known_agent_keys(),
                     custom_instructions=roster_control.custom_instructions,
                     workspace_dir=roster_control.workspace_dir,
+                    graph_id=roster_control.graph_id,
                 )
                 db.add(new_session)
                 await db.commit()
@@ -806,6 +824,7 @@ def create_ui() -> None:
                         workspace_dir=s_obj.workspace_dir or "",
                         session_agents=frozen,
                         decision_ledger=s_obj.decision_ledger or "",
+                        graph_id=s_obj.graph_id or "",
                     )
 
                 # Load messages

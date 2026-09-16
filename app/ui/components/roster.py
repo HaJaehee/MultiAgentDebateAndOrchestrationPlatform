@@ -34,6 +34,7 @@ from app.orchestration.strategies import (
     STRATEGY_MAP,
     order_by_priority,
     resolve_strategy_name,
+    specialists_of,
 )
 from app.ui.components.agent_appearance import AgentAppearanceEditor
 
@@ -131,6 +132,11 @@ class AgentRosterControl:
         # 병렬 지시 전략에서 한 라운드에 동시에 띄울 에이전트 수의 상한.
         # 다른 전략에서는 쓰이지 않으므로 그 전략일 때만 화면에 나옵니다.
         self.parallel_limit: int = 3
+        # 그래프 토론이 쓸 그래프 파일 id (`data/graphs/<id>.json`). 다른 전략에서는 읽히지 않습니다.
+        self.graph_id: str = ""
+        self.graph_row: Optional[ui.column] = None
+        self.graph_select: Optional[ui.select] = None
+        self.graph_status: Optional[ui.label] = None
         self.custom_instructions: str = ""
         # 이 대화의 결정 장부. 오케스트레이터가 쓰고 사람은 읽기만 합니다.
         self.decision_ledger: str = ""
@@ -412,6 +418,25 @@ class AgentRosterControl:
                         )
                     self._sync_parallel_visibility()
 
+                # 그래프 토론 — 그 전략에서만 뜹니다. 편집기(별도 페이지)가 생기기 전까지는 그래프
+                # 파일을 고르고, 검증 결과를 보고, 카드 순서로 새로 만들 수 있습니다.
+                self.graph_row = ui.column().classes("w-full gap-1")
+                with self.graph_row:
+                    with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+                        ui.icon("hub", size="xs").classes("text-teal-400")
+                        ui.label("그래프:").classes("text-xs font-semibold text-slate-300")
+                        self.graph_select = ui.select(
+                            options={}, value=None, on_change=self._on_graph_change,
+                        ).props("outlined dense dark options-dense clearable").classes("w-64 text-xs")
+                        ui.button(
+                            "현재 카드 순서로 만들기", icon="account_tree",
+                            on_click=self._create_graph_from_cards,
+                        ).props("flat dense no-caps size=sm color=teal-4").tooltip(
+                            "참여로 체크한 전문가를 카드 순서대로 일렬로 이은 그래프를 새로 만들어 고릅니다"
+                        )
+                    self.graph_status = ui.label("").classes("text-[10px] leading-snug w-full")
+                self._sync_graph_row()
+
                 # Custom Instructions Input
                 with ui.column().classes("w-full gap-1 mt-1"):
                     ui.label("세션 전용 커스텀 지침 (선택사항):").classes("text-[11px] font-semibold text-slate-400")
@@ -546,6 +571,11 @@ class AgentRosterControl:
             ui.label("발언 순서:").classes(
                 "text-[11px] font-semibold text-slate-400 flex-shrink-0"
             )
+            if strategy is not None and strategy.runs_graph:
+                ui.label(
+                    "그래프가 정합니다 — 참여자·순서·병렬·반복은 아래에서 고른 그래프를 따릅니다"
+                ).classes("text-[11px] text-slate-400")
+                return
             if strategy is None or not speakers:
                 ui.label("참여할 전문가 에이전트가 없습니다").classes(
                     "text-[11px] text-amber-400"
@@ -2120,18 +2150,123 @@ class AgentRosterControl:
     def _on_strategy_change(self, e) -> None:
         self.strategy_name = e.value
         self._sync_parallel_visibility()
+        self._sync_graph_row()
         self._refresh_order_preview()
         if self.on_config_changed:
             ui.timer(0.01, self.on_config_changed, once=True)
 
     def _sync_parallel_visibility(self) -> None:
-        """'동시 실행' 은 병렬 지시 전략에서만 의미가 있습니다."""
+        """'동시 실행' 은 여럿이 동시에 도는 전략(병렬 지시 · 그래프 토론)에서만 의미가 있습니다."""
         if self.parallel_row is None:
             return
         strategy = STRATEGY_MAP.get(self.strategy_name)
         self.parallel_row.set_visibility(
-            bool(strategy and strategy.orchestrator_dispatches_parallel)
+            bool(strategy and (strategy.orchestrator_dispatches_parallel or strategy.runs_graph))
         )
+
+    # ------------------------------------------------------------------ 그래프 토론
+
+    def _graph_agents(self) -> Dict[str, bool]:
+        """검증에 쓸 {에이전트 키: 켜짐}. 엔진과 같은 기준입니다 (`_graph_for_turn`)."""
+        known: Dict[str, bool] = {}
+        try:
+            for key, cfg in get_config().agents.items():
+                if not getattr(cfg, "enabled", True):
+                    known[key] = False
+        except Exception:  # noqa: BLE001 - 설정을 못 읽어도 로스터 기준으로 봅니다
+            logger.debug("Could not read conf.json agents for graph validation", exc_info=True)
+        for agent in self._roster_agents():
+            known[agent.key] = True
+        return known
+
+    def _sync_graph_row(self) -> None:
+        """그래프 줄을 지금 전략·선택에 맞춥니다. 파일은 그때그때 읽습니다 (다른 창에서 고칠 수 있음)."""
+        if self.graph_row is None or self.graph_row.is_deleted:
+            return
+        strategy = STRATEGY_MAP.get(resolve_strategy_name(self.strategy_name))
+        visible = bool(strategy and strategy.runs_graph)
+        self.graph_row.set_visibility(visible)
+        if not visible:
+            return
+
+        from app.graph_store import list_graphs, load_graph
+        from app.orchestration.graph import validate_graph
+
+        options = {graph_id: name for graph_id, name in list_graphs()}
+        if self.graph_id and self.graph_id not in options:
+            options[self.graph_id] = f"(파일 없음) {self.graph_id}"
+        if self.graph_select is not None:
+            self.graph_select.set_options(options, value=self.graph_id or None)
+
+        if not self.graph_id:
+            text, tone = (
+                "그래프를 고르세요. 없으면 ‘현재 카드 순서로 만들기’ 로 시작할 수 있습니다."
+                if options else
+                "아직 그래프가 없습니다. ‘현재 카드 순서로 만들기’ 로 시작하세요."
+            ), "text-amber-400"
+        else:
+            try:
+                report = validate_graph(
+                    load_graph(self.graph_id), self._graph_agents(), default_max_visits=self.max_rounds,
+                )
+                text = report.summary()
+                if report.errors:
+                    text += " — 이대로는 토론을 시작하지 않습니다"
+                elif report.warnings:
+                    text += f" ({report.warnings[0]})"
+                tone = "text-red-400" if report.errors else ("text-amber-400" if report.warnings else "text-teal-300")
+            except FileNotFoundError:
+                text, tone = f"data/graphs/{self.graph_id}.json 파일이 없습니다", "text-red-400"
+            except ValueError as exc:
+                text, tone = f"그래프를 읽지 못했습니다: {exc}", "text-red-400"
+        if self.graph_status is not None:
+            self.graph_status.set_text(
+                text + " · 그래프 토론은 그래프에 놓인 에이전트가 참여합니다 (체크박스와 무관)"
+            )
+            # `classes(replace=...)` 는 NiceGUI 의 구조 클래스까지 지웁니다 (chat_feed 의 같은 주의).
+            self.graph_status.classes(
+                remove="text-red-400 text-amber-400 text-teal-300", add=tone,
+            )
+
+    def _on_graph_change(self, e) -> None:
+        self.graph_id = e.value or ""
+        self._sync_graph_row()
+        if self.on_config_changed:
+            ui.timer(0.01, self.on_config_changed, once=True)
+
+    def _create_graph_from_cards(self) -> None:
+        """참여로 체크한 전문가를 카드 순서대로 이은 그래프를 만들어 고릅니다."""
+        from datetime import datetime
+
+        from app.graph_store import free_graph_id, save_graph
+        from app.orchestration.graph import graph_from_card_order
+
+        selected = [
+            a for a in self._roster_agents()
+            if a.key == ORCHESTRATOR_KEY or self.selected_agents.get(a.key, True)
+        ]
+        keys = [a.key for a in order_by_priority(specialists_of(selected))]
+        if not keys:
+            ui.notify("참여로 체크한 전문가 에이전트가 없습니다.", type="warning", position="bottom-right")
+            return
+        spec = graph_from_card_order(
+            free_graph_id("cards"),
+            f"카드 순서 · {len(keys)}명 ({datetime.now().strftime('%m-%d %H:%M')})",
+            keys,
+        )
+        try:
+            save_graph(spec)
+        except OSError as exc:
+            ui.notify(f"그래프 파일을 저장하지 못했습니다: {exc}", type="negative", position="bottom-right")
+            return
+        self.graph_id = spec.id
+        self._sync_graph_row()
+        ui.notify(
+            f"‘{spec.name}’ 그래프를 만들어 골랐습니다 (data/graphs/{spec.id}.json).",
+            type="positive", position="bottom-right",
+        )
+        if self.on_config_changed:
+            ui.timer(0.01, self.on_config_changed, once=True)
 
     def _on_parallel_limit_change(self, e) -> None:
         # 빈 칸으로 지우는 중이면 (`None`) 마지막 값을 지킵니다. 0 이나 음수는
@@ -2230,6 +2365,7 @@ class AgentRosterControl:
         known_keys: Optional[List[str]] = None,
         session_agents: Optional[List[Agent]] = None,
         decision_ledger: str = "",
+        graph_id: str = "",
     ) -> None:
         self.agent_pool = get_agent_pool()
         # 잠금 여부와 스냅샷이 선택 규칙과 카드 목록을 함께 정하므로 먼저 반영합니다.
@@ -2263,6 +2399,9 @@ class AgentRosterControl:
         if self.custom_instr_input:
             self.custom_instr_input.value = instructions
         self.set_decision_ledger(decision_ledger)
+        self.graph_id = graph_id or ""
+        self._sync_parallel_visibility()
+        self._sync_graph_row()
         if self.workspace_input:
             self.workspace_input.value = self.workspace_dir
         self._refresh_workspace_hint()

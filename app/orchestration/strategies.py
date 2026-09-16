@@ -54,6 +54,10 @@ class BaseDebateStrategy(ABC):
     # 오케스트레이터가 결과를 취합합니다. False 면 한 명씩 순서대로 돕니다.
     orchestrator_dispatches_parallel: bool = False
 
+    # 순서 대신 사람이 그린 그래프를 따라 도는 전략인지. True 면 엔진이 라운드 루프 대신
+    # 그래프 스케줄러로 돕니다 (`OrchestratorEngine._run_graph`, `app/orchestration/graph.py`).
+    runs_graph: bool = False
+
     @property
     @abstractmethod
     def name(self) -> str:
@@ -251,11 +255,33 @@ class ParallelDispatchStrategy(BaseDebateStrategy):
         )
 
 
+class GraphDebateStrategy(BaseDebateStrategy):
+    """그래프 토론: 에이전트를 선으로 이어 누구의 출력이 누구의 입력이 되는지 사람이 그립니다.
+
+    순서·진영·지명·분배 대신 그래프가 정합니다 — 병렬(한 노드에서 여러 노드로 갈라짐), 합류
+    (취합 노드), 반복(판정 노드의 "아니오" 선). 참여자도 그래프에 놓인 에이전트입니다.
+
+    실제 실행은 엔진이 합니다 (`runs_graph`). 여기 있는 순서는 로스터 미리보기에서 그래프를
+    읽지 못했을 때 보여 줄 기본값일 뿐, 토론에 쓰이지 않습니다.
+    """
+
+    name = "graph_debate"
+    display_name = "그래프 토론 (Graph)"
+    runs_graph = True
+
+    def get_speakers_for_round(
+        self, active_agents: List[Agent], round_num: int, state: DebateState
+    ) -> List[Agent]:
+        specialists = order_by_priority(specialists_of(active_agents))
+        return specialists if specialists else active_agents
+
+
 STRATEGY_MAP = {
     "sequential_debate": SequentialDebateStrategy(),
     "adversarial_debate": AdversarialDebateStrategy(),
     "orchestrator_led": OrchestratorLedStrategy(),
     "parallel_dispatch": ParallelDispatchStrategy(),
+    "graph_debate": GraphDebateStrategy(),
 }
 
 DEFAULT_STRATEGY = "sequential_debate"

@@ -93,6 +93,21 @@ PACKAGE_FILES: list[tuple[str, str]] = [
     ("mcp_node/memory-scoped.mjs", "mcp_node/memory-scoped.mjs"),
 ]
 
+# 반드시 패키지에 들어 있어야 하는 파일. 모두 SOURCE_DIRS(app/) 안에 있어 따로 담지는 않지만
+# (PACKAGE_FILES 에 또 적으면 두 번 들어갑니다), 빠지면 폐쇄망에서 기능이 조용히 죽는 것들이라
+# 패키징할 때 확인합니다. 아래 무시·금지 규칙이 바뀌어 이 파일들이 걸러지면 패키징을 멈춥니다.
+#
+# graph_editor/ 는 그래프 토론 편집기가 쓰는 Vue Flow 묶음입니다. CDN 을 쓸 수 없는 망이라
+# 저장소에 싣습니다 (다시 만드는 법: app/ui/static/graph_editor/BUILD.md). 라이선스 고지는
+# 배포물과 함께 다녀야 합니다 (MIT · ISC · BSD-3-Clause). 폴더 이름을 `vendor` 로 하면 아래
+# FORBIDDEN_NAMES 에 걸립니다.
+REQUIRED_PACKAGE_PATHS: list[str] = [
+    "app/ui/static/graph_editor/index.js",
+    "app/ui/static/graph_editor/vue-flow.css",
+    "app/ui/static/graph_editor/THIRD_PARTY_NOTICES.txt",
+    "app/ui/static/graph_editor/BUILD.md",
+]
+
 # 디렉터리를 복사할 때 건너뛸 것들. 소스 트리 안에 런타임 부스러기가 섞이는 것을 막습니다.
 IGNORE_PATTERNS = [
     "__pycache__", "*.pyc", "*.pyo", "*.egg-info",
@@ -277,6 +292,14 @@ def main() -> None:
 
     if not items:
         sys.exit("담을 파일이 없습니다. 프로젝트 루트에서 실행하고 있습니까?")
+
+    packed = {rel for _src, rel in items}
+    missing = [path for path in REQUIRED_PACKAGE_PATHS if path not in packed]
+    if missing:
+        log("\n[중단] 반드시 담겨야 할 파일이 빠졌습니다:")
+        for path in missing:
+            log(f"  {path}")
+        sys.exit("파일이 있는지, 무시·금지 규칙(IGNORE_PATTERNS · FORBIDDEN_NAMES)에 걸리지 않는지 확인하세요.")
 
     # --- 2. 검사 -------------------------------------------------------------
     limit = int(args.max_file_mb * 1024 * 1024)

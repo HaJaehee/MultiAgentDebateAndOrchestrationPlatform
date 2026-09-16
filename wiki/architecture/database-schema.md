@@ -108,6 +108,8 @@ Represents a single multi-agent collaboration workspace or discussion thread.
 | `summary_through_id` | `VARCHAR(36)` | Yes | `NULL` | Id of the last message the summary covers; a summary whose anchor is missing is discarded. |
 | `personas_locked` | `BOOLEAN` | No | `False` | Locks session personas once the first user message is received. |
 | `workspace_dir` | `TEXT` | No | `''` | Workspace this conversation uses; empty means the `conf.json` default. Unlike personas it never locks — it must be changeable mid-debate. |
+| `graph_id` | `VARCHAR(64)` | No | `''` | Graph file (`data/graphs/<id>.json`) used by the graph debate strategy. |
+| `graph_snapshot` | `JSON` | Yes | `NULL` | The graph the latest turn actually ran, frozen at turn start — editing or deleting the file mid-debate does not affect it. |
 | `created_at` | `DATETIME` | No | `utc_now` | UTC creation timestamp. |
 | `updated_at` | `DATETIME` | No | `utc_now` | UTC last updated timestamp. |
 
@@ -128,6 +130,7 @@ Stores the sequential transcript of messages exchanged during a debate.
 | `started_at` | `DATETIME` | Yes | - | Wall-clock time the speech actually started (taken before the stream opens). |
 | `finished_at` | `DATETIME` | Yes | - | Wall-clock time the speech actually finished, including a speech that ended in failure. Taken outside the write lock, so waiting to commit is not counted. |
 | `turn_started_at` | `DATETIME` | Yes | - | Set **only** on the synthesis speech that closed a turn: when that turn's opening request was recorded. `finished_at - turn_started_at` is the turn's total elapsed time, shown in the report footer and the Markdown export. Recorded explicitly rather than inferred, because an interjection right after planning is also a `user` row with `round_number=0`. `NULL` elsewhere, which also marks the row that closed a turn. |
+| `graph_node_id` | `VARCHAR(64)` | Yes | - | Graph debate only: the node that produced this message. Needed because one agent can sit on several nodes. |
 
 `started_at` equals `finished_at` for records that take no time (a person's message, a speaker-selection note). Both are `NULL` for rows written before v0.6.1.2: the migration deliberately adds them without a default, because backfilling would make every old speech appear to start and finish at the moment of migration. The chat feed and the Markdown export show such rows with the single `created_at` value and without calling it a start or an end ([`app/timestamps.py` `speech_timing`](file:///d:/MultiAgentOrchestrator/app/timestamps.py)).
 
@@ -265,7 +268,8 @@ skipped entirely for a table `create_all` just created.
 ```python
 _ADDED_COLUMNS = {
     "sessions": {"personas_locked": ..., "workspace_dir": ..., "known_agents": ..., "parallel_limit": ...,
-                 "decision_ledger": ..., "ledger_through_id": ..., "transcript_summary": ..., "summary_through_id": ...},
+                 "decision_ledger": ..., "ledger_through_id": ..., "transcript_summary": ..., "summary_through_id": ...,
+                 "graph_id": ..., "graph_snapshot": ...},
     "session_agents": {"config_snapshot": "TEXT",
                        "card_color": "VARCHAR(40) NOT NULL DEFAULT ''",
                        "icon_path": "TEXT NOT NULL DEFAULT ''"},

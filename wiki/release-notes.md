@@ -6,6 +6,27 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.9.0
+
+**Graph debate — engine (a fifth strategy).** Agents can be wired into a graph: who feeds whom, parallel
+branches, joins, and review loops closed by yes/no gates. Graphs live in `data/graphs/<id>.json`; a
+session picks one and each turn freezes it. Nodes run in supersteps, see only what their incoming
+wires carry (full text, digest or code references), and loops stop at gates, per-node visit caps or the
+step cap. Invalid graphs — including a loop that bypasses every gate — are refused before the request
+is recorded. For now the roster offers a graph picker, the validation summary and "현재 카드 순서로
+만들기"; the canvas editor is next. The card sort and the other four strategies are unchanged.
+→ [Debate Strategies §2.5](orchestration/debate-strategies.md)
+
+**Graph editor library, bundled for air-gapped networks.** [Vue Flow](https://vueflow.dev) 1.48.2 and its
+dependencies are shipped as one ES module in `app/ui/static/graph_editor/` (156 KB) that imports nothing but
+`vue`, which NiceGUI already provides — the editor needs no CDN. A spike page confirmed nodes render,
+dragging and wiring work, Korean text round-trips and every request stays on the local server. The
+licence notices (MIT · ISC · BSD-3-Clause) and rebuild instructions travel with it, and
+`package_source.py` now aborts if any of these required files is missing from the package.
+→ [Air-Gapped Packaging](operations/airgap-packaging.md)
+
+---
+
 ## v0.8.3
 
 **Long conversations no longer forget what the user said.** Every speaker's context carried the whole
