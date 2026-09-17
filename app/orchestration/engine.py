@@ -682,6 +682,7 @@ class OrchestratorEngine:
         post_process: Optional[Callable[[str], Coroutine[Any, Any, str]]] = None,
         turn_started_at: Optional[datetime] = None,
         graph_node_id: Optional[str] = None,
+        graph_port: Optional[str] = None,
     ) -> DebateMessage:
         """한 에이전트의 발언을 스트리밍하고, DB 에 기록하고, 상태에 반영합니다.
 
@@ -724,6 +725,7 @@ class OrchestratorEngine:
                     "msg_type": msg_type,
                     "started_at": started_at,
                     "graph_node_id": graph_node_id,
+                    "graph_port": graph_port,
                 },
             })
 
@@ -885,6 +887,7 @@ class OrchestratorEngine:
                 finished_at=finished_at,
                 turn_started_at=turn_started_at,
                 graph_node_id=graph_node_id,
+                graph_port=graph_port,
                 **({"created_at": created_at} if created_at is not None else {}),
             )]
             for call_log in executed_tools:
@@ -940,6 +943,7 @@ class OrchestratorEngine:
             finished_at=finished_at,
             turn_started_at=turn_started_at,
             graph_node_id=graph_node_id,
+            graph_port=graph_port,
         )
         state.messages.append(message)
 
@@ -1251,6 +1255,7 @@ class OrchestratorEngine:
                         round_number=pm.round_number,
                         msg_type=pm.msg_type,
                         graph_node_id=pm.graph_node_id,
+                        graph_port=pm.graph_port,
                     )
                 )
             # 여기서부터가 이번 턴입니다. 산출물은 이 뒤의 발언에서만 모읍니다.
@@ -1649,6 +1654,7 @@ class OrchestratorEngine:
         round_number: int,
         msg_type: str,
         graph_node_id: Optional[str] = None,
+        graph_port: Optional[str] = None,
         created_at: Optional[datetime] = None,
     ) -> DebateMessage:
         """LLM 발언이 아닌 기록을 남깁니다 (지명 결과, 지명 실패 안내 등).
@@ -1673,6 +1679,7 @@ class OrchestratorEngine:
                 started_at=now,
                 finished_at=now,
                 graph_node_id=graph_node_id,
+                graph_port=graph_port,
                 **({"created_at": created_at} if created_at is not None else {}),
             )],
             what=f"a note from {agent.name}",
@@ -1695,6 +1702,7 @@ class OrchestratorEngine:
             started_at=now,
             finished_at=now,
             graph_node_id=graph_node_id,
+            graph_port=graph_port,
         )
         state.messages.append(message)
         if on_event:
@@ -2334,6 +2342,8 @@ class OrchestratorEngine:
                 "graph_id": spec.id,
                 "name": spec.name or spec.id,
                 "nodes": [{"id": n.id, "type": n.type, "label": n.display} for n in spec.nodes],
+                # 화면이 이번 턴에 실제로 도는 그림을 그립니다 (파일은 턴 도중에 바뀔 수 있습니다).
+                "spec": spec.dump(),
                 "max_steps": max_steps,
             })
         scheduler.deliver(spec.start.id, "out", start_value)
@@ -2489,6 +2499,7 @@ class OrchestratorEngine:
                     db_lock=db_lock,
                     created_at=created_at,
                     graph_node_id=node.id,
+                    graph_port="out",
                 )
                 return "out", [message.id]
 
@@ -2515,6 +2526,7 @@ class OrchestratorEngine:
                 note = await self._record_note(
                     db=db, state=state, on_event=on_event, agent=orchestrator,
                     round_number=step, msg_type="error", graph_node_id=node.id,
+                    graph_port=node.default if node.type == "gate" else "out",
                     content=(
                         f"> ⚠️ **그래프 노드 “{node.display}” 가 실패했습니다.**\n>\n"
                         f"> - 원인: `{type(result).__name__}: {result}`\n>\n"
@@ -2725,7 +2737,7 @@ class OrchestratorEngine:
         async with db_lock:
             note = await self._record_note(
                 db=db, state=state, on_event=on_event, agent=orchestrator,
-                round_number=step, msg_type="orchestrator", graph_node_id=node.id,
+                round_number=step, msg_type="orchestrator", graph_node_id=node.id, graph_port=decision,
                 content=content_text, created_at=created_at,
             )
         if on_event:

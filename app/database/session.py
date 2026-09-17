@@ -24,6 +24,7 @@ _ADDED_COLUMNS = {
         "turn_started_at": "DATETIME",
         # 그래프 토론의 노드 (v0.9.0). 그 밖의 발언은 NULL.
         "graph_node_id": "VARCHAR(64)",
+        "graph_port": "VARCHAR(8)",
     },
     "sessions": {
         "personas_locked": "BOOLEAN NOT NULL DEFAULT 0",

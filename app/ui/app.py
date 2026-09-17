@@ -22,6 +22,7 @@ from app.agents.personas import (
 from app.config import resolve_workspace_dir
 from app.database.models import ArtifactModel, MessageModel, SessionModel
 from app.database.session import get_session_factory
+from app.orchestration.graph_run import GraphRunTracker, last_graph_turn, node_labels
 from app.orchestration.runner import TurnRun, get_debate_runner
 from app.orchestration.strategies import resolve_strategy_name
 from app.session_ops import discard_turn
@@ -70,6 +71,8 @@ def create_ui() -> None:
         # 이 페이지가 붙어 있는 백그라운드 토론의 구독. 페이지가 사라지면 구독만
         # 끊고 토론은 계속 굴러갑니다.
         consumer_task: Optional[asyncio.Task] = None
+        # 그래프 토론의 실행 표시. 이벤트와 기록 둘 다 이것 하나로 모읍니다 (graph_run.py).
+        graph_tracker: Optional[GraphRunTracker] = None
         subscription: Optional["asyncio.Queue[Dict[str, Any]]"] = None
         subscribed_run: Optional[TurnRun] = None
 
@@ -87,7 +90,19 @@ def create_ui() -> None:
 
         async def apply_event(event: Dict[str, Any]) -> None:
             """백그라운드 토론 이벤트를 이 화면에 반영합니다."""
+            nonlocal graph_tracker
             etype = event.get("type")
+
+            # 그래프 실행 표시. 카드가 그려지기 전에 노드 이름을 알아야 배지가 붙습니다.
+            if etype == "graph_started":
+                graph_tracker = GraphRunTracker()
+                chat_feed.set_graph_labels(node_labels(event.get("spec")))
+            if graph_tracker is not None:
+                changed = graph_tracker.observe(event)
+                if etype in ("turn_completed", "run_finished"):
+                    roster_control.set_graph_run(graph_tracker, active=False)
+                elif changed:
+                    roster_control.set_graph_run(graph_tracker, active=True)
 
             if etype == "status_changed":
                 speaker = event.get("speaker", "")
@@ -796,7 +811,10 @@ def create_ui() -> None:
 
         async def load_session_state(sid: str) -> None:
             """세션 화면을 DB 기록과 진행 중인 토론 스냅샷으로 다시 구성합니다."""
+            nonlocal graph_tracker
             detach_from_run()
+            graph_tracker = None
+            graph_spec: Optional[Dict[str, Any]] = None
             chat_feed.clear()
             artifact_viewer.render_artifacts([])
 
@@ -811,6 +829,7 @@ def create_ui() -> None:
                     # 잠긴 대화는 잠글 때 굳은 에이전트로 로스터를 그립니다.
                     # conf.json 에서 지워진 에이전트도 이 대화에서는 계속 발언합니다.
                     frozen = await session_roster_agents(db, s_obj, pool)
+                    graph_spec = s_obj.graph_snapshot or None
                     roster_control.load_from_session(
                         active_keys=s_obj.active_agents or [],
                         known_keys=s_obj.known_agents or [],
@@ -849,6 +868,8 @@ def create_ui() -> None:
                         "started_at": m.started_at,
                         "finished_at": m.finished_at,
                         "turn_started_at": m.turn_started_at,
+                        "graph_node_id": m.graph_node_id,
+                        "graph_port": m.graph_port,
                         "tool_calls": [
                             {
                                 "tool_name": tc.tool_name,
@@ -890,6 +911,19 @@ def create_ui() -> None:
                 if snapshot["artifacts"]:
                     # 스냅샷은 이번 턴 것뿐입니다. 덮어쓰면 이전 턴 산출물이 화면에서 사라집니다.
                     formatted_arts = merge_artifacts(formatted_arts, snapshot["artifacts"])
+
+            # 그래프 토론의 실행 표시와 노드 배지. 도는 중이면 러너가 들고 있는 그래프와 진행 상태를,
+            # 끝났으면 그 턴에 굳힌 그래프(`sessions.graph_snapshot`)와 기록을 씁니다.
+            graph_state = snapshot.get("graph") if running else None
+            if graph_state and graph_state.get("spec"):
+                graph_spec = graph_state["spec"]
+            chat_feed.set_graph_labels(node_labels(graph_spec))
+            if graph_spec:
+                # 도는 중이면 러너가 모은 이번 턴 발언을 씁니다. DB 기록을 합성 발언으로 잘라 내면, 합성이
+                # 막 기록되고 턴이 아직 닫히지 않은 순간에 이번 턴이 통째로 "지난 턴" 쪽으로 넘어갑니다.
+                history = snapshot["messages"] if running else last_graph_turn(formatted_msgs, running=False)
+                graph_tracker = GraphRunTracker.from_history(graph_spec, history, state=graph_state)
+            roster_control.set_graph_run(graph_tracker, active=running)
 
             if formatted_msgs:
                 chat_feed.render_all(formatted_msgs, streaming_ids=streaming_ids)

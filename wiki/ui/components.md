@@ -110,6 +110,48 @@ The web application workspace is organized into four primary UI components in [a
   `orchestrator_dispatches_parallel` — every other strategy runs one speaker at a time and would
   never read it, and a control that does nothing is worse than no control. Lower it for a local
   single-GPU endpoint.
+- **그래프 row (v0.9.0)**: shown only for 그래프 토론. A graph picker, a status line with the
+  validation summary, **그래프 편집** (enabled once a graph is picked), **새 그래프** (saves a
+  start → end graph, stores the choice on the session, then opens the editor) and **현재 카드 순서로
+  만들기**. While this row is visible the participation checkboxes show whether each agent is placed in
+  the graph and are disabled — in this strategy the graph decides who takes part, and a checkbox that
+  changes nothing would mislead. Below it: a read-only preview of the graph, a one-line run summary and
+  **크게 보기** — see §1.2.2.
+
+### 1.2.2. Graph execution overlay (v0.9.0)
+
+- **What is drawn**: the preview canvas (`GraphCanvas(readonly=True)`) and the 크게 보기 dialog show the
+  same run state, pushed with `set_run(view)` from `GraphRunTracker.view()`:
+  - nodes: running (amber border that pulses; a steady ring under `prefers-reduced-motion`), done
+    (chip `✓`, `✓ ×2`), gate verdict (chip `예` / `아니오`, with visit count), failed (`⚠ 실패`), not run
+    yet (dimmed), and a `상한` badge when a node hit its visit cap;
+  - wires: flowed (thicker), flowing into a running node (amber, animated), not flowed (faded); a gate wire
+    that flowed is labelled `예 ✓` / `아니오 ✓`.
+- **Which graph**: while a turn runs, the graph frozen for that turn (the file may change mid-turn).
+  Afterwards the selected file, with the last turn's state only if the file still equals that turn's
+  snapshot — an old picture on an edited graph would show wires flowing that no longer exist
+  ("지난 턴 이후 그래프가 바뀌어 실행 표시를 지웠습니다").
+- **Summary line**: `N단계 진행 중 — 구현, 보안 검토`, `N단계 마침 — 다음 단계 준비 중` (between steps),
+  `N단계에서 끝남 · 최종 합성 노드에 닿음 — 최종 합성 중`, and `지난 턴 · N단계까지 실행` once finished.
+- **Refresh**: the page rebuilds the tracker from the runner snapshot (its `graph` state and this turn's
+  messages) while a turn runs, otherwise from the database and `sessions.graph_snapshot`. Slicing database
+  messages at the last synthesis during a run was wrong: the synthesis is written a moment before the turn
+  closes, and a page loaded in between drew an empty graph.
+- **Chat badges**: cards from a graph node get `구현 · 2회차`, `판정 · 아니오`, `구현 · 방문 상한`
+  (`NodeBadges`, counted per turn in record order); the round badge reads `Step N`. The Markdown export
+  writes the same name after the speaker (`— 노드 “구현 · 2회차”`), a `그래프` row in the header and
+  `N단계` headings.
+- **Lessons**:
+  - Update Vue Flow nodes and edges **in place**. Replacing them with new objects of the same id leaves
+    them unmeasured (0 × 0) and `fitView` does nothing.
+  - Measure after layout settles. A canvas created during the dialog's open transition read every handle
+    at 0,0, so wires started at the node's top edge; the dialog canvas is drawn on `show`, and `fit()`
+    calls `updateNodeInternals()` first. (In the automated browser pane, hidden pages run no animation
+    frames, so measurements there stay 0 until a frame is drawn — not a product bug.)
+  - Backward wires (a gate's `아니오` back to an earlier node) use a `loop` edge that dips below the nodes
+    it spans; the default curve ran straight behind the node row and hid its label.
+  - The roster width limits a wide graph to about 30 % zoom, so extra height does not help — hence a
+    dialog, not a taller preview.
 - **Custom Instructions Box**: Allows injecting ad-hoc guidelines into all agent prompts for the current session.
 - **결정 장부 (Decision Ledger, v0.8.3)**: a read-only expansion directly under the custom instructions
   box, captioned with its character count (`비어 있음` when empty). The orchestrator rewrites it after
@@ -595,3 +637,34 @@ websocket is not re-checked when a cookie reaches its 7-day expiry; the next rec
 - **Lock Banner**: If the session has already begun (`personas_locked = true`), inputs are disabled, displaying a read-only warning badge.
 - **In-Progress Banner**: If a debate is running for this session, a banner says so and states that
   opening this page does not interrupt it. Navigating here used to kill the running turn.
+
+### 1.6. Graph Editor Page ([app/ui/graph_page.py](file:///d:/MultiAgentOrchestrator/app/ui/graph_page.py))
+
+- Page at `/graphs/{graph_id}` editing `data/graphs/<id>.json` for the graph debate strategy
+  ([debate-strategies.md §2.5](../orchestration/debate-strategies.md)).
+- **Layout**: header (back, file path, graph name, `저장 안 됨` badge, 검증, 다른 이름으로 저장, 저장) ·
+  left palette (flow nodes, one button per enabled specialist with its colour, 카드 순서로 다시 채우기,
+  화면 맞춤) · canvas · right inspector with the validation report underneath.
+- **Canvas** ([graph_canvas.js](file:///d:/MultiAgentOrchestrator/app/ui/components/graph_canvas.js),
+  [graph_canvas.py](file:///d:/MultiAgentOrchestrator/app/ui/components/graph_canvas.py)): Vue Flow from
+  the bundled `app/ui/static/graph_editor/` module, loaded with `ui.element(component=..., esm=...)`.
+  Nodes show a type band (the agent's badge colour for agent nodes), badges for visit cap and "모두
+  기다림", a title and a subtitle. Wire colour is the carry (전문 indigo · 요지 teal · 참조 amber); a gate's
+  `no` wire is dashed. Invalid connections are refused while dragging: self-loops, into `start`, and
+  duplicates. Delete/Backspace removes the selection.
+- **The browser holds the edit state.** The server hears only `select` (to fill the inspector), one
+  `dirty` event when a clean graph first changes, and reads `getGraph()` on 검증 or 저장. Inspector edits
+  go back with `updateNode` / `updateEdge`. Sending every drag event would flood the websocket
+  ([roster-editing.md §5.2](../agents/roster-editing.md)). `beforeunload` asks before leaving unsaved
+  changes.
+- **Conversion** is pure Python and tested without a browser: `spec_to_canvas` places nodes without
+  `pos` by distance from `start`, and `canvas_to_spec` keeps only the fields each node type uses.
+- **Save** always writes, even with validation errors, so a half-built graph is not lost; the
+  notification carries the report and the engine refuses the graph at turn start until it is fixed.
+  The report uses a visit cap of 3 for nodes without one, since the page has no session.
+- **Lessons**:
+  - Fit view is re-run by a `ResizeObserver` until the user pans or zooms. The first render happens
+    before the canvas has a size, and the view fitted to 0 × 0 left most nodes off-screen.
+  - Vue Flow re-checks **every existing wire** with `is-valid-connection` whenever the edge list is
+    replaced, and drops those that fail. The duplicate check must ignore the wire's own `id`; without
+    that, connecting one new wire erased all the others.

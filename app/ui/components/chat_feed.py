@@ -4,6 +4,7 @@ import time
 from typing import Any, Callable, Coroutine, Dict, Iterable, List, Optional, Set, Tuple
 from nicegui import ui
 from app.agents.base import style_for_agent
+from app.orchestration.graph_run import NodeBadges
 from app.timestamps import format_duration, speech_time_text, speech_timing
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.mention_input import MENTION_INPUT_CLASS, MENTION_QUERY_EVENT
@@ -260,6 +261,8 @@ class ChatFeed:
         # 사람이 편 것이 아니라 기본 상태이고, 그것까지 세면 토론이 도는 동안
         # 자동 스크롤이 영영 꺼집니다.
         self._user_expanded: Set[str] = set()
+        # 그래프 토론 발언에 붙는 노드 배지 ("구현 · 2회차"). 이름은 화면이 그 대화의 그래프에서 줍니다.
+        self._node_badges = NodeBadges()
         # 사람이 직접 스크롤을 움직였는지. 카드를 접고 나서도 쏟아지는 출력을
         # 거슬러 올라가려면 이것이 필요합니다 — 펼침 여부와 무관하게, 휠을
         # 굴리는 것 자체가 "내가 볼 곳은 내가 정한다" 는 뜻입니다.
@@ -883,7 +886,12 @@ class ChatFeed:
 
     # ------------------------------------------------------------------ 렌더링
 
+    def set_graph_labels(self, labels: Dict[str, str]) -> None:
+        """노드 배지에 쓸 {노드 id: 이름}. 대화를 열 때와 그래프가 돌기 시작할 때 받습니다."""
+        self._node_badges.set_labels(labels)
+
     def clear(self) -> None:
+        self._node_badges.reset()
         self._active_streams.clear()
         self._stop_pending = False
         # 카드가 사라지므로 펼침 기억도 함께 버립니다. 남겨 두면 다음 대화가
@@ -911,6 +919,7 @@ class ChatFeed:
         if not self.alive:
             return
         streaming: Set[str] = set(streaming_ids or ())
+        self._node_badges.reset()
         self._active_streams.clear()
         self._user_expanded.clear()
         self._scroll_detached = False
@@ -1188,6 +1197,8 @@ class ChatFeed:
         msg_type = msg.get("msg_type", "agent")
         round_num = msg.get("round_number", 0)
         tool_calls = msg.get("tool_calls", [])
+        # 기록 순서대로 불려야 방문 횟수가 맞습니다 — 카드는 늘 그 순서로 그려집니다.
+        node_badge = self._node_badges.observe(msg)
 
         style = self._style_for(sender_key)
 
@@ -1225,8 +1236,14 @@ class ChatFeed:
                         time_label.set_visibility(bool(time_text))
 
                 with ui.row().classes("items-center gap-1 no-wrap flex-shrink-0"):
+                    if node_badge:
+                        ui.badge(node_badge, color="teal-10").props("dense text-[10px]").classes(
+                            "text-teal-100"
+                        ).tooltip("그래프 토론에서 이 발언을 낸 노드")
                     if round_num > 0:
-                        ui.badge(f"Round {round_num}", color="slate-700").props("dense text-[10px]")
+                        # 그래프 토론의 라운드는 단계입니다 (상태 줄의 "N단계" 와 같은 수).
+                        round_word = "Step" if msg.get("graph_node_id") else "Round"
+                        ui.badge(f"{round_word} {round_num}", color="slate-700").props("dense text-[10px]")
                     ui.button(
                         icon="content_copy", on_click=lambda: self._copy_card(info)
                     ).props("flat dense round size=sm color=slate-4").tooltip(

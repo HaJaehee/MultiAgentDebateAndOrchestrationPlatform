@@ -21,6 +21,7 @@ from app.mcp.manager import get_mcp_manager
 from app.mcp.pool import get_runtime_pool
 from app.orchestration.runner import get_debate_runner
 from app.ui.app import create_ui
+from app.ui.graph_page import create_graph_page
 from app.ui.personas_page import create_personas_page
 
 # Logging Configuration
@@ -275,6 +276,7 @@ from app.ui.theme import FAVICON_SVG
 # 2. Build NiceGUI Application
 create_ui()
 create_personas_page()
+create_graph_page()
 ui.run_with(
     server,
     title=APP_NAME,

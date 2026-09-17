@@ -538,6 +538,7 @@ class SessionSidebar:
                     "active_agents": session_obj.active_agents or [],
                     "custom_instructions": session_obj.custom_instructions or "",
                     "workspace_dir": session_obj.workspace_dir or "",
+                    "graph_snapshot": session_obj.graph_snapshot,
                     "created_at": session_obj.created_at,
                     "updated_at": session_obj.updated_at,
                 }
@@ -560,6 +561,8 @@ class SessionSidebar:
                         "started_at": m.started_at,
                         "finished_at": m.finished_at,
                         "turn_started_at": m.turn_started_at,
+                        "graph_node_id": m.graph_node_id,
+                        "graph_port": m.graph_port,
                         "tool_calls": [
                             {
                                 "tool_name": tc.tool_name,

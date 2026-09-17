@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Set
 from app.config import resolve_workspace_dir
 from app.orchestration.control import TurnControl
 from app.orchestration.engine import OrchestratorEngine, get_orchestrator_engine
+from app.orchestration.graph_run import GraphRunTracker
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,10 @@ class TurnRun:
         # 이번 턴에 갱신된 결정 장부. None 이면 아직 갱신되지 않은 것이고, 화면은 DB 의
         # 값을 그대로 씁니다 (장부는 턴이 끝날 때 저장됩니다).
         self.decision_ledger: Optional[str] = None
+
+        # 그래프 토론이면 어느 노드가 돌고 있는지. 새로고침한 화면이 실행 표시를 다시 그립니다.
+        # 방문 횟수와 판정 갈래는 발언 기록에서 세므로, 여기에는 기록으로 알 수 없는 것만 있습니다.
+        self.graph: Optional[GraphRunTracker] = None
 
     @property
     def budget_request(self) -> Optional[Dict[str, Any]]:
@@ -203,6 +208,10 @@ class TurnRun:
     def apply(self, event: Dict[str, Any]) -> None:
         """이벤트를 정본 스냅샷에 반영합니다. 새로 붙는 화면이 이걸 그립니다."""
         etype = event.get("type")
+        if etype == "graph_started":
+            self.graph = GraphRunTracker()
+        if self.graph is not None:
+            self.graph.observe(event)
 
         if etype == "status_changed":
             speaker = event.get("speaker", "")
@@ -456,6 +465,7 @@ class TurnRun:
             "budget_request": dict(self.decision_request) if self.decision_request else None,
             "context_dropped": self.context_dropped,
             "decision_ledger": self.decision_ledger,
+            "graph": self.graph.to_state() if self.graph is not None else None,
         }
 
 

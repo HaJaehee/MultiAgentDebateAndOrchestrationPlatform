@@ -137,6 +137,26 @@ class AgentRosterControl:
         self.graph_row: Optional[ui.column] = None
         self.graph_select: Optional[ui.select] = None
         self.graph_status: Optional[ui.label] = None
+        self.graph_edit_btn: Optional[ui.button] = None
+        # 그래프 미리보기와 실행 표시. 실행 상태의 근거는 `GraphRunTracker` 하나입니다 (graph_run.py).
+        self.graph_preview_box: Optional[ui.element] = None
+        self.graph_run_label: Optional[ui.label] = None
+        self.graph_size_btn: Optional[ui.button] = None
+        self._graph_canvas: Optional[Any] = None
+        self._graph_preview_key: Optional[str] = None
+        # "크게 보기" 대화상자. 로스터 칸은 좁아 넓은 그래프가 읽히지 않을 만큼 작아집니다. 열려 있는 동안
+        # 미리보기와 같은 실행 상태를 받습니다.
+        self._graph_dialog: Optional[ui.dialog] = None
+        self._graph_dialog_box: Optional[ui.element] = None
+        self._graph_dialog_label: Optional[ui.label] = None
+        self._graph_dialog_canvas: Optional[Any] = None
+        self._graph_dialog_key: Optional[str] = None
+        # 열리는 전환 효과가 끝난 뒤에야 캔버스를 그립니다. 확대 중에 재면 핀 자리가 전부 0 이 됩니다.
+        self._graph_dialog_shown = False
+        self._graph_run: Optional[Any] = None
+        self._graph_run_active = False
+        # 그래프 전략일 때 참여자 = 그래프에 놓인 에이전트. 카드 체크박스가 이 값을 따라갑니다.
+        self._graph_agent_keys: Optional[set] = None
         self.custom_instructions: str = ""
         # 이 대화의 결정 장부. 오케스트레이터가 쓰고 사람은 읽기만 합니다.
         self.decision_ledger: str = ""
@@ -418,8 +438,11 @@ class AgentRosterControl:
                         )
                     self._sync_parallel_visibility()
 
-                # 그래프 토론 — 그 전략에서만 뜹니다. 편집기(별도 페이지)가 생기기 전까지는 그래프
-                # 파일을 고르고, 검증 결과를 보고, 카드 순서로 새로 만들 수 있습니다.
+                # 그래프 토론 — 그 전략에서만 뜹니다. 그래프 파일을 고르고, 검증 결과와 미리보기를 보고,
+                # 편집 페이지로 가거나 카드 순서로 새로 만듭니다. 토론 중에는 미리보기가 실행 표시가 됩니다.
+                from app.ui.components.graph_canvas import GraphCanvas
+
+                GraphCanvas.add_styles()
                 self.graph_row = ui.column().classes("w-full gap-1")
                 with self.graph_row:
                     with ui.row().classes("w-full items-center gap-2 flex-wrap"):
@@ -428,6 +451,16 @@ class AgentRosterControl:
                         self.graph_select = ui.select(
                             options={}, value=None, on_change=self._on_graph_change,
                         ).props("outlined dense dark options-dense clearable").classes("w-64 text-xs")
+                        self.graph_edit_btn = ui.button(
+                            "그래프 편집", icon="edit",
+                            on_click=lambda: ui.navigate.to(f"/graphs/{self.graph_id}"),
+                        ).props("unelevated dense no-caps size=sm color=teal-8")
+                        self.graph_edit_btn.tooltip("고른 그래프를 편집 화면에서 엽니다")
+                        ui.button(
+                            "새 그래프", icon="add", on_click=self._create_blank_graph,
+                        ).props("flat dense no-caps size=sm color=teal-4").tooltip(
+                            "시작과 최종 합성만 있는 새 그래프를 만들어 편집 화면을 엽니다"
+                        )
                         ui.button(
                             "현재 카드 순서로 만들기", icon="account_tree",
                             on_click=self._create_graph_from_cards,
@@ -435,6 +468,17 @@ class AgentRosterControl:
                             "참여로 체크한 전문가를 카드 순서대로 일렬로 이은 그래프를 새로 만들어 고릅니다"
                         )
                     self.graph_status = ui.label("").classes("text-[10px] leading-snug w-full")
+                    with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                        self.graph_run_label = ui.label("").classes(
+                            "text-[10px] leading-snug text-slate-300 flex-grow min-w-0 truncate"
+                        )
+                        self.graph_size_btn = ui.button(
+                            "크게 보기", icon="open_in_full", on_click=self._open_graph_dialog,
+                        ).props("flat dense no-caps size=sm color=slate-4")
+                        self.graph_size_btn.tooltip("그래프와 실행 표시를 넓은 창에서 봅니다")
+                    self.graph_preview_box = ui.element("div").classes(
+                        "w-full h-[220px] rounded-lg overflow-hidden border border-slate-700"
+                    )
                 self._sync_graph_row()
 
                 # Custom Instructions Input
@@ -606,7 +650,11 @@ class AgentRosterControl:
 
     def _build_agent_card(self, agent: Agent, persona: Optional[Any] = None) -> None:
         is_orchestrator = (agent.key == "orchestrator")
-        is_active = self.selected_agents.get(agent.key, True)
+        graph_keys = self._graph_agent_keys
+        is_active = (
+            agent.key in graph_keys if graph_keys is not None
+            else self.selected_agents.get(agent.key, True)
+        )
 
         display_name = persona.name if (persona and getattr(persona, "name", None)) else agent.name
         display_role = persona.role if (persona and getattr(persona, "role", None)) else agent.role
@@ -693,7 +741,12 @@ class AgentRosterControl:
                             value=is_active,
                             on_change=lambda e, k=agent.key, c=card: self._on_agent_toggle(k, e.value, c),
                         ).props("dense dark color=indigo-4")
-                        if self.personas_locked:
+                        if graph_keys is not None:
+                            # 그래프 토론의 참여자는 그래프가 정합니다. 여기서 끄고 켜도 반영되지
+                            # 않으므로 손잡이를 잠그고 그래프를 따라 보여 줍니다.
+                            cb.disable()
+                            cb.tooltip("그래프 토론은 그래프에 놓인 에이전트가 참여합니다 — 그래프 편집에서 바꾸세요")
+                        elif self.personas_locked:
                             cb.disable()
                             cb.tooltip("이 대화는 이미 토론이 시작되어 에이전트가 고정되었습니다")
                         else:
@@ -2186,7 +2239,13 @@ class AgentRosterControl:
         strategy = STRATEGY_MAP.get(resolve_strategy_name(self.strategy_name))
         visible = bool(strategy and strategy.runs_graph)
         self.graph_row.set_visibility(visible)
+        previous_keys = self._graph_agent_keys
+        self._graph_agent_keys = None
+        if self.graph_edit_btn is not None:
+            self.graph_edit_btn.set_enabled(bool(self.graph_id))
         if not visible:
+            if previous_keys is not None:
+                self.refresh_agent_cards()
             return
 
         from app.graph_store import list_graphs, load_graph
@@ -2197,6 +2256,16 @@ class AgentRosterControl:
             options[self.graph_id] = f"(파일 없음) {self.graph_id}"
         if self.graph_select is not None:
             self.graph_select.set_options(options, value=self.graph_id or None)
+
+        if self.graph_id:
+            try:
+                self._graph_agent_keys = set(load_graph(self.graph_id).agent_keys())
+            except (FileNotFoundError, ValueError):
+                self._graph_agent_keys = set()
+        else:
+            self._graph_agent_keys = set()
+        if self._graph_agent_keys != previous_keys:
+            self.refresh_agent_cards()
 
         if not self.graph_id:
             text, tone = (
@@ -2227,12 +2296,157 @@ class AgentRosterControl:
             self.graph_status.classes(
                 remove="text-red-400 text-amber-400 text-teal-300", add=tone,
             )
+        self._sync_graph_preview()
+
+    # ------------------------------------------------------------ 그래프 미리보기 · 실행 표시
+
+    def set_graph_run(self, tracker: Optional[Any], active: bool) -> None:
+        """이 대화의 그래프 실행 상태를 받습니다 (`GraphRunTracker`). 도는 중이면 active.
+
+        토론 중에는 이벤트마다 불립니다. 파일을 다시 읽지 않도록 그래프 줄 전체가 아니라 미리보기만 맞춥니다.
+        """
+        self._graph_run = tracker
+        self._graph_run_active = bool(active and tracker is not None)
+        self._sync_graph_preview()
+
+    def _graph_preview_source(self):
+        """미리보기에 그릴 (그래프, 실행 상태, 안내 문구).
+
+        - 도는 중: 그 턴에 굳힌 그래프와 실행 상태. 파일을 고쳐도 도는 턴은 그대로이기 때문입니다.
+        - 끝난 뒤: 고른 파일이 그 턴의 그래프와 같으면 실행 상태를 얹고, 바뀌었으면 파일만 그립니다 —
+          지난 그림을 고친 그래프 위에 얹으면 없는 선이 흐른 것처럼 보입니다.
+        """
+        from app.graph_store import load_graph
+
+        tracker = self._graph_run
+        if tracker is not None and tracker.spec and self._graph_run_active:
+            return tracker.spec, tracker.view(), tracker.summary(active=True)
+        if not self.graph_id:
+            return None, None, ""
+        try:
+            current = load_graph(self.graph_id).dump()
+        except (FileNotFoundError, ValueError):
+            return None, None, ""
+        if tracker is not None and tracker.spec and tracker.spec.get("id") == self.graph_id:
+            if tracker.spec == current:
+                summary = tracker.summary()
+                return current, tracker.view(), (f"지난 턴 · {summary}" if summary else "")
+            return current, None, "지난 턴 이후 그래프가 바뀌어 실행 표시를 지웠습니다"
+        return current, None, ""
+
+    def _sync_graph_preview(self) -> None:
+        import json
+
+        from app.orchestration.graph import parse_graph
+        from app.ui.components.graph_canvas import agent_infos, spec_to_canvas
+
+        box = self.graph_preview_box
+        if box is None or box.is_deleted:
+            return
+        if self.graph_row is None or not self.graph_row.visible:
+            # 그래프 전략이 아니면 줄이 숨어 있습니다. 전략을 바꾸면 `_sync_graph_row` 가 다시 부릅니다.
+            return
+        spec, view, summary = self._graph_preview_source()
+        if self.graph_run_label is not None:
+            self.graph_run_label.set_text(summary)
+        box.set_visibility(spec is not None)
+        if self.graph_size_btn is not None:
+            self.graph_size_btn.set_visibility(spec is not None)
+        if spec is None:
+            if self._graph_preview_key is not None:
+                box.clear()
+                self._graph_canvas = None
+                self._graph_preview_key = None
+            return
+        agents = agent_infos(self._roster_agents())
+        key = json.dumps([spec, sorted(agents.items())], sort_keys=True, ensure_ascii=False, default=str)
+        try:
+            self._graph_canvas = self._draw_graph_canvas(
+                box, self._graph_canvas, self._graph_preview_key, key, lambda: spec_to_canvas(parse_graph(spec), agents), view,
+            )
+            self._graph_preview_key = key
+            dialog_box = self._graph_dialog_box
+            if dialog_box is not None and not dialog_box.is_deleted and self._graph_dialog_shown:
+                if self._graph_dialog_label is not None:
+                    self._graph_dialog_label.set_text(summary or (spec.get("name") or spec.get("id") or ""))
+                self._graph_dialog_canvas = self._draw_graph_canvas(
+                    dialog_box, self._graph_dialog_canvas, self._graph_dialog_key, key,
+                    lambda: spec_to_canvas(parse_graph(spec), agents), view,
+                )
+                self._graph_dialog_key = key
+        except ValueError:
+            logger.debug("Could not draw the graph preview", exc_info=True)
+
+    @staticmethod
+    def _draw_graph_canvas(box, canvas, old_key, key, build, view):
+        """그래프가 바뀌었으면 캔버스를 새로 만들고, 같으면 실행 상태만 넘깁니다 (노드 자리·화면 위치 유지)."""
+        from app.ui.components.graph_canvas import GraphCanvas
+
+        if canvas is not None and key == old_key:
+            canvas.set_run(view)
+            return canvas
+        data = build()
+        box.clear()
+        with box:
+            return GraphCanvas(data, readonly=True, run_view=view).classes("w-full h-full")
+
+    def _open_graph_dialog(self) -> None:
+        if self._graph_dialog is not None and not self._graph_dialog.is_deleted:
+            self._graph_dialog.open()
+            return
+        with ui.dialog() as dialog, ui.card().classes(
+            "w-[94vw] max-w-none h-[86vh] bg-slate-900 border border-slate-700 p-3 gap-2 no-wrap"
+        ):
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                ui.icon("hub", size="xs").classes("text-teal-400")
+                self._graph_dialog_label = ui.label("").classes("text-sm text-slate-200 flex-grow min-w-0 truncate")
+                ui.button(icon="close", on_click=dialog.close).props("flat dense round size=sm color=slate-4")
+            self._graph_dialog_box = ui.element("div").classes(
+                "w-full flex-grow rounded-lg overflow-hidden border border-slate-700"
+            )
+        self._graph_dialog = dialog
+
+        def _shown() -> None:
+            self._graph_dialog_shown = True
+            self._sync_graph_preview()
+
+        def _forget() -> None:
+            # 닫으면 지웁니다. 열어 둔 채 보이지 않는 캔버스에 실행 상태를 계속 보내지 않도록.
+            self._graph_dialog = None
+            self._graph_dialog_box = None
+            self._graph_dialog_label = None
+            self._graph_dialog_canvas = None
+            self._graph_dialog_key = None
+            self._graph_dialog_shown = False
+            dialog.delete()
+
+        dialog.on("show", _shown)
+        dialog.on("hide", _forget)
+        dialog.open()
 
     def _on_graph_change(self, e) -> None:
         self.graph_id = e.value or ""
         self._sync_graph_row()
         if self.on_config_changed:
             ui.timer(0.01, self.on_config_changed, once=True)
+
+    async def _create_blank_graph(self) -> None:
+        """시작 → 최종 합성만 있는 그래프를 만들어 고르고, 편집 화면을 엽니다."""
+        from app.ui.graph_page import new_blank_graph
+
+        try:
+            spec = new_blank_graph()
+        except OSError as exc:
+            ui.notify(f"그래프 파일을 만들지 못했습니다: {exc}", type="negative", position="bottom-right")
+            return
+        self.graph_id = spec.id
+        self._sync_graph_row()
+        # 이 대화의 선택을 먼저 저장하고 떠납니다. 타이머로 미루면 화면이 바뀌며 사라질 수 있습니다.
+        if self.on_config_changed:
+            result = self.on_config_changed()
+            if hasattr(result, "__await__"):
+                await result
+        ui.navigate.to(f"/graphs/{spec.id}")
 
     def _create_graph_from_cards(self) -> None:
         """참여로 체크한 전문가를 카드 순서대로 이은 그래프를 만들어 고릅니다."""
@@ -2400,6 +2614,9 @@ class AgentRosterControl:
             self.custom_instr_input.value = instructions
         self.set_decision_ledger(decision_ledger)
         self.graph_id = graph_id or ""
+        # 다른 대화의 실행 표시가 남지 않게 지웁니다. 이 대화의 것은 화면이 기록을 읽은 뒤 `set_graph_run` 으로 줍니다.
+        self._graph_run = None
+        self._graph_run_active = False
         self._sync_parallel_visibility()
         self._sync_graph_row()
         if self.workspace_input:

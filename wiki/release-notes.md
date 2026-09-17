@@ -13,9 +13,28 @@ branches, joins, and review loops closed by yes/no gates. Graphs live in `data/g
 session picks one and each turn freezes it. Nodes run in supersteps, see only what their incoming
 wires carry (full text, digest or code references), and loops stop at gates, per-node visit caps or the
 step cap. Invalid graphs — including a loop that bypasses every gate — are refused before the request
-is recorded. For now the roster offers a graph picker, the validation summary and "현재 카드 순서로
-만들기"; the canvas editor is next. The card sort and the other four strategies are unchanged.
+is recorded. The roster offers a graph picker, the validation summary, "그래프 편집", "새 그래프" and
+"현재 카드 순서로 만들기"; while this strategy is selected the participation checkboxes follow the
+graph and are locked. The card sort and the other four strategies are unchanged.
 → [Debate Strategies §2.5](orchestration/debate-strategies.md)
+
+**Graph editor page.** `/graphs/<id>` edits a graph on a canvas like a blueprint: add start, agent,
+merge, gate and end nodes from the palette, drag wires between ports (a gate has yes and no), and set
+each node and wire in the inspector — agent, instruction, what it sees, join rule, visit cap, gate
+question and default branch, and whether a wire carries the full text, the digest or code references.
+Validation shows the same report the engine applies, with the worst-case number of calls per turn. The
+edit state lives in the browser and the server reads it only on save, so dragging never floods the
+websocket; leaving with unsaved changes asks first. Graph files now write only the fields that differ
+from the defaults, so a hand-opened file shows what was actually set.
+→ [UI Components §1.6](ui/components.md)
+
+**Watching a graph run.** While a graph debate runs, the roster preview shows it live: the running node
+pulses, finished nodes show how often they ran, gates show their verdict, wires that carried output are
+drawn solid (the ones feeding a running node animate), and the rest fade. 크게 보기 opens the same view in
+a wide dialog. Chat cards name their node (`구현 · 2회차`, `판정 · 아니오`), and so does the Markdown
+export. A refreshed page or a reopened conversation draws the same picture: each node output now records
+the port it left through (`messages.graph_port`), and the state is counted from the record.
+→ [UI Components §1.2.2](ui/components.md) · [Debate Strategies §2.5](orchestration/debate-strategies.md)
 
 **Graph editor library, bundled for air-gapped networks.** [Vue Flow](https://vueflow.dev) 1.48.2 and its
 dependencies are shipped as one ES module in `app/ui/static/graph_editor/` (156 KB) that imports nothing but

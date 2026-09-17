@@ -208,9 +208,22 @@ graph TD
   user message is recorded; the roster shows the same report.
 - **Gate**: a tool-less orchestrator copy answers `{"decision": "yes"|"no", "reason"}`. Anything else —
   including "no problem" in prose — takes the node's `default` branch and the note says so.
-- **UI today**: the roster shows a graph picker, the validation summary, the concurrency limit, and
-  **현재 카드 순서로 만들기** (a chain of the checked specialists in card order). The canvas editor and
-  live execution overlay are the next phases; see the design page.
+- **UI today**: the roster shows a graph picker, the validation summary, the concurrency limit,
+  **그래프 편집** / **새 그래프** (open the canvas editor at `/graphs/<id>`), and **현재 카드 순서로
+  만들기** (a chain of the checked specialists in card order). While this strategy is selected the
+  participation checkboxes show the graph's agents and are locked. The editor is described in
+  [UI Components §1.6](../ui/components.md). While a turn runs the roster preview becomes a live
+  execution overlay, and chat cards carry node badges ([UI Components §1.2.2](../ui/components.md)).
+- **Run state from the record** ([app/orchestration/graph_run.py](file:///d:/MultiAgentOrchestrator/app/orchestration/graph_run.py)):
+  every node output stores its node and port (`messages.graph_node_id`, `graph_port`), so visit counts, gate
+  branches and flowed wires are counted from messages alone. `GraphRunTracker` builds the same picture from
+  live events, from the runner snapshot plus this turn's messages after a refresh, and from the database for
+  a finished conversation. Only "which nodes are running now" and "why it stopped" come from events;
+  `TurnRun.graph` keeps them for a refreshed page. `end` counts as reached when its incoming wires flowed,
+  since the engine stops the moment they do.
+- **File shape**: `GraphSpec.dump()` writes each node's `id`, `type` and only the fields that differ from
+  the defaults, with integer `pos`; reading fills the defaults back in. The turn snapshot uses the
+  same shape.
 
 ---
 

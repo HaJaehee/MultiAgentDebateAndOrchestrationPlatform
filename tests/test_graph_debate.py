@@ -223,6 +223,20 @@ def test_graph_files_round_trip_atomically(tmp_path):
         graph_store.load_graph("../conf", tmp_path)
 
 
+def test_graph_files_write_only_what_differs_from_the_defaults():
+    data = example()
+    data["nodes"][2]["pos"] = [120.4, 80.6]
+    spec = parse_graph(data)
+    dumped = spec.dump()
+    impl = next(n for n in dumped["nodes"] if n["id"] == "impl")
+    assert "question" not in impl and "plan" not in impl and "wait" not in impl, "쓰이지 않는 기본값은 파일에 없습니다"
+    assert impl["agent"] == "coder" and impl["pos"] == [120, 81]
+    assert parse_graph(dumped).model_dump(exclude={"nodes"}) == spec.model_dump(exclude={"nodes"})
+    assert [n.model_dump(exclude={"pos"}) for n in parse_graph(dumped).nodes] == [
+        n.model_dump(exclude={"pos"}) for n in spec.nodes
+    ], "다시 읽으면 기본값이 채워져 같은 그래프"
+
+
 def test_a_file_whose_inner_id_differs_is_refused(tmp_path):
     (tmp_path / "a.json").write_text(json.dumps(example(id="b")), encoding="utf-8")
     with pytest.raises(ValueError, match="파일 이름과 다릅니다"):

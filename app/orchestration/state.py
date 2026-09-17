@@ -29,6 +29,8 @@ class DebateMessage(BaseModel):
     turn_started_at: Optional[datetime] = None
     # 그래프 토론에서 이 발언을 낸 노드 (`MessageModel.graph_node_id`).
     graph_node_id: Optional[str] = None
+    # 노드의 출력으로 나간 핀 (`MessageModel.graph_port`). 출력이 아닌 기록은 None.
+    graph_port: Optional[str] = None
 
 
 class DebateState(BaseModel):

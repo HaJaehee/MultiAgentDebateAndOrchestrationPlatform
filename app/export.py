@@ -13,6 +13,7 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from app.orchestration.graph_run import NodeBadges, node_labels
 from app.orchestration.strategies import get_strategy
 # 시각 규칙은 `app.timestamps` 가 정본입니다. 여기서도 이름을 내보내 기존 호출자
 # (`from app.export import to_local` 등)가 그대로 동작하게 합니다.
@@ -126,8 +127,15 @@ def build_session_markdown(
     ]
     # 동시 실행 상한은 병렬 지시 전략에서만 읽히는 값입니다. 순차로 돈 대화에
     # 적어 두면 문서가 있지도 않은 설정을 있는 것처럼 말하게 됩니다.
-    if get_strategy(session.get("strategy")).orchestrator_dispatches_parallel:
+    strategy = get_strategy(session.get("strategy"))
+    if strategy.orchestrator_dispatches_parallel or strategy.runs_graph:
         meta.append(("동시 실행 상한", str(session.get("parallel_limit") or 3)))
+    # 그래프 토론은 마지막 턴에 실제로 돈 그래프를 적습니다. 발언 제목의 노드 이름도 이 그래프에서 옵니다
+    # (지난 턴이 다른 그래프였다면 그 턴의 노드는 id 로 적힙니다).
+    graph = session.get("graph_snapshot") if strategy.runs_graph else None
+    if graph:
+        meta.append(("그래프", f"{graph.get('name') or graph.get('id')} (data/graphs/{graph.get('id')}.json)"))
+    badges = NodeBadges(node_labels(graph))
 
     out.append("| 항목 | 값 |")
     out.append("| --- | --- |")
@@ -148,7 +156,10 @@ def build_session_markdown(
         round_number = msg.get("round_number") or 0
         if round_number != current_round:
             current_round = round_number
-            heading = "준비 및 계획" if round_number == 0 else f"Round {round_number}"
+            heading = "준비 및 계획" if round_number == 0 else (
+                # 그래프 토론의 라운드는 단계입니다.
+                f"{round_number}단계" if msg.get("graph_node_id") else f"Round {round_number}"
+            )
             out += [f"### {heading}", ""]
 
         label = TYPE_LABEL.get(msg.get("msg_type", "agent"), "🤖 에이전트")
@@ -160,6 +171,9 @@ def build_session_markdown(
         header = f"#### {label} · {name}"
         if role:
             header += f" ({role})"
+        node_badge = badges.observe(msg)
+        if node_badge:
+            header += f" — 노드 “{node_badge}”"
         out.append(header)
         if stamp:
             out += ["", f"*{stamp}*"]

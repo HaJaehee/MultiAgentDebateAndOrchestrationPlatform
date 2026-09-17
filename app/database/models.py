@@ -108,6 +108,9 @@ class MessageModel(Base):
     # 그래프 토론에서 이 발언을 낸 노드. 같은 에이전트가 여러 노드에 놓일 수 있어 발언자만으로는
     # 어느 노드였는지 알 수 없습니다. 그래프 토론이 아니면 NULL.
     graph_node_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # 이 발언이 노드의 **출력**으로 나간 핀 — 에이전트·취합은 `out`, 판정은 `yes`/`no`. 노드에 붙었지만
+    # 출력이 아닌 기록(방문 상한 안내)은 NULL. 새로고침한 화면이 어느 선으로 흘렀는지 다시 그리는 근거입니다.
+    graph_port: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
 
     session: Mapped["SessionModel"] = relationship("SessionModel", back_populates="messages")
     tool_calls: Mapped[List["ToolCallRecordModel"]] = relationship(

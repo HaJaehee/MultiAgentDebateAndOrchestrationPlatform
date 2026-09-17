@@ -93,6 +93,14 @@ class GraphNode(BaseModel):
     def display(self) -> str:
         return self.label.strip() or (self.agent or NODE_TYPE_LABELS.get(self.type, self.type))
 
+    def dump(self) -> Dict[str, Any]:
+        data: Dict[str, Any] = {"id": self.id, "type": self.type}
+        data.update(self.model_dump(exclude={"id", "type", "pos"}, exclude_defaults=True))
+        if self.pos is not None:
+            # 편집기 좌표는 정수면 충분합니다 (`40.0` 대신 `40`).
+            data["pos"] = [round(v) for v in self.pos]
+        return data
+
 
 class GraphEdge(BaseModel):
     id: str = Field(min_length=1, max_length=64)
@@ -123,8 +131,13 @@ class GraphSpec(BaseModel):
         return value
 
     def dump(self) -> Dict[str, Any]:
-        """파일·스냅샷에 쓰는 모양. 선은 `from`/`to` 이름으로 씁니다."""
-        data = self.model_dump(exclude={"edges"})
+        """파일·스냅샷에 쓰는 모양. 선은 `from`/`to` 이름으로 씁니다.
+
+        노드는 기본값과 다른 필드만 적습니다. 사람이 열어 고치는 파일이라, 에이전트 노드에 쓰이지 않는
+        `question: ""` 같은 줄이 섞이면 무엇이 설정된 것인지 알아보기 어렵습니다. 읽을 때 기본값이 다시 채워집니다.
+        """
+        data = self.model_dump(exclude={"nodes", "edges"})
+        data["nodes"] = [node.dump() for node in self.nodes]
         data["edges"] = [edge.dump() for edge in self.edges]
         return data
 
