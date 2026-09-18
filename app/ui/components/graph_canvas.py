@@ -155,7 +155,20 @@ GRAPH_EDITOR_CSS = """
 .gedge-digest .vue-flow__edge-path { stroke: #38c7b4; }
 .gedge-refs .vue-flow__edge-path { stroke: #eea83d; }
 .gedge-no .vue-flow__edge-path { stroke-dasharray: 7 6; }
-.gedge.selected .vue-flow__edge-path { stroke-width: 3.6; }
+/* 고른 선. Vue Flow 기본 테마가 고른 선을 #555(어두운 회색)로 칠해 어두운 바탕에서 보이지 않았습니다 —
+   그 규칙(.vue-flow__edge.selected …)보다 구체적으로 적어 노란색으로 깜빡이게 합니다. */
+.gcanvas .vue-flow__edge.gedge.selected .vue-flow__edge-path,
+.gcanvas .vue-flow__edge.gedge:focus .vue-flow__edge-path,
+.gcanvas .vue-flow__edge.gedge:focus-visible .vue-flow__edge-path {
+  stroke: #facc15; stroke-width: 4; filter: drop-shadow(0 0 4px rgba(250, 204, 21, .75));
+  animation: gedge-blink 1s ease-in-out infinite;
+}
+.gcanvas .vue-flow__edge.gedge.selected .vue-flow__edge-textbg { fill: #3f3510; stroke: #facc15; stroke-width: 1; }
+.gcanvas .vue-flow__edge.gedge.selected .vue-flow__edge-text { fill: #fde68a; }
+@keyframes gedge-blink { 0%, 100% { stroke: #facc15; opacity: 1; } 50% { stroke: #fef08a; opacity: .35; } }
+@media (prefers-reduced-motion: reduce) {
+  .gcanvas .vue-flow__edge.gedge.selected .vue-flow__edge-path { animation: none; }
+}
 .gedge .vue-flow__edge-textbg { fill: #151a2d; }
 .gedge .vue-flow__edge-text { fill: #cbd2ea; font-size: 11px; }
 .vue-flow__connectionline .vue-flow__connection-path { stroke: #a5b4fc; stroke-width: 2; }

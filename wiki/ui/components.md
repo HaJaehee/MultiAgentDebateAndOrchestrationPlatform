@@ -650,7 +650,9 @@ websocket is not re-checked when a cookie reaches its 7-day expiry; the next rec
   the bundled `app/ui/static/graph_editor/` module, loaded with `ui.element(component=..., esm=...)`.
   Nodes show a type band (the agent's badge colour for agent nodes), badges for visit cap and "모두
   기다림", a title and a subtitle. Wire colour is the carry (전문 indigo · 요지 teal · 참조 amber); a gate's
-  `no` wire is dashed. Invalid connections are refused while dragging: self-loops, into `start`, and
+  `no` wire is dashed. The selected wire blinks yellow (steady yellow under `prefers-reduced-motion`);
+  Vue Flow's default theme paints it `#555`, invisible on the dark canvas, so the rule is written more
+  specifically than the theme's `.vue-flow__edge.selected .vue-flow__edge-path`. Invalid connections are refused while dragging: self-loops, into `start`, and
   duplicates. Delete/Backspace removes the selection.
 - **The browser holds the edit state.** The server hears only `select` (to fill the inspector), one
   `dirty` event when a clean graph first changes, and reads `getGraph()` on 검증 or 저장. Inspector edits

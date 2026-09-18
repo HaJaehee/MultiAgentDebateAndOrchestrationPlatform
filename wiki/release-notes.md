@@ -6,6 +6,15 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.9.0.1
+
+**The selected wire in the graph editor is visible.** Vue Flow's default theme painted the selected wire
+dark gray (`#555`), which nearly vanished on the dark canvas and overrode the carry colours. It now
+blinks yellow with a glow, and its label turns yellow too; with reduced motion enabled it stays yellow
+without blinking. → [UI Components §1.6](ui/components.md)
+
+---
+
 ## v0.9.0
 
 **Graph debate — engine (a fifth strategy).** Agents can be wired into a graph: who feeds whom, parallel
