@@ -6,6 +6,17 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.9.1
+
+**Roster view options: summary and hide-inactive.** Two checkboxes next to the roster title. `요약 보기`
+shrinks each card to its avatar and name (role and model move to the tooltip). `비활성 에이전트 숨기기`
+hides the cards unchecked for this conversation and the `꺼둔 에이전트` row, leaving a `비활성 N개 숨김`
+note. Both only change the view — nothing is written to `conf.json` — and cards can still be dragged
+to reorder while either is on; hidden agents keep their place in the speaking order.
+→ [UI Components §1.2](ui/components.md)
+
+---
+
 ## v0.9.0.1
 
 **The selected wire in the graph editor is visible.** Vue Flow's default theme painted the selected wire

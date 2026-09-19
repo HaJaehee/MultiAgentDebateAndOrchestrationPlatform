@@ -78,8 +78,10 @@ The web application workspace is organized into four primary UI components in [a
 > `The parent element this slot belongs to has been deleted.`
 
 - **Agent Toggle Cards**: Allows users to include or exclude specific specialists (e.g. toggling the Critic off for faster brainstorming). The Master Orchestrator is fixed and always enabled.
-- **Card anatomy**: drag handle · avatar · name with `수정됨` / stance / `이 대화 전용` badges · role ·
-  participation checkbox · ⋮ menu (stance, disable, delete) · model line · tool button. The checkbox
+- **Card anatomy**: drag handle · avatar on the top line, then name with `수정됨` / stance /
+  `이 대화 전용` badges and role *below* it (v0.9.1: always stacked — side by side, the row wrapped only
+  for long names, so cards disagreed in shape) · participation checkbox · ⋮ menu (stance, disable,
+  delete) · model line · tool button (icon over `도구 N`, `stack`). The checkbox
   scopes to *this conversation*; everything in the ⋮ menu writes to `conf.json`. They are deliberately
   one layer apart — side by side they are indistinguishable and the mistake is expensive.
 - **Card border** (v0.5.1): normally the border reports participation — indigo when enabled, grey when
@@ -88,6 +90,15 @@ The web application workspace is organized into four primary UI components in [a
   look exactly as they did before, which is why an upgrade does not repaint an existing roster.
 - **Reordering**: cards are dragged to set `debate_priority`; the lifted card fades and the drop edge
   is marked. See [roster-editing.md](../agents/roster-editing.md#5-speaking-order-by-drag).
+- **View options** (v0.9.1): two checkboxes beside the roster title, held on the roster instance only
+  (not saved; a reload turns them off).
+  - `요약 보기` — each card is just avatar + name, no checkbox or ⋮ menu; role and model are in the
+    tooltip. Participation still shows as the dimmed style.
+  - `비활성 에이전트 숨기기` — cards unchecked for this conversation are not built, the
+    `꺼둔 에이전트` row is hidden, and a `비활성 N개 숨김` note ends the card row. Unchecking a card
+    while this is on redraws the row so the card disappears at once.
+  - Dragging keeps working in both modes. A drop re-ranks the **full** roster list relative to the
+    target card, so hidden agents keep their position in the speaking order.
 - **Speaking-order preview** (v0.5.0): a line under the cards showing the order this round will
   actually run in, plus a note saying how much to trust it. Only Sequential Debate follows card
   order; Adversarial interleaves the camps and the orchestrator-led/parallel strategies decide per

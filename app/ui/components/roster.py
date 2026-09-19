@@ -216,6 +216,11 @@ class AgentRosterControl:
         self.resync_btn: Optional[ui.button] = None
         # 드래그로 순서를 바꾸는 중에 집어 든 에이전트 키.
         self.dragging_key: Optional[str] = None
+        # 카드 보기 방식 (이 화면에만 걸림, conf.json 과 무관). 요약 보기는 아이콘과 이름만,
+        # 비활성 숨기기는 참여에서 뺀 카드와 꺼 둔 에이전트 줄을 감춥니다. 어느 쪽이든
+        # 보이는 카드끼리는 드래그로 순서를 바꿀 수 있습니다.
+        self.compact_cards: bool = False
+        self.hide_inactive: bool = False
         self.workspace_input: Optional[ui.input] = None
         self.workspace_hint: Optional[ui.label] = None
         self.workspace_apply_btn: Optional[ui.button] = None
@@ -255,6 +260,18 @@ class AgentRosterControl:
                         ui.label("토론 참여 에이전트 선택").classes("text-xs font-bold text-slate-300")
                         self.persona_badge = ui.badge("고정됨", color="amber-8").props("dense text-[9px]")
                         self.persona_badge.set_visibility(False)
+                        ui.checkbox(
+                            "요약 보기", value=self.compact_cards,
+                            on_change=lambda e: self._on_view_option("compact_cards", e.value),
+                        ).props("dense dark size=xs color=indigo-4").classes(
+                            "text-[11px] text-slate-400"
+                        ).tooltip("카드를 아이콘과 이름만으로 줄여 보여 줍니다")
+                        ui.checkbox(
+                            "비활성 에이전트 숨기기", value=self.hide_inactive,
+                            on_change=lambda e: self._on_view_option("hide_inactive", e.value),
+                        ).props("dense dark size=xs color=indigo-4").classes(
+                            "text-[11px] text-slate-400"
+                        ).tooltip("참여에서 뺀 에이전트와 꺼 둔 에이전트를 감춥니다")
                     with ui.row().classes("items-center gap-2"):
                         self.add_agent_btn = (
                             ui.button("에이전트 추가", icon="person_add",
@@ -308,9 +325,7 @@ class AgentRosterControl:
                 )
 
                 self.cards_row = ui.row().classes("w-full gap-2 flex-wrap")
-                with self.cards_row:
-                    for ag in self._roster_agents():
-                        self._build_agent_card(ag)
+                self._fill_cards_row(self._roster_agents())
 
                 # 카드가 놓인 순서가 곧 발언 순서인 전략은 순차 토론뿐입니다.
                 # 디베이트는 진영끼리 교차시키고, 지명·병렬은 매 라운드
@@ -544,16 +559,34 @@ class AgentRosterControl:
             self.current_personas = personas
         self.agent_pool = get_agent_pool()
         agents = self._roster_agents()
-        self.cards_row.clear()
-        with self.cards_row:
-            for ag in agents:
-                p = self.current_personas.get(ag.key) if self.current_personas else None
-                self._build_agent_card(ag, persona=p)
+        self._fill_cards_row(agents)
         self._refresh_disabled_agents()
         self._refresh_agent_admin_controls()
         self._refresh_order_preview()
         if self.on_roster_changed is not None:
             self.on_roster_changed(agents)
+
+    def _fill_cards_row(self, agents: List[Agent]) -> None:
+        """카드 줄을 비우고 지금 보기 방식으로 다시 채웁니다."""
+        self.cards_row.clear()
+        hidden = 0
+        with self.cards_row:
+            for ag in agents:
+                p = self.current_personas.get(ag.key) if self.current_personas else None
+                if not self._build_agent_card(ag, persona=p):
+                    hidden += 1
+            if hidden:
+                ui.label(f"비활성 {hidden}개 숨김").classes(
+                    "text-[10px] text-slate-500 self-center"
+                )
+
+    def _on_view_option(self, name: str, value: bool) -> None:
+        """요약 보기 / 비활성 숨기기. 화면만 바뀌므로 카드와 꺼 둔 줄만 다시 그립니다."""
+        setattr(self, name, bool(value))
+        if self.cards_row is None or self.cards_row.is_deleted:
+            return
+        self._fill_cards_row(self._roster_agents())
+        self._refresh_disabled_agents()
 
     def _speaking_order(self) -> List[Agent]:
         """지금 설정으로 한 라운드를 돌면 나올 발언 순서.
@@ -648,7 +681,8 @@ class AgentRosterControl:
                 "text-[10px] text-slate-500 w-full leading-snug"
             )
 
-    def _build_agent_card(self, agent: Agent, persona: Optional[Any] = None) -> None:
+    def _build_agent_card(self, agent: Agent, persona: Optional[Any] = None) -> bool:
+        """카드 하나를 그립니다. 비활성 숨기기로 감췄으면 False."""
         is_orchestrator = (agent.key == "orchestrator")
         graph_keys = self._graph_agent_keys
         is_active = (
@@ -660,9 +694,15 @@ class AgentRosterControl:
         display_role = persona.role if (persona and getattr(persona, "role", None)) else agent.role
         is_customized = getattr(persona, "is_customized", False) if persona else False
 
+        if self.hide_inactive and not is_active and not is_orchestrator:
+            return False
+
         # 이름 줄 양쪽으로 드래그 손잡이와 (체크박스 + ⋮) 가 붙으면서 가운데가
         # 좁아졌습니다. 폭을 넓혀 이름·역할·뱃지가 제 자리를 갖게 합니다.
-        card_cls = "p-2 rounded-lg border flex-grow max-w-[340px] min-w-[270px] transition-all "
+        if self.compact_cards:
+            card_cls = "px-2 py-1 rounded-lg border max-w-[300px] overflow-hidden transition-all "
+        else:
+            card_cls = "p-2 rounded-lg border flex-grow max-w-[340px] min-w-[270px] transition-all "
         card_cls += "bg-slate-800/90 border-indigo-500/60" if is_active else "bg-slate-900/60 border-slate-800 opacity-50"
 
         # 순서를 바꿀 수 있을 때만 집어 들 수 있게 합니다. 오케스트레이터는 라운드
@@ -692,17 +732,34 @@ class AgentRosterControl:
                 js_handler=JS_DROP,
             )
 
-        with card:
-            with ui.row().classes("w-full items-center justify-between no-wrap"):
-                with ui.row().classes("items-center gap-2 min-w-0 overflow-hidden"):
-                    if reorderable:
-                        ui.icon("drag_indicator", size="14px").classes(
-                            "text-slate-600 flex-shrink-0"
-                        ).tooltip("끌어서 발언 순서를 바꿉니다")
+        if self.compact_cards:
+            # 요약 보기 — 아이콘과 이름만. 참여 여부는 흐림으로, 나머지는 툴팁으로 읽습니다.
+            with card:
+                with ui.row().classes("w-full items-center gap-1.5 no-wrap min-w-0 overflow-hidden"):
                     ui.avatar(agent.avatar, color=agent.color, text_color="white", size="xs").classes(
                         "flex-shrink-0"
                     )
-                    with ui.column().classes("gap-0 min-w-0"):
+                    ui.label(display_name).classes("text-xs font-bold truncate min-w-0")
+                ui.tooltip(
+                    f"{display_name} — {display_role}\r\nmodel: {agent.model}"
+                    + ("\r\n끌어서 발언 순서를 바꿉니다" if reorderable else "")
+                ).classes("whitespace-pre-line text-[10px]")
+            return True
+
+        with card:
+            with ui.row().classes("w-full items-start justify-between no-wrap"):
+                # 아이콘 줄 아래에 이름·역할을 늘 따로 둡니다. 한 줄에 나란히 두면 이름이
+                # 길 때만 줄이 꺾여, 카드마다 모양이 달라졌습니다.
+                with ui.column().classes("gap-0.5 min-w-0 flex-grow overflow-hidden"):
+                    with ui.row().classes("items-center gap-1 no-wrap"):
+                        if reorderable:
+                            ui.icon("drag_indicator", size="14px").classes(
+                                "text-slate-600 flex-shrink-0"
+                            ).tooltip("끌어서 발언 순서를 바꿉니다")
+                        ui.avatar(agent.avatar, color=agent.color, text_color="white", size="22px").classes(
+                            "flex-shrink-0"
+                        )
+                    with ui.column().classes("gap-0 min-w-0 w-full"):
                         with ui.row().classes(
                             "items-center gap-1 no-wrap min-w-0 w-full overflow-hidden"
                         ):
@@ -731,7 +788,7 @@ class AgentRosterControl:
                                     "conf.json 에서는 지워졌지만, 이 대화는 토론을 시작할 때 "
                                     "굳은 구성으로 계속 씁니다"
                                 )
-                        ui.label(display_role).classes("text-[9px] text-slate-400 truncate")
+                        ui.label(display_role).classes("text-[9px] text-slate-400 truncate w-full")
 
                 if is_orchestrator:
                     ui.badge("필수", color="indigo-9").props("dense text-[9px]")
@@ -802,11 +859,14 @@ class AgentRosterControl:
             # 좌우하는데, 지금까지는 conf.json 을 직접 고치는 수밖에 없었습니다.
             allowed = agent.allowed_mcp_servers or []
             with ui.row().classes("w-full items-center gap-1 mt-1 no-wrap"):
+                # 아이콘 아래에 "도구 N" — stack 은 아이콘과 글자를 세로로 쌓습니다.
                 tools_button = ui.button(
                     f"도구 {len(allowed)}",
                     icon="handyman",
                     on_click=lambda _, k=agent.key: self._open_agent_tools_dialog(k),
-                ).props("flat dense no-caps size=sm color=teal-4").classes("text-[10px]")
+                ).props("flat dense no-caps stack size=sm color=teal-4").classes(
+                    "text-[10px] flex-shrink-0"
+                )
                 ui.label(", ".join(allowed) or "없음").classes(
                     "text-[9px] text-slate-500 truncate"
                 )
@@ -825,6 +885,7 @@ class AgentRosterControl:
                 f"{f'{agent.sequential_thinking.mode} (max {agent.sequential_thinking.max_steps} steps)' if agent.sequential_thinking.enabled else 'disabled'}\r\n"
                 f"mcp: {', '.join(agent.allowed_mcp_servers) or '-'}"
             ).classes("whitespace-pre-line text-[10px]")
+        return True
 
     def _open_persona_editor(self) -> None:
         if not self.session_id:
@@ -1158,8 +1219,8 @@ class AgentRosterControl:
 
         disabled = {k: c for k, c in configured.items() if not getattr(c, "enabled", True)}
         self.disabled_row.clear()
-        self.disabled_row.set_visibility(bool(disabled))
-        if not disabled:
+        self.disabled_row.set_visibility(bool(disabled) and not self.hide_inactive)
+        if not disabled or self.hide_inactive:
             return
 
         reason = self._agent_admin_lock_reason()
@@ -2179,7 +2240,10 @@ class AgentRosterControl:
 
     def _on_agent_toggle(self, key: str, value: bool, card: Optional[ui.card] = None) -> None:
         self.selected_agents[key] = value
-        if card is not None and not card.is_deleted:
+        if self.hide_inactive and not value:
+            # 참여에서 빼는 순간 숨김 대상이 됩니다. 줄을 다시 그려 "N개 숨김" 도 맞춥니다.
+            self._fill_cards_row(self._roster_agents())
+        elif card is not None and not card.is_deleted:
             if value:
                 card.classes(
                     remove="bg-slate-900/60 border-slate-800 opacity-50",
