@@ -440,7 +440,18 @@ MEMORY_SEARCH_TOOLS = ("search_nodes", "open_nodes")
 # 커지고 같은 자리에서 또 잘립니다. 나누기가 뜻을 가지려면 덧붙이는 도구가
 # 있어야 하고, 없으면 아예 다른 조언을 해야 합니다.
 APPEND_TOOLS = ("edit_file", "edit_text_file", "append_file", "patch_file", "str_replace")
-FILE_WRITE_TOOLS = ("write_file", "write_text_file", "create_file")
+# `write_workspace_file` 은 샌드박스 서버의 쓰기 도구입니다. 빠져 있던 동안 `sandbox` 만
+# 가진 에이전트는 분할 쓰기 지침(`file_writing_guidance`)을 한 줄도 받지 못했습니다.
+FILE_WRITE_TOOLS = ("write_file", "write_text_file", "create_file", "write_workspace_file")
+
+# slide_studio MCP 서버의 진입 도구들. 바이너리 문서를 만들 수 있는 유일한 길이라,
+# 프롬프트에서 이름을 그대로 짚어 줍니다.
+SLIDE_TOOLS = ("slide_open", "slide_add", "slide_export")
+SHEET_TOOLS = ("sheet_write_table",)
+# 사람이 화면에서 슬라이드에 적어 둔 부탁을 읽고 닫는 도구. 진입 도구와 따로 찾는
+# 이유는 **없어도 발표자료는 만들어지기** 때문입니다 — 있을 때만 한 줄을 더합니다.
+SLIDE_COMMENT_TOOLS = ("slide_comments",)
+SLIDE_RESOLVE_TOOLS = ("slide_resolve_comment",)
 
 
 def _tool_names(tools: Optional[List[Dict[str, Any]]]) -> List[str]:
@@ -912,6 +923,87 @@ FILE_WRITING_HEAD = (
 )
 
 
+def slide_tool(tools: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+    """이 발언이 쓸 수 있는 발표자료 생성 도구의 이름. 없으면 None."""
+    return _find_tool(tools, SLIDE_TOOLS)
+
+
+def sheet_tool(tools: Optional[List[Dict[str, Any]]]) -> Optional[str]:
+    """이 발언이 쓸 수 있는 스프레드시트 생성 도구의 이름. 없으면 None."""
+    return _find_tool(tools, SHEET_TOOLS)
+
+
+BINARY_DOC_HEAD = (
+    "[바이너리 문서(.pptx / .xlsx / .docx / .pdf)]\n"
+    ".pptx 와 .xlsx 는 XML 을 담은 ZIP 컨테이너입니다. 텍스트가 아니므로 파일 쓰기 "
+    "도구로는 만들 수 없습니다 — 그렇게 쓴 파일은 PowerPoint / Excel 이 열지 못합니다."
+)
+
+
+def binary_file_guidance(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
+    """바이너리 문서를 어떻게 만들(거나 만들지 말) 것인가. 해당 없으면 None.
+
+    `file_writing_guidance` 와 같은 규율입니다 — 도구를 이름 꼬리로 찾고, 실제로 가진
+    도구의 **전체 이름**을 짚어 주며, 아무것도 해당하지 않으면 None 이라 프롬프트가
+    한 글자도 늘지 않습니다.
+
+    갈래가 셋인 이유:
+
+    - 발표자료 · 스프레드시트 도구가 있으면 그 이름과 순서를 알려 줍니다.
+    - 쓰기 도구만 있으면 **못 만든다고 사실대로 말하라**고 시킵니다. 이 갈래가 없으면
+      모델은 `.pptx` 를 텍스트로 써 놓고 만들었다고 보고합니다. 원래의 버그입니다.
+    - 둘 다 가졌으면 앞의 것에 "쓰기 도구로 쓰지 말라" 한 줄을 더합니다. 도구가
+      둘 다 보이면 익숙한 쪽으로 손이 가기 때문입니다.
+    """
+    deck, sheet = slide_tool(tools), sheet_tool(tools)
+    comments = _find_tool(tools, SLIDE_COMMENT_TOOLS)
+    resolve = _find_tool(tools, SLIDE_RESOLVE_TOOLS)
+    writer = file_write_tool(tools)
+    if not deck and not sheet and not writer:
+        return None
+
+    lines = []
+    if deck or sheet:
+        if deck:
+            lines.append(
+                f"- 발표자료는 `{deck}` 로 시작합니다. 첫 인자 `name` 이 문서 이름이고, "
+                f"그 뒤의 모든 호출에서 **같은 값**을 씁니다."
+            )
+            lines.append(
+                "- 문서는 서버에 살아 있고 사람이 브라우저에서 같이 고칩니다. 열면 "
+                "화면 주소가 돌아오니 **사람에게 그 주소를 알려 주세요.** 고치기 전에는 "
+                "반드시 읽어서 최신 `rev` 를 받고, 쓸 때 그 값을 함께 보냅니다."
+            )
+            lines.append(
+                "- 슬라이드는 한 호출에 한 장씩 쌓습니다. 내보내기 도구는 파일을 "
+                "**다시 열어** 실제 내용을 보고하니, 그 판정을 읽기 전에는 완료했다고 "
+                "말하지 마세요."
+            )
+        if comments:
+            # 코멘트는 사람 → 에이전트 통로입니다. 읽으라고 시키지 않으면 사람은
+            # 대답 없는 곳에 계속 적게 되고, 기능이 있다는 사실만 남습니다.
+            tail = f" 처리한 것은 `{resolve}` 로 표시하세요." if resolve else ""
+            lines.append(
+                f"- 사람이 화면에서 슬라이드에 부탁을 적어 둘 수 있습니다. 고치기 전에 "
+                f"`{comments}` 로 읽고 **그것부터 처리하세요** — 사람이 직접 짚은 것이라 "
+                f"당신이 짐작한 개선보다 우선합니다.{tail}"
+            )
+        if sheet:
+            lines.append(f"- 스프레드시트는 `{sheet}` 에 열 이름과 행 데이터를 넘겨 만듭니다.")
+        if writer:
+            lines.append(
+                f"- `{writer}` 로 .pptx / .xlsx 를 쓰려는 시도는 거부됩니다. 시도하지 마세요."
+            )
+    else:
+        lines.append(
+            f"- 이 환경에는 그런 파일을 만들 수 있는 도구가 없습니다. `{writer}` 로 "
+            f"마크다운(.md)이나 CSV 로 쓰고, 요청한 형식의 파일은 만들지 못했다고 "
+            f"사용자에게 그대로 알리세요. 만들었다고 말하지 마세요."
+        )
+
+    return BINARY_DOC_HEAD + "\n" + "\n".join(lines)
+
+
 def file_writing_guidance(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
     """파일 쓰기 도구를 **가진** 에이전트에게만 붙는 상시 지침. 없으면 None.
 
@@ -1278,7 +1370,7 @@ class LLMCaller:
         custom_instructions: str = "",
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
-        """System prompt = persona + sequential thinking + file-writing rule + session instructions.
+        """System prompt = persona + sequential thinking + file rules + session instructions.
 
         세션 지침이 맨 뒤인 것은 그것이 가장 구체적인 지시이기 때문입니다. 파일 쓰기
         지침은 그 앞에 두어, 사람이 세션 지침으로 다르게 시키면 그쪽이 뒤에 옵니다.
@@ -1299,6 +1391,10 @@ class LLMCaller:
         guidance = file_writing_guidance(tools)
         if guidance:
             parts.append(guidance)
+
+        binary = binary_file_guidance(tools)
+        if binary:
+            parts.append(binary)
 
         if custom_instructions:
             parts.append(f"[Session Custom Instructions]:\n{custom_instructions}")

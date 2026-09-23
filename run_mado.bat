@@ -29,7 +29,7 @@ for /f "usebackq delims=" %%i in (`"%PYTHON_BIN%" -c "from app.config import get
 if not defined APP_URL set "APP_URL=conf.json 의 app 참조"
 
 rem --- 서버가 응답하면 브라우저를 엽니다. 서버는 콘솔을 붙잡고 있으므로
-rem     기다리는 일은 별도 프로세스가 합니다 (MAO_NO_BROWSER=1 이면 건너뜁니다).
+rem     기다리는 일은 별도 프로세스가 합니다 (MADO_NO_BROWSER=1 이면 건너뜁니다).
 rem     같은 인자를 그대로 넘겨야 --port 로 포트를 바꿔도 맞는 주소를 엽니다.
 if exist "%~dp0open_browser.py" start "" /b "%PYTHON_BIN%" open_browser.py %*
 

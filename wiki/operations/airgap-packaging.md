@@ -116,7 +116,7 @@ server process on purpose:
 The address comes from `conf.json`'s `app` object, overridden by the same `--host` / `--port` arguments
 that were forwarded to `app.main`, so a custom port always opens the right URL. A wildcard bind
 address (`0.0.0.0`) is rewritten to `127.0.0.1` — it is a bind address, not a reachable one.
-Set `MAO_NO_BROWSER=1` to opt out, `MAO_BROWSER_TIMEOUT` to change the 90-second wait.
+Set `MADO_NO_BROWSER=1` to opt out, `MADO_BROWSER_TIMEOUT` to change the 90-second wait.
 
 Launchers are generated artifacts, not source. To refresh them on an existing installation
 without rebuilding the whole bundle:

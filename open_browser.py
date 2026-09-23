@@ -18,8 +18,8 @@
     python open_browser.py [app.main 에 넘긴 것과 같은 인자들]
 
 환경변수:
-    MAO_NO_BROWSER        비어 있지 않으면 아무것도 하지 않고 끝냅니다.
-    MAO_BROWSER_TIMEOUT   서버를 기다리는 최대 시간(초). 기본 90.
+    MADO_NO_BROWSER        비어 있지 않으면 아무것도 하지 않고 끝냅니다.
+    MADO_BROWSER_TIMEOUT   서버를 기다리는 최대 시간(초). 기본 90.
 """
 
 import os
@@ -93,7 +93,7 @@ def wait_for_server(host: str, port: int, timeout: float) -> bool:
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
 
-    if os.environ.get("MAO_NO_BROWSER", "").strip():
+    if os.environ.get("MADO_NO_BROWSER", "").strip():
         return 0
 
     target = resolve_target(argv)
@@ -103,7 +103,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     host, port = target
     try:
-        timeout = float(os.environ.get("MAO_BROWSER_TIMEOUT", "") or DEFAULT_TIMEOUT)
+        timeout = float(os.environ.get("MADO_BROWSER_TIMEOUT", "") or DEFAULT_TIMEOUT)
     except ValueError:
         timeout = DEFAULT_TIMEOUT
 

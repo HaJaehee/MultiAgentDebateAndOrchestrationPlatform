@@ -66,7 +66,7 @@
 | `MCP_NODE_HOME` / `MCP_SANDBOX_HOME` | MCP 서버 위치 |
 | `WORKSPACE_DIR` | 공용 작업 공간 |
 | `SANDBOX_KERNEL_PYTHON` / `SANDBOX_EXEC_TIMEOUT` / `SANDBOX_MAX_NAMESPACES` | 샌드박스 |
-| `MAO_NO_BROWSER` / `MAO_BROWSER_TIMEOUT` | 자동 브라우저 열기 |
+| `MADO_NO_BROWSER` / `MADO_BROWSER_TIMEOUT` | 자동 브라우저 열기 |
 
 ### 상태 값
 

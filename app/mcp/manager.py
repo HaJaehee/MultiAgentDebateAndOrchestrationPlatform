@@ -14,6 +14,7 @@ from app.mcp.client import (
     MCPToolError,
     clip_tool_output,
 )
+from app.mcp.guards import binary_write_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,39 @@ def sync_vendored_servers(server_configs: Dict[str, MCPServerConfig]) -> None:
                 logger.info(f"Installed forked memory MCP server at: {target}")
             except OSError as e:
                 logger.warning(f"Could not install forked memory MCP server at '{target}': {e}")
+
+
+def absolutize_local_script_args(server_configs: Dict[str, MCPServerConfig]) -> None:
+    """설정에 적힌 상대 경로 인자를 프로젝트 루트 기준 절대 경로로 바꿉니다.
+
+    자식 프로세스는 우리 cwd 를 물려받습니다 (`client.py` 의 `_get_server_params` 는
+    `cwd=` 를 넘기지 않습니다). 그런데 그 cwd 가 프로젝트 루트라는 보장이 없습니다 —
+    `run_mado.ps1` 은 `Set-Location` 없이 `python -m app.main` 을 돌리고, 개발 PC 에서
+    다른 폴더에서 띄우는 일도 흔합니다. 그러면 `./mcp_servers/memory_scoped/index.mjs` 같은
+    기본값이 엉뚱한 곳을 가리켜 서버가 조용히 안 뜹니다. 지금까지는 런처가 절대
+    경로 환경변수(`MCP_NODE_HOME` 등)를 넣어 주어 가려져 있던 구멍입니다.
+
+    `sync_vendored_servers` 와 일부러 갈라 둡니다. 그쪽은 "포크한 파일을 제자리에
+    놓는" 일이고 이쪽은 "모든 경로를 고치는" 일이라, 한 함수에 섞으면 다음 사람이
+    하나를 고치다 다른 하나를 깹니다.
+
+    바꾸는 것은 **실제로 존재하는 파일을 가리키는** 상대 경로뿐입니다. 그 조건이
+    `-m`, `--repository`, 플래그 값 같은 인자를 건드리지 않게 막아 줍니다. 멱등합니다.
+    """
+    for cfg in server_configs.values():
+        if not cfg.args:
+            continue
+        for i, arg in enumerate(cfg.args):
+            if not isinstance(arg, str) or not arg:
+                continue
+            if "/" not in arg and "\\" not in arg:
+                continue  # 경로처럼 보이지 않음 (플래그, 모듈명 등)
+            candidate = Path(arg).expanduser()
+            if candidate.is_absolute():
+                continue
+            resolved = (PROJECT_ROOT / candidate).resolve()
+            if resolved.exists():
+                cfg.args[i] = str(resolved)
 
 
 # 작업 공간 준비는 경로마다 한 번씩만. 같은 폴더를 쓰는 런타임 둘이 동시에
@@ -408,6 +442,7 @@ class MCPManager:
 
             await ensure_workspace_async(self.workspace)
             sync_vendored_servers(self.server_configs)
+            absolutize_local_script_args(self.server_configs)
 
             for name in self.server_configs:
                 await self._start_client(name)
@@ -560,6 +595,14 @@ class MCPManager:
                 arguments = {"input": arguments}
         elif not isinstance(arguments, dict):
             arguments = {}
+
+        # 텍스트 도구로 .pptx/.xlsx 를 쓰려는 시도는 여기서 끊습니다. 흘려보내면
+        # 도구는 성공을 보고하고 사용자는 열리지 않는 파일을 받습니다. 자세한 이유는
+        # `app/mcp/guards.py` 를 보세요.
+        refusal = binary_write_refusal(tool_name, arguments, self._tool_lookup.keys())
+        if refusal:
+            logger.info(f"Refused binary write via '{tool_name}' (actor={actor}).")
+            return refusal, "error"
 
         client: Optional[MCPClientConnection] = None
         actual_tool_name = tool_name
