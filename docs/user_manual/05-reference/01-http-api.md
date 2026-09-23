@@ -117,8 +117,8 @@ MCP 서버별 연결 상태. `"enabled": false` 로 꺼 둔 서버도 함께 보
     }
   ],
   "runtimes": {
-    "D:\MultiAgentOrchestrator\workspace": {
-      "workspace": "D:\MultiAgentOrchestrator\workspace",
+    "D:\MultiAgentDebateOrchestration\workspace": {
+      "workspace": "D:\MultiAgentDebateOrchestration\workspace",
       "holders": ["3f1c...세션 id"],
       "idle_seconds": 0.0,
       "initialized": true,

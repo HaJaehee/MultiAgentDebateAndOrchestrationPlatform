@@ -1,6 +1,6 @@
 # Orchestration Engine & Execution Lifecycle
 
-The [`OrchestratorEngine`](file:///d:/MultiAgentOrchestrator/app/orchestration/engine.py#L33-L436) coordinates the multi-agent debate workflow, turn management, database synchronization, and artifact synthesis. It implements an asynchronous state machine inspired by StateGraph patterns.
+The [`OrchestratorEngine`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py#L33-L436) coordinates the multi-agent debate workflow, turn management, database synchronization, and artifact synthesis. It implements an asynchronous state machine inspired by StateGraph patterns.
 
 ---
 
@@ -50,7 +50,7 @@ however the turn ends — completion, user stop, cancellation, or an exception. 
 pointing at the same folder share one runtime; a different folder gets its own group of
 server processes, which is what allows debates in different workspaces to run at the same
 time. Every `call_agent()` in the turn is handed that runtime explicitly. See
-[Runtime Isolation](file:///d:/MultiAgentOrchestrator/wiki/mcp/runtime-isolation.md).
+[Runtime Isolation](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/runtime-isolation.md).
 
 ### Phase 1: Planning & Goal Decomposition
 1. **Multi-Turn Context Restoration**: At the start of a turn, the engine loads all previous `MessageModel` records for the session from SQLite into `state.messages`. This ensures previous user prompts and agent remarks are fully restored.
@@ -63,7 +63,7 @@ time. Every `call_agent()` in the turn is handed that runtime explicitly. See
 For each round $r \in [1, \text{max\_rounds}]$:
 1. The active strategy (e.g. `sequential_debate`) determines the speaker order. Under `orchestrator_led` the orchestrator is asked, each round, which agents should speak.
 2. For each agent in the speaker list:
-   - [`_context_for_speech()`](file:///d:/MultiAgentOrchestrator/app/orchestration/engine.py) first folds old messages into the rolling summary if the request would exceed this agent's window, then [`_build_context_for_agent()`](file:///d:/MultiAgentOrchestrator/app/orchestration/engine.py) constructs the transcript labeled by speaker name and role. Its goal message pins the user record, this turn's plan and (when needed) the summary; pinned messages appear in the transcript as references.
+   - [`_context_for_speech()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py) first folds old messages into the rolling summary if the request would exceed this agent's window, then [`_build_context_for_agent()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py) constructs the transcript labeled by speaker name and role. Its goal message pins the user record, this turn's plan and (when needed) the summary; pinned messages appear in the transcript as references.
    - The engine emits `message_stream_start` and streams response tokens via `message_stream_chunk` events in real time.
    - If the agent calls MCP tools (e.g. reading files or executing code in the sandbox), every tool invocation is stored in the database (`ToolCallRecordModel`) and streamed to the UI as a real-time event.
    - Once completed, the agent's full text response is finalized in the database (`MessageModel`) and emitted via `message_added`.
@@ -77,12 +77,12 @@ database write and before `message_added`. The synthesis call uses it to run the
 self-repair loop, so the streaming card is finalised with the corrected text and the artifacts
 are extracted from it. Failures inside `post_process` are logged and the original body is kept
 — post-processing must never cost a turn. See
-[Artifact Synthesis §3](file:///d:/MultiAgentOrchestrator/wiki/orchestration/artifact-generation.md).
+[Artifact Synthesis §3](file:///d:/MultiAgentDebateOrchestration/wiki/orchestration/artifact-generation.md).
 
 1. Once all debate rounds conclude, the engine transitions to `status = "synthesizing"`.
 2. The **Master Orchestrator** receives the complete transcript of the debate.
 3. The Orchestrator synthesizes the consensus, integrating architectural proposals, code revisions, and security audit recommendations.
-4. [`_extract_artifacts_from_synthesis()`](file:///d:/MultiAgentOrchestrator/app/orchestration/engine.py#L372-L436) parses the output, extracting code blocks, Mermaid diagrams, and JSON summaries into individual [`ArtifactModel`](file:///d:/MultiAgentOrchestrator/app/database/models.py#L80-L92) records.
+4. [`_extract_artifacts_from_synthesis()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py#L372-L436) parses the output, extracting code blocks, Mermaid diagrams, and JSON summaries into individual [`ArtifactModel`](file:///d:/MultiAgentDebateOrchestration/app/database/models.py#L80-L92) records.
 5. `artifacts_synthesized` is sent as soon as the artifacts are saved; then the ledger is updated once more with the conclusions, and the ledger and summary are saved to `sessions` (only on this path — an aborted turn saves neither).
 6. The state status is marked `completed` with `is_consensus_reached = True`.
 
@@ -121,7 +121,7 @@ async def on_event(event: Dict[str, Any]) -> None:
 ## 4. Who Owns the Running Turn
 
 `run_turn()` is never awaited from a page callback.
-[`DebateRunner`](file:///d:/MultiAgentOrchestrator/app/orchestration/runner.py) owns it:
+[`DebateRunner`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/runner.py) owns it:
 `runner.start(session_id, prompt)` spawns an `asyncio.Task` and returns immediately.
 
 This is not a detail. Awaiting the turn inside a NiceGUI click handler tied the debate to
@@ -143,7 +143,7 @@ one browser client, and that had two consequences:
 The runner never touches NiceGUI. The task is created with `asyncio.create_task`, which
 starts with an empty `Slot` stack, so UI elements cannot be created from it even by mistake.
 
-On the UI side ([`app/ui/app.py`](file:///d:/MultiAgentOrchestrator/app/ui/app.py)):
+On the UI side ([`app/ui/app.py`](file:///d:/MultiAgentDebateOrchestration/app/ui/app.py)):
 
 - `load_session_state()` renders DB messages, then merges in the run's snapshot messages
   by id for anything not yet committed, and re-registers the streaming card so incoming

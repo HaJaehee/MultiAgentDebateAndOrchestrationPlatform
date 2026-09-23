@@ -1,6 +1,6 @@
 # MCP Error Handling, Diagnostics & Resilience
 
-External subprocess communications are inherently vulnerable to runtime disruptions (e.g., process crashes, environment misconfigurations, and invalid tool arguments). The platform implements robust diagnostic and fault-tolerance patterns in [app/mcp/client.py](file:///d:/MultiAgentOrchestrator/app/mcp/client.py).
+External subprocess communications are inherently vulnerable to runtime disruptions (e.g., process crashes, environment misconfigurations, and invalid tool arguments). The platform implements robust diagnostic and fault-tolerance patterns in [app/mcp/client.py](file:///d:/MultiAgentDebateOrchestration/app/mcp/client.py).
 
 ---
 
@@ -10,7 +10,7 @@ MCP distinguishes between communication protocol failures and semantic tool exec
 
 | Category | Transport Representation | System Handling | LLM Context Injection |
 | :--- | :--- | :--- | :--- |
-| **Protocol Error** | JSON-RPC error or broken pipe | Logged as warning; triggers [`MCPToolError`](file:///d:/MultiAgentOrchestrator/app/mcp/client.py#L18-L32) | Marked as `status: "error"`; returns error message string. |
+| **Protocol Error** | JSON-RPC error or broken pipe | Logged as warning; triggers [`MCPToolError`](file:///d:/MultiAgentDebateOrchestration/app/mcp/client.py#L18-L32) | Marked as `status: "error"`; returns error message string. |
 | **Tool Execution Error**| Valid JSON-RPC response with `isError: true` | Recorded with `status: "error"`; keeps process alive | **Raw server error text is injected verbatim** into LLM context. |
 
 ### Preserving Verbatim Error Text for LLM Self-Correction
@@ -33,7 +33,7 @@ ExceptionGroup: unhandled errors in a TaskGroup
 ```
 This generic message contains zero diagnostic value. The actual root cause (`ModuleNotFoundError: No module named 'xyz'`) was written by the child process directly to `stderr`.
 
-### The `_StderrTee` Solution ([app/mcp/client.py](file:///d:/MultiAgentOrchestrator/app/mcp/client.py#L52-L111)):
+### The `_StderrTee` Solution ([app/mcp/client.py](file:///d:/MultiAgentDebateOrchestration/app/mcp/client.py#L52-L111)):
 1. Creates an OS pipe (`os.pipe()`) and attaches the write descriptor to the subprocess's `stderr`.
 2. Spawns a background daemon thread that pumps the read descriptor to the main application's console while maintaining a ring buffer of:
    - **Head lines** (first 4 lines: typically the immediate failure statement, e.g. `Cannot find module ...`).
@@ -55,7 +55,7 @@ flowchart LR
 ## 3. Automatic Reconnection & Safety
 
 When a tool invocation fails because the underlying stdio process died:
-- [`MCPClientConnection.execute_tool()`](file:///d:/MultiAgentOrchestrator/app/mcp/client.py) detects the broken pipe and attempts **exactly one automatic reconnection**.
+- [`MCPClientConnection.execute_tool()`](file:///d:/MultiAgentDebateOrchestration/app/mcp/client.py) detects the broken pipe and attempts **exactly one automatic reconnection**.
 - If reconnection succeeds, the call proceeds.
 - If a tool invocation fails logically (`isError: true` with a live server), **no retry is attempted**. Automatically retrying side-effecting operations (such as file appending or git commits) could cause duplicate operations or state corruption.
 - Uvicorn's file watcher explicitly excludes `workspace/`, `*.db*`, and `.git/` so that file operations performed by sandbox or filesystem tools do not trigger false hot-reloads and application restarts.
@@ -83,19 +83,19 @@ The rule is now stated in one place and enforced at every layer:
 
 | Layer | Guarantee |
 | :--- | :--- |
-| [`MCPManager.execute_tool()`](file:///d:/MultiAgentOrchestrator/app/mcp/manager.py) | **The boundary.** Returns `(text, "error")` for anything that goes wrong. Re-raises `CancelledError` only. |
-| [`LLMCaller._execute_tool_safely()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) | Enforces the same rule again in case the manager is replaced (test doubles) or lookup itself throws. |
-| [`LLMCaller._parse_tool_call()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) | Absorbs malformed `tool_calls` — object or dict shape, broken argument JSON, missing `tool_call_id` (an empty id makes the *next* request 400). |
-| [`LLMCaller._notify_tool_call()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) | A dead browser callback cannot discard the observation of a tool that actually ran. |
-| [`engine._speak()`](file:///d:/MultiAgentOrchestrator/app/orchestration/engine.py) | Catches `BaseException`, records a `msg_type="error"` turn, and lets the other agents continue. A failed DB commit rolls back so the session is not left broken. |
-| [`DebateRunner`](file:///d:/MultiAgentOrchestrator/app/orchestration/runner.py) | Reports `BaseExceptionGroup` as `failed` instead of dying silently. `cancel()` uses `asyncio.wait` with a 20 s cap so shutdown is never blocked by a task that ignores cancellation. |
-| [`app/main.py`](file:///d:/MultiAgentOrchestrator/app/main.py) | Installs an event-loop exception handler and `threading.excepthook`; MCP init failure no longer prevents the app from starting. |
+| [`MCPManager.execute_tool()`](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py) | **The boundary.** Returns `(text, "error")` for anything that goes wrong. Re-raises `CancelledError` only. |
+| [`LLMCaller._execute_tool_safely()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) | Enforces the same rule again in case the manager is replaced (test doubles) or lookup itself throws. |
+| [`LLMCaller._parse_tool_call()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) | Absorbs malformed `tool_calls` — object or dict shape, broken argument JSON, missing `tool_call_id` (an empty id makes the *next* request 400). |
+| [`LLMCaller._notify_tool_call()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) | A dead browser callback cannot discard the observation of a tool that actually ran. |
+| [`engine._speak()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py) | Catches `BaseException`, records a `msg_type="error"` turn, and lets the other agents continue. A failed DB commit rolls back so the session is not left broken. |
+| [`DebateRunner`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/runner.py) | Reports `BaseExceptionGroup` as `failed` instead of dying silently. `cancel()` uses `asyncio.wait` with a 20 s cap so shutdown is never blocked by a task that ignores cancellation. |
+| [`app/main.py`](file:///d:/MultiAgentDebateOrchestration/app/main.py) | Installs an event-loop exception handler and `threading.excepthook`; MCP init failure no longer prevents the app from starting. |
 
 ### Time and size limits
 
 Two limits stop a single server from taking the whole debate hostage. Both are read once at
 import from the environment (see
-[Environment Variables §3.5](file:///d:/MultiAgentOrchestrator/wiki/configuration/environment-variables.md)):
+[Environment Variables §3.5](file:///d:/MultiAgentDebateOrchestration/wiki/configuration/environment-variables.md)):
 
 | Variable | Default | Behaviour on breach |
 | :--- | :--- | :--- |
@@ -121,7 +121,7 @@ MCP server could take the server down with it.
 
 ## 5. Real-Time Connection Monitoring
 
-The system exposes connection states via [`MCPManager.connection_status()`](file:///d:/MultiAgentOrchestrator/app/mcp/manager.py#L210-L230) and the `GET /api/mcp` endpoint:
+The system exposes connection states via [`MCPManager.connection_status()`](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py#L210-L230) and the `GET /api/mcp` endpoint:
 
 | Status Chip | Visual Indicator | Meaning & Health State |
 | :--- | :--- | :--- |

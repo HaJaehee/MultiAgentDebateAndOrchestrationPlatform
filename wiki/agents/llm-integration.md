@@ -1,6 +1,6 @@
 # LLM Integration & LiteLLM Gateway
 
-The MADO: Multi-Agent Debate & Orchestration Platform integrates with Large Language Models via [LiteLLM](https://github.com/BerriAI/litellm), managed by the [`LLMCaller`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py#L28-L362) class in [app/agents/llm.py](file:///d:/MultiAgentOrchestrator/app/agents/llm.py).
+The MADO: Multi-Agent Debate & Orchestration Platform integrates with Large Language Models via [LiteLLM](https://github.com/BerriAI/litellm), managed by the [`LLMCaller`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py#L28-L362) class in [app/agents/llm.py](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py).
 
 ---
 
@@ -21,8 +21,8 @@ flowchart LR
     LiteLLM --> Gateway[Corporate LLM Gateway / Proxy]
 ```
 
-### Parameter Mapping ([app/agents/llm.py](file:///d:/MultiAgentOrchestrator/app/agents/llm.py#L123-L183))
-[`build_completion_kwargs()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py#L123-L183) translates agent settings into LiteLLM parameters:
+### Parameter Mapping ([app/agents/llm.py](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py#L123-L183))
+[`build_completion_kwargs()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py#L123-L183) translates agent settings into LiteLLM parameters:
 - `model`: e.g. `"openai/gpt-4o"`, `"anthropic/claude-3-5-sonnet-20241022"`, `"ollama_chat/qwen2.5-coder:14b"`.
 - `api_base`: Base endpoint URL.
 - `api_key`: API token. For keyless local endpoints (Ollama, vLLM, LM Studio) that expect a non-empty string, a dummy token (`sk-no-key-required`) is provided automatically.
@@ -34,7 +34,7 @@ flowchart LR
 
 ## 2. The Multi-Turn Tool Calling Loop & Real-Time Streaming
 
-When an agent has access to MCP tools, [`_run_litellm_loop()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py#L199-L270) runs an autonomous observation-thought loop up to `max_tool_iterations` (default: 30):
+When an agent has access to MCP tools, [`_run_litellm_loop()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py#L199-L270) runs an autonomous observation-thought loop up to `max_tool_iterations` (default: 30):
 
 ```mermaid
 sequenceDiagram
@@ -62,14 +62,14 @@ sequenceDiagram
 2. **Incremental Token Streaming**: Using `acompletion(stream=True)` and `litellm.stream_chunk_builder`, partial word tokens are streamed to `on_chunk`, dynamically rendering in the UI while tools are accumulating.
 3. **Tool Execution Streaming**: As each tool executes, the `on_tool_call` asynchronous callback dispatches events to the UI, rendering an accordion widget in the chat feed before the agent's text response finishes generating.
 4. **Nothing in the loop may end the turn** (v0.5.0). Malformed `tool_calls` are absorbed by
-   [`_parse_tool_call()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) — object or dict
+   [`_parse_tool_call()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) — object or dict
    shape, broken argument JSON, and a missing `tool_call_id` (which would make the *next*
    request a 400). Tool failures come back as `role: "tool"` observations via
-   [`_execute_tool_safely()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py), and a dead
+   [`_execute_tool_safely()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py), and a dead
    UI callback cannot discard the observation of a tool that actually ran
-   ([`_notify_tool_call()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py)). Only
+   ([`_notify_tool_call()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py)). Only
    `CancelledError` propagates. See
-   [MCP Resilience §4](file:///d:/MultiAgentOrchestrator/wiki/mcp/error-handling-resilience.md).
+   [MCP Resilience §4](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/error-handling-resilience.md).
 
 
 ### 2.1. When a call fails, record what we sent (v0.5.3)
@@ -86,9 +86,9 @@ classifies 500 as retryable, so a deterministic request-shape error was also ret
 surfacing. All that reached the log was the exception string, which said nothing about the request.
 
 When the endpoint will not say why, the remaining evidence is our own. Every hard failure in
-[`_complete_once()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) — streaming and the
+[`_complete_once()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) — streaming and the
 non-streaming retry both refused — now logs a
-[`request_fingerprint()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py):
+[`request_fingerprint()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py):
 
 ```
 Request fingerprint for Senior Python Engineer (model=openai/qwen3-27b, api_base=http://gateway/v1):
@@ -144,7 +144,7 @@ never inspected before, so being cut off was invisible. Since v0.6.1.2 two cases
 (see "Reaching the limit with readable calls" below): arguments that would not parse mean the call
 really was cut and did not run; `length` with readable arguments means the calls **did** run.
 
-[`_assistant_turn()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) replaces the verbatim
+[`_assistant_turn()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) replaces the verbatim
 `model_dump()`: every tool call is re-serialised from the arguments **we actually executed**, so
 what leaves the process is always valid JSON. Unreadable arguments become a short
 `{"_unreadable": "인자 N자를 읽지 못해 생략했습니다"}` — sending 14KB of truncated JSON back tells
@@ -205,7 +205,7 @@ the same sizes.
 same failure next round with a slightly smaller chunk, because the thinking still takes its third.
 When reasoning is at least `REASONING_HEAVY_SHARE` (25%) of the response's output — measured in
 characters with the same yardstick as `completion_budget_report`, so the log and the notice agree —
-[`reasoning_heavy_note()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) adds one paragraph:
+[`reasoning_heavy_note()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) adds one paragraph:
 keep the reasoning short and call the tool, and do not draft the file inside the reasoning (that
 writes the same text twice). Below the threshold nothing is added; telling a model that barely
 thinks to think less is noise. JSON escaping inflates argument sizes, so the share errs low —
@@ -263,7 +263,7 @@ for new or small files, and their prompts say to prefer targeted edits. The mode
 clever about length; the tool surface simply does not invite a 14KB one-shot. Our architect tried
 one because `write_file` was in its hand and nothing had said otherwise.
 
-So [`file_writing_guidance()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) adds two lines
+So [`file_writing_guidance()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) adds two lines
 to the system prompt of agents that hold a file-writing tool — resolved by name tail, the same rule
 as `truncation_advice()`, and shaped the same three ways (append by name; split into several files
 when only an overwriting tool exists; nothing at all when the agent has no file tool, so a critic's
@@ -290,7 +290,7 @@ debate turn that used tools first is continued the same way; the piece is concat
 *truncated* segment, not onto the text from an earlier tool iteration, which stays a separate
 paragraph. Synthesis, speaker selection, diagram repair and specialist turns all reach it through
 the one `call_agent()` path.
-[`_finish_truncated_answer()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) appends what was
+[`_finish_truncated_answer()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) appends what was
 written so far as an `assistant` turn, adds `CONTINUE_ANSWER_INSTRUCTION`, and calls again — up to
 `max_continuations` times (default 2, ceiling 10, `0` disables it).
 
@@ -420,7 +420,7 @@ Sequential Thinking enforces deliberate reasoning before answering. Configured i
 
 ### `show_steps` decides what *people* see, not what models read
 
-When `show_steps = false`, [`_apply_show_steps()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py)
+When `show_steps = false`, [`_apply_show_steps()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py)
 strips intermediate thought steps from the recorded turn, keeping only the text after
 `## 최종 결론` / `## Final Conclusion`.
 
@@ -436,7 +436,7 @@ speaker's context. Two things followed.
   characters. Those characters were all `Thought 1: ...` preamble, so **the conclusion never
   made it in at all.**
 
-[`strip_reasoning_trace()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) removes the
+[`strip_reasoning_trace()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) removes the
 trace at every point where a turn body becomes part of a prompt — next-speaker context,
 synthesis transcript, planning prompt, speaker selection, task dispatch — while the database
 and the timeline keep the full text. It handles both shapes: the `## 최종 결론` marker used by
@@ -457,7 +457,7 @@ Measured on a synthetic transcript (5 thoughts + conclusion, 3 specialists × 3 
 ## 4. Unreachable Endpoints Fail Loudly
 
 There is no offline simulator. When an agent cannot reach its endpoint,
-[`call_agent()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) raises
+[`call_agent()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) raises
 `LLMUnavailableError` carrying the model, endpoint label, and the underlying error.
 
 The engine catches it per speaker and records a message with `msg_type="error"` that
@@ -494,7 +494,7 @@ prompt caching). Before a speech the engine folds old messages into the summary,
 arrive as digests with long code referenced, so the trim rarely fires. See
 [Conversation Memory](../orchestration/context-memory.md).
 
-**The budget** ([`context_budget()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py)) is
+**The budget** ([`context_budget()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py)) is
 
 ```
 max_context_window − effective max_tokens − 512 − tool definitions
@@ -521,7 +521,7 @@ arguments and weights characters by script (ASCII ÷ 3, everything else × 1.5).
 `write_file` turn — whose `content` is empty — as 4 tokens.
 
 The synthesis call is bounded separately, in
-[`_build_synthesis_prompt()`](file:///d:/MultiAgentOrchestrator/app/orchestration/engine.py):
+[`_build_synthesis_prompt()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py):
 it packs the whole transcript into a *single* user message, so there are no messages for
 `fit_context_window()` to drop. It fills from the most recent turn backwards — later turns
 already reflect the earlier discussion, so if something must go, the front should go. Its budget is
@@ -554,7 +554,7 @@ Sections 5.1 and 5.2 run once, before the loop. The loop then keeps appending �
 message per iteration plus one `tool` result per call, and a single tool output can be tens of
 kilobytes. Two things that were handled correctly before the loop were getting undone inside it.
 
-**The in-loop trim did not merge.** [`fit_tool_loop_context()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py)
+**The in-loop trim did not merge.** [`fit_tool_loop_context()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py)
 drops whole `assistant(tool_calls) + tool results` blocks, oldest first — never a bare `tool`
 message, which would be a 400 of its own. But its elision notice is a `user` message inserted
 directly after the head (`system` + the goal, also `user`), and unlike the pre-loop path its
@@ -569,7 +569,7 @@ drop both. If a dropped block held it, it is restored inside the notice (clipped
 
 **The wrap-up call dropped `tools` while the history still held tool blocks.** When the tool
 budget runs out — or when the user declines to widen the context and chooses to wrap up —
-[`_wrap_up_without_tools()`](file:///d:/MultiAgentOrchestrator/app/agents/llm.py) asks for a
+[`_wrap_up_without_tools()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) asks for a
 final answer with no further tool use. It used to do that by omitting `tools` entirely. The
 intent was right: hand a model the list after telling it the budget is gone and it calls a tool
 anyway, and that call is discarded unexecuted.

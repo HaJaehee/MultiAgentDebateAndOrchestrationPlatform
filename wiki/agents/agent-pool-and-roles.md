@@ -1,14 +1,14 @@
 # Agent Pool & Built-In Roles
 
-The MADO: Multi-Agent Debate & Orchestration Platform coordinates multiple specialized autonomous agents that debate, collaborate, and synthesize solutions. Agent definitions, runtime metadata, and UI appearance are managed by [app/agents/base.py](file:///d:/MultiAgentOrchestrator/app/agents/base.py) and [app/agents/pool.py](file:///d:/MultiAgentOrchestrator/app/agents/pool.py).
+The MADO: Multi-Agent Debate & Orchestration Platform coordinates multiple specialized autonomous agents that debate, collaborate, and synthesize solutions. Agent definitions, runtime metadata, and UI appearance are managed by [app/agents/base.py](file:///d:/MultiAgentDebateOrchestration/app/agents/base.py) and [app/agents/pool.py](file:///d:/MultiAgentDebateOrchestration/app/agents/pool.py).
 
 ---
 
 ## 1. Agent Architecture & UI Styling
 
-Each agent is represented by the [`Agent`](file:///d:/MultiAgentOrchestrator/app/agents/base.py) Pydantic
+Each agent is represented by the [`Agent`](file:///d:/MultiAgentDebateOrchestration/app/agents/base.py) Pydantic
 model — `AgentConfig` plus the three values the screen actually draws with. A single function,
-[`style_for_agent(key, card_color, icon)`](file:///d:/MultiAgentOrchestrator/app/agents/base.py),
+[`style_for_agent(key, card_color, icon)`](file:///d:/MultiAgentDebateOrchestration/app/agents/base.py),
 produces them in two steps.
 
 **Step 1 — the key decides a default.** The five built-in keys have a fixed table:
@@ -37,7 +37,7 @@ has chosen anything, so **appearance is never a required field**.
 | `icon` | a Material icon name (`"query_stats"`), or a path to an image | the avatar |
 
 Both are chosen from the UI — the **Add Agent** dialog and the **persona editor** share one editor
-([`ui/components/agent_appearance.py`](file:///d:/MultiAgentOrchestrator/app/ui/components/agent_appearance.py))
+([`ui/components/agent_appearance.py`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/agent_appearance.py))
 — and what is chosen is written back to `conf.json`. Clearing a value removes the key and returns
 that agent to step 1. `badge_color` is the chosen colour resolved to something CSS can use directly,
 which the border needs: Quasar colour names are classes, not values.
@@ -140,9 +140,9 @@ graph LR
 
 ---
 
-## 3. The `AgentPool` Registry ([app/agents/pool.py](file:///d:/MultiAgentOrchestrator/app/agents/pool.py))
+## 3. The `AgentPool` Registry ([app/agents/pool.py](file:///d:/MultiAgentDebateOrchestration/app/agents/pool.py))
 
-The [`AgentPool`](file:///d:/MultiAgentOrchestrator/app/agents/pool.py#L9-L56) acts as the runtime registry for all configured agents:
+The [`AgentPool`](file:///d:/MultiAgentDebateOrchestration/app/agents/pool.py#L9-L56) acts as the runtime registry for all configured agents:
 
 ```python
 class AgentPool:
@@ -161,7 +161,7 @@ class AgentPool:
 ## 4. Extending with Custom Specialist Agents
 
 To add a new specialist (e.g. a Data Scientist or DevOps Engineer), add an entry to the `agents`
-object in [conf.json](file:///d:/MultiAgentOrchestrator/conf.json):
+object in [conf.json](file:///d:/MultiAgentDebateOrchestration/conf.json):
 
 ```json
 "data_scientist": {

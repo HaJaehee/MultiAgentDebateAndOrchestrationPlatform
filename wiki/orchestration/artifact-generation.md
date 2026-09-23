@@ -19,7 +19,7 @@ viewer.
 
 ## 1. Artifact Extraction Architecture
 
-[`_extract_artifacts_from_synthesis()`](file:///d:/MultiAgentOrchestrator/app/orchestration/engine.py)
+[`_extract_artifacts_from_synthesis()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py)
 produces four kinds of artifact. Every title starts with the local time the turn finished
 (`MM-DD HH:MM`), because artifacts now accumulate across turns and identical titles must be told apart.
 
@@ -104,7 +104,7 @@ flowchart LR
     titled with its author. Models routinely draw the architecture during the debate and omit it
     from the summary. Earlier turns' diagrams are not re-promoted — they are already that turn's
     artifacts.
-- **Normalisation**: [`normalize_mermaid()`](file:///d:/MultiAgentOrchestrator/app/orchestration/engine.py)
+- **Normalisation**: [`normalize_mermaid()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py)
   normalises line endings and quotes bracket labels containing parentheses
   (`A[결제 (Payment)]` → `A["결제 (Payment)"]`), the most common way an LLM-authored diagram
   fails to parse. Shape syntax (`[(cylinder)]`, `[[subroutine]]`, `[/parallelogram/]`) is
@@ -190,7 +190,7 @@ broken one the user can see and report.
 
 ### 3.1. Why the linter is deliberately incomplete
 
-[`app/mermaid_lint.py`](file:///d:/MultiAgentOrchestrator/app/mermaid_lint.py) is **not** a
+[`app/mermaid_lint.py`](file:///d:/MultiAgentDebateOrchestration/app/mermaid_lint.py) is **not** a
 Mermaid parser. Reimplementing the grammar in Python is a losing race, and a Node renderer
 cannot be shipped in the air-gapped bundle. Each rule was instead calibrated against the real
 `mermaid.parse()` running in a browser.
@@ -332,8 +332,8 @@ with an apostrophe no longer lands as `&#x27;` in the file name.
 
 ## 5. Storage & UI Integration
 
-- **Database Entity**: Each extracted item is committed as an [`ArtifactModel`](file:///d:/MultiAgentOrchestrator/app/database/models.py#L80-L92) record linked via foreign key to `sessions.id`.
-- **UI Viewer**: Rendered in [`ArtifactViewer`](file:///d:/MultiAgentOrchestrator/app/ui/components/artifact_viewer.py) as tabbed cards on the right-hand panel of the workspace. Users can switch between tabs, copy snippets, or download raw files with a single click.
+- **Database Entity**: Each extracted item is committed as an [`ArtifactModel`](file:///d:/MultiAgentDebateOrchestration/app/database/models.py#L80-L92) record linked via foreign key to `sessions.id`.
+- **UI Viewer**: Rendered in [`ArtifactViewer`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/artifact_viewer.py) as tabbed cards on the right-hand panel of the workspace. Users can switch between tabs, copy snippets, or download raw files with a single click.
 - **Append, never replace.** The `artifacts_synthesized` event carries only the finished turn's
   artifacts. The viewer used to render exactly that list, so every turn wiped the previous turns' tabs
   from the screen; reloading during a run did the same, because the running turn's snapshot overwrote

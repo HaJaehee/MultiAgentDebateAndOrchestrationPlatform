@@ -85,7 +85,7 @@ graph TD
 ## 📁 프로젝트 구조 (Directory Structure)
 
 ```
-MultiAgentOrchestrator/
+MultiAgentDebateOrchestration/
 ├── conf.example.json         # 설정 템플릿 (저장소에 커밋되는 원본)
 ├── setup_mcp.py              # 개발 PC용 MCP 서버 일괄 설치
 ├── package_offline.py        # 폐쇄망 배포 번들 패키징 (런타임 + MCP 서버 동봉)

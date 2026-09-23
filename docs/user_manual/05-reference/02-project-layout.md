@@ -7,7 +7,7 @@
 ## 최상위
 
 ```text
-MultiAgentOrchestrator/
+MultiAgentDebateOrchestration/
 ├── app/                      애플리케이션 소스
 ├── tests/                    테스트 (528개)
 ├── wiki/                     영문 기술 위키

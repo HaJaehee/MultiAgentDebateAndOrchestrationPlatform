@@ -183,7 +183,7 @@ graph TD
   start into `sessions.graph_snapshot`. Nodes `start` · `agent` · `merge` · `gate` (yes/no) · `end`;
   each wire carries `full`, `digest` (`## 요지` only) or `refs` (long code referenced). Schema,
   validation and scheduling are pure code in
-  [app/orchestration/graph.py](file:///d:/MultiAgentOrchestrator/app/orchestration/graph.py), tested
+  [app/orchestration/graph.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/graph.py), tested
   without an LLM.
 - **Participants**: the agents placed in the graph — not the roster checkboxes.
 - **Execution — supersteps**: nodes that received new input run together in one step (bounded by
@@ -214,7 +214,7 @@ graph TD
   participation checkboxes show the graph's agents and are locked. The editor is described in
   [UI Components §1.6](../ui/components.md). While a turn runs the roster preview becomes a live
   execution overlay, and chat cards carry node badges ([UI Components §1.2.2](../ui/components.md)).
-- **Run state from the record** ([app/orchestration/graph_run.py](file:///d:/MultiAgentOrchestrator/app/orchestration/graph_run.py)):
+- **Run state from the record** ([app/orchestration/graph_run.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/graph_run.py)):
   every node output stores its node and port (`messages.graph_node_id`, `graph_port`), so visit counts, gate
   branches and flowed wires are counted from messages alone. `GraphRunTracker` builds the same picture from
   live events, from the runner snapshot plus this turn's messages after a refresh, and from the database for
@@ -229,7 +229,7 @@ graph TD
 
 ## 3. Adding a Custom Debate Strategy
 
-1. Subclass `BaseDebateStrategy` in [app/orchestration/strategies.py](file:///d:/MultiAgentOrchestrator/app/orchestration/strategies.py):
+1. Subclass `BaseDebateStrategy` in [app/orchestration/strategies.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/strategies.py):
    ```python
    class ConsensusVotingStrategy(BaseDebateStrategy):
        name = "consensus_voting"

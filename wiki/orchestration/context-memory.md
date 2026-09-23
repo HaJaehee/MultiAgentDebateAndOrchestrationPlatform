@@ -1,7 +1,7 @@
 # Conversation Memory: Pinned User Record, Decision Ledger & Summaries (v0.8.3)
 
-[app/orchestration/context_memory.py](file:///d:/MultiAgentOrchestrator/app/orchestration/context_memory.py)
-holds the pure functions; [`OrchestratorEngine`](file:///d:/MultiAgentOrchestrator/app/orchestration/engine.py)
+[app/orchestration/context_memory.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/context_memory.py)
+holds the pure functions; [`OrchestratorEngine`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py)
 makes the LLM calls (section `대화 기억`).
 
 ---
@@ -215,7 +215,7 @@ Events: `ledger_update_started`, `ledger_updated`, `ledger_update_failed`, `cont
 
 ## 5. Tests
 
-[tests/test_context_memory.py](file:///d:/MultiAgentOrchestrator/tests/test_context_memory.py). The
+[tests/test_context_memory.py](file:///d:/MultiAgentDebateOrchestration/tests/test_context_memory.py). The
 reproduction test passes the prompts the engine sent through the real `fit_context_window` and checks
 the constraint in what would reach the endpoint; disabling the pin makes it fail. Other tests pin the
 tiers message by message, digest parsing, code references, the ledger's position in what `call_agent`

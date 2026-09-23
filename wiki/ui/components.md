@@ -1,6 +1,6 @@
 # UI Components Reference
 
-The web application workspace is organized into four primary UI components in [app/ui/components/](file:///d:/MultiAgentOrchestrator/app/ui/components/) alongside the dedicated persona editor page.
+The web application workspace is organized into four primary UI components in [app/ui/components/](file:///d:/MultiAgentDebateOrchestration/app/ui/components/) alongside the dedicated persona editor page.
 
 ```text
 +-----------------------------------------------------------------------------------+
@@ -41,7 +41,7 @@ The web application workspace is organized into four primary UI components in [a
 > removes the blank-then-filled flash the old order produced. That warning is emitted once per
 > process, so leaving a benign one in place would hide the next real use-after-free.
 
-### 1.1. Session Sidebar ([app/ui/components/sidebar.py](file:///d:/MultiAgentOrchestrator/app/ui/components/sidebar.py))
+### 1.1. Session Sidebar ([app/ui/components/sidebar.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/sidebar.py))
 - **`+ New Chat` Button**: Instantiates a fresh debate session and clears the workspace.
 - **Session List**: Displays historical sessions, by default ordered by `updated_at` descending.
 - **Sorting** (v0.8.3): a selector next to `세션 목록` — `최근 변경` (the old order, default), `이름순`,
@@ -68,9 +68,9 @@ The web application workspace is organized into four primary UI components in [a
   knowledge graph, the agent roster and the previous conclusion — clearing only the
   transcript. Disabled while that session's debate is running, because the conclusion does
   not exist yet. See
-  [Session Handoff](file:///d:/MultiAgentOrchestrator/wiki/orchestration/session-handoff.md).
+  [Session Handoff](file:///d:/MultiAgentDebateOrchestration/wiki/orchestration/session-handoff.md).
 
-### 1.2. Agent Roster Control ([app/ui/components/roster.py](file:///d:/MultiAgentOrchestrator/app/ui/components/roster.py))
+### 1.2. Agent Roster Control ([app/ui/components/roster.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster.py))
 
 > The persona button's tooltip element is created once at build time and only its text is swapped
 > afterwards. `Element.tooltip()` builds a new `q-tooltip` in whatever slot is current, so calling it
@@ -181,7 +181,7 @@ The web application workspace is organized into four primary UI components in [a
   receives its root at spawn time. The value is stored on the session row — `conf.json` is never
   written. Blocked while a debate is running, here or in another conversation.
 
-### 1.2.1. Appearance Editor ([app/ui/components/agent_appearance.py](file:///d:/MultiAgentOrchestrator/app/ui/components/agent_appearance.py))
+### 1.2.1. Appearance Editor ([app/ui/components/agent_appearance.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/agent_appearance.py))
 
 One editor serves both places a card's colour and icon can be set — the **에이전트 추가** dialog and
 the persona editor — because two copies would drift on how a value is picked or written.
@@ -199,7 +199,7 @@ the persona editor — because two copies would drift on how a value is picked o
   selection and erase the image it was created to display. The same reason a `_syncing` flag guards
   every write-back from code.
 
-### 1.3. Chat & Debate Feed ([app/ui/components/chat_feed.py](file:///d:/MultiAgentOrchestrator/app/ui/components/chat_feed.py))
+### 1.3. Chat & Debate Feed ([app/ui/components/chat_feed.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/chat_feed.py))
 - **Color-Coded Message Timeline**: Displays user prompts, orchestrator guidance, and specialist contributions with distinct avatars, roles, and colors.
 - **Per-conversation styling** (v0.5.1): the feed does not resolve colours from `conf.json`. The roster
   hands it the agents it is drawing (`set_agent_styles()`) every time it redraws, so a locked
@@ -258,8 +258,8 @@ the persona editor — because two copies would drift on how a value is picked o
   inserts a newline; `.prevent` then stops plain Enter from leaving a stray newline behind in
   the box it is about to clear. The order matters: `.prevent.exact` would call preventDefault
   before the modifier is checked, killing the line break it is supposed to allow.
-- **@mentions** (v0.8.0, [app/workspace_files.py](file:///d:/MultiAgentOrchestrator/app/workspace_files.py),
-  [app/ui/mention_input.py](file:///d:/MultiAgentOrchestrator/app/ui/mention_input.py)): typing `@` in the
+- **@mentions** (v0.8.0, [app/workspace_files.py](file:///d:/MultiAgentDebateOrchestration/app/workspace_files.py),
+  [app/ui/mention_input.py](file:///d:/MultiAgentDebateOrchestration/app/ui/mention_input.py)): typing `@` in the
   input opens a list of this conversation's workspace files and folders plus the turn's active
   specialists. See §1.3.4.
 - **Workspace upload button** (`upload_file`, left of the input): saves files into
@@ -289,7 +289,7 @@ the persona editor — because two copies would drift on how a value is picked o
   rendered text — to the clipboard, whether or not the card is collapsed.
   `navigator.clipboard` exists only in secure contexts (HTTPS or localhost). With the default
   `host = "0.0.0.0"`, a colleague opening `http://<ip>:8000` has no such API, and the button would
-  silently do nothing while reporting success. [app/ui/clipboard.py](file:///d:/MultiAgentOrchestrator/app/ui/clipboard.py)
+  silently do nothing while reporting success. [app/ui/clipboard.py](file:///d:/MultiAgentDebateOrchestration/app/ui/clipboard.py)
   falls back to a hidden textarea and `execCommand('copy')`; the artifact viewer's copy button uses
   the same helper.
 
@@ -344,7 +344,7 @@ frame.
   `contain-intrinsic-size: auto 220px` estimates never-rendered cards and remembers real heights
   afterwards so the scrollbar jumps less. Off-screen text stays in the DOM, so copy and find are
   unaffected.
-* **`QuietSplitter`** ([app/ui/components/quiet_splitter.py](file:///d:/MultiAgentOrchestrator/app/ui/components/quiet_splitter.py))
+* **`QuietSplitter`** ([app/ui/components/quiet_splitter.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/quiet_splitter.py))
   sets `LOOPBACK = False`. Quasar's `QSplitter` writes the panel's `style.width` directly on every
   mouse move and emits `update:modelValue` **once, on release** (it is not `emit-immediately`). With
   loopback on, the server sent that value straight back, laying out both panes once more at the moment
@@ -481,7 +481,7 @@ the typed value with the reference block attached; a simulated upload inserted
 
 ### 1.3.5. Workspace file download (v0.8.1)
 
-[app/ui/components/workspace_download.py](file:///d:/MultiAgentOrchestrator/app/ui/components/workspace_download.py),
+[app/ui/components/workspace_download.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/workspace_download.py),
 with the file logic in `app/workspace_files.py`. Uploads went in; nothing came out — a user on another PC
 had no way to take the files a debate produced.
 
@@ -523,8 +523,8 @@ dialog were not exercised (hidden preview window).
 
 ### 1.3.6. Remote access token (v0.8.2)
 
-[app/security.py](file:///d:/MultiAgentOrchestrator/app/security.py) and
-[app/ui/components/access_token.py](file:///d:/MultiAgentOrchestrator/app/ui/components/access_token.py).
+[app/security.py](file:///d:/MultiAgentDebateOrchestration/app/security.py) and
+[app/ui/components/access_token.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/access_token.py).
 Until now MADO had no authentication at all: bound to `0.0.0.0`, anyone on the network could read every
 conversation (`/api/sessions/{id}/personas`, `/personas/{id}`), see MCP commands (`/api/mcp`), add an MCP
 server with an arbitrary command, run code through the sandbox MCP, and download workspace files.
@@ -625,7 +625,7 @@ CRLF into LF, and the "screens sent back" count included clients without a conne
 encryption). One token is one owner; there are no per-user accounts or per-session ownership. An already open
 websocket is not re-checked when a cookie reaches its 7-day expiry; the next reconnect or page load is.
 
-### 1.4. Artifact Viewer ([app/ui/components/artifact_viewer.py](file:///d:/MultiAgentOrchestrator/app/ui/components/artifact_viewer.py))
+### 1.4. Artifact Viewer ([app/ui/components/artifact_viewer.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/artifact_viewer.py))
 - **Tabs accumulate across turns.** `add_artifacts()` appends a finished turn's artifacts (skipping ids
   already shown) and opens that turn's report; `render_artifacts()` is only for rebuilding from a full
   list. See [Artifact Synthesis §5](../orchestration/artifact-generation.md).
@@ -638,7 +638,7 @@ websocket is not re-checked when a cookie reaches its 7-day expiry; the next rec
   - **JSON Summary Tab**: Structured session metadata.
 - **Action Toolbar**: Includes one-click **"Copy to Clipboard"** and **"Download File"** buttons for all extracted artifacts.
 
-### 1.5. Persona Editor Page ([app/ui/personas_page.py](file:///d:/MultiAgentOrchestrator/app/ui/personas_page.py))
+### 1.5. Persona Editor Page ([app/ui/personas_page.py](file:///d:/MultiAgentDebateOrchestration/app/ui/personas_page.py))
 - Dedicated page accessible at `/personas/{session_id}`.
 - Renders cards for each registered agent with editable fields:
   - **Display Name**
@@ -649,15 +649,15 @@ websocket is not re-checked when a cookie reaches its 7-day expiry; the next rec
 - **In-Progress Banner**: If a debate is running for this session, a banner says so and states that
   opening this page does not interrupt it. Navigating here used to kill the running turn.
 
-### 1.6. Graph Editor Page ([app/ui/graph_page.py](file:///d:/MultiAgentOrchestrator/app/ui/graph_page.py))
+### 1.6. Graph Editor Page ([app/ui/graph_page.py](file:///d:/MultiAgentDebateOrchestration/app/ui/graph_page.py))
 
 - Page at `/graphs/{graph_id}` editing `data/graphs/<id>.json` for the graph debate strategy
   ([debate-strategies.md §2.5](../orchestration/debate-strategies.md)).
 - **Layout**: header (back, file path, graph name, `저장 안 됨` badge, 검증, 다른 이름으로 저장, 저장) ·
   left palette (flow nodes, one button per enabled specialist with its colour, 카드 순서로 다시 채우기,
   화면 맞춤) · canvas · right inspector with the validation report underneath.
-- **Canvas** ([graph_canvas.js](file:///d:/MultiAgentOrchestrator/app/ui/components/graph_canvas.js),
-  [graph_canvas.py](file:///d:/MultiAgentOrchestrator/app/ui/components/graph_canvas.py)): Vue Flow from
+- **Canvas** ([graph_canvas.js](file:///d:/MultiAgentDebateOrchestration/app/ui/components/graph_canvas.js),
+  [graph_canvas.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/graph_canvas.py)): Vue Flow from
   the bundled `app/ui/static/graph_editor/` module, loaded with `ui.element(component=..., esm=...)`.
   Nodes show a type band (the agent's badge colour for agent nodes), badges for visit cap and "모두
   기다림", a title and a subtitle. Wire colour is the carry (전문 indigo · 요지 teal · 참조 amber); a gate's
