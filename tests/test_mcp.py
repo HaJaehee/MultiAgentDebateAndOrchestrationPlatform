@@ -251,7 +251,7 @@ def _node_mcp_home() -> Path | None:
     candidates = [
         Path(os.environ["MCP_NODE_HOME"]) if os.environ.get("MCP_NODE_HOME") else None,
         Path(__file__).resolve().parent.parent / "mcp_node",
-        Path(__file__).resolve().parent.parent / "dist" / "MultiAgentOrchestrator_bundle" / "mcp_node",
+        Path(__file__).resolve().parent.parent / "dist" / "MultiAgentDebateOrchestration_bundle" / "mcp_node",
     ]
     for candidate in candidates:
         if candidate and (candidate / "node_modules" / "@modelcontextprotocol" / "sdk").is_dir():
@@ -262,7 +262,7 @@ def _node_mcp_home() -> Path | None:
 def _node_bin() -> str | None:
     import shutil as _shutil
     root = Path(__file__).resolve().parent.parent
-    bundled = root / "dist" / "MultiAgentOrchestrator_bundle" / "node_runtime" / "node.exe"
+    bundled = root / "dist" / "MultiAgentDebateOrchestration_bundle" / "node_runtime" / "node.exe"
     if bundled.is_file():
         return str(bundled)
     return os.environ.get("NODE_BIN") or _shutil.which("node")

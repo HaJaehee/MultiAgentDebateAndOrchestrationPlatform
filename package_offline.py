@@ -2,7 +2,7 @@
 
 생성되는 번들에는 다음이 모두 포함되어 인터넷 없이 즉시 구동됩니다.
 
-    MultiAgentOrchestrator_bundle/
+    MultiAgentDebateOrchestration_bundle/
     ├── app/                 애플리케이션 소스
     ├── conf.json            설정 (없으면 conf.example.json 에서 복사)
     ├── LICENSE.md           라이선스 (LGPL-3.0 전문 + 제3자 고지)
@@ -53,8 +53,8 @@ for _stream in (sys.stdout, sys.stderr):
 
 ROOT_DIR = Path(__file__).resolve().parent
 DIST_DIR = ROOT_DIR / "dist"
-STAGING_DIR = DIST_DIR / "MultiAgentOrchestrator_bundle"
-ZIP_FILE = DIST_DIR / "MultiAgentOrchestrator_offline.zip"
+STAGING_DIR = DIST_DIR / "MultiAgentDebateOrchestration_bundle"
+ZIP_FILE = DIST_DIR / "MultiAgentDebateOrchestration_offline.zip"
 
 # 번들에 포함할 Node 런타임. 공식 MCP 서버들은 순수 JS 라 node.exe 하나면 돌아가며
 # npm / npx 는 런타임에 전혀 필요하지 않습니다.
@@ -106,7 +106,7 @@ STEPS = 10
 
 # 번들에 담지 않을 것.
 #
-# 스테이징 폴더(dist/MultiAgentOrchestrator_bundle)는 실행 사이에 남아 있고,
+# 스테이징 폴더(dist/MultiAgentDebateOrchestration_bundle)는 실행 사이에 남아 있고,
 # 거기서 run_mado.bat 로 앱을 한 번 띄우면 대화 DB 와 에이전트가 만든 파일이
 # 그 안에 생깁니다. 예전에는 압축이 폴더를 통째로 담아서 그것들이 그대로
 # 반입 대상이 되었습니다 — 실제로 workspace/handoff.py 같은 테스트 산출물이
@@ -247,7 +247,7 @@ def stage_sandbox(sandbox_src: str | None) -> Path | None:
     candidates += [
         ROOT_DIR.parent / "AirgappedPySandbox",
         ROOT_DIR.parent / "airgappedpysandbox",
-        ROOT_DIR / "dist" / "MultiAgentOrchestrator_bundle" / "mcp_sandbox",
+        ROOT_DIR / "dist" / "MultiAgentDebateOrchestration_bundle" / "mcp_sandbox",
     ]
 
     source = next((c for c in candidates if (c / "server.py").exists()), None)
@@ -817,7 +817,7 @@ def main() -> None:
     parser.add_argument(
         "--launchers-only", metavar="DIR", nargs="?", const=str(STAGING_DIR), default=None,
         help="번들 전체를 다시 만들지 않고 실행 스크립트와 open_browser.py 만 갱신 "
-             "(기본 대상: dist/MultiAgentOrchestrator_bundle)",
+             "(기본 대상: dist/MultiAgentDebateOrchestration_bundle)",
     )
     args = parser.parse_args()
 

@@ -36,7 +36,7 @@ Windows 에서 실행하는 것을 전제로 합니다 — 포터블 런타임�
 산출물 실행 시점에는 필요하지 않습니다.**
 
 ```text
-MultiAgentOrchestrator_bundle/
+MultiAgentDebateOrchestration_bundle/
 ├── app/                    애플리케이션 소스
 ├── conf.json               설정 (없으면 conf.example.json 에서 복사)
 ├── LICENSE.md              라이선스 (LGPL-3.0 전문 + 제3자 고지)
@@ -71,7 +71,7 @@ for /f "usebackq delims=" %%i in (`"%PYTHON_BIN%" -c "from app.config import get
 
 ### 압축에서 빠지는 것
 
-스테이징 폴더(`dist/MultiAgentOrchestrator_bundle/`)는 빌드 사이에 남아 있습니다.
+스테이징 폴더(`dist/MultiAgentDebateOrchestration_bundle/`)는 빌드 사이에 남아 있습니다.
 거기서 `run_mado.bat` 로 앱을 한 번 띄우면 대화 DB 와 에이전트가 만든 파일이
 그 안에 생기고, 압축이 폴더를 통째로 담던 시절에는 그것이 그대로 반입 대상이
 되었습니다.
@@ -137,7 +137,7 @@ python package_source.py [--out-dir dist] [--max-file-mb 2] [--allow-secrets]
 ```
 
 ```text
-MultiAgentOrchestrator_source/
+MultiAgentDebateOrchestration_source/
 ├── app/                          애플리케이션 소스 (통째로 교체)
 ├── mcp_servers/                  포크한 MCP 서버 원본
 ├── mcp_node/memory-scoped.mjs    그 실행 사본

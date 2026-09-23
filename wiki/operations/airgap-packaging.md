@@ -6,10 +6,10 @@ In enterprise, defense, and high-security environments, systems often operate in
 
 ## 1. Bundle Anatomy
 
-Running `python package_offline.py` on an internet-connected build machine generates `dist/MultiAgentOrchestrator_bundle/` (and a `.zip` archive):
+Running `python package_offline.py` on an internet-connected build machine generates `dist/MultiAgentDebateOrchestration_bundle/` (and a `.zip` archive):
 
 ```text
-MultiAgentOrchestrator_bundle/
+MultiAgentDebateOrchestration_bundle/
 ├── app/                       # Application source code
 ├── conf.json                  # Configuration file (copied from conf.example.json)
 ├── wheels/                    # Offline pip wheel archive
@@ -122,7 +122,7 @@ Launchers are generated artifacts, not source. To refresh them on an existing in
 without rebuilding the whole bundle:
 
 ```powershell
-python package_offline.py --launchers-only "C:\path\to\MultiAgentOrchestrator_bundle"
+python package_offline.py --launchers-only "C:\path\to\MultiAgentDebateOrchestration_bundle"
 ```
 
 Run it on the target after copying new sources when the launcher itself changed.
@@ -146,7 +146,7 @@ source and configuration** — roughly 600 KB — to be applied on top of an alr
 bundle.
 
 ```powershell
-python package_source.py   # dist\MultiAgentOrchestrator_source_YYYYMMDD.zip
+python package_source.py   # dist\MultiAgentDebateOrchestration_source_YYYYMMDD.zip
 ```
 
 ### What goes in

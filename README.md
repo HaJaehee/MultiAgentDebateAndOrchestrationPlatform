@@ -935,7 +935,7 @@ stderr 에 경고를 남깁니다. 공용으로 떨어뜨리면 주입이 깨졌
 매번 처음부터 다시 받는 일**입니다.
 
 ```bash
-python package_source.py   # dist/MultiAgentOrchestrator_source_YYYYMMDD.zip (약 600KB)
+python package_source.py   # dist/MultiAgentDebateOrchestration_source_YYYYMMDD.zip (약 600KB)
 ```
 
 담는 것은 **돌아가는 앱을 갱신하는 데 필요한 것뿐**입니다.

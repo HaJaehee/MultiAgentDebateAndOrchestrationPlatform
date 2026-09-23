@@ -7,8 +7,8 @@ MCP 서버 설치본까지 들고 있어 수백 MB 입니다. 그 런타임은 �
 
 이 스크립트는 **런타임을 제외한** 소스와 설정만 묶습니다.
 
-    dist/MultiAgentOrchestrator_source_YYYYMMDD.zip
-    └── MultiAgentOrchestrator_source/
+    dist/MultiAgentDebateOrchestration_source_YYYYMMDD.zip
+    └── MultiAgentDebateOrchestration_source/
         ├── app/                      애플리케이션 소스 (통째로 교체)
         ├── mcp_servers/              이 저장소가 직접 들고 있는 MCP 서버
         │   └── memory_scoped/        공식 memory 서버 포크 (대화별 지식 그래프)
@@ -79,7 +79,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 
 ROOT_DIR = Path(__file__).resolve().parent
-PACKAGE_NAME = "MultiAgentOrchestrator_source"
+PACKAGE_NAME = "MultiAgentDebateOrchestration_source"
 
 # --- 무엇을 담는가 (허용 목록) -------------------------------------------------
 
