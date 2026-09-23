@@ -17,7 +17,7 @@ This guide walks you through setting up and running the MADO: Multi-Agent Debate
 
 ### Step 1: Clone Repository & Create Virtual Environment
 ```bash
-git clone https://github.com/HaJaehee/MultiAgentOrchestrator.git MultiAgentDebateOrchestration
+git clone https://github.com/HaJaehee/MultiAgentDebateAndOrchestrationPlatform.git MultiAgentDebateOrchestration
 cd MultiAgentDebateOrchestration
 
 # Create and activate virtual environment
