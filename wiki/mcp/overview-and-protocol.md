@@ -3,9 +3,9 @@
 The MADO: Multi-Agent Debate & Orchestration Platform embeds a native host implementation of the **Model Context Protocol (MCP)** using the official Python SDK (`mcp`). It allows agents to inspect files, execute code in sandboxes, manipulate git repositories, and query persistent knowledge graphs via standardized JSON-RPC over `stdio`.
 
 Implementation files:
-- [app/mcp/client.py](file:///d:/MultiAgentOrchestrator/app/mcp/client.py): Stdio process management, session lifecycle, and error capture.
-- [app/mcp/manager.py](file:///d:/MultiAgentOrchestrator/app/mcp/manager.py): Tool registry, permissions dispatcher, and workspace initializer for **one** workspace.
-- [app/mcp/pool.py](file:///d:/MultiAgentOrchestrator/app/mcp/pool.py): One manager per workspace, reference counted, so sessions in different folders run concurrently — see [Runtime Isolation](file:///d:/MultiAgentOrchestrator/wiki/mcp/runtime-isolation.md).
+- [app/mcp/client.py](file:///d:/MultiAgentDebateOrchestration/app/mcp/client.py): Stdio process management, session lifecycle, and error capture.
+- [app/mcp/manager.py](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py): Tool registry, permissions dispatcher, and workspace initializer for **one** workspace.
+- [app/mcp/pool.py](file:///d:/MultiAgentDebateOrchestration/app/mcp/pool.py): One manager per workspace, reference counted, so sessions in different folders run concurrently — see [Runtime Isolation](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/runtime-isolation.md).
 
 ---
 
@@ -15,7 +15,7 @@ Traditional LLM tool integrations hardcode proprietary Python functions inside t
 
 1. **Language-Agnostic Isolation**: Tools run as separate subprocesses (Node.js or Python) with dedicated memory spaces, ensuring that unstable tools or heavy dependencies (such as Jupyter kernels) cannot crash the main application.
 2. **Standardized Tool Schemas**: MCP servers describe their own tools, parameter types, and descriptions dynamically via JSON-RPC.
-3. **Plug-and-Play Extensibility**: New tools can be connected simply by adding their startup command to [conf.json](file:///d:/MultiAgentOrchestrator/conf.json).
+3. **Plug-and-Play Extensibility**: New tools can be connected simply by adding their startup command to [conf.json](file:///d:/MultiAgentDebateOrchestration/conf.json).
 
 ---
 
@@ -43,7 +43,7 @@ stateDiagram-v2
 1. **State Preservation**: The Python sandbox ([AirgappedPySandbox](https://github.com/HaJaehee/AirgappedPySandbox)) holds persistent IPython kernels. Variables, loaded DataFrames, and defined functions must persist across turns. Spawning a new process per call would wipe out all state.
 2. **Performance**: Launching a Node.js runtime or initializing an IPython kernel takes 1–2 seconds. With persistent sessions, tool execution overhead is reduced to ~0.02 seconds.
 
-### Task Ownership Model ([app/mcp/client.py](file:///d:/MultiAgentOrchestrator/app/mcp/client.py#L145-L150)):
+### Task Ownership Model ([app/mcp/client.py](file:///d:/MultiAgentDebateOrchestration/app/mcp/client.py#L145-L150)):
 In `anyio`, asynchronous cancel scopes are bound strictly to the task that created them. If a task opens an MCP stdio context and another task closes it, an unrecoverable runtime exception is raised. To guarantee safety:
 - A dedicated background task (`_serve`) creates and owns the `stdio_client` and `ClientSession`.
 - Caller tasks submit requests to the active session asynchronously, allowing concurrent, multiplexed tool calling.
@@ -63,7 +63,7 @@ $$\text{qualified\_name} = \text{server\_name} \text{\_\_} \text{tool\_name}$$
 - `git__git_diff`
 
 ### 3.2. Mapping to OpenAI Function Calling
-[`MCPToolDefinition.to_openai_tool()`](file:///d:/MultiAgentOrchestrator/app/mcp/client.py#L124-L135) transforms native MCP JSON schemas into OpenAI-compatible tool specifications for LiteLLM:
+[`MCPToolDefinition.to_openai_tool()`](file:///d:/MultiAgentDebateOrchestration/app/mcp/client.py#L124-L135) transforms native MCP JSON schemas into OpenAI-compatible tool specifications for LiteLLM:
 
 ```json
 {
@@ -84,7 +84,7 @@ $$\text{qualified\_name} = \text{server\_name} \text{\_\_} \text{tool\_name}$$
 
 ---
 
-## 4. Permission Dispatching ([app/mcp/manager.py](file:///d:/MultiAgentOrchestrator/app/mcp/manager.py#L122-L138))
+## 4. Permission Dispatching ([app/mcp/manager.py](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py#L122-L138))
 
 Each agent configuration defines `allowed_mcp_servers = ["filesystem", "sandbox"]`. When an agent turn begins:
 

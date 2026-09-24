@@ -1,6 +1,6 @@
 # Database Schema & Persistence
 
-The MADO: Multi-Agent Debate & Orchestration Platform uses SQLite with the asynchronous **SQLAlchemy 2.0 ORM** powered by `aiosqlite`. All database models are defined in [app/database/models.py](file:///d:/MultiAgentOrchestrator/app/database/models.py), and connection pooling and engine management are handled in [app/database/session.py](file:///d:/MultiAgentOrchestrator/app/database/session.py).
+The MADO: Multi-Agent Debate & Orchestration Platform uses SQLite with the asynchronous **SQLAlchemy 2.0 ORM** powered by `aiosqlite`. All database models are defined in [app/database/models.py](file:///d:/MultiAgentDebateOrchestration/app/database/models.py), and connection pooling and engine management are handled in [app/database/session.py](file:///d:/MultiAgentDebateOrchestration/app/database/session.py).
 
 ---
 
@@ -89,7 +89,7 @@ erDiagram
 
 ## 2. Table Specifications
 
-### 2.1. `sessions` Table ([SessionModel](file:///d:/MultiAgentOrchestrator/app/database/models.py#L16-L42))
+### 2.1. `sessions` Table ([SessionModel](file:///d:/MultiAgentDebateOrchestration/app/database/models.py#L16-L42))
 Represents a single multi-agent collaboration workspace or discussion thread.
 
 | Column | Type | Nullable | Default | Description |
@@ -113,7 +113,7 @@ Represents a single multi-agent collaboration workspace or discussion thread.
 | `created_at` | `DATETIME` | No | `utc_now` | UTC creation timestamp. |
 | `updated_at` | `DATETIME` | No | `utc_now` | UTC last updated timestamp. |
 
-### 2.2. `messages` Table ([MessageModel](file:///d:/MultiAgentOrchestrator/app/database/models.py#L44-L61))
+### 2.2. `messages` Table ([MessageModel](file:///d:/MultiAgentDebateOrchestration/app/database/models.py#L44-L61))
 Stores the sequential transcript of messages exchanged during a debate.
 
 | Column | Type | Nullable | Default | Description |
@@ -133,9 +133,9 @@ Stores the sequential transcript of messages exchanged during a debate.
 | `graph_node_id` | `VARCHAR(64)` | Yes | - | Graph debate only: the node that produced this message. Needed because one agent can sit on several nodes. |
 | `graph_port` | `VARCHAR(8)` | Yes | - | Graph debate only: the output port this message left through — `out` for agent and merge speeches, `yes`/`no` for a gate verdict. NULL for notes attached to a node that are not its output (the visit-cap notice). The live overlay, a refreshed page and a reopened conversation all count visits, gate branches and flowed wires from this column. |
 
-`started_at` equals `finished_at` for records that take no time (a person's message, a speaker-selection note). Both are `NULL` for rows written before v0.6.1.2: the migration deliberately adds them without a default, because backfilling would make every old speech appear to start and finish at the moment of migration. The chat feed and the Markdown export show such rows with the single `created_at` value and without calling it a start or an end ([`app/timestamps.py` `speech_timing`](file:///d:/MultiAgentOrchestrator/app/timestamps.py)).
+`started_at` equals `finished_at` for records that take no time (a person's message, a speaker-selection note). Both are `NULL` for rows written before v0.6.1.2: the migration deliberately adds them without a default, because backfilling would make every old speech appear to start and finish at the moment of migration. The chat feed and the Markdown export show such rows with the single `created_at` value and without calling it a start or an end ([`app/timestamps.py` `speech_timing`](file:///d:/MultiAgentDebateOrchestration/app/timestamps.py)).
 
-### 2.3. `tool_calls` Table ([ToolCallRecordModel](file:///d:/MultiAgentOrchestrator/app/database/models.py#L63-L78))
+### 2.3. `tool_calls` Table ([ToolCallRecordModel](file:///d:/MultiAgentDebateOrchestration/app/database/models.py#L63-L78))
 Logs every MCP tool invocation executed by an agent during a turn.
 
 | Column | Type | Nullable | Default | Description |
@@ -150,7 +150,7 @@ Logs every MCP tool invocation executed by an agent during a turn.
 | `status` | `VARCHAR(20)` | No | `'success'` | Execution result status (`'success'` or `'error'`). |
 | `created_at` | `DATETIME` | No | `utc_now` | UTC execution timestamp. |
 
-### 2.4. `artifacts` Table ([ArtifactModel](file:///d:/MultiAgentOrchestrator/app/database/models.py#L80-L92))
+### 2.4. `artifacts` Table ([ArtifactModel](file:///d:/MultiAgentDebateOrchestration/app/database/models.py#L80-L92))
 Persists individual output artifacts synthesized by the Master Orchestrator at the end of a debate.
 
 | Column | Type | Nullable | Default | Description |
@@ -163,7 +163,7 @@ Persists individual output artifacts synthesized by the Master Orchestrator at t
 | `language` | `VARCHAR(50)` | No | `'markdown'` | Syntax highlighting language (e.g. `'python'`, `'mermaid'`). |
 | `created_at` | `DATETIME` | No | `utc_now` | UTC creation timestamp. |
 
-### 2.5. `session_agents` Table ([SessionAgentModel](file:///d:/MultiAgentOrchestrator/app/database/models.py))
+### 2.5. `session_agents` Table ([SessionAgentModel](file:///d:/MultiAgentDebateOrchestration/app/database/models.py))
 Holds a session's agent personas, their card appearance, and — from the first user message onward —
 the frozen operating configuration that makes a started conversation self-contained.
 
@@ -191,7 +191,7 @@ before the snapshot column existed.
 
 ## 3. Session Initialization & Connection Management
 
-The database connection engine is configured in [app/database/session.py](file:///d:/MultiAgentOrchestrator/app/database/session.py):
+The database connection engine is configured in [app/database/session.py](file:///d:/MultiAgentDebateOrchestration/app/database/session.py):
 
 ```python
 engine = create_async_engine(db_url, echo=False, future=True)
@@ -252,7 +252,7 @@ It never raises (except cancellation): a write failure that stopped the debate w
 speech still to come.
 
 ### Table Auto-Creation
-When the application starts up inside `lifespan()` in [app/main.py](file:///d:/MultiAgentOrchestrator/app/main.py#L33-L35), it calls `init_db(db_url)`. This executes:
+When the application starts up inside `lifespan()` in [app/main.py](file:///d:/MultiAgentDebateOrchestration/app/main.py#L33-L35), it calls `init_db(db_url)`. This executes:
 ```python
 async with engine.begin() as conn:
     await conn.run_sync(Base.metadata.create_all)

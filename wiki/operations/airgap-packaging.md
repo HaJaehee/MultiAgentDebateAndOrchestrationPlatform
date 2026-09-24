@@ -1,15 +1,15 @@
 # Air-Gapped & Offline Packaging
 
-In enterprise, defense, and high-security environments, systems often operate in **air-gapped networks** completely isolated from the public internet. The MADO: Multi-Agent Debate & Orchestration Platform includes an automated packaging pipeline in [package_offline.py](file:///d:/MultiAgentOrchestrator/package_offline.py) that produces fully self-contained, zero-dependency deployment bundles.
+In enterprise, defense, and high-security environments, systems often operate in **air-gapped networks** completely isolated from the public internet. The MADO: Multi-Agent Debate & Orchestration Platform includes an automated packaging pipeline in [package_offline.py](file:///d:/MultiAgentDebateOrchestration/package_offline.py) that produces fully self-contained, zero-dependency deployment bundles.
 
 ---
 
 ## 1. Bundle Anatomy
 
-Running `python package_offline.py` on an internet-connected build machine generates `dist/MultiAgentOrchestrator_bundle/` (and a `.zip` archive):
+Running `python package_offline.py` on an internet-connected build machine generates `dist/MultiAgentDebateOrchestration_bundle/` (and a `.zip` archive):
 
 ```text
-MultiAgentOrchestrator_bundle/
+MultiAgentDebateOrchestration_bundle/
 ├── app/                       # Application source code
 ├── conf.json                  # Configuration file (copied from conf.example.json)
 ├── wheels/                    # Offline pip wheel archive
@@ -67,7 +67,7 @@ The packager automatically initializes `workspace/` as an empty Git repository (
 ## 3. Launcher Automation (`run_mado.bat` / `.ps1`)
 
 > **Source of truth** (v0.5.0): both launchers are *generated* by
-> `write_launchers()` in [package_offline.py](file:///d:/MultiAgentOrchestrator/package_offline.py).
+> `write_launchers()` in [package_offline.py](file:///d:/MultiAgentDebateOrchestration/package_offline.py).
 > A byte-identical snapshot is now committed at the repository root so a source-only checkout
 > has something to run and so the shipped launcher is reviewable in diffs — but the generator
 > remains authoritative. To change them, edit the generator and re-emit the copy:
@@ -116,13 +116,13 @@ server process on purpose:
 The address comes from `conf.json`'s `app` object, overridden by the same `--host` / `--port` arguments
 that were forwarded to `app.main`, so a custom port always opens the right URL. A wildcard bind
 address (`0.0.0.0`) is rewritten to `127.0.0.1` — it is a bind address, not a reachable one.
-Set `MAO_NO_BROWSER=1` to opt out, `MAO_BROWSER_TIMEOUT` to change the 90-second wait.
+Set `MADO_NO_BROWSER=1` to opt out, `MADO_BROWSER_TIMEOUT` to change the 90-second wait.
 
 Launchers are generated artifacts, not source. To refresh them on an existing installation
 without rebuilding the whole bundle:
 
 ```powershell
-python package_offline.py --launchers-only "C:\path\to\MultiAgentOrchestrator_bundle"
+python package_offline.py --launchers-only "C:\path\to\MultiAgentDebateOrchestration_bundle"
 ```
 
 Run it on the target after copying new sources when the launcher itself changed.
@@ -130,7 +130,7 @@ Run it on the target after copying new sources when the launcher itself changed.
 ### Parameter Forwarding & Encoding
 - **CLI Parameter Forwarding**: Both `run_mado.ps1` (`$args`) and `run_mado.bat` (`%*`) pass all command-line arguments directly to `app.main`. Users can run `.\run_mado.ps1 --port 9000` to override the bound port dynamically.
 - **UTF-8 BOM Protection**: `run_mado.ps1` is saved with UTF-8 BOM (`utf-8-sig`) and configures `[Console]::OutputEncoding = UTF8`, preventing PowerShell parser errors on Korean Windows systems.
-- **Zero Configuration Drift**: Because paths and settings are injected via environment variables, [conf.json](file:///d:/MultiAgentOrchestrator/conf.json) requires **zero manual adjustments** when moving between environments.
+- **Zero Configuration Drift**: Because paths and settings are injected via environment variables, [conf.json](file:///d:/MultiAgentDebateOrchestration/conf.json) requires **zero manual adjustments** when moving between environments.
 
 
 ---
@@ -141,12 +141,12 @@ The full bundle is hundreds of megabytes because it carries a portable CPython, 
 the pip wheel archive, and the installed MCP servers. None of that changes when you fix a
 bug in `app/`. Re-transferring it means re-doing the transfer review from scratch every time.
 
-[`package_source.py`](file:///d:/MultiAgentOrchestrator/package_source.py) packages **only
+[`package_source.py`](file:///d:/MultiAgentDebateOrchestration/package_source.py) packages **only
 source and configuration** — roughly 600 KB — to be applied on top of an already-transferred
 bundle.
 
 ```powershell
-python package_source.py   # dist\MultiAgentOrchestrator_source_YYYYMMDD.zip
+python package_source.py   # dist\MultiAgentDebateOrchestration_source_YYYYMMDD.zip
 ```
 
 ### What goes in

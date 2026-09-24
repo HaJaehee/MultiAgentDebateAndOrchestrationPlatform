@@ -38,6 +38,12 @@ EXCLUDED_DIRS = frozenset({
     ".git", ".hg", ".svn", "node_modules", ".venv", "venv", "env", "__pycache__",
     ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".idea", ".next", ".nuxt",
     "dist", "build", ".memory-graphs", ".ipynb_checkpoints", "site-packages",
+    # 런타임이 쓰는 임시 폴더(app/mcp/pool.py). 사용자가 만든 파일이 아니므로
+    # @멘션 목록과 다운로드 창에 보이면 안 됩니다.
+    ".mado",
+    # PairSlide(발표자료 서버)가 진행 중인 문서를 두는 곳. 작업 공간을 함께 쓰면
+    # 여기에 JSON 이 쌓이는데, 사람이 받을 파일은 내보낸 .pptx 쪽입니다.
+    ".pairslide",
 })
 
 # 한 작업 공간에서 목록에 올리는 최대 항목 수(파일+폴더). 넘으면 거기서 멈추고

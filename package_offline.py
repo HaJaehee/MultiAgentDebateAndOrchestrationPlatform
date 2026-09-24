@@ -2,7 +2,7 @@
 
 생성되는 번들에는 다음이 모두 포함되어 인터넷 없이 즉시 구동됩니다.
 
-    MultiAgentOrchestrator_bundle/
+    MultiAgentDebateOrchestration_bundle/
     ├── app/                 애플리케이션 소스
     ├── conf.json            설정 (없으면 conf.example.json 에서 복사)
     ├── LICENSE.md           라이선스 (LGPL-3.0 전문 + 제3자 고지)
@@ -53,8 +53,8 @@ for _stream in (sys.stdout, sys.stderr):
 
 ROOT_DIR = Path(__file__).resolve().parent
 DIST_DIR = ROOT_DIR / "dist"
-STAGING_DIR = DIST_DIR / "MultiAgentOrchestrator_bundle"
-ZIP_FILE = DIST_DIR / "MultiAgentOrchestrator_offline.zip"
+STAGING_DIR = DIST_DIR / "MultiAgentDebateOrchestration_bundle"
+ZIP_FILE = DIST_DIR / "MultiAgentDebateOrchestration_offline.zip"
 
 # 번들에 포함할 Node 런타임. 공식 MCP 서버들은 순수 JS 라 node.exe 하나면 돌아가며
 # npm / npx 는 런타임에 전혀 필요하지 않습니다.
@@ -106,7 +106,7 @@ STEPS = 10
 
 # 번들에 담지 않을 것.
 #
-# 스테이징 폴더(dist/MultiAgentOrchestrator_bundle)는 실행 사이에 남아 있고,
+# 스테이징 폴더(dist/MultiAgentDebateOrchestration_bundle)는 실행 사이에 남아 있고,
 # 거기서 run_mado.bat 로 앱을 한 번 띄우면 대화 DB 와 에이전트가 만든 파일이
 # 그 안에 생깁니다. 예전에는 압축이 폴더를 통째로 담아서 그것들이 그대로
 # 반입 대상이 되었습니다 — 실제로 workspace/handoff.py 같은 테스트 산출물이
@@ -247,7 +247,7 @@ def stage_sandbox(sandbox_src: str | None) -> Path | None:
     candidates += [
         ROOT_DIR.parent / "AirgappedPySandbox",
         ROOT_DIR.parent / "airgappedpysandbox",
-        ROOT_DIR / "dist" / "MultiAgentOrchestrator_bundle" / "mcp_sandbox",
+        ROOT_DIR / "dist" / "MultiAgentDebateOrchestration_bundle" / "mcp_sandbox",
     ]
 
     source = next((c for c in candidates if (c / "server.py").exists()), None)
@@ -590,7 +590,7 @@ def write_launchers(has_node: bool, has_sandbox: bool, target_dir: Optional[Path
         "for /f \"usebackq delims=\" %%i in (`\"%PYTHON_BIN%\" -c \"from app.config import get_config;c=get_config().app;print(f'http://{c.host}:{c.port}')\"`) do set \"APP_URL=%%i\"\r\n"
         "if not defined APP_URL set \"APP_URL=conf.json 의 app 참조\"\r\n\r\n"
         "rem --- 서버가 응답하면 브라우저를 엽니다. 서버는 콘솔을 붙잡고 있으므로\r\n"
-        "rem     기다리는 일은 별도 프로세스가 합니다 (MAO_NO_BROWSER=1 이면 건너뜁니다).\r\n"
+        "rem     기다리는 일은 별도 프로세스가 합니다 (MADO_NO_BROWSER=1 이면 건너뜁니다).\r\n"
         "rem     같은 인자를 그대로 넘겨야 --port 로 포트를 바꿔도 맞는 주소를 엽니다.\r\n"
         "if exist \"%~dp0open_browser.py\" start \"\" /b \"%PYTHON_BIN%\" open_browser.py %*\r\n\r\n"
         "echo [*] 내장 포터블 파이썬 런타임으로 서버를 시작합니다 (%APP_URL%)...\r\n"
@@ -634,7 +634,7 @@ def write_launchers(has_node: bool, has_sandbox: bool, target_dir: Optional[Path
         "    & $env:PYTHON_BIN -c \"from app.config import get_config;c=get_config().app;print(f'http://{c.host}:{c.port}')\"\r\n"
         "} catch { \"conf.json 의 app 참조\" }\r\n\r\n"
         "# 서버가 응답하면 브라우저를 엽니다. 서버는 이 콘솔을 붙잡고 있으므로 기다리는\r\n"
-        "# 일은 별도 프로세스가 합니다 (MAO_NO_BROWSER=1 이면 건너뜁니다). 같은 인자를\r\n"
+        "# 일은 별도 프로세스가 합니다 (MADO_NO_BROWSER=1 이면 건너뜁니다). 같은 인자를\r\n"
         "# 그대로 넘겨야 --port 로 포트를 바꿔도 맞는 주소를 엽니다.\r\n"
         "if (Test-Path (Join-Path $RootDir \"open_browser.py\")) {\r\n"
         "    Start-Process -FilePath $env:PYTHON_BIN "
@@ -710,8 +710,8 @@ def write_launchers(has_node: bool, has_sandbox: bool, target_dir: Optional[Path
         "- 서버가 뜨면 **기본 브라우저가 자동으로 열립니다.** 열리지 않으면 콘솔에 표시되는 "
         "주소로 접속하세요. 주소는 `conf.json` 의 `app.host` / `app.port` "
         "(또는 `.env` 의 `APP_HOST` / `APP_PORT`) 를 그대로 따릅니다.\r\n"
-        "- 브라우저를 띄우고 싶지 않으면 `MAO_NO_BROWSER=1` 을 설정한 뒤 실행하세요. "
-        "서버를 기다리는 시간은 기본 90초이고 `MAO_BROWSER_TIMEOUT` 으로 바꿉니다.\r\n\r\n"
+        "- 브라우저를 띄우고 싶지 않으면 `MADO_NO_BROWSER=1` 을 설정한 뒤 실행하세요. "
+        "서버를 기다리는 시간은 기본 90초이고 `MADO_BROWSER_TIMEOUT` 으로 바꿉니다.\r\n\r\n"
         "실행 스크립트가 MCP 서버 경로 환경변수(`NODE_BIN`, `PYTHON_BIN`, `MCP_NODE_HOME`, "
         "`MCP_SANDBOX_HOME`, `WORKSPACE_DIR`)를 자동으로 채워주므로 별도 설정이 필요 없습니다.\r\n\r\n"
         "---\r\n\r\n"
@@ -817,7 +817,7 @@ def main() -> None:
     parser.add_argument(
         "--launchers-only", metavar="DIR", nargs="?", const=str(STAGING_DIR), default=None,
         help="번들 전체를 다시 만들지 않고 실행 스크립트와 open_browser.py 만 갱신 "
-             "(기본 대상: dist/MultiAgentOrchestrator_bundle)",
+             "(기본 대상: dist/MultiAgentDebateOrchestration_bundle)",
     )
     args = parser.parse_args()
 

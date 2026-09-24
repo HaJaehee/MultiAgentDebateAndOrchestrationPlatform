@@ -2,7 +2,7 @@
 
 In the MADO: Multi-Agent Debate & Orchestration Platform, `conf.json` defines system-wide default agent configurations. However, different collaboration scenarios (e.g. cloud migration vs. embedded systems) require tailored system prompts and agent titles.
 
-The session persona management system, implemented in [app/agents/personas.py](file:///d:/MultiAgentOrchestrator/app/agents/personas.py), provides session-specific persona overrides while guaranteeing **persona immutability** once a debate begins.
+The session persona management system, implemented in [app/agents/personas.py](file:///d:/MultiAgentDebateOrchestration/app/agents/personas.py), provides session-specific persona overrides while guaranteeing **persona immutability** once a debate begins.
 
 ---
 
@@ -45,18 +45,18 @@ stateDiagram-v2
 - The user can open the persona editor at `/personas/{session_id}` (accessed via the **"Persona Settings"** button in the agent roster panel).
 - **Editable Fields**: `name`, `role`, `system_prompt`, and the card's appearance — `card_color` and `icon`. The appearance editor is the same one the **Add Agent** dialog uses, so a colour is picked from twelve swatches or a colour picker, and an icon is either a Material icon name or an uploaded image (see [Agent Pool §1](agent-pool-and-roles.md)). The preview avatar and the card border follow the choice immediately.
 - Operational settings (`model`, `api_base`, `allowed_mcp_servers`, credentials) are not editable here — they are governed by `conf.json` while the session is open, and frozen into the session at the first message (see §6).
-- Draft changes are saved to the [`session_agents`](file:///d:/MultiAgentOrchestrator/app/database/models.py#L94-L115) table in SQLite.
+- Draft changes are saved to the [`session_agents`](file:///d:/MultiAgentDebateOrchestration/app/database/models.py#L94-L115) table in SQLite.
 - Agents that have not been edited continue to reflect their `conf.json` defaults.
 
 ### Phase 2: Freeze & Lock (First User Message)
-- When the user sends their first message, [prepare_agents_for_turn()](file:///d:/MultiAgentOrchestrator/app/agents/personas.py#L217-L229) triggers [`freeze_personas()`](file:///d:/MultiAgentOrchestrator/app/agents/personas.py#L163-L195).
+- When the user sends their first message, [prepare_agents_for_turn()](file:///d:/MultiAgentDebateOrchestration/app/agents/personas.py#L217-L229) triggers [`freeze_personas()`](file:///d:/MultiAgentDebateOrchestration/app/agents/personas.py#L163-L195).
 - The system resolves the effective persona for **every** agent in the pool. For any agent lacking an explicit draft in `session_agents`, a snapshot of its current `conf.json` configuration is written to the database.
 - `session.personas_locked` is set to `True`.
-- Any subsequent attempt to call `save_persona()` or `reset_persona()` raises [`PersonasLockedError`](file:///d:/MultiAgentOrchestrator/app/agents/personas.py#L36-L44).
+- Any subsequent attempt to call `save_persona()` or `reset_persona()` raises [`PersonasLockedError`](file:///d:/MultiAgentDebateOrchestration/app/agents/personas.py#L36-L44).
 - The UI transitions the editor into a locked read-only state.
 
 ### Phase 3: Session Resumption (Historical Fidelity)
-- When a user resumes an existing session days or weeks later, [`effective_personas()`](file:///d:/MultiAgentOrchestrator/app/agents/personas.py#L95-L110) loads the frozen snapshot from SQLite.
+- When a user resumes an existing session days or weeks later, [`effective_personas()`](file:///d:/MultiAgentDebateOrchestration/app/agents/personas.py#L95-L110) loads the frozen snapshot from SQLite.
 - Even if `conf.json` has been modified or updated in the interim, the session continues executing with the exact personas that created the historical debate transcript.
 
 ---
@@ -93,10 +93,10 @@ colour and icon, and the persona merged in. From that moment the conversation do
 
 The last row is the one exception. The snapshot records *which servers an agent may call*, but
 whether that server process is running is a property of the whole application
-([MCPManager](file:///d:/MultiAgentOrchestrator/app/mcp/manager.py)).
+([MCPManager](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py)).
 
 The roster and the persona editor read the same frozen set through
-[`session_roster_agents()`](file:///d:/MultiAgentOrchestrator/app/agents/personas.py); an agent that
+[`session_roster_agents()`](file:///d:/MultiAgentDebateOrchestration/app/agents/personas.py); an agent that
 survives only inside one conversation is marked with a **이 대화 전용** badge. If the screen read the
 live pool instead, a deleted agent would speak with no card to explain it.
 
@@ -104,14 +104,14 @@ live pool instead, a deleted agent would speak with no card to explain it.
 
 `session_agents` rows are written in a single commit, so their `created_at` values tie and sorting by
 `(created_at, id)` falls through to a random UUID — card order changed on every read.
-[`frozen_agents()`](file:///d:/MultiAgentOrchestrator/app/agents/personas.py) sorts deterministically
+[`frozen_agents()`](file:///d:/MultiAgentDebateOrchestration/app/agents/personas.py) sorts deterministically
 instead: orchestrator first, then `conf.json` order, then conversation-only agents.
 
 ### 6.3. Re-syncing (the escape hatch)
 
 Making the snapshot authoritative has a cost: rotate an API key or move the gateway, and old
 conversations keep hammering a dead endpoint. The **설정 갱신** button, shown on locked sessions,
-calls [`resync_agent_configs()`](file:///d:/MultiAgentOrchestrator/app/agents/personas.py), which
+calls [`resync_agent_configs()`](file:///d:/MultiAgentDebateOrchestration/app/agents/personas.py), which
 rewrites the snapshots from the current `conf.json` **without touching the personas** — the speakers
 in the transcript stay who they were. Agents no longer present in `conf.json` are left alone.
 
@@ -123,7 +123,7 @@ prompt) and never exposes the snapshot; a test asserts it.
 
 `config_snapshot` is `NULL` for conversations locked before the column existed. Those keep following
 the live `conf.json`, exactly as they always did, and
-[`_add_missing_columns()`](file:///d:/MultiAgentOrchestrator/app/database/session.py) adds the column
+[`_add_missing_columns()`](file:///d:/MultiAgentDebateOrchestration/app/database/session.py) adds the column
 to existing databases at startup.
 
 ---
@@ -135,7 +135,7 @@ The UI displays an orange **"Customized"** badge for any agent whose persona dif
 ### Detection Mechanism:
 Because `freeze_personas()` snapshots all agents into `session_agents` upon the first message, the mere existence of a database row cannot determine if a user deliberately customized the agent.
 
-Instead, [`_differs()`](file:///d:/MultiAgentOrchestrator/app/agents/personas.py#L59-L62) performs field-by-field value comparison:
+Instead, [`_differs()`](file:///d:/MultiAgentDebateOrchestration/app/agents/personas.py#L59-L62) performs field-by-field value comparison:
 
 ```python
 EDITABLE_FIELDS = ("name", "role", "system_prompt", "card_color", "icon")
@@ -188,9 +188,9 @@ Starting from the latest enhancement, editing an agent's persona on the Web UI (
 
 ### Workflow
 1. **Targeted JSON Modification**:
-   [`update_agent_persona_in_conf_file()`](file:///d:/MultiAgentOrchestrator/app/config.py) reads the raw `conf.json` — `//` documentation keys and unresolved `${VAR}` placeholders included — locates `agents.<agent_key>`, updates `name`, `role`, and `system_prompt`, and rewrites the file atomically. A multi-line prompt is written as an array of lines so it stays readable. Everything else in the file, including the notes and every other agent, is carried through untouched.
+   [`update_agent_persona_in_conf_file()`](file:///d:/MultiAgentDebateOrchestration/app/config.py) reads the raw `conf.json` — `//` documentation keys and unresolved `${VAR}` placeholders included — locates `agents.<agent_key>`, updates `name`, `role`, and `system_prompt`, and rewrites the file atomically. A multi-line prompt is written as an array of lines so it stays readable. Everything else in the file, including the notes and every other agent, is carried through untouched.
 2. **In-Memory Pool Reloading**:
    After writing to disk, `get_config(reload=True)` re-reads the configuration, and `get_agent_pool().reload()` refreshes all in-memory `Agent` instances.
 3. **Reactive UI Synchronization**:
-   The main debate page's [`AgentRosterControl`](file:///d:/MultiAgentOrchestrator/app/ui/components/roster.py) rebuilds its roster cards via `refresh_agent_cards()`, so modified agent names and roles appear immediately without a full browser refresh.
+   The main debate page's [`AgentRosterControl`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster.py) rebuilds its roster cards via `refresh_agent_cards()`, so modified agent names and roles appear immediately without a full browser refresh.
 

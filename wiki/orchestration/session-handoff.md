@@ -12,7 +12,7 @@ A long debate eventually fills every agent's context window. Rounds accumulate, 
 
 The obvious workaround — start a new session, point it at the same workspace, and tell the agents to consult memory — **does not work**, and the reason is deliberate.
 
-The bundled `memory` server ([mcp_servers/memory_scoped/index.mjs](file:///d:/MultiAgentOrchestrator/mcp_servers/memory_scoped/index.mjs)) stores one graph file per conversation:
+The bundled `memory` server ([mcp_servers/memory_scoped/index.mjs](file:///d:/MultiAgentDebateOrchestration/mcp_servers/memory_scoped/index.mjs)) stores one graph file per conversation:
 
 ```text
 <MEMORY_GRAPH_DIR>/<session id>.jsonl
@@ -109,11 +109,11 @@ sequenceDiagram
 
 | Concern | Location |
 | :--- | :--- |
-| Session/persona/note creation | [`continue_session()`](file:///d:/MultiAgentOrchestrator/app/session_ops.py) |
-| Note text | [`build_handoff_note()`](file:///d:/MultiAgentOrchestrator/app/session_ops.py) |
-| Graph directory resolution | [`memory_graph_dir()`](file:///d:/MultiAgentOrchestrator/app/mcp/manager.py) — finds whichever server declares `MEMORY_GRAPH_DIR`, so renaming the server key does not break it |
-| Graph copy | [`carry_over_memory_graph()`](file:///d:/MultiAgentOrchestrator/app/mcp/manager.py) |
-| UI entry point | `⑂` button per session card in [`SessionSidebar`](file:///d:/MultiAgentOrchestrator/app/ui/components/sidebar.py) |
+| Session/persona/note creation | [`continue_session()`](file:///d:/MultiAgentDebateOrchestration/app/session_ops.py) |
+| Note text | [`build_handoff_note()`](file:///d:/MultiAgentDebateOrchestration/app/session_ops.py) |
+| Graph directory resolution | [`memory_graph_dir()`](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py) — finds whichever server declares `MEMORY_GRAPH_DIR`, so renaming the server key does not break it |
+| Graph copy | [`carry_over_memory_graph()`](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py) |
+| UI entry point | `⑂` button per session card in [`SessionSidebar`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/sidebar.py) |
 
 `memory_graph_dir()` calls `RootConfig.mcp_servers_for_workspace()`, which mutates the `WORKSPACE_DIR` environment variable as an intentional side effect (child MCP processes inherit it). Because this call is read-only, it saves and restores the previous value — otherwise resolving a path would silently re-point the servers that are currently running.
 

@@ -39,7 +39,7 @@ $AppUrl = try {
 } catch { "conf.json 의 app 참조" }
 
 # 서버가 응답하면 브라우저를 엽니다. 서버는 이 콘솔을 붙잡고 있으므로 기다리는
-# 일은 별도 프로세스가 합니다 (MAO_NO_BROWSER=1 이면 건너뜁니다). 같은 인자를
+# 일은 별도 프로세스가 합니다 (MADO_NO_BROWSER=1 이면 건너뜁니다). 같은 인자를
 # 그대로 넘겨야 --port 로 포트를 바꿔도 맞는 주소를 엽니다.
 if (Test-Path (Join-Path $RootDir "open_browser.py")) {
     Start-Process -FilePath $env:PYTHON_BIN -ArgumentList (@("open_browser.py") + $args) -WorkingDirectory $RootDir -WindowStyle Hidden | Out-Null

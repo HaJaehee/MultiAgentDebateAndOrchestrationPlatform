@@ -32,7 +32,7 @@ graph TD
 
 ## 2. Page Routing & Mounting
 
-The application registers two primary NiceGUI pages in [app/main.py](file:///d:/MultiAgentOrchestrator/app/main.py#L144-L151):
+The application registers two primary NiceGUI pages in [app/main.py](file:///d:/MultiAgentDebateOrchestration/app/main.py#L144-L151):
 
 ```python
 create_ui()              # Registers "/" (Main Workspace)
@@ -58,7 +58,7 @@ ui.run_with(
 
 ---
 
-## 3. Styling & Theme Engine ([app/ui/theme.py](file:///d:/MultiAgentOrchestrator/app/ui/theme.py))
+## 3. Styling & Theme Engine ([app/ui/theme.py](file:///d:/MultiAgentDebateOrchestration/app/ui/theme.py))
 
 The UI uses Quasar Framework components styled with custom CSS:
 - **Dark Mode**: Forced system-wide dark palette with dark background (`#121212`), elevated card surfaces (`#1e1e1e`), and high-contrast typography.

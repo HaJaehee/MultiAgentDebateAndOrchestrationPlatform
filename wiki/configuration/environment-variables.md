@@ -1,6 +1,6 @@
 # Environment Variables & Dynamic Resolution
 
-The MADO: Multi-Agent Debate & Orchestration Platform features a dynamic environment variable substitution engine in [app/config.py](file:///d:/MultiAgentOrchestrator/app/config.py#L41-L86). It allows a single [conf.json](file:///d:/MultiAgentOrchestrator/conf.json) to be shared seamlessly between local developer workstations, staging servers, and air-gapped production bundles without modification.
+The MADO: Multi-Agent Debate & Orchestration Platform features a dynamic environment variable substitution engine in [app/config.py](file:///d:/MultiAgentDebateOrchestration/app/config.py#L41-L86). It allows a single [conf.json](file:///d:/MultiAgentDebateOrchestration/conf.json) to be shared seamlessly between local developer workstations, staging servers, and air-gapped production bundles without modification.
 
 ---
 
@@ -17,7 +17,7 @@ The configuration loader parses all strings recursively, supporting standard she
 ### Blank-to-None Conversion & Inheritance Protection
 After substitution, an unresolved variable like `${CODER_API_BASE}` is left as an empty string `""`. If treated as a string, this empty value would overwrite the global ``llm.api_base`` setting with blank credentials.
 
-To prevent this, [app/config.py](file:///d:/MultiAgentOrchestrator/app/config.py#L255-L261) uses a Pydantic `before` validator (`_blank_to_none`):
+To prevent this, [app/config.py](file:///d:/MultiAgentDebateOrchestration/app/config.py#L255-L261) uses a Pydantic `before` validator (`_blank_to_none`):
 ```python
 @field_validator("api_key", "api_base", "api_version", "provider", mode="before")
 @classmethod
@@ -99,7 +99,7 @@ By defaulting `PYTHON_BIN` to `sys.executable`, the child MCP process inherits t
 
 ### 3.5. MCP Runtime Pool
 
-Read at import time by [app/mcp/pool.py](file:///d:/MultiAgentOrchestrator/app/mcp/pool.py). An MCP server binds the folder it may touch at spawn time, so the platform keeps **one server group per workspace**; see [Runtime Isolation](file:///d:/MultiAgentOrchestrator/wiki/mcp/runtime-isolation.md).
+Read at import time by [app/mcp/pool.py](file:///d:/MultiAgentDebateOrchestration/app/mcp/pool.py). An MCP server binds the folder it may touch at spawn time, so the platform keeps **one server group per workspace**; see [Runtime Isolation](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/runtime-isolation.md).
 
 | Environment Variable | Default | Purpose |
 | :--- | :--- | :--- |
@@ -108,7 +108,7 @@ Read at import time by [app/mcp/pool.py](file:///d:/MultiAgentOrchestrator/app/m
 
 ### 3.6. Tool-Call Safety Limits
 
-Read once at import time by [app/mcp/client.py](file:///d:/MultiAgentOrchestrator/app/mcp/client.py). Both exist so that a single misbehaving server cannot take the whole backend with it; leave them alone unless a specific server legitimately needs more room.
+Read once at import time by [app/mcp/client.py](file:///d:/MultiAgentDebateOrchestration/app/mcp/client.py). Both exist so that a single misbehaving server cannot take the whole backend with it; leave them alone unless a specific server legitimately needs more room.
 
 | Environment Variable | Default | Purpose |
 | :--- | :--- | :--- |

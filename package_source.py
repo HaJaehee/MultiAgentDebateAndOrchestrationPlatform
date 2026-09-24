@@ -7,11 +7,13 @@ MCP 서버 설치본까지 들고 있어 수백 MB 입니다. 그 런타임은 �
 
 이 스크립트는 **런타임을 제외한** 소스와 설정만 묶습니다.
 
-    dist/MultiAgentOrchestrator_source_YYYYMMDD.zip
-    └── MultiAgentOrchestrator_source/
+    dist/MultiAgentDebateOrchestration_source_YYYYMMDD.zip
+    └── MultiAgentDebateOrchestration_source/
         ├── app/                      애플리케이션 소스 (통째로 교체)
-        ├── mcp_servers/              포크한 MCP 서버 원본
+        ├── mcp_servers/              이 저장소가 직접 들고 있는 MCP 서버
+        │   └── memory_scoped/        공식 memory 서버 포크 (대화별 지식 그래프)
         ├── mcp_node/memory-scoped.mjs  그 실행 사본 (설치본의 것을 바로 갈아끼움)
+        ├── wheels/                   --with-wheels 로 지정했을 때만 (아래 참고)
         ├── docs/
         │   ├── user_manual/          사용 설명서 마크다운 원본
         │   ├── user_manual_html/     그것을 패키징 시점에 렌더링한 HTML (바로 열람)
@@ -27,11 +29,28 @@ MCP 서버 설치본까지 들고 있어 수백 MB 입니다. 그 런타임은 �
 
 사용법:
     python package_source.py [--out-dir dist] [--max-file-mb 2] [--allow-secrets]
-                             [--skip-manual-html]
+                             [--skip-manual-html] [--with-wheels PKG [PKG ...]]
 
 포함 목록은 **허용 목록(allow-list)** 입니다. 제외 목록으로 짜면 새 디렉터리가
 생겼을 때 조용히 딸려 들어갑니다. 여기서는 새 디렉터리가 생기면 그냥 빠지고,
 빠진 것은 눈에 띕니다.
+
+## 새 pip 의존성이 생겼을 때 (`--with-wheels`)
+
+이 패키지는 소스만 담으므로 `requirements.txt` 를 고쳐 보내도 대상 장비에는
+**그 패키지가 설치되지 않습니다.** 폐쇄망이라 `pip install` 이 레지스트리에 닿지
+못하기 때문입니다. 그 결과가 특히 고약한 쪽은 MCP 서버입니다 — `conf.json` 은
+서버를 가리키는데 import 가 실패해 기동만 안 되고, 화면에는 "연결 안 됨" 한 줄로만
+보입니다. 기능이 조용히 빠집니다.
+
+그래서 이번 갱신에서 **새로 추가된 패키지만** 골라 wheel 로 함께 실을 수 있게
+했습니다. 런타임 전체를 다시 싣는 것과는 다릅니다 (그건 `package_offline.py`).
+
+    python package_source.py --with-wheels mcp-server-fetch
+
+대상 장비에서:
+
+    python_runtime\\python.exe -m pip install --no-index --find-links wheels mcp-server-fetch
 """
 
 from __future__ import annotations
@@ -43,6 +62,7 @@ import re
 import shutil
 import subprocess
 import sys
+import sysconfig
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -59,7 +79,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 
 ROOT_DIR = Path(__file__).resolve().parent
-PACKAGE_NAME = "MultiAgentOrchestrator_source"
+PACKAGE_NAME = "MultiAgentDebateOrchestration_source"
 
 # --- 무엇을 담는가 (허용 목록) -------------------------------------------------
 
@@ -101,11 +121,16 @@ PACKAGE_FILES: list[tuple[str, str]] = [
 # 저장소에 싣습니다 (다시 만드는 법: app/ui/static/graph_editor/BUILD.md). 라이선스 고지는
 # 배포물과 함께 다녀야 합니다 (MIT · ISC · BSD-3-Clause). 폴더 이름을 `vendor` 로 하면 아래
 # FORBIDDEN_NAMES 에 걸립니다.
+#
+# mcp_servers/ 아래의 서버들은 `conf.json` 이 **경로나 주소로** 가리킵니다. 파일이
+# 빠지면 설정은 그대로인데 서버만 기동하지 못하고, 화면에는 "연결 안 됨" 한 줄로
+# 보입니다. 기능이 조용히 빠지는 모양이라 여기서 확인합니다.
 REQUIRED_PACKAGE_PATHS: list[str] = [
     "app/ui/static/graph_editor/index.js",
     "app/ui/static/graph_editor/vue-flow.css",
     "app/ui/static/graph_editor/THIRD_PARTY_NOTICES.txt",
     "app/ui/static/graph_editor/BUILD.md",
+    "mcp_servers/memory_scoped/index.mjs",
 ]
 
 # 디렉터리를 복사할 때 건너뛸 것들. 소스 트리 안에 런타임 부스러기가 섞이는 것을 막습니다.
@@ -208,6 +233,70 @@ def render_manual_html(build_dir: Path) -> list[tuple[Path, str]]:
     return found
 
 
+def collect_wheels(packages: list[str], build_dir: Path) -> list[tuple[Path, str]]:
+    """이번 갱신이 새로 요구하는 패키지만 wheel 로 받아 담습니다.
+
+    `FORBIDDEN_NAMES` 에 `wheels` 가 있는 것과 모순처럼 보이지만 그렇지 않습니다.
+    그 규칙은 "소스 트리를 훑다가 런타임이 **실수로** 딸려 들어가는 것" 을 막습니다.
+    여기 들어오는 wheel 은 명령줄에 이름을 적어야만 생기는, 의도한 예외입니다.
+    그래서 `collect_dir` 을 거치지 않고 따로 모읍니다.
+
+    담는 범위를 `requirements.txt` 전체가 아니라 **지정한 패키지** 로 좁힌 것도
+    같은 이유입니다. 전체를 담으면 이 패키지가 사실상 오프라인 번들이 되어,
+    "런타임은 한 번만 반입한다" 는 이 스크립트의 존재 이유가 없어집니다.
+    """
+    if build_dir.exists():
+        shutil.rmtree(build_dir, ignore_errors=True)
+    build_dir.mkdir(parents=True, exist_ok=True)
+
+    requirements = ROOT_DIR / "requirements.txt"
+    command = [sys.executable, "-m", "pip", "download",
+               "--only-binary=:all:", "-d", str(build_dir)]
+    if requirements.is_file():
+        # 버전을 requirements.txt 와 맞춥니다. 대상 장비에 이미 있는 패키지와
+        # 어긋난 버전을 실어 보내면 설치 단계에서 해석이 꼬입니다.
+        command += ["-c", str(requirements)]
+    command += packages
+
+    log(f"  wheel 내려받는 중: {', '.join(packages)}")
+    try:
+        subprocess.run(command, check=True, capture_output=True)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        detail = (getattr(exc, "stderr", b"") or b"").decode("utf-8", "replace").strip()
+        log(f"\n[중단] wheel 을 받지 못했습니다: {exc}")
+        if detail:
+            log(f"  {detail.splitlines()[-1]}")
+        sys.exit(
+            "인터넷이 되는 PC 에서 실행해야 합니다. wheel 없이 소스만 보내려면 "
+            "--with-wheels 를 빼고 다시 실행하세요."
+        )
+
+    if not any(build_dir.glob("*.whl")):
+        sys.exit("wheel 이 하나도 받아지지 않았습니다. 패키지 이름을 확인하세요.")
+
+    (build_dir / "INSTALL.txt").write_text(
+        "이 폴더의 wheel 은 이번 갱신이 새로 요구하는 패키지입니다.\n"
+        "설치본 루트에서 아래를 실행한 뒤 앱을 다시 띄우세요.\n"
+        "\n"
+        f"  python_runtime\\python.exe -m pip install --no-index --find-links wheels "
+        f"{' '.join(packages)}\n"
+        "\n"
+        "포터블 런타임을 쓰지 않는 설치본이라면 python.exe 자리에 그 환경의\n"
+        "인터프리터를 넣으세요. --no-index 가 있어 네트워크에 닿지 않습니다.\n"
+        "\n"
+        f"이 wheel 은 {sys.implementation.name} {sys.version_info.major}."
+        f"{sys.version_info.minor} / {sysconfig.get_platform()} 기준으로 받았습니다.\n"
+        "설치본의 인터프리터가 다른 버전이면 순수 파이썬이 아닌 wheel(pyzmq 등)이\n"
+        "설치되지 않습니다. 그때는 같은 버전의 PC 에서 다시 묶으세요.\n",
+        encoding="utf-8",
+    )
+
+    found = sorted(p for p in build_dir.glob("*") if p.is_file())
+    total = sum(p.stat().st_size for p in found)
+    log(f"  wheels/  {len(found)}개 ({total / 1024 / 1024:.1f} MB)")
+    return [(p, f"wheels/{p.name}") for p in found]
+
+
 def scan_for_secrets(items: list[tuple[Path, str]]) -> list[str]:
     """반입 전에 걸러야 할 값이 섞여 있는지 봅니다."""
     findings: list[str] = []
@@ -252,6 +341,9 @@ def main() -> None:
                         help="키처럼 보이는 값이 있어도 강행")
     parser.add_argument("--skip-manual-html", action="store_true",
                         help="설명서 HTML 렌더링을 건너뜁니다 (마크다운 원본은 그대로 담깁니다)")
+    parser.add_argument("--with-wheels", nargs="+", metavar="PKG", default=[],
+                        help="이번 갱신이 새로 요구하는 pip 패키지를 wheel 로 함께 담습니다 "
+                             "(예: --with-wheels mcp-server-fetch). 인터넷 필요")
     args = parser.parse_args()
 
     dist_dir = (ROOT_DIR / args.out_dir).resolve() if not Path(args.out_dir).is_absolute() \
@@ -290,6 +382,15 @@ def main() -> None:
         dist_dir.mkdir(parents=True, exist_ok=True)
         items.extend(render_manual_html(manual_build))
 
+    # wheel 은 맨 마지막에 붙입니다. 아래의 필수 파일 확인·비밀값 검사·MANIFEST 는
+    # 그대로 거치지만, 크기 상한만 면제됩니다 (2MB 를 넘는 것이 정상입니다).
+    wheel_build = dist_dir / f".{PACKAGE_NAME}_wheels"
+    wheel_items: list[tuple[Path, str]] = []
+    if args.with_wheels:
+        dist_dir.mkdir(parents=True, exist_ok=True)
+        wheel_items = collect_wheels(list(args.with_wheels), wheel_build)
+        items.extend(wheel_items)
+
     if not items:
         sys.exit("담을 파일이 없습니다. 프로젝트 루트에서 실행하고 있습니까?")
 
@@ -303,7 +404,9 @@ def main() -> None:
 
     # --- 2. 검사 -------------------------------------------------------------
     limit = int(args.max_file_mb * 1024 * 1024)
-    oversized = [(rel, src.stat().st_size) for src, rel in items if src.stat().st_size > limit]
+    exempt = {rel for _src, rel in wheel_items}  # wheel 은 크지만 의도한 것입니다
+    oversized = [(rel, src.stat().st_size) for src, rel in items
+                 if rel not in exempt and src.stat().st_size > limit]
     if oversized:
         log(f"\n[중단] 상한({args.max_file_mb} MB)을 넘는 파일이 있습니다:")
         for rel, size in sorted(oversized, key=lambda it: -it[1])[:20]:
@@ -344,6 +447,8 @@ def main() -> None:
     total = sum(src.stat().st_size for src, _ in items)
     if manual_build.exists():
         shutil.rmtree(manual_build, ignore_errors=True)
+    if wheel_build.exists():
+        shutil.rmtree(wheel_build, ignore_errors=True)
 
     log("")
     log(f"  스테이징 : {staging}")
@@ -351,10 +456,19 @@ def main() -> None:
     log(f"  파일     : {len(items) + 1}개 (원본 {len(items)} + MANIFEST.txt)")
     log(f"  원본 크기: {total / 1024:.0f} KB  ->  압축 {zip_path.stat().st_size / 1024:.0f} KB")
     log("")
-    log("  런타임(python_runtime, node_runtime, wheels, mcp_sandbox)과")
+    if wheel_items:
+        log(f"  wheel     : {len(wheel_items)}개 — 대상에서 wheels/INSTALL.txt 를 먼저 보세요.")
+        log("")
+    log("  런타임(python_runtime, node_runtime, mcp_sandbox)과")
     log("  운영 데이터(workspace, multiagent.db, conf.json)는 들어 있지 않습니다.")
+    if not wheel_items:
+        log("  requirements.txt 에 패키지를 새로 넣었다면 이 패키지만으로는 설치되지")
+        log("  않습니다 (폐쇄망은 pip 가 레지스트리에 닿지 못합니다).")
+        log("  --with-wheels <패키지…> 로 다시 묶으면 wheel 을 함께 담습니다.")
     log("  설명서는 docs/user_manual_html/index.html 을 브라우저로 열면 됩니다")
     log("  (이번 패키징 시점에 마크다운 원본에서 새로 렌더링했습니다).")
+    log("  conf.json 은 담기지 않습니다 — conf.example.json 에 이번에 새 항목이")
+    log("  생겼다면(MCP 서버·에이전트 등) 대상의 conf.json 에 직접 옮기세요.")
     log("  대상 장비에서는 압축을 푼 내용을 설치본 위에 덮어쓰세요.")
     log("  app/ 은 파일 단위로 덮지 말고 통째로 교체해야 합니다 —")
     log("  이번 갱신에서 삭제된 모듈이 남아 계속 import 됩니다.")

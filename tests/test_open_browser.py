@@ -143,7 +143,7 @@ def test_main_opens_the_running_server(conf_app, monkeypatch):
     port = server.getsockname()[1]
     opened = []
     monkeypatch.setattr(open_browser.webbrowser, "open", lambda url: opened.append(url))
-    monkeypatch.delenv("MAO_NO_BROWSER", raising=False)
+    monkeypatch.delenv("MADO_NO_BROWSER", raising=False)
 
     try:
         assert open_browser.main(["--port", str(port)]) == 0
@@ -156,10 +156,10 @@ def test_main_opens_the_running_server(conf_app, monkeypatch):
 def test_main_respects_the_opt_out(conf_app, monkeypatch):
     opened = []
     monkeypatch.setattr(open_browser.webbrowser, "open", lambda url: opened.append(url))
-    monkeypatch.setenv("MAO_NO_BROWSER", "1")
+    monkeypatch.setenv("MADO_NO_BROWSER", "1")
 
     assert open_browser.main([]) == 0
-    assert opened == [], "MAO_NO_BROWSER 를 설정했는데 브라우저가 열렸습니다"
+    assert opened == [], "MADO_NO_BROWSER 를 설정했는데 브라우저가 열렸습니다"
 
 
 def test_main_gives_up_quietly_when_the_server_fails(conf_app, monkeypatch):
@@ -171,8 +171,8 @@ def test_main_gives_up_quietly_when_the_server_fails(conf_app, monkeypatch):
 
     opened = []
     monkeypatch.setattr(open_browser.webbrowser, "open", lambda url: opened.append(url))
-    monkeypatch.delenv("MAO_NO_BROWSER", raising=False)
-    monkeypatch.setenv("MAO_BROWSER_TIMEOUT", "0.8")
+    monkeypatch.delenv("MADO_NO_BROWSER", raising=False)
+    monkeypatch.setenv("MADO_BROWSER_TIMEOUT", "0.8")
 
     assert open_browser.main(["--port", str(port)]) == 1
     assert opened == []

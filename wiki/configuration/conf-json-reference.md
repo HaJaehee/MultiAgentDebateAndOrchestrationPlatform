@@ -1,8 +1,8 @@
 # conf.json Configuration Reference
 
-The [conf.json](file:///d:/MultiAgentOrchestrator/conf.json) file is the single source of truth for all runtime behaviors in the MADO: Multi-Agent Debate & Orchestration Platform. It dynamically configures the web application, default LLM provider options, MCP background servers, and all specialist agent personas.
+The [conf.json](file:///d:/MultiAgentDebateOrchestration/conf.json) file is the single source of truth for all runtime behaviors in the MADO: Multi-Agent Debate & Orchestration Platform. It dynamically configures the web application, default LLM provider options, MCP background servers, and all specialist agent personas.
 
-The configuration file is loaded, validated, and normalized by [app/config.py](file:///d:/MultiAgentOrchestrator/app/config.py) using the standard-library `json` module and Pydantic v2.
+The configuration file is loaded, validated, and normalized by [app/config.py](file:///d:/MultiAgentDebateOrchestration/app/config.py) using the standard-library `json` module and Pydantic v2.
 
 ---
 
@@ -37,7 +37,7 @@ The configuration file is loaded, validated, and normalized by [app/config.py](f
 ### 1.1. Comments
 
 JSON has no comment syntax, so the loader treats **any key beginning with `//` as
-documentation** and strips it before validation ([`strip_comment_keys`](file:///d:/MultiAgentOrchestrator/app/config.py)).
+documentation** and strips it before validation ([`strip_comment_keys`](file:///d:/MultiAgentDebateOrchestration/app/config.py)).
 The value is a string, or an array of strings for a multi-line note. Because the
 writers read and rewrite the raw file, these notes survive every edit made from
 the roster panel.
@@ -67,9 +67,9 @@ stay readable in the file instead of collapsing into `
 
 ### 1.3. Formatting
 
-Writes go through [`write_conf_file()`](file:///d:/MultiAgentOrchestrator/app/config.py), which emits
+Writes go through [`write_conf_file()`](file:///d:/MultiAgentDebateOrchestration/app/config.py), which emits
 `json.dumps(..., ensure_ascii=False, indent=2)` and swaps the file in with `os.replace()`. The shipped
-[conf.example.json](file:///d:/MultiAgentOrchestrator/conf.example.json) adds blank lines between
+[conf.example.json](file:///d:/MultiAgentDebateOrchestration/conf.example.json) adds blank lines between
 sections for readability; the first edit made from the roster panel normalizes them away. Only
 whitespace is affected — every `//` note, value, and key order is carried through.
 
@@ -108,7 +108,7 @@ Defines system-wide defaults. Any agent that does not explicitly set an attribut
 | `extra_headers` | `dict` | `{}` | Custom HTTP headers sent with every LLM request (e.g. gateway auth). |
 | `extra_body` | `dict` | `{}` | Custom JSON body fields sent with requests. |
 
-#### Inheritance Rules ([app/config.py](file:///d:/MultiAgentOrchestrator/app/config.py#L148-L175))
+#### Inheritance Rules ([app/config.py](file:///d:/MultiAgentDebateOrchestration/app/config.py#L148-L175))
 - If an agent leaves an inheritable field empty or whitespace-only (e.g., `${LLM_API_BASE}` with no value in the environment), the field resolves to `None` and inherits from `llm`.
 - Setting any alias in an alias group (e.g., `api_base`, `api_url`, `base_url`) overrides the entire group.
 
@@ -196,7 +196,7 @@ back to its key-derived icon rather than showing a broken avatar. See
 
 ## 3. Live Mode vs. Unconfigured Agents
 
-Each agent computes an `is_live` property dynamically ([app/config.py](file:///d:/MultiAgentOrchestrator/app/config.py#L269-L277)):
+Each agent computes an `is_live` property dynamically ([app/config.py](file:///d:/MultiAgentDebateOrchestration/app/config.py#L269-L277)):
 
 ```python
 @property

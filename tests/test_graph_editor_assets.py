@@ -34,6 +34,9 @@ def test_every_bundled_license_is_noticed():
 
 def test_the_source_package_carries_the_editor_assets():
     packed = {rel for _src, rel in package_source.collect_dir(ROOT / "app", "app")}
-    assert set(package_source.REQUIRED_PACKAGE_PATHS) <= packed
-    assert all((ROOT / path).is_file() for path in package_source.REQUIRED_PACKAGE_PATHS)
+    editor_paths = {p for p in package_source.REQUIRED_PACKAGE_PATHS
+                    if p.startswith("app/ui/static/graph_editor/")}
+    assert editor_paths, "필수 목록에서 편집기 자산이 사라졌습니다"
+    assert editor_paths <= packed
+    assert all((ROOT / path).is_file() for path in editor_paths)
     assert "vendor" in package_source.FORBIDDEN_NAMES, "이 이름을 피해 graph_editor/ 에 둔 이유"

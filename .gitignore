@@ -16,8 +16,8 @@ docs/user_manual_html/
 build/
 *.egg-info/
 *.spec
-MultiAgentOrchestrator_bundle*
-MultiAgentOrchestrator_offline*
+MultiAgentDebateOrchestration_bundle*
+MultiAgentDebateOrchestration_offline*
 vendor/
 wheelhouse/
 

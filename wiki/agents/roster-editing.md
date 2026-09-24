@@ -1,6 +1,6 @@
 # Roster Editing — Changing `conf.json` From the UI
 
-Agents used to exist only in [conf.json](file:///d:/MultiAgentOrchestrator/conf.json). Adding one, giving
+Agents used to exist only in [conf.json](file:///d:/MultiAgentDebateOrchestration/conf.json). Adding one, giving
 it a different place in the round, or removing it meant opening the file in an editor and restarting
 the app. The roster panel now performs all of it in place, writing through to `conf.json` so the
 change survives the next boot.
@@ -33,7 +33,7 @@ conversation is unaffected, because it froze its own copy of both values at lock
 ## 1. The lock: who may edit, and when
 
 All five are gated by
-[`_agent_admin_lock_reason()`](file:///d:/MultiAgentOrchestrator/app/ui/components/roster.py). Opening
+[`_agent_admin_lock_reason()`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster.py). Opening
 only some of them would produce the worst outcome — a user changes something and cannot tell why the
 conversation ignored it.
 
@@ -58,20 +58,20 @@ would change the speaker list of a turn already in flight.
 
 Half of `conf.json` is prose — notes explaining what each server does and why something is switched
 off. JSON has no comment syntax, so those notes live as **keys beginning with `//`**, which
-[`strip_comment_keys()`](file:///d:/MultiAgentOrchestrator/app/config.py) removes before validation.
+[`strip_comment_keys()`](file:///d:/MultiAgentDebateOrchestration/app/config.py) removes before validation.
 They are ordinary data, which is what makes the writers simple. Every writer in
-[app/config.py](file:///d:/MultiAgentOrchestrator/app/config.py) is the same four steps:
+[app/config.py](file:///d:/MultiAgentDebateOrchestration/app/config.py) is the same four steps:
 
 1. **Validate the input first.** Agent keys and server names must match `BARE_KEY_PATTERN`, stances
    must be one of `DEBATE_STANCES`, and unknown override fields are rejected. Nothing has been
    written yet, so a bad request cannot leave a half-edited file behind.
-2. **Read the raw file** with [`read_conf_file()`](file:///d:/MultiAgentOrchestrator/app/config.py) —
+2. **Read the raw file** with [`read_conf_file()`](file:///d:/MultiAgentDebateOrchestration/app/config.py) —
    `//` notes included, `${VAR}` placeholders unresolved. The screen shows *resolved* values; echoing
    those back would bake another machine's absolute paths and a plaintext API key into the file.
 3. **Edit the parsed dictionary.** Assigning to an existing key keeps its position; a new key is
    appended inside its own object, so a new agent lands among the agents and a new server among the
    servers, with no insertion-point arithmetic.
-4. **Rewrite it once** with [`write_conf_file()`](file:///d:/MultiAgentOrchestrator/app/config.py),
+4. **Rewrite it once** with [`write_conf_file()`](file:///d:/MultiAgentDebateOrchestration/app/config.py),
    which writes to a temporary file and `os.replace()`s it into place. A crash mid-write cannot leave
    a truncated config — that state stops the app from booting at all.
 
@@ -79,7 +79,7 @@ Deleting an agent or server leaves the `//` note above it. Deleting prose a huma
 undone, and it is exactly what you want back when you re-add the agent.
 
 Adding then deleting an agent restores the file **byte for byte**; that round-trip is asserted in
-[tests/test_agent_admin.py](file:///d:/MultiAgentOrchestrator/tests/test_agent_admin.py).
+[tests/test_agent_admin.py](file:///d:/MultiAgentDebateOrchestration/tests/test_agent_admin.py).
 
 > This used to be considerably harder. TOML has a standard-library reader but no writer, so the
 > writers edited **line ranges** — tracking multi-line string state so a `system_prompt` containing
@@ -92,11 +92,11 @@ Adding then deleting an agent restores the file **byte for byte**; that round-tr
 
 The add dialog prefills every LLM field — model, API URL, API key, provider, temperature, context
 window, response tokens, timeout, retries, tool-loop limit — from
-[`agent_defaults_from_llm()`](file:///d:/MultiAgentOrchestrator/app/config.py), which resolves the
+[`agent_defaults_from_llm()`](file:///d:/MultiAgentDebateOrchestration/app/config.py), which resolves the
 effective default (the `llm` value if set, otherwise the `AgentConfig` default).
 
 **Fields left untouched are not written to the file.**
-[`prune_agent_overrides()`](file:///d:/MultiAgentOrchestrator/app/config.py) drops anything equal to
+[`prune_agent_overrides()`](file:///d:/MultiAgentDebateOrchestration/app/config.py) drops anything equal to
 the prefilled default, and only the remainder lands in the section:
 
 ```json
@@ -148,7 +148,7 @@ The orchestrator can be neither disabled nor deleted; it runs planning and synth
 ## 5. Speaking order by drag
 
 Card order **is** speaking order. Dropping a card rewrites `debate_priority` as `10, 20, 30, …`
-([`set_agent_debate_order_in_conf_file()`](file:///d:/MultiAgentOrchestrator/app/config.py)); the gaps
+([`set_agent_debate_order_in_conf_file()`](file:///d:/MultiAgentDebateOrchestration/app/config.py)); the gaps
 leave room to insert one agent between two others later without rewriting the rest.
 
 ### 5.1. The drop position must follow the cursor
@@ -161,7 +161,7 @@ The first implementation always inserted **before** the target. Two things were 
 - **Reaching the last position.** "Before the last card" is as far right as you can get.
 
 The drop handler now takes the cursor's half: left half inserts before, right half inserts after.
-[tests/test_agent_admin.py](file:///d:/MultiAgentOrchestrator/tests/test_agent_admin.py) pins both the
+[tests/test_agent_admin.py](file:///d:/MultiAgentDebateOrchestration/tests/test_agent_admin.py) pins both the
 new behaviour and the fact that the old rule was a no-op, and asserts that one drag can place any
 card in any position.
 
@@ -175,13 +175,13 @@ NiceGUI emits an event to the server whenever a Python handler is registered, so
 `card.on("dragover.prevent", lambda _: None)` flooded the websocket for the whole duration of a drag.
 
 Passing only `js_handler` handles the event client-side and emits nothing
-([`JS_DRAG_OVER`](file:///d:/MultiAgentOrchestrator/app/ui/components/roster.py)). Exactly three
+([`JS_DRAG_OVER`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster.py)). Exactly three
 messages now cross the wire per drag: `dragstart`, `drop`, `dragend`.
 
 The same JS handlers provide the feedback that makes the interaction legible: the lifted card fades
 (`.agent-dragging`), and the target card grows a thick bar on the edge the card will land on
 (`.agent-drop-before` / `.agent-drop-after`, defined in
-[app/ui/theme.py](file:///d:/MultiAgentOrchestrator/app/ui/theme.py)). `box-shadow: inset` draws the
+[app/ui/theme.py](file:///d:/MultiAgentDebateOrchestration/app/ui/theme.py)). `box-shadow: inset` draws the
 bar without affecting layout, so cards do not jump as the indicator moves.
 
 The orchestrator card is neither draggable nor a drop target — it stands outside the rounds.
@@ -204,7 +204,7 @@ degrades to a single priority-ordered pass.
 ## 7. Applying the change to the running app
 
 Writing the file is not enough — the screen and the live pool would drift until the next restart.
-[`_apply_agent_change()`](file:///d:/MultiAgentOrchestrator/app/ui/components/roster.py) chains:
+[`_apply_agent_change()`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster.py) chains:
 
 ```mermaid
 graph LR

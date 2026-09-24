@@ -1,6 +1,6 @@
 # MCP Runtime Isolation — Running Many Sessions at Once
 
-Implementation: [app/mcp/pool.py](file:///d:/MultiAgentOrchestrator/app/mcp/pool.py)
+Implementation: [app/mcp/pool.py](file:///d:/MultiAgentDebateOrchestration/app/mcp/pool.py)
 
 Until v0.6.0 the platform held **one** `MCPManager` for the whole process. Because an
 MCP server receives the folder it may touch **at spawn time** — `filesystem` takes it as
@@ -34,7 +34,7 @@ Sessions that point at the same folder already share files. Giving them separate
 processes isolates nothing while multiplying the process count by the number of
 conversations. Within one folder, per-conversation isolation is already handled by
 request metadata — the host stamps `_meta.conversationId` on every call
-([`compose_scope`](file:///d:/MultiAgentOrchestrator/app/mcp/manager.py)), which is what
+([`compose_scope`](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py)), which is what
 keeps memory graphs and sandbox namespaces apart.
 
 To isolate a single conversation completely, give it a dedicated workspace folder in the
@@ -73,7 +73,7 @@ stateDiagram-v2
   folder do not pay the startup cost again (the sandbox spends seconds launching an
   IPython kernel).
 - A turn borrows the runtime for its whole duration.
-  [`OrchestratorEngine.run_turn`](file:///d:/MultiAgentOrchestrator/app/orchestration/engine.py)
+  [`OrchestratorEngine.run_turn`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py)
   acquires before the debate and releases in a `finally`, so the reference is returned
   however the turn ends — completion, user stop, cancellation, or an exception. Missing a
   release would leave a runtime nobody uses alive until shutdown, taking a slot from the
@@ -96,7 +96,7 @@ right now."
 
 ## 4. The Per-Runtime Environment
 
-[`MCPRuntimePool.runtime_env()`](file:///d:/MultiAgentOrchestrator/app/mcp/pool.py) builds
+[`MCPRuntimePool.runtime_env()`](file:///d:/MultiAgentDebateOrchestration/app/mcp/pool.py) builds
 the variables layered onto every server this runtime starts:
 
 | Variable | Value | Reason |
@@ -118,7 +118,7 @@ Deliberately **not** set:
 
 A second manager is useless if the first one keeps rewriting global state.
 
-- [`RootConfig.mcp_servers_for_workspace()`](file:///d:/MultiAgentOrchestrator/app/config.py)
+- [`RootConfig.mcp_servers_for_workspace()`](file:///d:/MultiAgentDebateOrchestration/app/config.py)
   used to assign `os.environ["WORKSPACE_DIR"]` so child processes would inherit it. With
   more than one runtime, whichever call came last overwrote every other runtime's path.
   It now passes the workspace through `resolve_env_vars(..., overrides)` and writes
@@ -137,7 +137,7 @@ A second manager is useless if the first one keeps rewriting global state.
 for a folder that does not exist yet. `as_uri()` then produces `file://?/C:/...`, which the
 server rejects as an invalid URL — the filesystem server comes up with no allowed
 directories and the only trace is a single `Failed to request initial roots` line.
-`strip_extended_path_prefix()` in [app/config.py](file:///d:/MultiAgentOrchestrator/app/config.py)
+`strip_extended_path_prefix()` in [app/config.py](file:///d:/MultiAgentDebateOrchestration/app/config.py)
 removes the prefix before the path becomes a URI.
 
 ---
@@ -146,7 +146,7 @@ removes the prefix before the path becomes a URI.
 
 `conf.json` remains the single source of truth for every runtime. Editing MCP servers from
 the UI therefore restarts **all live runtimes**
-([`MCPRuntimePool.reload_all()`](file:///d:/MultiAgentOrchestrator/app/mcp/pool.py)), and
+([`MCPRuntimePool.reload_all()`](file:///d:/MultiAgentDebateOrchestration/app/mcp/pool.py)), and
 that operation stays locked while any debate is running — a debate must not lose its tools
 mid-round. The lock is now about the configuration file, not about a shared process.
 
@@ -171,7 +171,7 @@ MCP server processes, not a thread.
 
 ## 8. Related Pages
 
-- [Overview & Protocol](file:///d:/MultiAgentOrchestrator/wiki/mcp/overview-and-protocol.md) — stdio host/client architecture and persistent sessions
-- [Bundled Servers](file:///d:/MultiAgentOrchestrator/wiki/mcp/bundled-servers.md) — what each server binds at spawn time
-- [Engine Lifecycle](file:///d:/MultiAgentOrchestrator/wiki/orchestration/engine-lifecycle.md) — where a turn borrows and returns its runtime
-- [Session Handoff](file:///d:/MultiAgentOrchestrator/wiki/orchestration/session-handoff.md) — how a knowledge graph moves between conversations
+- [Overview & Protocol](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/overview-and-protocol.md) — stdio host/client architecture and persistent sessions
+- [Bundled Servers](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/bundled-servers.md) — what each server binds at spawn time
+- [Engine Lifecycle](file:///d:/MultiAgentDebateOrchestration/wiki/orchestration/engine-lifecycle.md) — where a turn borrows and returns its runtime
+- [Session Handoff](file:///d:/MultiAgentDebateOrchestration/wiki/orchestration/session-handoff.md) — how a knowledge graph moves between conversations

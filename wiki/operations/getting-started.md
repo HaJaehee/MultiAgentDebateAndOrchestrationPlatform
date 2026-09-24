@@ -17,8 +17,8 @@ This guide walks you through setting up and running the MADO: Multi-Agent Debate
 
 ### Step 1: Clone Repository & Create Virtual Environment
 ```bash
-git clone https://github.com/HaJaehee/MultiAgentOrchestrator.git
-cd MultiAgentOrchestrator
+git clone https://github.com/HaJaehee/MultiAgentDebateAndOrchestrationPlatform.git MultiAgentDebateOrchestration
+cd MultiAgentDebateOrchestration
 
 # Create and activate virtual environment
 python -m venv .venv
@@ -34,7 +34,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Step 3: Run One-Click MCP Setup ([setup_mcp.py](file:///d:/MultiAgentOrchestrator/setup_mcp.py))
+### Step 3: Run One-Click MCP Setup ([setup_mcp.py](file:///d:/MultiAgentDebateOrchestration/setup_mcp.py))
 The setup script prepares all bundled MCP servers in a single step (requires internet, run once):
 ```bash
 python setup_mcp.py

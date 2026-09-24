@@ -9,7 +9,7 @@ The platform comes pre-configured with a suite of official and open-source MCP s
 | Server Key | Runtime | Source Package / Repo | Tool Count | Default Status | Primary Responsibility |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `filesystem` | Node.js | `@modelcontextprotocol/server-filesystem` | 14 | **Enabled** | File read/write/search within `./workspace`. |
-| `memory` | Node.js | fork of `@modelcontextprotocol/server-memory` ([`mcp_servers/memory_scoped/`](file:///d:/MultiAgentOrchestrator/mcp_servers/memory_scoped/index.mjs)) | 9 | **Enabled** | Knowledge graph persistence, one graph per conversation. |
+| `memory` | Node.js | fork of `@modelcontextprotocol/server-memory` ([`mcp_servers/memory_scoped/`](file:///d:/MultiAgentDebateOrchestration/mcp_servers/memory_scoped/index.mjs)) | 9 | **Enabled** | Knowledge graph persistence, one graph per conversation. |
 | `git` | Python | `mcp-server-git` (pip package) | 12 | **Enabled** | Repository version control & diff tracking. |
 | `sandbox` | Python | [AirgappedPySandbox](https://github.com/HaJaehee/AirgappedPySandbox) v0.4.1 | 5 | **Enabled** | Stateful IPython kernel code execution, one namespace per conversation and speaker. |
 | `sequential_thinking` | Node.js | `@modelcontextprotocol/server-sequential-thinking`| 1 | *Disabled* | Step-by-step reasoning (used only when `mode = "mcp"`). |
@@ -43,9 +43,9 @@ The platform comes pre-configured with a suite of official and open-source MCP s
 ### 2.3. Git Versioning Server (`git`)
 - **Execution**: Python module (`-m mcp_server_git --repository ./workspace`).
 - **Prerequisite**: Requires `./workspace` to be an initialized git repository.
-- **Corporate Intranet & Git Discovery**: [`find_git_executable()`](file:///d:/MultiAgentOrchestrator/app/mcp/manager.py) locates git across custom enterprise paths (e.g. `C:\Program Files\Git\cmd\git.exe` or `%LOCALAPPDATA%\Programs\Git\cmd\git.exe`).
+- **Corporate Intranet & Git Discovery**: [`find_git_executable()`](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py) locates git across custom enterprise paths (e.g. `C:\Program Files\Git\cmd\git.exe` or `%LOCALAPPDATA%\Programs\Git\cmd\git.exe`).
 - **Safe Directory Protection**: Executes `git config --global --add safe.directory "*"` automatically to prevent `fatal: detected dubious ownership in repository` errors in containerized or shared drive environments.
-- **Workspace Auto-Init**: [`ensure_workspace()`](file:///d:/MultiAgentOrchestrator/app/mcp/manager.py) checks for `./workspace/.git` upon startup. If missing, it initializes the repository with `git init`, creates a `.gitkeep`, and creates the initial commit automatically.
+- **Workspace Auto-Init**: [`ensure_workspace()`](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py) checks for `./workspace/.git` upon startup. If missing, it initializes the repository with `git init`, creates a `.gitkeep`, and creates the initial commit automatically.
 - **Key Tools**:
   - `git_status`: Checks working tree changes.
   - `git_diff`: Inspects modifications introduced during a debate round.
@@ -94,7 +94,7 @@ Four of the bundled servers are rooted at one shared directory:
 | `sandbox` | `SANDBOX_WORKSPACE` env |
 
 `WORKSPACE_DIR` is normalised to an **absolute path** at import time in
-[`app/config.py`](file:///d:/MultiAgentOrchestrator/app/config.py), anchored at the project
+[`app/config.py`](file:///d:/MultiAgentDebateOrchestration/app/config.py), anchored at the project
 root rather than the current working directory.
 
 This is not cosmetic. Passing the relative `./workspace` leaves resolution to each child
@@ -108,14 +108,14 @@ the project's. Two servers, one setting, two folders.
 The root is fixed at spawn time for every one of these servers, so there is no way to point a
 running server at another folder. Rather than restart the shared servers whenever a session
 wants a different workspace, the platform keeps **one group per workspace**:
-[`MCPRuntimePool`](file:///d:/MultiAgentOrchestrator/app/mcp/pool.py) resolves the **raw**
+[`MCPRuntimePool`](file:///d:/MultiAgentDebateOrchestration/app/mcp/pool.py) resolves the **raw**
 `mcp_servers` table against that folder — re-running the same substitution is exact, whereas
 string-replacing paths in already-substituted argv would not be — and starts a group for it.
 
 Conversations in different workspaces therefore debate concurrently; conversations sharing a
 workspace share the group, and stay apart inside it through the per-conversation scope in each
 request's `_meta`. See
-[Runtime Isolation](file:///d:/MultiAgentOrchestrator/wiki/mcp/runtime-isolation.md) for the
+[Runtime Isolation](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/runtime-isolation.md) for the
 reference counting, idle TTL, and the runtime budget.
 
 ### The sandbox kernel's cwd (closed in v0.4.1)
