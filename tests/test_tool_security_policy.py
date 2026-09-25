@@ -29,6 +29,7 @@ from app.mcp.policy import (
     Policy,
     ToolMeta,
     denial_covers,
+    describe_verdict,
     evaluate,
     grant_covers,
     hard_block,
@@ -40,6 +41,7 @@ from app.mcp.policy import (
     server_environment,
     stricter_mode,
     tool_always_denied,
+    tool_outcome,
 )
 
 # 글자로만 다루므로 실제로 있을 필요는 없습니다. 운영체제의 절대 경로 모양만 따릅니다.
@@ -362,7 +364,7 @@ def test_session_denials_deny_and_say_it_was_the_user():
     profile = profile_call(FETCH, {"url": "https://docs.python.org"}, WS)
     verdict = evaluate(profile, Policy(mode="auto", denials=parse_rules(["net(python.org)"])))
     assert verdict.effect == DENY and verdict.source == "denial"
-    assert "사용자가 이 대화에서" in verdict.headline
+    assert "유저가 이 대화에서" in verdict.headline
 
 
 def test_denials_beat_session_grants_and_allow_rules():
@@ -393,3 +395,31 @@ def test_denial_covers_only_scopes_that_block_the_call():
 
 def test_a_tool_wide_denial_removes_the_tool_from_the_list():
     assert tool_always_denied(FETCH, Policy(denials=parse_rules(["mcp(fetch/fetch)"])))
+
+
+# ---------------------------------------------------------------------------
+# 보여줄 말 — 결과 하나, 판정 한 줄
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("status, security, outcome, verdict", [
+    ("success", {"decision": "allow", "rule": "mode:default"}, "success", "자동 허용 · 기본 모드"),
+    ("success", {"decision": "allow", "rule": "session:net(python.org)"}, "success",
+     "자동 허용 · 이 대화 규칙 net(python.org)"),
+    ("error", {"decision": "approved", "rule": "once", "approver": "local"}, "error",
+     "유저 승인 · 이번만 · 서버 PC"),
+    ("success", {"decision": "approved", "rule": "always:net(pypi.org)", "approver": "local"}, "success",
+     "유저 승인 · conf.json 규칙으로 등록 net(pypi.org) · 서버 PC"),
+    ("denied", {"decision": "deny", "rule": "read(**/.env)"}, "blocked", "규칙 차단 · read(**/.env)"),
+    ("denied", {"decision": "deny", "rule": "mode:read_only"}, "blocked", "모드 차단 · 읽기 전용 모드"),
+    ("error", {"decision": "hard", "rule": "문서 형식"}, "blocked", "고정 보호 · 문서 형식"),
+    ("denied", {"decision": "rejected", "rule": "session:write(a.md)", "approver": "remote"}, "blocked",
+     "유저 거부 · 이 대화 규칙으로 등록 write(a.md) · 원격"),
+    ("denied", {"decision": "rejected", "rule": "session:write(a.md)"}, "blocked",
+     "유저 거부 · 이 대화 규칙 write(a.md)"),
+    ("denied", {"decision": "timeout"}, "blocked", "응답 없음 · 정해진 시간 안에 답이 없었음"),
+    ("error", {}, "error", ""),
+])
+def test_one_outcome_and_one_verdict_line(status, security, outcome, verdict):
+    assert tool_outcome(status, security) == outcome
+    assert describe_verdict(security) == verdict

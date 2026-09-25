@@ -74,7 +74,7 @@ from app.agents.llm import estimate_tokens, is_file_writing_call, strip_reasonin
 from app.orchestration.state import DebateMessage, DebateState
 
 # 토론 도중 들어온 사용자 발언의 머리표 (`OrchestratorEngine._apply_interjections`).
-INTERJECTION_PREFIX = "[토론 중 사용자 개입]"
+INTERJECTION_PREFIX = "[토론 중 유저 개입]"
 
 # ---------------------------------------------------------------- 1. 고정
 
@@ -332,16 +332,16 @@ def build_user_record(state: DebateState, *, model: str, token_cap: int) -> User
 
     refs = {i: n for n, (i, _m) in enumerate(chosen, start=1)}
     lines = [
-        "[사용자 발언 기록] 이 대화에서 사용자가 한 말입니다. 컨텍스트가 차도 생략되지 않습니다.",
+        "[유저 발언 기록] 이 대화에서 유저가 한 말입니다. 컨텍스트가 차도 생략되지 않습니다.",
         "앞선 발언끼리 어긋나면 **더 나중 발언**을 따르세요. 결정 장부·요약·다른 에이전트의 "
-        "말보다 이 기록이 우선합니다. 토론 기록의 `(사용자 발언 #n)` 자리가 여기의 #n 입니다.",
+        "말보다 이 기록이 우선합니다. 토론 기록의 `(유저 발언 #n)` 자리가 여기의 #n 입니다.",
     ]
     for i, m in chosen:
         lines.append(f"\n#{refs[i]} · {_user_label(state, i, m)}\n{_user_body(m)}")
     omitted = len(candidates) - len(chosen)
     if omitted:
         lines.append(
-            f"\n(길이 한도로 사용자 발언 {omitted}건은 여기에 싣지 못했습니다. 토론 기록에 원문이 있습니다.)"
+            f"\n(길이 한도로 유저 발언 {omitted}건은 여기에 싣지 못했습니다. 토론 기록에 원문이 있습니다.)"
         )
     return UserRecord(text="\n".join(lines), refs=refs)
 
@@ -362,7 +362,7 @@ def build_plan_pin(state: DebateState, *, model: str, token_cap: int) -> str:
 
 
 def user_placeholder(number: int) -> str:
-    return f"(사용자 발언 #{number} — 위 [사용자 발언 기록]에 전문이 있습니다)"
+    return f"(유저 발언 #{number} — 위 [유저 발언 기록]에 전문이 있습니다)"
 
 
 OPENING_PLACEHOLDER = "(이번 턴 요청 — 위 [User Goal / Current Request]에 전문이 있습니다)"
@@ -398,7 +398,7 @@ def ledger_prompt(
         "- 각 항목은 한 줄. 결정과 기각에는 근거를 짧게 붙이세요.\n"
         "- 뒤집힌 결정은 결정 사항에서 빼고 기각된 대안으로 옮기되 이유를 적으세요. 해결된 쟁점은 "
         "미해결에서 지우세요.\n"
-        "- 사용자 발언과 어긋나는 결정은 사용자 발언을 따르세요. 누군가 제안만 했고 합의되지 않은 것은 "
+        "- 유저 발언과 어긋나는 결정은 유저 발언을 따르세요. 누군가 제안만 했고 합의되지 않은 것은 "
         "결정 사항이 아니라 미해결 쟁점입니다. 없는 사실을 지어내지 마세요.\n"
         "- 파일 경로·함수·인터페이스 이름·수치는 원문 그대로.\n"
         f"- 전체 {max_chars}자 이내. 머리말이나 설명 없이 아래 다섯 제목을 이 순서대로 쓰고, "
@@ -452,7 +452,7 @@ def summary_prompt(
         "위 둘을 합쳐 **갱신된 요약 하나**를 쓰세요.\n"
         "- 누가 무엇을 제안·주장했고 어떻게 정리됐는지 흐름을 남기세요 (발언자 이름 유지).\n"
         "- 결정·기각과 그 이유, 수치·파일 경로·함수·인터페이스 이름·명령은 원문 그대로 남기세요.\n"
-        "- 사용자 발언은 따로 고정되므로 요약에서는 무엇을 요구했는지만 짧게 적으세요.\n"
+        "- 유저 발언은 따로 고정되므로 요약에서는 무엇을 요구했는지만 짧게 적으세요.\n"
         "- 사고 과정, 인사, 반복, 이미 뒤집힌 중간안의 세부는 버리세요. 없는 내용을 지어내지 마세요.\n"
         f"- {max_chars}자 이내. 머리말 없이 요약 본문만 쓰세요."
     )

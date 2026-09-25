@@ -55,7 +55,7 @@ def test_document_carries_the_whole_conversation():
     assert "### 준비 및 계획" in md
     assert "### Round 1" in md
     # 발언자와 종류가 드러납니다.
-    assert "🙋 사용자" in md
+    assert "🙋 유저" in md
     assert "System Architect (Architecture)" in md
     # 발언 본문과 도구 실행 기록이 함께 남습니다.
     assert "캐시 계층을 설계해줘" in md

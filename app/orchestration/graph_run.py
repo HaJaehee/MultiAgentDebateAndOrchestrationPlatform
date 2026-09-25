@@ -238,7 +238,7 @@ class GraphRunTracker:
             "end": "최종 합성 노드에 닿음",
             "idle": "더 돌 노드가 없어 멈춤",
             "step_cap": "단계 상한에 닿음",
-            "stopped": "사용자 요청으로 정지",
+            "stopped": "유저 요청으로 정지",
         }.get(self.finished or "", "")
         if active:
             if self.finished is None:

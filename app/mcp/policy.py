@@ -809,7 +809,7 @@ def evaluate(profile: CallProfile, policy: Policy) -> Verdict:
         rule, what = hit
         return Verdict(
             DENY, top, "denial", rule.text,
-            f"사용자가 이 대화에서 `{rule.text}` 를 거부했습니다. 이 대화 동안 같은 범위의 호출은 "
+            f"유저가 이 대화에서 `{rule.text}` 를 거부했습니다. 이 대화 동안 같은 범위의 호출은 "
             f"실행되지 않습니다.",
             [what],
         )
@@ -935,28 +935,109 @@ def tool_always_denied(meta: ToolMeta, policy: Policy) -> Optional[str]:
     return None
 
 
-# 감사 기록의 `rule` 칸에 규칙 대신 들어가는 표식과 그 뜻 (`tool_gate`).
-AUDIT_MARKERS = {
-    "once": "이번만",
-    "repeat": "이미 거부된 호출",
-    "unattended": "물을 사람 없음",
-    "gate-error": "판정 오류",
-}
+# ---------------------------------------------------------------------------
+# 도구 기록을 사람에게 보여줄 말 — 채팅 피드와 세션 저장 파일이 같은 말을 씁니다
+# ---------------------------------------------------------------------------
+#
+# 한 줄에 두 가지만 답합니다. **결과**(도구가 돌았는가, 어떻게 끝났는가)는 제목 줄의
+# 배지 하나로, **판정**(누가 · 무슨 근거로 허락하거나 막았는가)은 본문 첫 줄 하나로.
+# 예전에는 제목 앞말(Tool Call/Blocked), 상태 배지(SUCCESS/DENIED), 보안 배지(사용자 거부)
+# 가 같은 사실을 서로 다른 말로 되풀이했습니다.
+#
+# 감사 기록의 `rule` 칸 모양 (`tool_gate` 가 적습니다):
+#   mode:<모드>        모드 기본값으로 판정
+#   session:<규칙…>    이 대화의 허용·거부 규칙 (카드에서 등록했거나, 등록된 것에 걸렸거나)
+#   always:<규칙…>     카드에서 conf.json 에 등록
+#   once · repeat · unattended · gate-error   표식
+#   그 밖              conf.json 의 규칙 원문 (고정 보호면 그 종류)
+
+OUTCOME_LABELS = {"success": "성공", "error": "실패", "blocked": "차단"}
+_BLOCKING_DECISIONS = frozenset({"deny", "hard", "rejected", "timeout"})
+_APPROVER_LABELS = {"local": "서버 PC", "remote": "원격"}
 
 
-def describe_audit_rule(rule: str) -> str:
-    """감사 기록의 `rule` 칸을 사람이 읽는 말로. 규칙 원문은 그대로 둡니다."""
-    text = str(rule or "")
-    if text.startswith("mode:"):
-        return f"{MODE_LABELS.get(text[5:], text[5:])} 모드"
-    return AUDIT_MARKERS.get(text, text)
+def tool_outcome(status: str, security: Optional[Mapping[str, Any]] = None) -> str:
+    """도구가 돌았는가와 그 결과 — `success` · `error` · `blocked`.
+
+    `blocked` 는 실행하지 않은 호출입니다. 보안 판정뿐 아니라 문서 형식 거부(텍스트 도구로
+    .pptx)도 여기 듭니다 — 사람에게 중요한 것은 "도구가 돌았는가" 입니다.
+    """
+    decision = str((security or {}).get("decision") or "")
+    if status == "denied" or decision in _BLOCKING_DECISIONS:
+        return "blocked"
+    return "success" if status == "success" else "error"
+
+
+def _split_rule(rule: str) -> Tuple[str, str]:
+    for origin in ("mode", "session", "always"):
+        if rule.startswith(f"{origin}:"):
+            return origin, rule[len(origin) + 1:]
+    return "", rule
+
+
+def _registered(origin: str, body: str) -> str:
+    if origin == "session":
+        return f"이 대화 규칙으로 등록 {body}"
+    if origin == "always":
+        return f"conf.json 규칙으로 등록 {body}"
+    return "이번만"
+
+
+def describe_verdict(security: Optional[Mapping[str, Any]]) -> str:
+    """판정 한 줄 — "누가 · 근거 · 답한 곳". 판정 없이 실행된 호출이면 빈 문자열.
+
+    "누가" 자리의 말은 정해져 있습니다: 자동 허용 · 유저 승인 · 규칙 차단 · 모드 차단 ·
+    고정 보호 · 유저 거부 · 응답 없음 (그리고 판정 오류). 승인 카드 버튼의 허용·거부와
+    같은 말입니다.
+    """
+    info = security or {}
+    decision = str(info.get("decision") or "")
+    if not decision:
+        return ""
+    rule = str(info.get("rule") or "")
+    approver = str(info.get("approver") or "")
+    origin, body = _split_rule(rule)
+
+    if decision == "allow":
+        if origin == "mode":
+            parts = ["자동 허용", f"{MODE_LABELS.get(body, body)} 모드"]
+        elif origin == "session":
+            parts = ["자동 허용", f"이 대화 규칙 {body}"]
+        else:
+            parts = ["자동 허용", f"규칙 {body}" if body else ""]
+    elif decision == "approved":
+        parts = ["유저 승인", _registered(origin, body)]
+    elif decision == "deny":
+        if origin == "mode":
+            parts = ["모드 차단", f"{MODE_LABELS.get(body, body)} 모드"]
+        elif rule == "unattended":
+            parts = ["응답 없음", "물어볼 유저가 없었음"]
+        elif rule == "gate-error":
+            parts = ["판정 오류", "안전을 위해 실행하지 않음"]
+        else:
+            parts = ["규칙 차단", body]
+    elif decision == "hard":
+        parts = ["고정 보호", "" if body in ("", "고정 보호") else body]
+    elif decision == "rejected":
+        if rule == "repeat":
+            parts = ["유저 거부", "이번 턴에 이미 거부한 호출"]
+        elif origin == "session" and not approver:
+            parts = ["유저 거부", f"이 대화 규칙 {body}"]
+        else:
+            parts = ["유저 거부", _registered(origin, body)]
+    elif decision == "timeout":
+        parts = ["응답 없음", "정해진 시간 안에 답이 없었음"]
+    else:
+        parts = [decision, rule]
+    parts.append(_APPROVER_LABELS.get(approver, ""))
+    return " · ".join(part for part in parts if part)
 
 
 def refusal_text(tool_name: str, reason: str, next_action: str = "") -> str:
     """모델에게 돌려줄 거부 관측. `guards.binary_write_refusal` 과 같은 모양입니다."""
     action = next_action or (
         "같은 호출을 다시 하지 마십시오. 이 도구 없이 진행하거나, 꼭 필요하다면 "
-        "왜 필요한지 발언에 적어 사용자가 판단하게 하세요."
+        "왜 필요한지 발언에 적어 유저가 판단하게 하세요."
     )
     return (
         f"REFUSED - 도구가 실행되지 않았습니다 (도구 보안 정책).\n"

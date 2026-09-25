@@ -85,7 +85,7 @@ class TurnControl:
         for request in self.pending_decisions:
             request.resolve(0, "wrap_up")
         for approval in self.pending_approvals:
-            approval.answer("deny", reason="사용자가 토론 정지를 요청했습니다.")
+            approval.answer("deny", reason="유저가 토론 정지를 요청했습니다.")
 
     # -------------------------------------------------- 개입
 
@@ -471,7 +471,7 @@ class ToolApprovalRequest(DecisionRequest):
         """한도 쪽지의 답 모양으로 들어온 것 (정지·시간 초과). 늘 거부입니다."""
         if outcome == "timeout":
             return self.answer("timeout", reason="정해진 시간 안에 답이 없었습니다.")
-        return self.answer("deny", reason="사용자가 토론 정지를 요청했습니다.")
+        return self.answer("deny", reason="유저가 토론 정지를 요청했습니다.")
 
     def describe(self) -> dict:
         return {**super().describe(), "decision": self.decision}

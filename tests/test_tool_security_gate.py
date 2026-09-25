@@ -219,7 +219,7 @@ async def test_session_grants_stop_the_next_prompt_and_are_saved(tmp_path, secur
     assert requested["tool_name"] == "fetch__fetch" and requested["suggestions"] == ["net(docs.python.org)"]
 
     second = await gate.check(_agent("critic"), "fetch__fetch", {"url": "https://peps.python.org"}, mcp)
-    assert second.allowed and second.audit["rule"] == "net(python.org)"
+    assert second.allowed and second.audit["rule"] == "session:net(python.org)"
     assert control.pending_approvals == []
 
 
@@ -491,7 +491,7 @@ async def test_a_session_denial_is_saved_and_blocks_the_next_turn_without_asking
     first = await gate.check(_agent(), "fetch__fetch", {"url": "https://docs.python.org"}, mcp)
     await answer
     assert not first.allowed and first.audit["decision"] == "rejected"
-    assert first.audit["rule"] == "net(python.org)"
+    assert first.audit["rule"] == "session:net(python.org)"
     assert "외부 문서 금지" in first.output and "net(python.org)" in first.output
     assert saved == [([], ["net(python.org)"])]
 
@@ -500,7 +500,7 @@ async def test_a_session_denial_is_saved_and_blocks_the_next_turn_without_asking
     next_turn = ToolGate(session_id="s", control=TurnControl(), denials=saved[-1][1])
     again = await next_turn.check(_agent("critic"), "fetch__fetch", {"url": "https://peps.python.org"}, mcp)
     assert not again.allowed and again.audit["decision"] == "rejected"
-    assert "사용자가 이 대화에서" in again.output
+    assert "유저가 이 대화에서" in again.output
     assert next_turn.control.pending_approvals == []
 
 

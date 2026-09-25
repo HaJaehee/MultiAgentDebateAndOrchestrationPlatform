@@ -79,6 +79,17 @@ def _audit(decision: str, verdict_risk: str, rule: str = "", approver: str = "")
     return {"decision": decision, "risk": verdict_risk, "rule": rule, "approver": approver}
 
 
+def _registered_rule(decision: str, scope: List[str]) -> str:
+    """카드에서 기억하게 한 범위를 감사 기록 모양으로 (`session:…` · `always:…`). 아니면 빈 문자열."""
+    if not scope:
+        return ""
+    if decision.endswith("_session"):
+        return "session:" + ", ".join(scope)
+    if decision.endswith("_always"):
+        return "always:" + ", ".join(scope)
+    return ""
+
+
 def _safe_rules(texts: List[str]) -> List[Rule]:
     """저장된 허용 목록을 읽습니다. 규칙 문법이 바뀌어 못 읽는 줄은 건너뜁니다."""
     rules: List[Rule] = []
@@ -102,9 +113,9 @@ def _preview(arguments: Any) -> str:
 
 # 사람이 거부한 호출에 붙는 다음 행동. 사람의 판단이라 모델이 우회로를 찾으면 안 됩니다.
 _DENIED_BY_USER_NEXT_ACTION = (
-    "사용자의 결정을 따르세요. 같은 호출을 다시 하지 말고, 같은 결과를 내는 다른 도구로 "
+    "유저의 결정을 따르세요. 같은 호출을 다시 하지 말고, 같은 결과를 내는 다른 도구로 "
     "돌아가지도 마십시오. 이 작업 없이 진행하거나, 꼭 필요하면 이유를 발언에 적어 "
-    "사용자가 판단하게 하세요."
+    "유저가 판단하게 하세요."
 )
 
 
@@ -239,7 +250,13 @@ class ToolGate:
         verdict = evaluate(profile, policy)
 
         if verdict.effect == ALLOW:
-            rule = verdict.rule if verdict.source in ("rule", "grant") else f"mode:{policy.mode}"
+            # 감사 기록의 `rule` 칸 모양은 `policy.describe_verdict` 에 적혀 있습니다.
+            if verdict.source == "grant":
+                rule = f"session:{verdict.rule}"
+            elif verdict.source == "rule":
+                rule = verdict.rule
+            else:
+                rule = f"mode:{policy.mode}"
             return GateResult(True, audit=_audit("allow", verdict.risk, rule))
 
         if verdict.effect == DENY:
@@ -249,7 +266,7 @@ class ToolGate:
                     False,
                     refusal_text(tool_name, verdict.explain(), _DENIED_BY_USER_NEXT_ACTION),
                     "denied",
-                    _audit("rejected", verdict.risk, verdict.rule),
+                    _audit("rejected", verdict.risk, f"session:{verdict.rule}"),
                 )
             return GateResult(
                 False, refusal_text(tool_name, verdict.explain()), "denied",
@@ -268,7 +285,7 @@ class ToolGate:
         if self.control is None:
             return GateResult(
                 False,
-                refusal_text(tool_name, "확인이 필요한 호출인데 물어볼 사람이 없어 실행하지 않았습니다.\n"
+                refusal_text(tool_name, "확인이 필요한 호출인데 물어볼 유저가 없어 실행하지 않았습니다.\n"
                                         + verdict.explain()),
                 "denied",
                 _audit("deny", verdict.risk, "unattended"),
@@ -402,19 +419,18 @@ class ToolGate:
 
         if request.allowed:
             return GateResult(True, audit=_audit(
-                "approved", verdict.risk, ", ".join(scope) if decision != "allow_once" else "once",
-                approver,
+                "approved", verdict.risk, _registered_rule(decision, scope) or "once", approver,
             ))
 
         if decision == "timeout":
             reason = (
-                f"{int(get_config().tool_security.approval_timeout)}초 안에 사용자의 승인이 없어 "
+                f"{int(get_config().tool_security.approval_timeout)}초 안에 유저의 승인이 없어 "
                 f"실행하지 않았습니다.\n{verdict.explain()}"
             )
             text = refusal_text(tool_name, reason)
             audit = _audit("timeout", verdict.risk)
         else:
-            reason = "사용자가 이 호출을 거부했습니다."
+            reason = "유저가 이 호출을 거부했습니다."
             if decision in ("deny_session", "deny_always") and scope:
                 reason += (
                     f" 이 대화 동안 `{'`, `'.join(scope)}` 범위의 호출은 실행되지 않습니다."
@@ -425,9 +441,7 @@ class ToolGate:
                 tool_name, f"{reason}\n{verdict.explain()}",
                 _DENIED_BY_USER_NEXT_ACTION if (request.reason or decision != "deny") else "",
             )
-            audit = _audit(
-                "rejected", verdict.risk, ", ".join(scope) if decision != "deny" else "", approver,
-            )
+            audit = _audit("rejected", verdict.risk, _registered_rule(decision, scope), approver)
         self._rejected[signature] = text
         return GateResult(False, text, "denied", audit)
 

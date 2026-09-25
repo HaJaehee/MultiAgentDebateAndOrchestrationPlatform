@@ -252,10 +252,28 @@ session handoff; the mode does.
 
 `tool_calls` gained four columns (`decision`, `risk`, `rule`, `approver`); see
 [Database Schema](../architecture/database-schema.md). `decision` is one of `allow`, `approved`,
-`deny`, `hard`, `rejected`, `timeout`; `rule` holds the matched rule, the granted or denied scope,
-`mode:<mode>` or a marker (`once`, `repeat`, `unattended`, `gate-error`). A call refused by a session
-denial is `rejected` with the denial as its rule and no approver (nobody was asked this time). The tool accordion shows a Security row and
-titles blocked calls `🛡️ Blocked`; the session export writes a `**Security**` line per call.
+`deny`, `hard`, `rejected`, `timeout`. `rule` records where the verdict came from:
+
+| `rule` | Meaning |
+| :--- | :--- |
+| `mode:<mode>` | the mode default |
+| `session:<rules>` | the conversation's grants/denials — registered on this card, or matched later |
+| `always:<rules>` | registered into `conf.json` on this card |
+| `once` · `repeat` · `unattended` · `gate-error` | markers |
+| anything else | a `conf.json` rule, or the kind of hard protection |
+
+**What a person sees** answers two questions, each in one place, in one language
+(`policy.tool_outcome` / `policy.describe_verdict`, shared by the chat feed and the session export):
+
+- *Did the tool run, and how did it end?* — one badge on the accordion header: `성공` (ran, succeeded),
+  `실패` (ran, the tool reported an error), `차단` (did not run: any security refusal and the binary
+  document refusal). Blocked calls use a shield icon, the rest a wrench.
+- *Who decided, on what grounds?* — one `판정` line: `자동 허용`, `유저 승인`, `규칙 차단`, `모드 차단`,
+  `고정 보호`, `유저 거부`, `응답 없음` (or `판정 오류`), followed by the ground and where the person
+  answered — e.g. `유저 거부 · 이 대화 규칙으로 등록 write(design.md) · 서버 PC`, and on later calls
+  `유저 거부 · 이 대화 규칙 write(design.md)`. Calls made without a gate show no 판정 line.
+
+The export writes `⛔ <code>tool</code> — 차단` and `**판정**: …` in the same words.
 
 ---
 

@@ -47,7 +47,7 @@ to trust it:
 
 | Strategy | Note shown |
 | :--- | :--- |
-| Sequential Debate | 카드 순서 그대로 · 각자 앞사람의 결론을 이어받습니다 |
+| Sequential Debate | 카드 순서 그대로 · 각자 앞 에이전트의 결론을 이어받습니다 |
 | Adversarial Debate | 제안 ↔ 비판 교차 · 중립은 맨 뒤 (카드 순서와 다를 수 있습니다) |
 | Orchestrator-Led | 매 라운드 오케스트레이터가 지명합니다 · 아래는 지명 실패 시의 순서 |
 | Parallel Dispatch | 동시 실행 (한 번에 최대 N명, 나머지는 순차로 밀림) — arrows become `·` |

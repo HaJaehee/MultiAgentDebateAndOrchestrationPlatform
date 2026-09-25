@@ -478,7 +478,7 @@ def build_reference_block(report: MentionReport, root: Path) -> str:
         for agent in report.agents:
             parts.append(f"- {agent.name} ({agent.role})")
         parts.append(
-            "사용자가 이 전문가를 직접 불렀습니다. 요청 중 이 전문가에게 해당하는 부분은 "
+            "유저가 이 전문가를 직접 불렀습니다. 요청 중 이 전문가에게 해당하는 부분은 "
             "이 전문가가 맡아 답하게 하세요."
         )
     return "\n".join(parts)

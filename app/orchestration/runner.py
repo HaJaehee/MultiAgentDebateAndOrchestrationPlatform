@@ -285,11 +285,11 @@ class TurnRun:
             pending = event.get("pending", 0)
             if event.get("deferred"):
                 self.status_text = self._pending_prefix(
-                    f"사용자 개입 {pending}건 — 최종 합성 중이라 다음 요청부터 반영됩니다."
+                    f"유저 개입 {pending}건 — 최종 합성 중이라 다음 요청부터 반영됩니다."
                 )
             else:
                 self.status_text = self._pending_prefix(
-                    f"사용자 개입 {pending}건 대기 — 다음 발언 차례에 반영됩니다."
+                    f"유저 개입 {pending}건 대기 — 다음 발언 차례에 반영됩니다."
                 )
 
         elif etype == "interjections_deferred":
@@ -479,7 +479,7 @@ class TurnRun:
                 rounds = event.get("rounds_completed", 0)
                 max_rounds = event.get("max_rounds", 0)
                 self.status_text = (
-                    f"사용자 요청으로 정지 — {rounds}/{max_rounds} 라운드까지의 토론으로 "
+                    f"유저 요청으로 정지 — {rounds}/{max_rounds} 라운드까지의 토론으로 "
                     f"합성을 마쳤습니다."
                 )
                 self.round_info = "Stopped"

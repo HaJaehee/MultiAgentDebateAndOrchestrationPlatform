@@ -335,7 +335,7 @@ def create_ui() -> None:
             elif etype == "context_summarized":
                 ui.notify(
                     f"컨텍스트가 차서 앞선 기록 {event.get('folded', 0)}건을 요약으로 접었습니다 "
-                    f"(누적 {event.get('total', 0)}건). 사용자 발언과 결정 장부는 원문 그대로 남습니다.",
+                    f"(누적 {event.get('total', 0)}건). 유저 발언과 결정 장부는 원문 그대로 남습니다.",
                     type="info",
                     position="bottom-right",
                 )
@@ -388,7 +388,7 @@ def create_ui() -> None:
                     max_rounds = event.get("max_rounds", 0)
                     chat_feed.set_busy(
                         False,
-                        f"사용자 요청으로 정지 — {rounds}/{max_rounds} 라운드까지의 토론으로 합성했습니다.",
+                        f"유저 요청으로 정지 — {rounds}/{max_rounds} 라운드까지의 토론으로 합성했습니다.",
                         "Stopped",
                     )
                     ui.notify(

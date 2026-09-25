@@ -28,10 +28,10 @@ pytest -k "snapshot"
 | `test_session_snapshot.py` | **시작된 대화 세션의 완전한 자기완결성 및 외부 설정 격리 보장** |
 | `test_roster_lock.py` | 토론 백그라운드 진행 중 전역 로스터 및 MCP 설정 변경 차단 잠금 |
 | `test_roster_selection.py` | 신규 에이전트 추가 시 기존 대화 세션의 활성/비활성 목록 정합성 |
-| `test_interaction.py` | 사용자 정지(Stop) 요청 및 중간 개입 메모(Interjection) 정상 반영 |
+| `test_interaction.py` | 유저 정지(Stop) 요청 및 중간 개입 메모(Interjection) 정상 반영 |
 | `test_session_handoff.py` | 세션 이어받기: 대화 맥락만 초기화하고 작업 공간 파일 및 지식 그래프 인계 |
 | `test_order_preview.py` | 로스터 UI의 발언 순서 미리보기와 엔진의 실제 발언 실행 순서 일치 여부 |
-| `test_tool_budget.py` | 도구 호출 상한 도달 시 사용자 중재 및 결론 도출 처리 |
+| `test_tool_budget.py` | 도구 호출 상한 도달 시 유저 중재 및 결론 도출 처리 |
 | `test_context_window.py` | 모델 컨텍스트 창 포화 시 중간 발언 축소 및 목표/지침 보존 원칙 |
 | `test_tool_failure_safety.py` | 도구 실행 실패 시 예외로 중단되지 않고 피드백 문자열로 정상 전파 |
 | `test_tool_loop_content.py` | 다중 도구 호출 루프 완료 후 생성된 발언 본문의 완전한 보존 |
@@ -106,7 +106,7 @@ for name in ("conf.json", "conf.example.json"):
     assert llm.get("max_tool_iterations") == 30
 ```
 
-소스 코드의 모델 기본값, 전역 Pydantic 모델, 그리고 실제 `conf.json` 및 `conf.example.json`의 기본값이 삼위일체로 정확히 일치하는지 자동 검증합니다. 셋 중 하나라도 어긋나면 사용자가 기본값을 오인하는 문제가 발생하기 때문입니다.
+소스 코드의 모델 기본값, 전역 Pydantic 모델, 그리고 실제 `conf.json` 및 `conf.example.json`의 기본값이 삼위일체로 정확히 일치하는지 자동 검증합니다. 셋 중 하나라도 어긋나면 유저가 기본값을 오인하는 문제가 발생하기 때문입니다.
 
 ### 시작된 대화 세션의 완전한 자기완결성 검증
 

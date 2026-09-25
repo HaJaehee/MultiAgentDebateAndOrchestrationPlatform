@@ -1110,7 +1110,7 @@ class OrchestratorEngine:
                 session_id=state.session_id,
                 sender_key="user",
                 sender_name="User",
-                sender_role="Client / Requestor",
+                sender_role="Client / Requester",
                 content=content,
                 round_number=round_number,
                 msg_type="user",
@@ -1118,7 +1118,7 @@ class OrchestratorEngine:
                 finished_at=now,
             )],
             what="the user's message",
-            label="사용자 발언",
+            label="유저 발언",
             kind="message-user",
             session_id=state.session_id,
             fallback_title=f"User — Round {round_number}",
@@ -1130,7 +1130,7 @@ class OrchestratorEngine:
             id=msg_id,
             sender_key="user",
             sender_name="User",
-            sender_role="Client / Requestor",
+            sender_role="Client / Requester",
             content=content,
             round_number=round_number,
             msg_type="user",
@@ -1166,7 +1166,7 @@ class OrchestratorEngine:
             await self._record_user_message(
                 db=db,
                 state=state,
-                content=f"[토론 중 사용자 개입]\n{note}",
+                content=f"{memory.INTERJECTION_PREFIX}\n{note}",
                 round_number=round_number,
                 on_event=on_event,
             )
@@ -1389,7 +1389,7 @@ class OrchestratorEngine:
                         f"{plan_record_block}"
                         f"[신규 User Request]:\n{user_prompt}\n\n"
                         f"{roster_block}"
-                        "위의 이전 세션 논의 맥락과 새로운 사용자 요청을 종합 분석하여 이번 토론의 핵심 목표, "
+                        "위의 이전 세션 논의 맥락과 새로운 유저 요청을 종합 분석하여 이번 토론의 핵심 목표, "
                         "접근 방향, 각 전문가에게 부여할 발언 지침을 작성하세요. "
                         f"{assign_rule}"
                     )}
@@ -2166,7 +2166,7 @@ class OrchestratorEngine:
             f"**동시에 각자의 과업을 수행합니다**. 서로의 이번 라운드 결과를 볼 수 없으므로 "
             f"과업이 겹치면 같은 일을 두 번 하게 됩니다.\n\n"
             f"겹치지 않게 과업을 나누세요. 전원을 부를 필요는 없고, 한 명만 불러도 됩니다. "
-            f"각 과업은 다른 사람의 결과를 기다리지 않고 혼자 끝낼 수 있는 것이어야 하며, "
+            f"각 과업은 다른 에이전트의 결과를 기다리지 않고 혼자 끝낼 수 있는 것이어야 하며, "
             f"무엇을 만들어 낼지(산출물)까지 한두 문장으로 적으세요. "
             f"동시 실행은 {parallel_limit}명까지이고 그보다 많이 부르면 나머지는 순차적으로 밀립니다.\n\n"
             f"다음 JSON 형식으로만 답하세요:\n"
@@ -3475,7 +3475,7 @@ class OrchestratorEngine:
             # 남은 라운드에서 나왔을 반론을 지어내면, 검증되지 않은 결론이 검증된
             # 것처럼 보고서에 올라갑니다.
             early_stop = (
-                f"\n[주의] 사용자가 예정된 라운드보다 일찍 토론을 정지시켰습니다 "
+                f"\n[주의] 유저가 예정된 라운드보다 일찍 토론을 정지시켰습니다 "
                 f"(진행: {state.current_round}/{state.max_rounds} 라운드). 남은 라운드에서 "
                 f"나왔을 의견을 추측해 채우지 말고, 지금까지 오간 논의만으로 정리하되 "
                 f"아직 검토되지 못한 쟁점을 보고서에 명시하세요.\n"

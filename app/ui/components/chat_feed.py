@@ -4,7 +4,7 @@ import time
 from typing import Any, Callable, Coroutine, Dict, Iterable, List, Optional, Set, Tuple
 from nicegui import ui
 from app.agents.base import style_for_agent
-from app.mcp.policy import describe_audit_rule
+from app.mcp.policy import OUTCOME_LABELS, describe_verdict, tool_outcome
 from app.orchestration.graph_run import NodeBadges
 from app.timestamps import format_duration, speech_time_text, speech_timing
 from app.ui.clipboard import copy_to_clipboard
@@ -143,14 +143,11 @@ RISK_BADGE_COLORS = {
     "outside": "deep-orange-8", "delete": "deep-orange-8", "exec_flagged": "red-8",
     "net": "red-8", "unknown": "red-8",
 }
-# 도구 기록 아코디언에 붙는 보안 판정 문구.
-SECURITY_DECISION_LABELS = {
-    "allow": ("허용", "teal-8"),
-    "approved": ("승인됨", "sky-8"),
-    "deny": ("정책 거부", "red-8"),
-    "hard": ("고정 보호", "red-9"),
-    "rejected": ("사용자 거부", "red-8"),
-    "timeout": ("응답 없음 · 거부", "red-8"),
+# 도구 기록 아코디언의 결과 배지 (`policy.tool_outcome`): (배지 색, 아이콘, 아이콘 색).
+OUTCOME_STYLES = {
+    "success": ("teal-8", "build", "text-slate-400"),
+    "error": ("amber-9", "build", "text-amber-400"),
+    "blocked": ("red-8", "gpp_bad", "text-red-400"),
 }
 
 BAR_CLASSES = "w-full items-center gap-2 px-3 py-2 rounded-lg text-xs flex-nowrap"
@@ -1563,33 +1560,28 @@ class ChatFeed:
         args = tc.get("arguments", {})
         output = tc.get("output", "")
 
-        status_color = "teal-4" if status == "success" else "red-4"
+        # 제목 줄은 결과 하나(배지), 본문 첫 줄은 판정 하나. 같은 사실을 여러 자리에서
+        # 다른 말로 되풀이하지 않습니다 (`policy.describe_verdict` 주석 참고).
         security = tc.get("security") or {}
-        decision = str(security.get("decision") or "")
-        blocked = status == "denied"
-        title = f"🛡️ Blocked: {tool_name}" if blocked else f"🛠️ Tool Call: {tool_name}"
-        with ui.expansion(title, icon="gpp_bad" if blocked else "build").classes(
-            "w-full mcp-tool-accordion text-xs"
-        ):
+        outcome = tool_outcome(status, security)
+        badge_color, icon, icon_color = OUTCOME_STYLES[outcome]
+        verdict = describe_verdict(security)
+        with ui.expansion().classes("w-full mcp-tool-accordion text-xs") as expansion:
+            with expansion.add_slot("header"):
+                with ui.row().classes("items-center gap-2 flex-nowrap flex-grow min-w-0"):
+                    ui.icon(icon, size="xs").classes(f"{icon_color} flex-shrink-0")
+                    ui.label(tool_name).classes("font-mono text-slate-200 truncate min-w-0 flex-grow")
+                    ui.badge(OUTCOME_LABELS[outcome], color=badge_color).props("dense")
             with ui.column().classes("p-2 gap-2 bg-slate-950/60 rounded"):
-                with ui.row().classes("items-center justify-between w-full"):
-                    ui.label("Status:").classes("font-semibold text-slate-400")
-                    ui.badge(status.upper(), color=status_color).props("dense")
-                if decision:
-                    label, color = SECURITY_DECISION_LABELS.get(decision, (decision, "grey-7"))
-                    detail = describe_audit_rule(str(security.get("rule") or ""))
-                    who = {"local": "서버 PC", "remote": "원격"}.get(str(security.get("approver") or ""), "")
-                    with ui.row().classes("items-center gap-2 w-full flex-nowrap"):
-                        ui.label("Security:").classes("font-semibold text-slate-400 flex-shrink-0")
-                        ui.badge(label, color=color).props("dense")
-                        text = " · ".join(t for t in (detail, who) if t)
-                        if text:
-                            ui.label(text).classes("text-slate-400 truncate min-w-0")
+                if verdict:
+                    with ui.row().classes("items-baseline gap-2 w-full flex-nowrap"):
+                        ui.label("판정").classes("font-semibold text-slate-400 flex-shrink-0")
+                        ui.label(verdict).classes("text-slate-300 break-all min-w-0")
 
-                ui.label("Arguments:").classes("font-semibold text-slate-400 mt-1")
+                ui.label("인자").classes("font-semibold text-slate-400 mt-1")
                 args_str = json.dumps(args, indent=2, ensure_ascii=False) if isinstance(args, dict) else str(args)
                 ui.code(args_str, language="json").classes("w-full text-xs")
 
-                ui.label("Execution Output:").classes("font-semibold text-slate-400 mt-1")
+                ui.label("출력").classes("font-semibold text-slate-400 mt-1")
                 with ui.scroll_area().classes("w-full max-h-32 bg-black/40 p-2 rounded text-slate-300 font-mono text-[11px]"):
                     ui.label(output).classes("mcp-tool-output")

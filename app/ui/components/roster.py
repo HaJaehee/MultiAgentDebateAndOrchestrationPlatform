@@ -670,7 +670,7 @@ class AgentRosterControl:
             if not ({"proponent", "critic"} <= stances):
                 return "한쪽 진영이 비어 대립이 성립하지 않습니다 · 우선순위 순으로 진행"
             return "제안 ↔ 비판 교차 · 중립은 맨 뒤 (카드 순서와 다를 수 있습니다)"
-        return "카드 순서 그대로 · 각자 앞사람의 결론을 이어받습니다"
+        return "카드 순서 그대로 · 각자 앞 에이전트의 결론을 이어받습니다"
 
     def _refresh_order_preview(self) -> None:
         """발언 순서 미리보기를 지금 설정으로 다시 그립니다."""

@@ -117,7 +117,7 @@ class LLMUnavailableError(RuntimeError):
 
 LEDGER_HEADER = (
     "[Session Decision Ledger]: 오케스트레이터가 이 대화의 토론을 라운드마다 정리한 결정 "
-    "장부입니다. 앞선 발언이 컨텍스트에서 생략돼도 남습니다. 사용자 발언이나 세션 지침과 "
+    "장부입니다. 앞선 발언이 컨텍스트에서 생략돼도 남습니다. 유저 발언이나 세션 지침과 "
     "어긋나면 그쪽을 따르세요."
 )
 
@@ -406,7 +406,7 @@ BUDGET_EXHAUSTED_INSTRUCTION = (
 )
 
 BUDGET_EXTENDED_INSTRUCTION = (
-    "[도구 호출 예산 확장] 사용자가 상한을 {extra}회 늘려 총 {limit}회가 되었습니다 "
+    "[도구 호출 예산 확장] 유저가 상한을 {extra}회 늘려 총 {limit}회가 되었습니다 "
     "(남은 호출 {remaining}회). 늘어난 몫은 결론을 내는 데 꼭 필요한 확인에만 쓰고, "
     "같은 탐색을 반복하지 마세요."
 )
@@ -751,7 +751,7 @@ def _clip_middle_to_tokens(model: str, text: str, cap: int) -> str:
 
 
 CONTEXT_WIDENED_INSTRUCTION = (
-    "[컨텍스트 확장] 사용자가 이 발언의 컨텍스트 한도를 {extra:,} 토큰 늘려 "
+    "[컨텍스트 확장] 유저가 이 발언의 컨텍스트 한도를 {extra:,} 토큰 늘려 "
     "총 {window:,} 토큰이 되었습니다. 앞선 기록이 생략되지 않고 그대로 남았습니다."
 )
 
@@ -783,7 +783,7 @@ ANSWER_AFTER_REASONING_INSTRUCTION = (
 # 로그 한 줄 없이 **빈 카드**로 남았습니다.
 ANSWER_ONLY_IN_REASONING_INSTRUCTION = (
     "[답변 없음] 직전 응답은 끝까지 쓰였지만 **답이 사고(reasoning) 안에만 있고 본문이 "
-    "비어** 있었습니다. 사람에게는 본문만 보입니다. 사고를 다시 하지 말고, 최종 답변을 "
+    "비어** 있었습니다. 유저에게는 본문만 보입니다. 사고를 다시 하지 말고, 최종 답변을 "
     "본문으로 쓰세요."
 )
 ANSWER_ONLY_IN_REASONING_FOOTER = (
@@ -970,8 +970,8 @@ def binary_file_guidance(tools: Optional[List[Dict[str, Any]]] = None) -> Option
                 f"그 뒤의 모든 호출에서 **같은 값**을 씁니다."
             )
             lines.append(
-                "- 문서는 서버에 살아 있고 사람이 브라우저에서 같이 고칩니다. 열면 "
-                "화면 주소가 돌아오니 **사람에게 그 주소를 알려 주세요.** 고치기 전에는 "
+                "- 문서는 서버에 살아 있고 유저가 브라우저에서 같이 고칩니다. 열면 "
+                "화면 주소가 돌아오니 **유저에게 그 주소를 알려 주세요.** 고치기 전에는 "
                 "반드시 읽어서 최신 `rev` 를 받고, 쓸 때 그 값을 함께 보냅니다."
             )
             lines.append(
@@ -984,8 +984,8 @@ def binary_file_guidance(tools: Optional[List[Dict[str, Any]]] = None) -> Option
             # 대답 없는 곳에 계속 적게 되고, 기능이 있다는 사실만 남습니다.
             tail = f" 처리한 것은 `{resolve}` 로 표시하세요." if resolve else ""
             lines.append(
-                f"- 사람이 화면에서 슬라이드에 부탁을 적어 둘 수 있습니다. 고치기 전에 "
-                f"`{comments}` 로 읽고 **그것부터 처리하세요** — 사람이 직접 짚은 것이라 "
+                f"- 유저가 화면에서 슬라이드에 부탁을 적어 둘 수 있습니다. 고치기 전에 "
+                f"`{comments}` 로 읽고 **그것부터 처리하세요** — 유저가 직접 짚은 것이라 "
                 f"당신이 짐작한 개선보다 우선합니다.{tail}"
             )
         if sheet:
@@ -998,7 +998,7 @@ def binary_file_guidance(tools: Optional[List[Dict[str, Any]]] = None) -> Option
         lines.append(
             f"- 이 환경에는 그런 파일을 만들 수 있는 도구가 없습니다. `{writer}` 로 "
             f"마크다운(.md)이나 CSV 로 쓰고, 요청한 형식의 파일은 만들지 못했다고 "
-            f"사용자에게 그대로 알리세요. 만들었다고 말하지 마세요."
+            f"유저에게 그대로 알리세요. 만들었다고 말하지 마세요."
         )
 
     return BINARY_DOC_HEAD + "\n" + "\n".join(lines)
