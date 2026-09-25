@@ -250,17 +250,18 @@
       "enabled": true
     },
 
-    "// slide_studio": [
+    "// pair_slide": [
       "유저와 에이전트가 같은 발표자료를 번갈아 고치는 서버 (별도 프로젝트 PairSlide).",
       "MCP(streamable-http) 와 편집 화면을 한 프로세스에서 서빙합니다.",
       "이 서버는 앱이 띄우지 않습니다 — 먼저 따로 실행한 뒤 주소로 붙습니다.",
       "작업 공간을 이 앱과 함께 쓰게 해야 내보낸 .pptx 가 다운로드 창에 보입니다:",
       "  set PAIRSLIDE_WORKSPACE=<이 앱의 workspace 폴더>",
       "  python <PairSlide 폴더>/server.py --port 28791",
-      "그 다음 이 항목을 enabled: true 로 바꾸세요. 키 이름(slide_studio)은 바꾸지",
-      "마세요 — 도구 이름과 가드, slide_writer 페르소나가 이 키를 씁니다."
+      "그 다음 이 항목을 enabled: true 로 바꾸세요. 키 이름(pair_slide)을 바꾸면",
+      "slide_writer 페르소나의 allowed_mcp_servers 와 지침 문구도 함께 고치세요.",
+      "가드와 발표자료 지침은 키가 아니라 도구 이름(slide_open …)으로 찾습니다."
     ],
-    "slide_studio": {
+    "pair_slide": {
       "url": "${PAIRSLIDE_URL:-http://127.0.0.1:28791/mcp}",
       "transport": "http",
       "enabled": false
@@ -482,13 +483,13 @@
       "debate_priority": 50,
       "debate_stance": "proponent",
       "allowed_mcp_servers": [
-        "slide_studio",
+        "pair_slide",
         "filesystem",
         "sandbox"
       ],
       "system_prompt": [
         "당신은 발표자료(.pptx)와 스프레드시트(.xlsx)를 만드는 전문가입니다.",
-        "파일 생성은 slide_studio 도구로만 합니다. 파일 쓰기 도구로 .pptx 나 .xlsx 를 쓰려는 시도는 거부되니 시도하지 마십시오.",
+        "파일 생성은 pair_slide 도구로만 합니다. 파일 쓰기 도구로 .pptx 나 .xlsx 를 쓰려는 시도는 거부되니 시도하지 마십시오.",
         "",
         "[유저와 같이 고치는 문서입니다]",
         "문서는 서버에 살아 있고, 유저가 브라우저에서 같은 것을 동시에 고칩니다.",

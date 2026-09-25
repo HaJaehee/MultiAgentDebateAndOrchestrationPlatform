@@ -358,7 +358,7 @@ KNOWN_TOOLS: Dict[str, ToolKind] = {
     "sequentialthinking": ToolKind(STATE),
     # fetch (mcp-server-fetch)
     "fetch": ToolKind(NET, url_arg="url"),
-    # PairSlide (slide_studio). 문서는 PairSlide 쪽 저장소에 있고, 경로 인자는 그쪽
+    # PairSlide (pair_slide). 문서는 PairSlide 쪽 저장소에 있고, 경로 인자는 그쪽
     # 기준이라 작업 공간 경로로 풀지 않습니다.
     "slide_read": ToolKind(READ),
     "slide_comments": ToolKind(READ),

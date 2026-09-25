@@ -33,7 +33,7 @@ PATH_ARGUMENT_KEYS = (
     "target", "target_file", "uri", "dest", "destination", "output_path",
 )
 
-# 거부 문구에서 대안으로 지목할 발표자료 · 스프레드시트 도구들 (conf 키 `slide_studio`).
+# 거부 문구에서 대안으로 지목할 발표자료 · 스프레드시트 도구들 (conf 키 `pair_slide`).
 _SLIDE_ENTRY_TOOLS = ("slide_open", "slide_add", "slide_export")
 _SHEET_ENTRY_TOOLS = ("sheet_write_table",)
 
@@ -68,7 +68,7 @@ def _find_available(available_tools: Iterable[str], tails: Iterable[str]) -> lis
         tail = _tool_tail(str(name))
         if tail in wanted and str(name) not in found:
             found.append(str(name))
-    # `_tool_lookup` 은 정규화된 이름(`slide_studio__slide_open`)과 맨이름을 둘 다
+    # `_tool_lookup` 은 정규화된 이름(`pair_slide__slide_open`)과 맨이름을 둘 다
     # 들고 있습니다. 모델에게는 서버가 붙은 쪽을 보여 줍니다 — 모호하지 않으니까요.
     qualified = [n for n in found if "__" in n]
     return qualified or found

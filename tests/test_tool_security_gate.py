@@ -344,7 +344,7 @@ async def test_manager_refuses_protected_paths_without_calling_the_server(tmp_pa
 
 def test_remote_servers_on_other_hosts_are_not_trusted_by_default(security):
     assert manager_module.server_is_trusted("filesystem", "")
-    assert manager_module.server_is_trusted("slide_studio", "127.0.0.1")
+    assert manager_module.server_is_trusted("pair_slide", "127.0.0.1")
     assert not manager_module.server_is_trusted("jira", "jira.corp.example")
     security(trusted_servers=["jira"])
     assert manager_module.server_is_trusted("jira", "jira.corp.example")

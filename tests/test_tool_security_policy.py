@@ -176,7 +176,7 @@ def test_untrusted_remote_server_is_judged_by_tool_and_host_only():
 
 
 def test_loopback_remote_server_is_not_network():
-    meta = ToolMeta("slide_studio", "slide_add", remote_host="127.0.0.1")
+    meta = ToolMeta("pair_slide", "slide_add", remote_host="127.0.0.1")
     assert _verdict(meta, {"name": "deck"}).effect == ALLOW
 
 

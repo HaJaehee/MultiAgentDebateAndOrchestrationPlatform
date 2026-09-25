@@ -444,7 +444,7 @@ APPEND_TOOLS = ("edit_file", "edit_text_file", "append_file", "patch_file", "str
 # 가진 에이전트는 분할 쓰기 지침(`file_writing_guidance`)을 한 줄도 받지 못했습니다.
 FILE_WRITE_TOOLS = ("write_file", "write_text_file", "create_file", "write_workspace_file")
 
-# slide_studio MCP 서버의 진입 도구들. 바이너리 문서를 만들 수 있는 유일한 길이라,
+# pair_slide MCP 서버의 진입 도구들. 바이너리 문서를 만들 수 있는 유일한 길이라,
 # 프롬프트에서 이름을 그대로 짚어 줍니다.
 SLIDE_TOOLS = ("slide_open", "slide_add", "slide_export")
 SHEET_TOOLS = ("sheet_write_table",)
