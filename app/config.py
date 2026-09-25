@@ -444,6 +444,114 @@ DEBATE_PRIORITY_STEP = 10
 DEBATE_STANCES = ("proponent", "critic", "neutral")
 
 
+# ---------------------------------------------------------------------------
+# 도구 보안 (`app/mcp/policy.py`)
+# ---------------------------------------------------------------------------
+
+TOOL_SECURITY_MODES = ("read_only", "default", "review", "auto")
+
+# 기본 거부 규칙. conf.json 에 `deny` 를 적으면 **이 목록을 대신합니다** (합치지 않습니다) —
+# 그래야 필요 없는 항목을 지울 수 있습니다.
+#
+# 비밀 파일은 어느 도구로 읽든(sandbox 코드 안의 경로 포함) 같은 규칙에 걸립니다.
+# 유출용으로 널리 쓰이는 수신 서비스는 네트워크가 "묻기" 여도 사람이 무심코 허락하기
+# 쉬워 아예 막습니다 (Antigravity 의 기본 허용 목록에 webhook.site 가 들어 있어 그대로
+# 유출 경로가 된 사례). 목록은 완전하지 않습니다 — 네트워크의 기본값이 묻기인 이유입니다.
+DEFAULT_TOOL_DENY_RULES = (
+    "read(**/.env)",
+    "read(**/.env.*)",
+    "read(**/*.pem)",
+    "read(**/*.key)",
+    "read(**/*.pfx)",
+    "read(**/*.p12)",
+    "read(**/id_rsa*)",
+    "read(**/id_ed25519*)",
+    "read(**/id_ecdsa*)",
+    "read(**/.ssh/**)",
+    "net(webhook.site)",
+    "net(requestbin.net)",
+    "net(pipedream.net)",
+    "net(beeceptor.com)",
+    "net(ngrok.io)",
+    "net(ngrok-free.app)",
+    "net(interact.sh)",
+    "net(oast.fun)",
+    "net(burpcollaborator.net)",
+)
+
+# 사람의 답을 기다리는 시간(초)의 기본값. 도구 상한·컨텍스트 창과 같습니다.
+DEFAULT_APPROVAL_TIMEOUT = 180.0
+
+
+def _validate_rule_list(value: Any) -> List[str]:
+    """규칙 문자열 목록을 검증합니다. 틀린 줄이 있으면 전부 모아 알립니다."""
+    from app.mcp.policy import parse_rules  # app.mcp 가 app.config 를 가져오므로 늦게
+
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    rules = [str(v).strip() for v in value if str(v or "").strip()]
+    parse_rules(rules)
+    return rules
+
+
+class AgentToolSecurity(BaseModel):
+    """에이전트별 덮어쓰기 (`tool_security.agents.<key>`). **조이기만** 합니다.
+
+    모드는 대화 모드와 비교해 더 엄격한 쪽이 쓰이고, 규칙은 전역 규칙에 더해집니다.
+    허용(allow) 규칙은 받지 않습니다 — 에이전트 하나를 위해 전역 거부를 풀 길이
+    생기면 안 되기 때문입니다.
+
+    `agents.<key>` 안이 아니라 여기 두는 이유: 에이전트 설정은 대화가 시작될 때
+    스냅샷으로 굳습니다(`session_agents.config_snapshot`). 보안은 굳으면 안 됩니다 —
+    나중에 조인 규칙이 지난 대화에도 바로 걸려야 합니다. 보안 설정이 한 곳에 모여
+    있어야 무엇이 풀려 있는지 한눈에 보이기도 합니다.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Optional[Literal["read_only", "default", "review", "auto"]] = None
+    deny: List[str] = Field(default_factory=list)
+    ask: List[str] = Field(default_factory=list)
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _blank_mode(cls, v: Any) -> Any:
+        return None if isinstance(v, str) and not v.strip() else v
+
+    @field_validator("deny", "ask", mode="before")
+    @classmethod
+    def _rules(cls, v: Any) -> List[str]:
+        return _validate_rule_list(v)
+
+
+class ToolSecurityConfig(BaseModel):
+    """전역 도구 보안 설정 (`tool_security`)."""
+
+    mode: Literal["read_only", "default", "review", "auto"] = Field(
+        default="default",
+        description="새 대화의 기본 모드. 대화마다 로스터 패널에서 바꿀 수 있습니다.",
+    )
+    approval_timeout: float = Field(
+        default=DEFAULT_APPROVAL_TIMEOUT, ge=10, le=3600,
+        description="승인 카드에 답이 없으면 이 시간(초)이 지나 거부합니다.",
+    )
+    deny: List[str] = Field(default_factory=lambda: list(DEFAULT_TOOL_DENY_RULES))
+    ask: List[str] = Field(default_factory=list)
+    allow: List[str] = Field(default_factory=list)
+    # 도구 이름표·annotations 를 믿을 서버. 비워 두면(None) 로컬 프로세스 서버와 이 PC
+    # 안의 원격 서버(127.0.0.1 등)를 믿고, 다른 호스트의 원격 서버는 믿지 않습니다.
+    trusted_servers: Optional[List[str]] = Field(default=None)
+    # 에이전트별로 더 조이는 설정 (키 = 에이전트 키).
+    agents: Dict[str, AgentToolSecurity] = Field(default_factory=dict)
+
+    @field_validator("deny", "ask", "allow", mode="before")
+    @classmethod
+    def _rules(cls, v: Any) -> List[str]:
+        return _validate_rule_list(v)
+
+
 class LLMConfig(BaseModel):
     """Global LLM defaults (the "llm" object). Every agent inherits these unless it overrides them."""
 
@@ -587,6 +695,7 @@ class RootConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     mcp_servers: Dict[str, MCPServerConfig] = Field(default_factory=dict)
     agents: Dict[str, AgentConfig] = Field(default_factory=dict)
+    tool_security: ToolSecurityConfig = Field(default_factory=ToolSecurityConfig)
 
     # 치환 **전** 의 "mcp_servers" 원문. 작업 공간을 런타임마다 다르게 풀 때
     # 이걸 그 작업 공간으로 다시 풉니다. 이미 치환된 경로 문자열을 찾아 바꾸는
@@ -1066,6 +1175,45 @@ def remove_mcp_server_from_conf_file(
 
     write_conf_file(path, data)
     reload_config_if_active(path)
+
+
+def add_tool_security_rules_to_conf_file(
+    effect: str,
+    rules: List[str],
+    config_path: str | Path = DEFAULT_CONFIG_PATH,
+) -> List[str]:
+    """`tool_security.<effect>` 에 규칙을 더합니다. 실제로 더해진 규칙을 돌려줍니다.
+
+    승인 카드의 "항상 허용"·"항상 거부" 가 부릅니다. 이미 있는 규칙은 다시 적지 않습니다.
+    `tool_security` 가 아직 없는 설정이면 그 칸만 만들고, 나머지는 적지 않아 코드의
+    기본값이 그대로 걸립니다.
+
+    `deny` 만은 다릅니다. 파일에 `deny` 를 적으면 기본 거부 목록(비밀 파일, 유출용 수신
+    서비스)을 **대신**하므로, 규칙 한 줄만 적으면 기본 보호가 통째로 사라집니다. 그래서
+    `deny` 가 아직 없으면 기본 목록을 먼저 옮겨 적고 그 뒤에 더합니다.
+    """
+    if effect not in ("deny", "ask", "allow"):
+        raise ValueError(f"'{effect}' 는 규칙 종류가 아닙니다 (deny · ask · allow).")
+    wanted = _validate_rule_list(rules)
+    if not wanted:
+        return []
+    path = Path(config_path)
+
+    data = read_conf_file(path)
+    section = _section(data, "tool_security")
+    current = section.get(effect)
+    if current is None:
+        current = list(DEFAULT_TOOL_DENY_RULES) if effect == "deny" else []
+    elif not isinstance(current, list):
+        raise ValueError(f"{path.name} 의 tool_security.{effect} 가 목록이 아닙니다.")
+    added = [r for r in wanted if r not in current]
+    if not added:
+        return []
+    section[effect] = list(current) + added
+
+    write_conf_file(path, data)
+    reload_config_if_active(path)
+    return added
 
 
 def set_agent_allowed_mcp_servers_in_conf_file(

@@ -192,6 +192,38 @@ back to its key-derived icon rather than showing a broken avatar. See
 }
 ```
 
+### 2.6. `tool_security` Object
+
+Allow / ask / deny for every MCP tool call. The full design — actions, trust, the code scan, hard
+protections and the approval card — is in [Tool Security](../mcp/tool-security.md).
+
+| Key | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `mode` | `str` | `"default"` | Default mode for conversations: `read_only`, `default`, `review`, `auto`. Each conversation can pick its own in the roster panel. |
+| `approval_timeout` | `float` | `180` | Seconds an approval card waits; no answer denies (10–3600). |
+| `deny` | `list[str]` | built-in list | Rules that always deny. Writing this key **replaces** the built-in list (secret files, capture services). The card's "항상 거부" appends here and copies the built-in list in first when the key is missing. |
+| `ask` | `list[str]` | `[]` | Rules that always ask, even when an allow rule matches. |
+| `allow` | `list[str]` | `[]` | Rules that run without asking. The card's "항상 허용" appends here (server PC only). |
+| `trusted_servers` | `list[str] \| null` | `null` | Servers whose tool names and annotations are believed. `null` = local servers and remote servers on this PC. |
+| `agents` | `dict[str, object]` | `{}` | Per-agent tightening: `mode`, `deny`, `ask` (no `allow`). The stricter mode wins. |
+
+Rule syntax: `read(glob)`, `write(glob)`, `delete(glob)`, `exec`, `exec(regex:…)`, `net(host)`,
+`mcp(server/tool)`, `mcp(server)`. Every rule is validated at load; a bad line fails the load and the
+error lists all of them.
+
+```json
+"tool_security": {
+  "mode": "default",
+  "deny": ["read(**/.env)", "read(**/.ssh/**)", "net(webhook.site)"],
+  "allow": ["net(docs.python.org)"],
+  "agents": { "critic": { "mode": "read_only" } }
+}
+```
+
+> Per-agent security is **not** under `agents.<key>`: agent settings freeze into each conversation's
+> snapshot, and security must stay live. MCP servers no longer inherit MADO's secret environment
+> variables; declare a secret a server needs in its `env` block.
+
 ---
 
 ## 3. Live Mode vs. Unconfigured Agents

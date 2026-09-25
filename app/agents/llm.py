@@ -1422,6 +1422,7 @@ class LLMCaller:
         on_context_trim: Optional[Callable[[int], Any]] = None,
         mcp: Optional[MCPManager] = None,
         ledger: str = "",
+        tool_gate: Optional[Any] = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Executes a turn for the given agent.
@@ -1446,6 +1447,10 @@ class LLMCaller:
 
         `ledger` 는 이 대화의 결정 장부입니다. 마지막 사용자 메시지 앞에 붙습니다
         (`place_ledger_last`) — 시스템 프롬프트에 두면 갱신될 때마다 캐시가 깨집니다.
+
+        `tool_gate` 는 도구 보안 문지기입니다 (`app/orchestration/tool_gate.py`). 늘 거부될
+        도구를 목록에서 빼고, 호출마다 허용·묻기·거부를 판정합니다. 주지 않으면 판정 없이
+        실행하고, 매니저의 고정 보호만 걸립니다.
         """
         # Retrieve available tools for this agent
         #
@@ -1457,6 +1462,8 @@ class LLMCaller:
         # 합니다 (서버를 껐거나 연결에 실패했으면 없는 도구를 가리키게 됩니다).
         mcp = mcp or self.mcp_manager
         tools = mcp.get_openai_tools_for_servers(self.resolve_tool_servers(agent))
+        if tool_gate is not None:
+            tools = tool_gate.filter_tools(agent.key, tools, mcp)
 
         formatted_messages: List[Dict[str, Any]] = [
             {"role": "system",
@@ -1494,7 +1501,7 @@ class LLMCaller:
                 agent, formatted_messages, tools, on_tool_call, on_chunk=on_chunk,
                 session_id=session_id, budget_arbiter=budget_arbiter,
                 context_arbiter=context_arbiter, on_context_trim=on_context_trim,
-                mcp=mcp, turn_anchor=turn_anchor,
+                mcp=mcp, turn_anchor=turn_anchor, tool_gate=tool_gate,
             )
         except LLMUnavailableError:
             raise
@@ -2128,6 +2135,19 @@ class LLMCaller:
         turn["tool_calls"] = calls
         return turn
 
+    @staticmethod
+    async def _check_tool_gate(
+        tool_gate: Optional[Any],
+        agent: Agent,
+        fn_name: str,
+        fn_args: Dict[str, Any],
+        mcp: Any,
+    ) -> Optional[Any]:
+        """도구 보안 판정. 문지기가 없으면 None (판정 없이 실행)."""
+        if tool_gate is None:
+            return None
+        return await tool_gate.check(agent, fn_name, fn_args, mcp)
+
     async def _execute_tool_safely(
         self,
         agent: Agent,
@@ -2207,6 +2227,7 @@ class LLMCaller:
         on_context_trim: Optional[Callable[[int], Any]] = None,
         mcp: Optional[MCPManager] = None,
         turn_anchor: str = "",
+        tool_gate: Optional[Any] = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """도구 루프. 상한은 두 겹의 안전장치와 함께 돕니다.
 
@@ -2440,16 +2461,27 @@ class LLMCaller:
                             "도구 이름과 인자를 다시 정확히 지정해 호출하세요.",
                             "error",
                         )
+                        security: Dict[str, Any] = {}
                     else:
-                        output, status = await self._execute_tool_safely(
-                            agent, fn_name, fn_args, session_id, mcp,
+                        # 도구 보안: 허용·묻기·거부. 거부되면 실행하지 않고, 그 이유가 곧
+                        # 도구 결과가 됩니다 — 모델이 읽고 다른 길을 찾습니다.
+                        gate = await self._check_tool_gate(
+                            tool_gate, agent, fn_name, fn_args, mcp or self.mcp_manager,
                         )
+                        if gate is not None and not gate.allowed:
+                            output, status = gate.output, gate.status or "denied"
+                        else:
+                            output, status = await self._execute_tool_safely(
+                                agent, fn_name, fn_args, session_id, mcp,
+                            )
+                        security = gate.audit if gate is not None else {}
 
                     call_log = {
                         "tool_name": fn_name or "(unknown)",
                         "arguments": fn_args,
                         "output": output,
                         "status": status,
+                        "security": security,
                     }
                     tool_logs.append(call_log)
                     await self._notify_tool_call(agent, on_tool_call, call_log)

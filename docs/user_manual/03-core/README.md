@@ -6,7 +6,7 @@
 
 ---
 
-## 일곱 개의 축
+## 여덟 개의 축
 
 | 문서 | 주요 내용 | 주요 파일 |
 | :--- | :--- | :--- |
@@ -17,6 +17,7 @@
 | [오케스트레이션 엔진](05-orchestration-engine.md) | 계획 → 라운드 → 합성 상태 머신, 비동기 백그라운드 실행 | `app/orchestration/engine.py`, `runner.py` |
 | [토론 전략](06-debate-strategies.md) | 발언 순서 제어 및 단계별 프롬프트 주입 메커니즘 | `app/orchestration/strategies.py` |
 | [데이터베이스와 세션 스냅샷](07-persistence.md) | ORM 스키마, 자기완결적 대화 영속화 구조 | `app/database/models.py` |
+| [도구 보안](08-tool-security.md) | 행위 단위 허용·묻기·거부, 승인 카드, 고정 보호 | `app/mcp/policy.py`, `app/orchestration/tool_gate.py` |
 
 ---
 

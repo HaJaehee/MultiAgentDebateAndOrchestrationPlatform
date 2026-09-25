@@ -42,6 +42,17 @@ _ADDED_COLUMNS = {
         # 그래프 토론 (v0.9.0).
         "graph_id": "VARCHAR(64) NOT NULL DEFAULT ''",
         "graph_snapshot": "JSON",
+        # 도구 보안. 빈 모드는 conf.json 의 기본값을 따릅니다.
+        "tool_mode": "VARCHAR(20) NOT NULL DEFAULT ''",
+        "tool_grants": "TEXT NOT NULL DEFAULT '[]'",
+        "tool_denials": "TEXT NOT NULL DEFAULT '[]'",
+    },
+    "tool_calls": {
+        # 도구 보안 판정. 빈 값은 "판정 없이 실행된 호출" 입니다 (이 컬럼 이전 기록 포함).
+        "decision": "VARCHAR(20) NOT NULL DEFAULT ''",
+        "risk": "VARCHAR(20) NOT NULL DEFAULT ''",
+        "rule": "TEXT NOT NULL DEFAULT ''",
+        "approver": "VARCHAR(20) NOT NULL DEFAULT ''",
     },
     "session_agents": {
         # NULL 이면 "이 컬럼이 생기기 전에 잠긴 대화" 입니다. 그런 대화는 예전처럼

@@ -4,6 +4,7 @@ import time
 from typing import Any, Callable, Coroutine, Dict, Iterable, List, Optional, Set, Tuple
 from nicegui import ui
 from app.agents.base import style_for_agent
+from app.mcp.policy import describe_audit_rule
 from app.orchestration.graph_run import NodeBadges
 from app.timestamps import format_duration, speech_time_text, speech_timing
 from app.ui.clipboard import copy_to_clipboard
@@ -22,6 +23,8 @@ logger = logging.getLogger(__name__)
 MentionProvider = Callable[[str], Coroutine[None, None, List[Dict[str, str]]]]
 # 올린 파일을 작업 공간에 넣는 쪽. (파일 이름, 내용) → 작업 공간 기준 경로.
 UploadHandler = Callable[[str, bytes], Coroutine[None, None, str]]
+# 도구 승인 카드의 답을 받는 쪽. (요청 id, 결정, 허용 범위, 거부 사유) → 받아들여졌는가.
+ToolApprovalHandler = Callable[[str, str, List[str], str], Coroutine[None, None, bool]]
 
 # 스트리밍 중인 카드를 다시 그리는 간격(초).
 #
@@ -130,6 +133,26 @@ DECISION_STYLES = {
     },
 }
 
+# 도구 승인 카드. 한도 쪽지(앰버·주황)와 다른 물음이라 하늘색으로 구분합니다.
+APPROVAL_CARD_CLASSES = (
+    "w-full gap-1.5 px-3 py-2 rounded-lg text-xs border bg-sky-950/50 border-sky-700/70"
+)
+# 위험 등급별 배지 색 (`app/mcp/policy.py` 의 RISK_LABELS 와 같은 키).
+RISK_BADGE_COLORS = {
+    "read": "blue-grey-7", "state": "blue-grey-7", "write": "amber-9", "exec": "amber-9",
+    "outside": "deep-orange-8", "delete": "deep-orange-8", "exec_flagged": "red-8",
+    "net": "red-8", "unknown": "red-8",
+}
+# 도구 기록 아코디언에 붙는 보안 판정 문구.
+SECURITY_DECISION_LABELS = {
+    "allow": ("허용", "teal-8"),
+    "approved": ("승인됨", "sky-8"),
+    "deny": ("정책 거부", "red-8"),
+    "hard": ("고정 보호", "red-9"),
+    "rejected": ("사용자 거부", "red-8"),
+    "timeout": ("응답 없음 · 거부", "red-8"),
+}
+
 BAR_CLASSES = "w-full items-center gap-2 px-3 py-2 rounded-lg text-xs flex-nowrap"
 LABEL_CLASSES = "font-semibold min-w-0 flex-grow"
 COUNTDOWN_CLASSES = "font-mono flex-shrink-0 whitespace-nowrap"
@@ -192,6 +215,8 @@ class ChatFeed:
         on_abort: Optional[Callable[[], Coroutine[None, None, None]]] = None,
         on_decision: Optional[Callable[[int, str], Coroutine[None, None, None]]] = None,
         on_tool_budget: Optional[Callable[[int, str], Coroutine[None, None, None]]] = None,
+        on_tool_approval: Optional[ToolApprovalHandler] = None,
+        viewer_is_local: Optional[Callable[[], bool]] = None,
         mention_provider: Optional[MentionProvider] = None,
         on_upload_file: Optional[UploadHandler] = None,
         upload_destination: Optional[Callable[[], str]] = None,
@@ -216,6 +241,14 @@ class ChatFeed:
         # 같은 통로를 씁니다 — 무엇에 답하는지는 쪽지의 `kind` 가 들고 있습니다.
         self.on_decision = on_decision or on_tool_budget
         self.on_tool_budget = self.on_decision
+        # 도구 승인 카드의 답 (요청 id, 결정, 허용 범위, 거부 사유) → 받아들여졌는가.
+        # 범위가 틀리면 받는 쪽이 알리고 False 를 돌려주며, 그때 카드는 남습니다.
+        self.on_tool_approval = on_tool_approval
+        # 이 화면이 서버 PC 에서 열렸는가. "항상 허용"(conf.json 저장)은 그때만 보입니다.
+        self.viewer_is_local = viewer_is_local or (lambda: False)
+        self.approval_column: Optional[ui.column] = None
+        # 떠 있는 승인 카드 (요청 id → 카드와 그 안의 입력칸들).
+        self._approval_cards: Dict[str, Dict[str, Any]] = {}
         self.scroll_area: Optional[ui.scroll_area] = None
         self.message_container: Optional[ui.column] = None
         self.status_bar: Optional[ui.row] = None
@@ -374,6 +407,13 @@ class ChatFeed:
                         .tooltip("더 쓰지 않고, 지금까지 얻은 것만으로 결론을 쓰게 합니다.")
                     )
                 self.budget_bar.set_visibility(False)
+
+                # 도구 승인 카드. 병렬 라운드에서는 여러 장이 동시에 뜨므로 쌓고, 너무
+                # 길어지면 이 칸 안에서 스크롤합니다 — 타임라인을 밀어내지 않습니다.
+                self.approval_column = ui.column().classes(
+                    "w-full gap-1 max-h-[45vh] overflow-y-auto flex-nowrap"
+                )
+                self.approval_column.set_visibility(False)
 
                 # 쓸려 가는 막대. 글자가 한동안 오지 않아도 무언가 돌고 있다는
                 # 것을 한눈에 보여줍니다.
@@ -762,6 +802,162 @@ class ChatFeed:
             return
         self.budget_countdown.set_text(f"{remaining}초 후 {label}")
 
+    # ------------------------------------------------------------ 도구 승인
+
+    def set_approvals(self, requests: Optional[List[Dict[str, Any]]]) -> None:
+        """승인 카드를 통째로 다시 그립니다 (새로고침한 화면의 스냅샷 복원)."""
+        for request_id in list(self._approval_cards):
+            self.remove_approval(request_id)
+        for request in requests or []:
+            self.add_approval(request)
+
+    def remove_approval(self, request_id: Optional[str]) -> None:
+        """답이 난 카드를 걷습니다."""
+        entry = self._approval_cards.pop(str(request_id or ""), None)
+        if entry is not None:
+            card = entry.get("card")
+            if card is not None and not card.is_deleted:
+                card.delete()
+        if self.approval_column is not None and not self.approval_column.is_deleted:
+            self.approval_column.set_visibility(bool(self._approval_cards))
+
+    def add_approval(self, info: Dict[str, Any]) -> None:
+        """승인 카드 한 장을 띄웁니다. 같은 id 가 이미 있으면 그대로 둡니다."""
+        request_id = str(info.get("id") or "")
+        if not request_id or request_id in self._approval_cards:
+            return
+        if not self.alive or self.approval_column is None or self.approval_column.is_deleted:
+            return
+        entry: Dict[str, Any] = {"info": dict(info)}
+        risk = str(info.get("risk") or "unknown")
+        can_remember = bool(info.get("can_remember"))
+        local = bool(self.viewer_is_local())
+
+        with self.approval_column:
+            with ui.column().classes(APPROVAL_CARD_CLASSES) as card:
+                with ui.row().classes("w-full items-center gap-2 flex-nowrap"):
+                    ui.icon("shield", size="sm").classes("text-sky-300 flex-shrink-0")
+                    ui.label(
+                        f"{info.get('agent_name', '에이전트')} · {info.get('tool_name', '')}"
+                    ).classes("font-semibold text-sky-100 min-w-0 truncate")
+                    ui.badge(
+                        str(info.get("risk_label") or risk),
+                        color=RISK_BADGE_COLORS.get(risk, "red-8"),
+                    ).props("dense")
+                    ui.space()
+                    entry["countdown"] = ui.label("").classes(
+                        f"{COUNTDOWN_CLASSES} text-sky-300"
+                    )
+                ui.label(str(info.get("headline") or "")).classes("text-sky-100")
+                reasons = [str(r) for r in info.get("reasons") or [] if str(r).strip()]
+                if reasons:
+                    with ui.column().classes("gap-0 pl-2"):
+                        for reason in reasons:
+                            ui.label(f"• {reason}").classes("text-slate-300 break-all")
+
+                code = str(info.get("code") or "")
+                preview = str(info.get("arguments_preview") or "")
+                if code or (preview and preview not in ("{}", "")):
+                    with ui.expansion("실행할 내용 보기", icon="code").classes(
+                        "w-full text-xs text-slate-300"
+                    ):
+                        if code:
+                            ui.code(code, language="python").classes("w-full text-xs")
+                        if preview and preview != "{}":
+                            ui.code(preview, language="json").classes("w-full text-xs")
+
+                # 기억할 범위. 허용과 거부가 같은 칸을 씁니다 — 허용을 기억할 수 없는
+                # 호출(ask 규칙)이면 거부용 범위로 채워 둡니다.
+                prefill = info.get("suggestions") if can_remember else info.get("deny_suggestions")
+                hint = "기억할 범위 (한 줄에 규칙 하나) — '이 대화에서'·'항상' 버튼이 이 범위를 씁니다"
+                if info.get("tool_wide"):
+                    hint += ". `mcp(서버/도구)` 는 그 도구의 모든 호출입니다"
+                entry["scope"] = ui.textarea(
+                    label=hint, value="\n".join(prefill or []),
+                ).props("outlined dense dark autogrow rows=1").classes("w-full text-xs")
+                entry["reason"] = ui.input(
+                    label="거부 사유 (선택) — 에이전트에게 그대로 전달됩니다",
+                ).props("outlined dense dark").classes("w-full text-xs")
+
+                with ui.row().classes("w-full items-center gap-1 flex-wrap justify-end"):
+                    ui.button(
+                        "이번만 허용", icon="check",
+                        on_click=lambda _e, rid=request_id: self._answer_approval(rid, "allow_once"),
+                    ).props("unelevated dense no-caps color=sky-7 size=sm")
+                    if can_remember:
+                        ui.button(
+                            "이 대화에서 허용", icon="playlist_add_check",
+                            on_click=lambda _e, rid=request_id: self._answer_approval(rid, "allow_session"),
+                        ).props("flat dense no-caps color=sky-3 size=sm").tooltip(
+                            "위 범위를 이 대화에서 묻지 않고 실행합니다. 거부·묻기 규칙은 그대로 이깁니다. "
+                            "로스터의 '대화 규칙' 에서 지울 수 있습니다."
+                        )
+                        if local:
+                            ui.button(
+                                "항상 허용", icon="bookmark_added",
+                                on_click=lambda _e, rid=request_id: self._answer_approval(rid, "allow_always"),
+                            ).props("flat dense no-caps color=sky-3 size=sm").tooltip(
+                                "위 범위를 conf.json 의 tool_security.allow 에 저장합니다 (서버 PC 에서만)."
+                            )
+                    ui.element("div").classes("w-3")
+                    ui.button(
+                        "거부", icon="block",
+                        on_click=lambda _e, rid=request_id: self._answer_approval(rid, "deny"),
+                    ).props("unelevated dense no-caps color=red-9 size=sm")
+                    ui.button(
+                        "이 대화에서 거부", icon="playlist_remove",
+                        on_click=lambda _e, rid=request_id: self._answer_approval(rid, "deny_session"),
+                    ).props("flat dense no-caps color=red-4 size=sm").tooltip(
+                        "위 범위를 이 대화에서 묻지 않고 거부합니다. 다음 턴에도 이어지고, "
+                        "로스터의 '대화 규칙' 에서 지울 수 있습니다."
+                    )
+                    if local:
+                        ui.button(
+                            "항상 거부", icon="gpp_bad",
+                            on_click=lambda _e, rid=request_id: self._answer_approval(rid, "deny_always"),
+                        ).props("flat dense no-caps color=red-4 size=sm").tooltip(
+                            "위 범위를 conf.json 의 tool_security.deny 에 저장합니다 (서버 PC 에서만). "
+                            "기본 거부 목록은 그대로 둡니다."
+                        )
+
+        entry["card"] = card
+        self._approval_cards[request_id] = entry
+        self.approval_column.set_visibility(True)
+        self._tick_approval_countdowns()
+
+    async def _answer_approval(self, request_id: str, decision: str) -> None:
+        """답은 한 번뿐입니다. 받아들여지면 카드를 걷고, 아니면(범위 오류 등) 남깁니다."""
+        entry = self._approval_cards.get(request_id)
+        if entry is None or self.on_tool_approval is None:
+            return
+        scope_box = entry.get("scope")
+        scope: List[str] = []
+        if decision.endswith(("_session", "_always")) and scope_box is not None:
+            scope = [line.strip() for line in str(scope_box.value or "").splitlines() if line.strip()]
+        reason_box = entry.get("reason")
+        reason = (
+            str(reason_box.value or "").strip()
+            if reason_box is not None and decision.startswith("deny") else ""
+        )
+        accepted = await self.on_tool_approval(request_id, decision, scope, reason)
+        if accepted:
+            self.remove_approval(request_id)
+
+    def _tick_approval_countdowns(self) -> None:
+        """답하지 않으면 거부되기까지 남은 시간."""
+        for entry in self._approval_cards.values():
+            label = entry.get("countdown")
+            if label is None or label.is_deleted:
+                continue
+            info = entry.get("info") or {}
+            opened_at = float(info.get("opened_at") or 0.0)
+            wait_seconds = float(info.get("wait_seconds") or 0.0)
+            if not opened_at or wait_seconds <= 0:
+                label.set_text("")
+                continue
+            remaining = int(opened_at + wait_seconds - time.time())
+            label.set_text("자동 거부" if remaining <= 0 else f"{remaining}초 후 자동 거부")
+
     def set_busy(self, busy: bool, status_text: str = "", round_info: str = "") -> None:
         if not self.alive:
             return
@@ -798,6 +994,7 @@ class ChatFeed:
             # 끝난 토론에는 답할 곳이 없습니다. 눌러도 아무 일이 없는 버튼을
             # 남겨 두면 사람은 무언가 고장 났다고 생각합니다.
             self.set_budget_request(None)
+            self.set_approvals([])
         if self.status_spinner:
             self.status_spinner.set_visibility(busy)
         if self.status_label and status_text:
@@ -849,6 +1046,7 @@ class ChatFeed:
         if not self.alive:
             return
         self._tick_budget_countdown()
+        self._tick_approval_countdowns()
         if self._busy_since is None:
             text = ""
         else:
@@ -1366,11 +1564,27 @@ class ChatFeed:
         output = tc.get("output", "")
 
         status_color = "teal-4" if status == "success" else "red-4"
-        with ui.expansion(f"🛠️ Tool Call: {tool_name}", icon="build").classes("w-full mcp-tool-accordion text-xs"):
+        security = tc.get("security") or {}
+        decision = str(security.get("decision") or "")
+        blocked = status == "denied"
+        title = f"🛡️ Blocked: {tool_name}" if blocked else f"🛠️ Tool Call: {tool_name}"
+        with ui.expansion(title, icon="gpp_bad" if blocked else "build").classes(
+            "w-full mcp-tool-accordion text-xs"
+        ):
             with ui.column().classes("p-2 gap-2 bg-slate-950/60 rounded"):
                 with ui.row().classes("items-center justify-between w-full"):
                     ui.label("Status:").classes("font-semibold text-slate-400")
                     ui.badge(status.upper(), color=status_color).props("dense")
+                if decision:
+                    label, color = SECURITY_DECISION_LABELS.get(decision, (decision, "grey-7"))
+                    detail = describe_audit_rule(str(security.get("rule") or ""))
+                    who = {"local": "서버 PC", "remote": "원격"}.get(str(security.get("approver") or ""), "")
+                    with ui.row().classes("items-center gap-2 w-full flex-nowrap"):
+                        ui.label("Security:").classes("font-semibold text-slate-400 flex-shrink-0")
+                        ui.badge(label, color=color).props("dense")
+                        text = " · ".join(t for t in (detail, who) if t)
+                        if text:
+                            ui.label(text).classes("text-slate-400 truncate min-w-0")
 
                 ui.label("Arguments:").classes("font-semibold text-slate-400 mt-1")
                 args_str = json.dumps(args, indent=2, ensure_ascii=False) if isinstance(args, dict) else str(args)

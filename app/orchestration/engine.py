@@ -46,6 +46,7 @@ from app.orchestration.graph import (
 )
 from app.workspace_files import mention_token
 from app.orchestration.control import TurnControl
+from app.orchestration.tool_gate import ToolGate
 from app.orchestration.state import ArtifactItem, DebateMessage, DebateState
 from app.orchestration.strategies import (
     BaseDebateStrategy,
@@ -493,8 +494,55 @@ class OrchestratorEngine:
         self.agent_pool = agent_pool or get_agent_pool()
         self.llm_caller = llm_caller or LLMCaller()
         self.session_factory = get_session_factory()
+        # 진행 중인 턴의 도구 보안 문지기 (세션 id → 게이트). 턴이 열 때 만들고 닫을 때
+        # 치웁니다 (`run_turn`). 발언뿐 아니라 지명·계획·요약 같은 보조 호출도 에이전트의
+        # 도구를 들고 나가므로, 모든 `call_agent` 가 같은 게이트를 거칩니다.
+        self._tool_gates: Dict[str, ToolGate] = {}
 
     # ------------------------------------------------------------------ 작업 공간
+
+    async def set_tool_rules(self, session_id: str, grants: List[str], denials: List[str]) -> bool:
+        """진행 중인 턴의 "이 대화에서" 규칙을 갈아 끼웁니다. 도는 턴이 없으면 False.
+
+        True 면 저장까지 게이트가 했습니다. 토론 중에는 게이트가 이 목록의 유일한
+        기록자여야, 카드에서 방금 더한 규칙을 화면의 옛 목록이 덮지 않습니다.
+        """
+        gate = getattr(self, "_tool_gates", {}).get(session_id)
+        if gate is None:
+            return False
+        await gate.replace_rules(grants, denials)
+        return True
+
+    def set_tool_mode(self, session_id: str, mode: str) -> bool:
+        """진행 중인 턴의 도구 보안 모드를 바꿉니다. 도는 턴이 없으면 False.
+
+        저장은 화면이 합니다 (세션 DB). 여기서는 이미 세워진 문지기에 알려, 수많은 승인
+        카드를 보고 모드를 바꾼 사람이 다음 턴까지 기다리지 않게 합니다.
+        """
+        gate = getattr(self, "_tool_gates", {}).get(session_id)
+        if gate is None:
+            return False
+        gate.set_mode(mode)
+        return True
+
+    def _gate_for(self, state: DebateState) -> Optional[ToolGate]:
+        """이 턴의 도구 보안 문지기. 턴 밖에서 부른 발언(테스트)이면 None."""
+        return getattr(self, "_tool_gates", {}).get(state.session_id)
+
+    def _rule_saver(
+        self, session_id: str,
+    ) -> Callable[[List[str], List[str]], Coroutine[Any, Any, None]]:
+        """"이 대화에서 허용·거부" 목록을 세션에 저장하는 함수. 다음 턴의 게이트가 읽습니다."""
+
+        async def save(grants: List[str], denials: List[str]) -> None:
+            async with self.session_factory() as db:
+                row = await db.get(SessionModel, session_id)
+                if row is not None:
+                    row.tool_grants = list(grants)
+                    row.tool_denials = list(denials)
+                    await db.commit()
+
+        return save
 
     @staticmethod
     def _mcp_for(state: DebateState) -> Optional[MCPManager]:
@@ -814,7 +862,7 @@ class OrchestratorEngine:
                 budget_arbiter=self._make_budget_arbiter(control, on_event),
                 context_arbiter=self._make_context_arbiter(state, agent, control, on_event),
                 on_context_trim=_on_context_trim,
-                mcp=self._mcp_for(state),
+                mcp=self._mcp_for(state), tool_gate=self._gate_for(state),
                 ledger=state.decision_ledger,
             )
             # 다이어그램 교정 같은 후처리는 시간이 걸립니다. 그동안 카드가 마지막 조각
@@ -891,6 +939,7 @@ class OrchestratorEngine:
                 **({"created_at": created_at} if created_at is not None else {}),
             )]
             for call_log in executed_tools:
+                security = call_log.get("security") or {}
                 rows.append(ToolCallRecordModel(
                     id=str(uuid.uuid4()),
                     session_id=state.session_id,
@@ -900,6 +949,12 @@ class OrchestratorEngine:
                     arguments=call_log.get("arguments", {}),
                     output=call_log.get("output", ""),
                     status=call_log.get("status", "success"),
+                    # 도구 보안 판정 (`app/orchestration/tool_gate.py`). 판정 없이 실행된
+                    # 호출(게이트 밖의 발언)은 비어 있습니다.
+                    decision=str(security.get("decision") or ""),
+                    risk=str(security.get("risk") or ""),
+                    rule=str(security.get("rule") or ""),
+                    approver=str(security.get("approver") or ""),
                 ))
             return rows
 
@@ -1162,6 +1217,7 @@ class OrchestratorEngine:
         try:
             return await self._run_turn(session_id, user_prompt, workspace, on_event, control)
         finally:
+            self._tool_gates.pop(session_id, None)
             await pool.release(session_id, workspace)
 
     async def _run_turn(
@@ -1189,6 +1245,16 @@ class OrchestratorEngine:
             parallel_limit = max(1, int(session_model.parallel_limit or 3))
             active_keys = session_model.active_agents or ["orchestrator", "architect", "coder", "critic"]
             custom_instructions = session_model.custom_instructions or ""
+            # 도구 보안: 이 대화의 모드와 "이 대화에서 허용·거부" 목록으로 문지기를 세웁니다.
+            self._tool_gates[session_id] = ToolGate(
+                session_id=session_id,
+                mode=session_model.tool_mode or "",
+                grants=list(session_model.tool_grants or []),
+                denials=list(session_model.tool_denials or []),
+                control=control,
+                on_event=on_event,
+                save_rules=self._rule_saver(session_id),
+            )
 
             # Ensure orchestrator is in active keys
             if "orchestrator" not in active_keys:
@@ -1815,7 +1881,7 @@ class OrchestratorEngine:
 
         content, _ = await self.llm_caller.call_agent(
             selector, prompt, custom_instructions, session_id=state.session_id,
-            mcp=self._mcp_for(state), ledger=state.decision_ledger,
+            mcp=self._mcp_for(state), tool_gate=self._gate_for(state), ledger=state.decision_ledger,
         )
         return self._parse_speaker_selection(content, candidates)
 
@@ -2110,7 +2176,7 @@ class OrchestratorEngine:
 
         content, _ = await self.llm_caller.call_agent(
             planner, prompt, custom_instructions, session_id=state.session_id,
-            mcp=self._mcp_for(state), ledger=state.decision_ledger,
+            mcp=self._mcp_for(state), tool_gate=self._gate_for(state), ledger=state.decision_ledger,
         )
         return self._parse_assignments(content, candidates)
 
@@ -2719,7 +2785,7 @@ class OrchestratorEngine:
         try:
             content, _ = await self.llm_caller.call_agent(
                 judge, prompt, state.custom_instructions, session_id=state.session_id,
-                mcp=self._mcp_for(state), ledger=state.decision_ledger,
+                mcp=self._mcp_for(state), tool_gate=self._gate_for(state), ledger=state.decision_ledger,
             )
             parsed = parse_gate_decision(content)
             if parsed is not None:
@@ -2980,7 +3046,7 @@ class OrchestratorEngine:
                     ),
                     state.custom_instructions,
                     session_id=state.session_id,
-                    mcp=self._mcp_for(state),
+                    mcp=self._mcp_for(state), tool_gate=self._gate_for(state),
                 )
                 summary = memory.parse_summary(content, max_chars)
                 if not summary:
@@ -3090,7 +3156,7 @@ class OrchestratorEngine:
                 ),
                 state.custom_instructions,
                 session_id=state.session_id,
-                mcp=self._mcp_for(state),
+                mcp=self._mcp_for(state), tool_gate=self._gate_for(state),
             )
             ledger = memory.parse_ledger(content, ledger_chars)
             if ledger is None:
@@ -3300,9 +3366,12 @@ class OrchestratorEngine:
             return []
         try:
             mcp = (self._mcp_for(state) if state else None) or self.llm_caller.mcp_manager
-            return mcp.get_openai_tools_for_servers(
+            tools = mcp.get_openai_tools_for_servers(
                 self.llm_caller.resolve_tool_servers(agent)
             ) or []
+            # 발언이 실제로 들고 나가는 목록과 같아야 합니다 (보안상 빠지는 도구 제외).
+            gate = self._gate_for(state) if state else None
+            return gate.filter_tools(agent.key, tools, mcp) if gate is not None else tools
         except Exception:  # noqa: BLE001 - 도구 목록을 못 구해도 합성은 진행합니다
             return []
 
@@ -3603,7 +3672,7 @@ class OrchestratorEngine:
         content, _ = await self.llm_caller.call_agent(
             fixer, [{"role": "user", "content": "\n".join(parts)}],
             custom_instructions, session_id=state.session_id,
-            mcp=self._mcp_for(state),
+            mcp=self._mcp_for(state), tool_gate=self._gate_for(state),
         )
         return [b["code"] for b in find_mermaid_blocks(content or "")]
 

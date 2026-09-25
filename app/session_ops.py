@@ -231,6 +231,9 @@ async def continue_session(
         # 덮는 것이라 따라오지 않습니다.
         decision_ledger=source.decision_ledger or "",
         workspace_dir=source.workspace_dir or "",
+        # 도구 보안 모드는 따라오고, "이 대화에서 허용" 은 따라오지 않습니다. 허락은
+        # 그 대화에서 사람이 본 호출에 대한 것이라, 새 대화에서 다시 묻는 편이 맞습니다.
+        tool_mode=source.tool_mode or "",
         # 아직 시작하지 않은 대화입니다. 첫 요청이 들어올 때 그 시점의 구성으로
         # 다시 굳고 다시 잠깁니다.
         personas_locked=False,

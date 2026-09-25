@@ -1,12 +1,12 @@
 # 🤖 MADO — Multi-Agent Debate & Orchestration Platform
 
-`v0.9.1` · `LGPL-3.0-or-later` · `Python 3.11+`
+`v0.10.0` · `LGPL-3.0-or-later` · `Python 3.11+`
 
 > **MCP 도구를 활용하는 반응형 멀티 에이전트 협업 & 토론 웹 애플리케이션**  
 > Dynamic Agent Profiling via `conf.json`, MCP Tool Integration, Multi-Model LLM Abstraction (LiteLLM), StateGraph Orchestration, and NiceGUI + FastAPI Reactive Web Interface.
 
 ```
-Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v0.9.1
+Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v0.10.0
 ```
 
 같은 내용을 웹 UI 우측 상단의 **ⓘ** 버튼으로도 볼 수 있습니다.
@@ -24,6 +24,7 @@ Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v0.9.1
    - 도구 검색 및 Function Calling 스키마 자동 변환, 실행 결과(Observation) 피드백.
    - **도구 호출 예산 안전가드**: 남은 호출 횟수를 에이전트에게 미리 알리고(한계에 가까울수록 촘촘하게), 상한에 닿으면 발언을 버리는 대신 **유저에게 상한 확장을 묻거나 즉시 마무리하도록** 합니다.
    - **컨텍스트 창 포화 안전가드**: 남은 여유를 띠 단위로 미리 알리고, 메모리 MCP 가 있으면 **잘리기 전에 지식 그래프로 옮겨 두게** 합니다. 창을 넘기면 조용히 버리지 않고 유저에게 상향을 묻습니다.
+   - **도구 보안 (허용 · 묻기 · 거부)**: 도구 호출을 `read(경로)`·`write(경로)`·`exec(코드)`·`net(호스트)` 같은 **행위**로 바꿔 판정하므로, `read(**/.env)` 한 줄이 파일 도구와 샌드박스 코드의 `open('.env')` 를 함께 막습니다. 대화마다 모드(읽기 전용·기본·검토·자동)를 고르고, "묻기" 는 승인 카드(이번만·이 대화에서·항상·사유를 적은 거부)로 뜹니다. 답이 없으면 거부합니다. MADO 설정·비밀·다른 대화의 기억은 어떤 설정으로도 도구가 닿지 않습니다.
 3. **다양한 LLM 프로바이더 추상화 (LiteLLM)**:
    - OpenAI (`gpt-4o`), Anthropic (`claude-3-5-sonnet`), Google (`gemini-1.5-pro`), Ollama 등 통합 지원.
    - `llm` 전역 설정에서 **API URL(`api_base`), 모델 명, API 버전, provider, timeout/재시도, 커스텀 헤더**를 지정하고 모든 에이전트가 상속.
@@ -114,7 +115,9 @@ MultiAgentDebateOrchestration/
 │   │   └── session.py        # Async Engine 및 세션 관리
 │   ├── mcp/                  # MCP Host & Tool Integration
 │   │   ├── client.py         # Stdio MCP Client 프로세스 관리자
-│   │   └── manager.py        # 도구 검색 및 Function Calling 디스패치
+│   │   ├── manager.py        # 도구 검색 및 Function Calling 디스패치, 고정 보호
+│   │   ├── policy.py         # 도구 보안 판정 (행위 · 규칙 · 모드 · 고정 보호)
+│   │   └── exec_scan.py      # 샌드박스 코드를 실행 전에 읽는 검사기
 │   ├── agents/               # 에이전트 및 LLM 계층
 │   │   ├── base.py           # Agent 모델, 카드 색·아이콘 해석 및 폴백
 │   │   ├── personas.py       # 세션별 페르소나 해석·저장·고정
@@ -124,6 +127,7 @@ MultiAgentDebateOrchestration/
 │   │   ├── state.py          # DebateState, DebateMessage, ArtifactItem
 │   │   ├── strategies.py     # 순차 토론, 디베이트, 오케스트레이터 지명, 병렬 지시 전략
 │   │   ├── engine.py         # 오케스트레이션 엔진 & 산출물 합성기
+│   │   ├── tool_gate.py      # 도구 보안 문지기 (판정 · 승인 카드 · 대화별 허용)
 │   │   └── runner.py         # 세션별 백그라운드 토론 태스크 & 재접속 스냅샷
 │   └── ui/                   # NiceGUI 반응형 웹 UI
 │       ├── app.py            # UI 페이지 레이아웃 및 리액티브 바인딩
@@ -149,6 +153,8 @@ MultiAgentDebateOrchestration/
     ├── test_abort_turn.py       # 긴급 종료 (그 턴만 지우기, 시작 전으로 되돌리기)
     ├── test_workspace_mentions.py # @언급 (경로만 전달·경로 안전·코드 블록 제외) & 업로드
     ├── test_remote_mcp.py       # 원격(HTTP) MCP 서버 (설정 규칙·전송 방식·토큰 보관)
+    ├── test_tool_security_policy.py # 도구 보안 판정 (코드 검사·규칙·모드·고정 보호·비밀 환경변수)
+    ├── test_tool_security_gate.py   # 승인 카드·게이트·도구 루프·매니저·러너·설정 기록
     ├── test_llm_settings.py   # llm 상속, 엔드포인트/단계적 사고 설정
     ├── test_db.py
     ├── test_mcp.py
@@ -270,7 +276,7 @@ pytest -v tests/
 |------|-----|
 | Author | Ha, Jaehee |
 | Email | lovesm135@naver.com |
-| Version | **v0.9.1** |
+| Version | **v0.10.0** |
 | License | LGPL-3.0-or-later ([LICENSE.md](LICENSE.md)) |
 
 버전 문자열의 정본은 [`app/about.py`](app/about.py) 한 곳입니다. FastAPI 메타데이터,
@@ -284,7 +290,7 @@ curl -s localhost:8000/api/health | python -m json.tool
 ```json
 {
   "status": "healthy",
-  "version": "v0.9.1",
+  "version": "v0.10.0",
   "author": { "name": "Ha, Jaehee", "email": "lovesm135@naver.com" }
 }
 ```

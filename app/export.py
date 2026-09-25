@@ -13,6 +13,7 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from app.mcp.policy import describe_audit_rule
 from app.orchestration.graph_run import NodeBadges, node_labels
 from app.orchestration.strategies import get_strategy
 # 시각 규칙은 `app.timestamps` 가 정본입니다. 여기서도 이름을 내보내 기존 호출자
@@ -68,10 +69,40 @@ def _fmt_time(value: Any) -> str:
     return str(value or "")
 
 
+# 도구 보안 판정 (`ToolCallRecordModel.decision`) 을 저장 문서에 적는 말.
+SECURITY_DECISION_TEXT = {
+    "allow": "허용",
+    "approved": "사람이 승인",
+    "deny": "정책이 거부",
+    "hard": "고정 보호로 거부",
+    "rejected": "사람이 거부",
+    "timeout": "응답 없어 거부",
+}
+
+
+def _security_line(call: Dict[str, Any]) -> str:
+    """도구 보안 판정 한 줄. 판정 없이 실행된 호출이면 빈 문자열."""
+    security = call.get("security") or {}
+    decision = str(security.get("decision") or "")
+    if not decision:
+        return ""
+    parts = [SECURITY_DECISION_TEXT.get(decision, decision)]
+    rule = str(security.get("rule") or "")
+    shown = describe_audit_rule(rule)
+    if shown and shown != rule:
+        parts.append(shown)
+    elif rule:
+        parts.append(f"`{rule}`")
+    approver = {"local": "서버 PC", "remote": "원격"}.get(str(security.get("approver") or ""))
+    if approver:
+        parts.append(approver)
+    return "**Security**: " + " · ".join(parts)
+
+
 def _tool_call_block(call: Dict[str, Any]) -> List[str]:
     name = call.get("tool_name", "unknown_tool")
     status = call.get("status", "success")
-    mark = "✅" if status == "success" else "❌"
+    mark = "✅" if status == "success" else ("⛔" if status == "denied" else "❌")
     args = call.get("arguments", {})
     args_text = (
         json.dumps(args, indent=2, ensure_ascii=False)
@@ -80,6 +111,10 @@ def _tool_call_block(call: Dict[str, Any]) -> List[str]:
     output = str(call.get("output", "") or "")
 
     lines = [f"<details>", f"<summary>{mark} 도구 실행: <code>{name}</code> ({status})</summary>", ""]
+    security = _security_line(call)
+    if security:
+        lines.append(security)
+        lines.append("")
     lines.append("**Arguments**")
     lines.append("")
     lines.append(_fence(args_text, "json"))

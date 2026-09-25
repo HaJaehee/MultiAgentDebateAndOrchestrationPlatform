@@ -569,6 +569,10 @@ class SessionSidebar:
                                 "arguments": tc.arguments,
                                 "output": tc.output,
                                 "status": tc.status,
+                                "security": {
+                                    "decision": tc.decision or "", "risk": tc.risk or "",
+                                    "rule": tc.rule or "", "approver": tc.approver or "",
+                                },
                                 "created_at": tc.created_at,
                             }
                             for tc in (m.tool_calls or [])
@@ -590,6 +594,10 @@ class SessionSidebar:
                         "arguments": tc.arguments,
                         "output": tc.output,
                         "status": tc.status,
+                        "security": {
+                            "decision": tc.decision or "", "risk": tc.risk or "",
+                            "rule": tc.rule or "", "approver": tc.approver or "",
+                        },
                         "created_at": tc.created_at,
                     }
                     for tc in res_t.scalars().all()

@@ -85,6 +85,11 @@ class TurnRun:
         # 보입니다 (기다리는 쪽은 엔진이고, 답할 수 있는 창이 3분뿐입니다).
         self.decision_request: Optional[Dict[str, Any]] = None
 
+        # 도구 승인 카드 (도구 보안 판정이 "묻기" 인 호출). 한도 쪽지와 달리 여러 장이
+        # 동시에 떠 있을 수 있습니다 — 병렬 라운드의 발언자마다 하나씩. 스냅샷에 들어가
+        # 새로고침한 화면과 원격 화면에서도 같은 카드가 보입니다.
+        self.approvals: List[Dict[str, Any]] = []
+
         # 컨텍스트 한도로 생략된 기록의 누적 건수. 화면이 "얼마나 잃었는지" 를
         # 계속 보여주기 위해 스냅샷에 남깁니다.
         self.context_dropped: int = 0
@@ -193,6 +198,26 @@ class TurnRun:
     def resolve_tool_budget(self, extra: int, request_id: Optional[str] = None) -> bool:
         """예전 이름. `resolve_decision` 과 같습니다."""
         return self.resolve_decision(extra, request_id)
+
+    def resolve_tool_approval(
+        self,
+        request_id: str,
+        decision: str,
+        *,
+        scope: Optional[List[str]] = None,
+        reason: str = "",
+        approver: str = "",
+    ) -> bool:
+        """도구 승인 카드에 답합니다. 범위가 쓸 수 없으면 ValueError (화면이 알립니다).
+
+        카드는 여기서 걷지 않습니다. 기다리던 게이트가 깨어나 `tool_approval_resolved`
+        를 보내면 그때 걷힙니다 — 저장 실패 같은 사정도 그 이벤트에 실려 옵니다.
+        """
+        if self.status != "running":
+            return False
+        return self.control.resolve_tool_approval(
+            request_id, decision, scope=scope, reason=reason, approver=approver,
+        )
 
     # -------------------------------------------------- 상태 적용
 
@@ -304,6 +329,30 @@ class TurnRun:
                     "도구를 더 쓰지 않고 지금까지의 관측으로 마무리하도록 했습니다."
                 )
             self.round_info = "Debating"
+
+        elif etype == "tool_approval_requested":
+            card = {k: v for k, v in event.items() if k != "type"}
+            self.approvals = [a for a in self.approvals if a.get("id") != card.get("id")] + [card]
+            self.busy = True
+            self.status_text = (
+                f"[{event.get('agent_name', '')}] `{event.get('tool_name', '')}` 실행 승인을 "
+                f"기다립니다 — {event.get('risk_label', '')}."
+            )
+            self.round_info = "Approval"
+
+        elif etype == "tool_approval_resolved":
+            self.approvals = [a for a in self.approvals if a.get("id") != event.get("id")]
+            decision = event.get("decision")
+            who, tool = event.get("agent_name", ""), event.get("tool_name", "")
+            if str(decision).startswith("allow"):
+                text = f"[{who}] `{tool}` 실행을 허락했습니다."
+            elif decision == "timeout":
+                text = f"[{who}] `{tool}` 승인에 답이 없어 실행하지 않았습니다."
+            else:
+                text = f"[{who}] `{tool}` 실행을 거부했습니다."
+            self.status_text = self._pending_prefix(text)
+            if not self.approvals:
+                self.round_info = "Debating"
 
         elif etype == "context_window_exhausted":
             self.decision_request = {k: v for k, v in event.items() if k != "type"}
@@ -421,6 +470,7 @@ class TurnRun:
             self.busy = False
             self.streaming_ids.clear()
             self.decision_request = None
+            self.approvals = []
             failed = event.get("failed_agents") or []
             if failed:
                 self.status_text = f"토론 완료 — 응답하지 못한 에이전트: {', '.join(failed)}"
@@ -463,6 +513,7 @@ class TurnRun:
             "decision_request": dict(self.decision_request) if self.decision_request else None,
             # 예전 이름. 스냅샷을 읽는 오래된 코드가 있어도 깨지지 않게 둡니다.
             "budget_request": dict(self.decision_request) if self.decision_request else None,
+            "tool_approvals": [dict(a) for a in self.approvals],
             "context_dropped": self.context_dropped,
             "decision_ledger": self.decision_ledger,
             "graph": self.graph.to_state() if self.graph is not None else None,
@@ -620,6 +671,34 @@ class DebateRunner:
                             request_id: Optional[str] = None) -> bool:
         """예전 이름. `resolve_decision` 과 같습니다."""
         return self.resolve_decision(session_id, extra, request_id)
+
+    async def set_tool_rules(self, session_id: str, grants: List[str], denials: List[str]) -> bool:
+        """진행 중인 토론의 "이 대화에서" 규칙을 바꿉니다. 도는 토론이 없으면 False.
+
+        False 면 저장은 부른 쪽(화면)이 합니다. 도는 토론이 있으면 그 게이트가 저장합니다
+        (`OrchestratorEngine.set_tool_rules`).
+        """
+        run = self._runs.get(session_id)
+        if run is None or run.status != "running":
+            return False
+        return await self.engine.set_tool_rules(session_id, grants, denials)
+
+    def set_tool_mode(self, session_id: str, mode: str) -> bool:
+        """진행 중인 토론의 도구 보안 모드를 바꿉니다 (`OrchestratorEngine.set_tool_mode`)."""
+        if session_id not in self._runs or self._runs[session_id].status != "running":
+            return False
+        return self.engine.set_tool_mode(session_id, mode)
+
+    def resolve_tool_approval(self, session_id: str, request_id: str, decision: str, *,
+                              scope: Optional[List[str]] = None, reason: str = "",
+                              approver: str = "") -> bool:
+        """도구 승인 카드에 답합니다 (`TurnRun.resolve_tool_approval`)."""
+        run = self._runs.get(session_id)
+        if run is None:
+            return False
+        return run.resolve_tool_approval(
+            request_id, decision, scope=scope, reason=reason, approver=approver,
+        )
 
     async def cancel(self, session_id: str) -> bool:
         run = self._runs.get(session_id)

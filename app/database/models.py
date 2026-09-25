@@ -53,6 +53,13 @@ class SessionModel(Base):
     # 실제로 돈** 그래프. 턴이 시작될 때 굳혀, 토론 중에 파일을 고치거나 지워도 흔들리지 않습니다.
     graph_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     graph_snapshot: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    # 도구 보안 모드 (`read_only` · `default` · `review` · `auto`). 비어 있으면 conf.json 의
+    # `tool_security.mode` 를 따릅니다. 페르소나와 달리 잠기지 않습니다.
+    tool_mode: Mapped[str] = mapped_column(String(20), default="", nullable=False)
+    # 승인 카드의 "이 대화에서 허용"·"이 대화에서 거부" 로 쌓인 규칙 (`read(src/**)` 같은
+    # 문자열). 로스터의 규칙 창에서 보고 지울 수 있습니다.
+    tool_grants: Mapped[List[str]] = mapped_column(JSON, default=list)
+    tool_denials: Mapped[List[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
@@ -128,7 +135,15 @@ class ToolCallRecordModel(Base):
     tool_name: Mapped[str] = mapped_column(String(100))
     arguments: Mapped[Any] = mapped_column(JSON, default=dict)
     output: Mapped[str] = mapped_column(Text, default="")
-    status: Mapped[str] = mapped_column(String(20), default="success")  # 'success', 'error'
+    status: Mapped[str] = mapped_column(String(20), default="success")  # 'success', 'error', 'denied'
+    # 도구 보안 판정 (`app/orchestration/tool_gate.py`). 비어 있으면 판정 없이 실행된 호출.
+    #   decision : allow · approved · deny · hard · rejected · timeout
+    #   rule     : 걸린 규칙 원문, 허락한 범위, 또는 `mode:<모드>`
+    #   approver : 사람이 답했으면 local · remote
+    decision: Mapped[str] = mapped_column(String(20), default="", nullable=False)
+    risk: Mapped[str] = mapped_column(String(20), default="", nullable=False)
+    rule: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    approver: Mapped[str] = mapped_column(String(20), default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     session: Mapped["SessionModel"] = relationship("SessionModel", back_populates="tool_calls")

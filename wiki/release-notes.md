@@ -6,6 +6,31 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v0.10.0
+
+**Tool security: allow, ask, deny.** Every MCP tool call now passes a gate before it runs. Calls become
+actions — `read(path)`, `write(path)`, `delete(path)`, `exec(code)`, `net(host)`, `mcp(server/tool)` —
+and are judged in the order hard protection → deny → ask → allow → mode default, so one rule such as
+`read(**/.env)` covers the filesystem tools and a sandbox `open('.env')` alike. Four modes per
+conversation (roster panel `도구 보안`): `read_only`, `default` (workspace writes and clean code run
+without asking; deletes, outside paths, network, flagged code and unknown tools ask), `review`, `auto`.
+Sandbox code is scanned before it runs; subprocess, `eval`, shell escapes and unparseable code ask
+instead of being guessed safe. "Ask" raises an approval card: allow or deny, each once, for this conversation, or always
+(`conf.json`, server PC only), with a deny reason the model reads verbatim; no answer within
+`approval_timeout` denies. Conversation grants and denials are stored on the session, carry into later
+turns, and are listed and deletable from the roster's `대화 규칙` button. Tools that can never run under the policy leave the tool list.
+Rules live in `tool_security` in `conf.json`; per-agent tightening in `tool_security.agents`.
+Every call records its verdict (`tool_calls.decision/risk/rule/approver`), shown in the tool accordion
+and the session export. → [Tool Security](mcp/tool-security.md)
+
+**Hard protections close three holes.** Other conversations' knowledge graphs (`.memory-graphs`) are no
+longer readable through file tools; the MADO install folder (config, `.env`, DB, app code) is out of tool
+reach even when a session workspace points at it; writes inside `.git` are refused. MCP servers no longer
+inherit MADO's secret environment variables (access token, LLM API keys) — a server that needs a secret
+declares it in its `env` block. → [Tool Security §6](mcp/tool-security.md)
+
+---
+
 ## v0.9.1
 
 **Roster view options: summary and hide-inactive.** Two checkboxes next to the roster title. `요약 보기`

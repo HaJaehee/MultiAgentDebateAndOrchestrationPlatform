@@ -240,7 +240,7 @@ async def test_partial_stream_is_kept_alongside_the_failure_notice():
         async def call_agent(self, agent, messages, custom_instructions="",
                              on_tool_call=None, on_chunk=None, session_id=None,
                              budget_arbiter=None,
-                             context_arbiter=None, on_context_trim=None, mcp=None, ledger=""):
+                             context_arbiter=None, on_context_trim=None, mcp=None, ledger="", tool_gate=None):
             if agent.key == "critic":
                 if on_chunk:
                     await on_chunk("검토를 시작하겠습니다")

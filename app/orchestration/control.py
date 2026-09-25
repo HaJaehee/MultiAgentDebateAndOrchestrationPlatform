@@ -15,6 +15,9 @@
 * **도구 예산 확장 요청** — 여기서는 방향이 반대입니다. 도구 호출 상한을 다 쓴
   에이전트가 사람에게 쪽지를 내밀고, 답(상한 확장 / 즉시 마무리)이 올 때까지
   그 발언만 기다립니다. 답이 없으면 시간이 지나 스스로 마무리로 갑니다.
+* **도구 승인 요청** — 도구 보안 판정이 "묻기" 인 호출. 답(이번만 / 이 대화에서 /
+  항상 허용, 거부)이 올 때까지 그 발언만 기다리고, 답이 없으면 거부합니다
+  (`app/orchestration/tool_gate.py`).
 
 경계를 넘어 공유되는 상태는 이 객체 하나뿐이고, 같은 이벤트 루프 안에서만
 읽고 쓰므로 락이 필요 없습니다. 엔진은 이 모듈만 알면 되고 UI 도 러너도
@@ -25,7 +28,7 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -75,11 +78,14 @@ class TurnControl:
 
         사람의 답을 기다리는 쪽지가 있었다면 (도구 상한이든 컨텍스트든) 그 자리에서
         "늘리지 않음" 으로 답합니다. 멈추라고 한 사람에게 "더 쓸까요?" 를 계속 물어
-        놓는 것은 답이 이미 나온 질문을 붙잡고 있는 것입니다.
+        놓는 것은 답이 이미 나온 질문을 붙잡고 있는 것입니다. 도구 승인도 같습니다 —
+        멈추라는 사람에게 "이 도구를 실행할까요?" 를 남겨 두지 않고 거부로 닫습니다.
         """
         self._stop_requested = True
         for request in self.pending_decisions:
             request.resolve(0, "wrap_up")
+        for approval in self.pending_approvals:
+            approval.answer("deny", reason="사용자가 토론 정지를 요청했습니다.")
 
     # -------------------------------------------------- 개입
 
@@ -111,8 +117,23 @@ class TurnControl:
 
     @property
     def pending_decisions(self) -> List["DecisionRequest"]:
-        """답을 기다리는 쪽지 전부 (들어온 순서)."""
-        return [r for r in self._decisions.values() if not r.resolved]
+        """답을 기다리는 한도 쪽지 전부 (들어온 순서). 도구 승인은 따로 셉니다.
+
+        둘을 섞으면 id 없이 누른 "상한 확장" 이 가장 최근 쪽지 — 도구 승인일 수 있는 —
+        에 답하게 됩니다. 확장 버튼이 도구 실행을 허락하는 일은 없어야 합니다.
+        """
+        return [
+            r for r in self._decisions.values()
+            if not r.resolved and not isinstance(r, ToolApprovalRequest)
+        ]
+
+    @property
+    def pending_approvals(self) -> List["ToolApprovalRequest"]:
+        """답을 기다리는 도구 승인 쪽지 전부 (들어온 순서)."""
+        return [
+            r for r in self._decisions.values()
+            if not r.resolved and isinstance(r, ToolApprovalRequest)
+        ]
 
     # 예전 이름. 러너와 테스트가 쓰고 있어 그대로 둡니다.
     @property
@@ -125,7 +146,7 @@ class TurnControl:
 
     async def _ask(self, request: "DecisionRequest", timeout: float, on_open) -> "DecisionRequest":
         """쪽지를 걸어 두고 답을 기다립니다. 종류가 무엇이든 흐름은 같습니다."""
-        if self._stop_requested or request.max_extension <= 0:
+        if self._stop_requested or not request.answerable:
             request.resolve(0, "wrap_up")
             return request
 
@@ -152,7 +173,7 @@ class TurnControl:
             request = self._decisions.get(request_id)
         else:
             request = self.pending_decision
-        if request is None:
+        if request is None or isinstance(request, ToolApprovalRequest):
             return False
         return request.resolve(extra, "extended" if extra > 0 else "wrap_up")
 
@@ -244,6 +265,69 @@ class TurnControl:
         """도구 상한 요청에 답합니다 (`resolve_decision` 과 같습니다)."""
         return self.resolve_decision(extra, request_id)
 
+    # -------------------------------------------------- 도구 승인
+
+    async def ask_tool_approval(
+        self,
+        *,
+        agent_key: str,
+        agent_name: str,
+        payload: Dict[str, Any],
+        timeout: float = TOOL_BUDGET_WAIT_SECONDS,
+        on_open=None,
+        validator: Optional[Callable[[List[str], str], Optional[str]]] = None,
+    ) -> "ToolApprovalRequest":
+        """도구 호출을 실행해도 되는지 사람에게 묻고 답을 기다립니다.
+
+        `payload` 는 화면이 그릴 내용입니다 (도구, 행위, 이유, 허용 범위 후보). 기다림이
+        끝나면 요청의 `decision` 이 채워져 있습니다 — `allow_once` · `allow_session` ·
+        `allow_always` · `deny` · `timeout`. 정지를 요청한 뒤에는 묻지 않고 거부합니다.
+
+        `validator` 는 사람이 고친 범위와 결정을 받아, 쓸 수 없으면 그 이유를 돌려줍니다.
+        답을 받는 자리(`resolve_tool_approval`)에서 불려 화면이 곧바로 알릴 수 있습니다.
+        """
+        request = ToolApprovalRequest(
+            request_id=uuid.uuid4().hex,
+            agent_key=agent_key,
+            agent_name=agent_name,
+            payload=payload,
+        )
+        request.validator = validator
+        await self._ask(request, timeout, on_open)
+        return request
+
+    def resolve_tool_approval(
+        self,
+        request_id: str,
+        decision: str,
+        *,
+        scope: Optional[List[str]] = None,
+        reason: str = "",
+        approver: str = "",
+    ) -> bool:
+        """도구 승인 쪽지에 답합니다. 이미 답이 났거나 없는 쪽지면 False.
+
+        "이 대화에서"·"항상" 의 범위가 지금 호출을 덮지 못하면 ValueError 로 알립니다.
+        그대로 받으면 방금 허락한 호출이 다음 판에 다시 물어지거나, 거부했다고 생각한
+        호출이 다음 판에 실행됩니다 (Antigravity 가 고친 범위를 승인 전에 검증하는 것과
+        같습니다).
+        """
+        request = self._decisions.get(request_id)
+        if not isinstance(request, ToolApprovalRequest) or request.resolved:
+            return False
+        if decision in REMEMBERED_DECISIONS:
+            cleaned = [str(r).strip() for r in (scope or []) if str(r).strip()]
+            if not cleaned:
+                raise ValueError(
+                    "기억할 범위가 비어 있습니다. 범위를 적거나 '이번만 허용'·'거부' 를 쓰세요."
+                )
+            if request.validator is not None:
+                problem = request.validator(cleaned, decision)
+                if problem:
+                    raise ValueError(problem)
+            scope = cleaned
+        return request.answer(decision, scope=scope, reason=reason, approver=approver)
+
 
 class DecisionRequest:
     """한도에 닿은 에이전트가 사람에게 내미는 쪽지.
@@ -293,6 +377,11 @@ class DecisionRequest:
     def resolved(self) -> bool:
         return self._decided.is_set()
 
+    @property
+    def answerable(self) -> bool:
+        """사람에게 내밀 선택지가 있는가. 늘릴 여지가 없으면 묻지 않고 마무리합니다."""
+        return self.max_extension > 0
+
     def resolve(self, extra: int, outcome: str) -> bool:
         """답을 채워 넣습니다. 이미 답이 있으면 무시하고 False."""
         if self._decided.is_set():
@@ -326,6 +415,66 @@ class DecisionRequest:
             "wait_seconds": self.wait_seconds,
             **self.payload,
         }
+
+
+APPROVAL_DECISIONS = (
+    "allow_once", "allow_session", "allow_always", "deny", "deny_session", "deny_always",
+)
+# 범위를 받아 기억하는 답 (이 대화 = 세션 DB, 항상 = conf.json).
+REMEMBERED_DECISIONS = ("allow_session", "allow_always", "deny_session", "deny_always")
+
+
+class ToolApprovalRequest(DecisionRequest):
+    """도구 보안 판정이 "묻기" 인 호출 하나에 대한 쪽지.
+
+    한도 쪽지(`DecisionRequest`)와 같은 우편함·같은 기다림을 쓰되, 답의 모양이 다릅니다 —
+    늘릴 양이 아니라 **허락할지와 그 범위**입니다. 답이 없으면 거부입니다. 사람이 자리에
+    없다고 위험한 호출을 실행하지는 않습니다.
+    """
+
+    def __init__(self, *, request_id: str, agent_key: str, agent_name: str,
+                 payload: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(
+            request_id=request_id, kind="tool_approval", agent_key=agent_key,
+            agent_name=agent_name, limit=0, used=0, tool_calls=0, payload=payload,
+        )
+        # allow_once | allow_session | allow_always | deny | deny_session | deny_always | timeout
+        self.decision: str = "pending"
+        self.scope: List[str] = []       # "이 대화에서"·"항상" 기억할 규칙
+        self.reason: str = ""            # 거부 사유 (모델에게 전달)
+        self.approver: str = ""          # local | remote
+        # 사람이 고친 범위를 검사하는 함수 (`ask_tool_approval`). 스냅샷에 싣지 않습니다.
+        self.validator: Optional[Callable[[List[str], str], Optional[str]]] = None
+
+    @property
+    def answerable(self) -> bool:
+        return True
+
+    @property
+    def allowed(self) -> bool:
+        return self.decision.startswith("allow_")
+
+    def answer(self, decision: str, *, scope: Optional[List[str]] = None,
+               reason: str = "", approver: str = "") -> bool:
+        """답을 채웁니다. 이미 답이 있거나 모르는 답이면 False."""
+        if self._decided.is_set() or decision not in APPROVAL_DECISIONS + ("timeout",):
+            return False
+        self.decision = decision
+        self.scope = [str(r) for r in (scope or []) if str(r).strip()]
+        self.reason = (reason or "").strip()
+        self.approver = approver
+        self.outcome = decision
+        self._decided.set()
+        return True
+
+    def resolve(self, extra: int, outcome: str) -> bool:
+        """한도 쪽지의 답 모양으로 들어온 것 (정지·시간 초과). 늘 거부입니다."""
+        if outcome == "timeout":
+            return self.answer("timeout", reason="정해진 시간 안에 답이 없었습니다.")
+        return self.answer("deny", reason="사용자가 토론 정지를 요청했습니다.")
+
+    def describe(self) -> dict:
+        return {**super().describe(), "decision": self.decision}
 
 
 # 예전 이름. 도구 예산 전용이던 시절의 import 를 깨뜨리지 않습니다.

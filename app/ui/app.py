@@ -25,6 +25,7 @@ from app.database.session import get_session_factory
 from app.orchestration.graph_run import GraphRunTracker, last_graph_turn, node_labels
 from app.orchestration.runner import TurnRun, get_debate_runner
 from app.orchestration.strategies import resolve_strategy_name
+from app.security import is_loopback
 from app.session_ops import discard_turn
 from app.ui.components.access_token import build_access_buttons
 from app.ui.components.artifact_viewer import ArtifactViewer, merge_artifacts
@@ -260,6 +261,41 @@ def create_ui() -> None:
                         type="info",
                         position="bottom-right",
                     )
+            elif etype == "tool_approval_requested":
+                # 에이전트는 이 답을 기다리며 멈춰 있습니다. 카드는 답하거나 시간이
+                # 지나 거부될 때까지 남습니다.
+                chat_feed.add_approval({k: v for k, v in event.items() if k != "type"})
+                chat_feed.set_busy(
+                    True,
+                    f"[{event.get('agent_name', '')}] `{event.get('tool_name', '')}` 실행 승인 대기 — "
+                    f"{event.get('risk_label', '')}",
+                    "Approval",
+                )
+                ui.notify(
+                    f"{event.get('agent_name', '에이전트')} 가 `{event.get('tool_name', '')}` 실행 "
+                    f"승인을 기다립니다 ({event.get('risk_label', '')}).",
+                    type="warning",
+                    position="bottom-right",
+                )
+            elif etype == "tool_approval_resolved":
+                chat_feed.remove_approval(event.get("id"))
+                # "이 대화에서 허용·거부" 가 더해졌을 수 있습니다. 규칙 창의 숫자와 목록을 맞춥니다.
+                roster_control.set_tool_rules(event.get("session_grants"), event.get("session_denials"))
+                if event.get("note"):
+                    ui.notify(str(event["note"]), type="warning", position="bottom-right")
+                elif event.get("persisted"):
+                    ui.notify(
+                        f"conf.json 의 tool_security.{event.get('persisted_as', 'allow')} 에 "
+                        f"저장했습니다: " + ", ".join(event["persisted"]),
+                        type="positive",
+                        position="bottom-right",
+                    )
+                elif event.get("decision") == "timeout":
+                    ui.notify(
+                        f"`{event.get('tool_name', '')}` 승인에 답이 없어 실행하지 않았습니다.",
+                        type="warning",
+                        position="bottom-right",
+                    )
             elif etype == "graph_gate_decided":
                 verdict = "예" if event.get("decision") == "yes" else "아니오"
                 ui.notify(
@@ -461,10 +497,13 @@ def create_ui() -> None:
                     curr.strategy = roster_control.strategy_name
                     curr.max_rounds = roster_control.max_rounds
                     curr.parallel_limit = roster_control.parallel_limit
+                    curr.tool_mode = roster_control.tool_mode
                     curr.custom_instructions = roster_control.custom_instructions
                     curr.workspace_dir = roster_control.workspace_dir
                     curr.graph_id = roster_control.graph_id
                     await db.commit()
+            # 도구 보안 모드는 진행 중인 턴에도 바로 걸립니다 (다음 도구 호출부터).
+            runner.set_tool_mode(current_session_id, roster_control.tool_mode)
 
         async def on_resync_agents() -> None:
             """잠긴 대화가 굳혀 둔 에이전트 구성을 지금 conf.json 값으로 다시 맞춥니다.
@@ -577,6 +616,59 @@ def create_ui() -> None:
             if run.status != "running":
                 chat_feed.set_busy(False, run.status_text, run.round_info)
 
+        def viewer_is_local() -> bool:
+            """이 화면이 서버 PC 에서 열렸는가. 모르면 원격으로 봅니다.
+
+            "항상 허용" 은 conf.json 을 고칩니다. 토큰 교체 버튼과 같은 원칙으로, 서버 PC
+            앞의 사람만 합니다.
+            """
+            try:
+                return is_loopback(client.ip)
+            except Exception:  # noqa: BLE001
+                return False
+
+        async def on_tool_approval(
+            request_id: str, decision: str, scope: List[str], reason: str,
+        ) -> bool:
+            """도구 승인 카드의 답을 토론에 전합니다. 받아들여졌으면 True."""
+            if not current_session_id:
+                return False
+            try:
+                accepted = runner.resolve_tool_approval(
+                    current_session_id, request_id, decision,
+                    scope=scope, reason=reason,
+                    approver="local" if viewer_is_local() else "remote",
+                )
+            except ValueError as exc:
+                # 범위가 틀렸거나 지금 호출을 덮지 못합니다. 카드는 남겨 고칠 수 있게 합니다.
+                ui.notify(str(exc), type="warning", position="bottom-right", multi_line=True)
+                return False
+            if not accepted:
+                chat_feed.remove_approval(request_id)
+                ui.notify(
+                    "이미 처리된 요청입니다 (시간이 지나 거부되었거나 토론이 끝났습니다).",
+                    type="warning",
+                    position="bottom-right",
+                )
+            return accepted
+
+        async def on_tool_rules_changed(grants: List[str], denials: List[str]) -> None:
+            """로스터의 규칙 창에서 지운 결과를 저장합니다.
+
+            토론이 돌고 있으면 그 게이트가 저장합니다 (카드에서 방금 더한 규칙을 이 화면의
+            옛 목록이 덮지 않도록). 돌고 있지 않으면 여기서 세션 행에 씁니다.
+            """
+            if not current_session_id:
+                return
+            if await runner.set_tool_rules(current_session_id, grants, denials):
+                return
+            async with session_factory() as db:
+                row = await db.get(SessionModel, current_session_id)
+                if row is not None:
+                    row.tool_grants = list(grants)
+                    row.tool_denials = list(denials)
+                    await db.commit()
+
         async def on_decision(extra: int, request_id: str) -> None:
             """한도에 닿은 에이전트에게 확장 여부를 알려 줍니다 (도구 상한·컨텍스트 공통).
 
@@ -676,6 +768,8 @@ def create_ui() -> None:
         chat_feed = ChatFeed(
             on_send_message, on_interject=on_interject, on_stop=on_stop, on_abort=on_abort,
             on_decision=on_decision,
+            on_tool_approval=on_tool_approval,
+            viewer_is_local=viewer_is_local,
             mention_provider=mention_provider,
             on_upload_file=on_upload_file,
             upload_destination=upload_destination,
@@ -683,6 +777,7 @@ def create_ui() -> None:
         # 작업 공간 파일 다운로드. 입력란 아래와 보고서 탭, 두 곳에서 같은 창을 엽니다.
         workspace_download = WorkspaceDownloadDialog(workspace_root)
         roster_control.on_open_workspace_download = workspace_download.open
+        roster_control.on_tool_rules_changed = on_tool_rules_changed
         artifact_viewer = ArtifactViewer(on_open_workspace_files=workspace_download.open)
 
         # 로스터가 카드를 다시 그릴 때마다 채팅 피드도 같은 겉모습을 받습니다.
@@ -799,6 +894,7 @@ def create_ui() -> None:
                     strategy=roster_control.strategy_name,
                     max_rounds=roster_control.max_rounds,
                     parallel_limit=roster_control.parallel_limit,
+                    tool_mode=roster_control.tool_mode,
                     active_agents=roster_control.get_active_agent_keys(),
                     known_agents=roster_control.known_agent_keys(),
                     custom_instructions=roster_control.custom_instructions,
@@ -836,6 +932,9 @@ def create_ui() -> None:
                         strategy=resolve_strategy_name(s_obj.strategy),
                         max_rounds=s_obj.max_rounds or 3,
                         parallel_limit=s_obj.parallel_limit or 3,
+                        tool_mode=s_obj.tool_mode or "",
+                        tool_grants=list(s_obj.tool_grants or []),
+                        tool_denials=list(s_obj.tool_denials or []),
                         instructions=s_obj.custom_instructions or "",
                         session_id=sid,
                         personas_locked=bool(s_obj.personas_locked),
@@ -876,6 +975,12 @@ def create_ui() -> None:
                                 "arguments": tc.arguments,
                                 "output": clip_tool_output(tc.output),
                                 "status": tc.status,
+                                "security": {
+                                    "decision": tc.decision or "",
+                                    "risk": tc.risk or "",
+                                    "rule": tc.rule or "",
+                                    "approver": tc.approver or "",
+                                },
                             }
                             for tc in m.tool_calls
                         ] if hasattr(m, "tool_calls") and m.tool_calls else [],
@@ -941,6 +1046,7 @@ def create_ui() -> None:
                 # 붙은 화면에서도 같은 선택지가 보여야, 새로고침 한 번으로 답할
                 # 곳을 잃지 않습니다.
                 chat_feed.set_decision_request(snapshot.get("decision_request"))
+                chat_feed.set_approvals(snapshot.get("tool_approvals"))
                 # 이번 턴에 갱신된 장부는 턴이 끝나야 DB 에 들어갑니다.
                 if snapshot.get("decision_ledger") is not None:
                     roster_control.set_decision_ledger(snapshot["decision_ledger"])

@@ -20,6 +20,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from pydantic import BaseModel
 
 from app.config import strip_extended_path_prefix
+from app.mcp.policy import server_environment
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +187,9 @@ class MCPToolDefinition(BaseModel):
     name: str
     description: str = ""
     input_schema: Dict[str, Any] = {}
+    # MCP 도구 annotations (`readOnlyHint` 등). 도구 보안 판정이 **신뢰하는 서버의 것만**
+    # 씁니다 — 명세도 신뢰할 수 없는 서버의 힌트를 믿지 말라고 합니다 (`app/mcp/policy.py`).
+    annotations: Optional[Dict[str, Any]] = None
 
     @property
     def qualified_name(self) -> str:
@@ -363,12 +367,12 @@ class MCPClientConnection:
         return _describe_exception(self._connect_error)
 
     def _get_server_params(self) -> StdioServerParameters:
-        merged_env = os.environ.copy()
-        merged_env.update(self.env)
+        # 부모의 비밀(원격 접속 토큰, LLM API 키)은 물려주지 않습니다. 서버가 필요한
+        # 비밀은 conf.json 의 그 서버 `env` 에 명시합니다 (`server_environment`).
         return StdioServerParameters(
             command=self.command,
             args=self.args,
-            env=merged_env,
+            env=server_environment(os.environ, self.env),
         )
 
     async def _serve(self) -> None:
@@ -612,12 +616,16 @@ class MCPClientConnection:
                 elif not isinstance(input_schema, dict):
                     input_schema = dict(input_schema) if input_schema else {}
 
+                annotations = getattr(t, "annotations", None)
+                if hasattr(annotations, "model_dump"):
+                    annotations = annotations.model_dump(exclude_none=True)
                 discovered.append(
                     MCPToolDefinition(
                         server_name=self.server_name,
                         name=t.name,
                         description=t.description or "",
                         input_schema=input_schema,
+                        annotations=dict(annotations) if isinstance(annotations, dict) and annotations else None,
                     )
                 )
             self._tools = discovered

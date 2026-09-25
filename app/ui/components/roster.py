@@ -132,6 +132,19 @@ class AgentRosterControl:
         # 병렬 지시 전략에서 한 라운드에 동시에 띄울 에이전트 수의 상한.
         # 다른 전략에서는 쓰이지 않으므로 그 전략일 때만 화면에 나옵니다.
         self.parallel_limit: int = 3
+        # 이 대화의 도구 보안 모드. 비어 있으면 conf.json 의 `tool_security.mode` 를 따릅니다.
+        self.tool_mode: str = ""
+        self.tool_mode_select: Optional[ui.select] = None
+        # 승인 카드의 "이 대화에서 허용·거부" 로 쌓인 규칙 (세션 DB). 규칙 창에서 보고 지웁니다.
+        self.tool_grants: List[str] = []
+        self.tool_denials: List[str] = []
+        self.tool_rules_button: Optional[ui.button] = None
+        self._tool_rules_dialog: Optional[ui.dialog] = None
+        self._tool_rules_body: Optional[ui.column] = None
+        # 규칙을 지웠을 때 저장하는 쪽 (허용, 거부). DB 와 도는 토론을 아는 화면(app.py)이 답니다.
+        self.on_tool_rules_changed: Optional[
+            Callable[[List[str], List[str]], Coroutine[None, None, None]]
+        ] = None
         # 그래프 토론이 쓸 그래프 파일 id (`data/graphs/<id>.json`). 다른 전략에서는 읽히지 않습니다.
         self.graph_id: str = ""
         self.graph_row: Optional[ui.column] = None
@@ -435,6 +448,31 @@ class AgentRosterControl:
                             min=1, max=5, step=1, value=self.max_rounds, on_change=self._on_rounds_change
                         ).props("dark label color=indigo-4").classes("w-20")
                         self.rounds_label = ui.badge(str(self.max_rounds), color="indigo-7").props("dense")
+
+                    # 도구 보안 모드 (`app/mcp/policy.py`). 대화마다 고르고, 토론 중에 바꾸면
+                    # 진행 중인 턴에도 다음 도구 호출부터 걸립니다.
+                    with ui.row().classes("items-center gap-2 min-w-[220px]"):
+                        ui.icon("shield", size="xs").classes("text-emerald-400")
+                        ui.label("도구 보안:").classes("text-xs font-semibold text-slate-300")
+                        self.tool_mode_select = ui.select(
+                            options=self._tool_mode_options(),
+                            value=self.tool_mode,
+                            on_change=self._on_tool_mode_change,
+                        ).props("outlined dense dark options-dense").classes("w-40 text-xs")
+                        self.tool_mode_select.tooltip(
+                            "읽기 전용: 읽기만 · 기본: 작업 공간 쓰기와 검사를 통과한 코드는 묻지 "
+                            "않음 · 검토: 읽기 말고 전부 묻기 · 자동: 거부 규칙 말고 묻지 않음. "
+                            "고정 보호(MADO 설정·비밀·다른 대화의 기억)는 어느 모드에서도 풀리지 않습니다."
+                        )
+                        self.tool_rules_button = (
+                            ui.button(self._tool_rules_label(), icon="rule",
+                                      on_click=self._open_tool_rules)
+                            .props("flat dense no-caps color=emerald-4 size=sm")
+                            .tooltip(
+                                "승인 카드에서 '이 대화에서 허용·거부' 로 쌓인 규칙을 보고 지웁니다. "
+                                "'항상' 규칙은 conf.json 의 tool_security 에 있습니다."
+                            )
+                        )
 
                     # 동시 실행 상한 — 병렬 지시 전략에서만 뜹니다. 다른 전략에서는
                     # 읽히지 않는 값이라, 늘 띄워 두면 안 듣는 손잡이가 됩니다.
@@ -2546,6 +2584,107 @@ class AgentRosterControl:
         if self.on_config_changed:
             ui.timer(0.01, self.on_config_changed, once=True)
 
+    @staticmethod
+    def _tool_mode_options() -> Dict[str, str]:
+        """모드 목록. 빈 값은 "conf.json 의 기본값" 이고, 그 값이 무엇인지 함께 적습니다."""
+        from app.config import get_config
+        from app.mcp.policy import MODE_LABELS, MODES
+
+        try:
+            default = get_config().tool_security.mode
+        except Exception:  # noqa: BLE001 - 설정을 못 읽어도 목록은 그립니다
+            default = "default"
+        options = {"": f"설정 기본값 ({MODE_LABELS.get(default, default)})"}
+        options.update({mode: MODE_LABELS[mode] for mode in MODES})
+        return options
+
+    def _on_tool_mode_change(self, e) -> None:
+        self.tool_mode = str(e.value or "")
+        if self.tool_mode == "auto":
+            ui.notify(
+                "자동 모드는 거부 규칙과 고정 보호 말고는 묻지 않고 실행합니다. "
+                "격리된 환경에서만 쓰세요.",
+                type="warning", position="bottom-right",
+            )
+        if self.on_config_changed:
+            ui.timer(0.01, self.on_config_changed, once=True)
+
+    # ------------------------------------------------------------ 대화 규칙
+
+    def _tool_rules_label(self) -> str:
+        count = len(self.tool_grants) + len(self.tool_denials)
+        return f"대화 규칙 {count}" if count else "대화 규칙"
+
+    def set_tool_rules(self, grants: Optional[List[str]], denials: Optional[List[str]]) -> None:
+        """이 대화의 허용·거부 목록을 바꿔 그립니다 (세션을 열 때, 카드에 답했을 때)."""
+        self.tool_grants = [str(r) for r in grants or [] if str(r).strip()]
+        self.tool_denials = [str(r) for r in denials or [] if str(r).strip()]
+        if self.tool_rules_button is not None and not self.tool_rules_button.is_deleted:
+            self.tool_rules_button.set_text(self._tool_rules_label())
+        self._render_tool_rules()
+
+    def _open_tool_rules(self) -> None:
+        if self._tool_rules_dialog is None or self._tool_rules_dialog.is_deleted:
+            with ui.dialog() as self._tool_rules_dialog, ui.card().classes(
+                "bg-slate-900 border border-emerald-800 text-slate-200 w-[36rem] max-w-full"
+            ):
+                with ui.row().classes("w-full items-center gap-2"):
+                    ui.icon("rule", size="sm").classes("text-emerald-300")
+                    ui.label("이 대화의 도구 규칙").classes("text-base font-bold text-emerald-200")
+                    ui.space()
+                    ui.button(icon="close", on_click=self._tool_rules_dialog.close).props(
+                        "flat round dense color=grey-4"
+                    )
+                ui.label(
+                    "승인 카드에서 '이 대화에서 허용·거부' 로 쌓인 규칙입니다. 이 대화에만 걸리고 "
+                    "다음 턴에도 이어집니다. 지우면 다음 도구 호출부터 다시 모드와 설정대로 판정합니다."
+                ).classes("text-xs text-slate-400")
+                self._tool_rules_body = ui.column().classes("w-full gap-3")
+                ui.label(
+                    "'항상 허용·거부' 로 저장한 규칙은 conf.json 의 tool_security.allow · deny 에 있습니다."
+                ).classes("text-[11px] text-slate-500")
+        self._render_tool_rules()
+        self._tool_rules_dialog.open()
+
+    def _render_tool_rules(self) -> None:
+        body = self._tool_rules_body
+        if body is None or body.is_deleted:
+            return
+        body.clear()
+        sections = (
+            ("거부", "playlist_remove", "text-red-300", "denials", self.tool_denials),
+            ("허용", "playlist_add_check", "text-sky-300", "grants", self.tool_grants),
+        )
+        with body:
+            for title, icon, color, kind, rules in sections:
+                with ui.row().classes("items-center gap-1"):
+                    ui.icon(icon, size="xs").classes(color)
+                    ui.label(f"{title} {len(rules)}").classes(f"text-sm font-semibold {color}")
+                if not rules:
+                    ui.label("없음").classes("text-xs text-slate-500 pl-5")
+                    continue
+                with ui.column().classes("w-full gap-1 pl-5"):
+                    for rule in rules:
+                        with ui.row().classes("w-full items-center gap-2 flex-nowrap"):
+                            ui.label(rule).classes(
+                                "font-mono text-xs text-slate-200 bg-slate-950/70 px-2 py-0.5 "
+                                "rounded min-w-0 flex-grow break-all"
+                            )
+                            ui.button(
+                                icon="delete_outline",
+                                on_click=lambda _e, k=kind, r=rule: self._remove_tool_rule(k, r),
+                            ).props("flat round dense color=grey-5 size=sm").tooltip("이 규칙 지우기")
+
+    async def _remove_tool_rule(self, kind: str, rule: str) -> None:
+        grants = [r for r in self.tool_grants if not (kind == "grants" and r == rule)]
+        denials = [r for r in self.tool_denials if not (kind == "denials" and r == rule)]
+        if self.on_tool_rules_changed is not None:
+            await self.on_tool_rules_changed(grants, denials)
+        # 알림을 먼저 띄웁니다. 다시 그리면 방금 누른 버튼이 지워지고, 그 버튼 자리에서는
+        # 더 이상 알림을 띄울 수 없습니다.
+        ui.notify(f"대화 규칙을 지웠습니다: {rule}", type="info", position="bottom-right")
+        self.set_tool_rules(grants, denials)
+
     def _on_parallel_limit_change(self, e) -> None:
         # 빈 칸으로 지우는 중이면 (`None`) 마지막 값을 지킵니다. 0 이나 음수는
         # "동시에 아무도 못 돈다" 는 뜻이 되므로 최소 1 입니다.
@@ -2644,6 +2783,9 @@ class AgentRosterControl:
         session_agents: Optional[List[Agent]] = None,
         decision_ledger: str = "",
         graph_id: str = "",
+        tool_mode: str = "",
+        tool_grants: Optional[List[str]] = None,
+        tool_denials: Optional[List[str]] = None,
     ) -> None:
         self.agent_pool = get_agent_pool()
         # 잠금 여부와 스냅샷이 선택 규칙과 카드 목록을 함께 정하므로 먼저 반영합니다.
@@ -2656,6 +2798,8 @@ class AgentRosterControl:
         self.strategy_name = resolve_strategy_name(strategy)
         self.max_rounds = max_rounds
         self.parallel_limit = max(1, int(parallel_limit or 3))
+        self.tool_mode = tool_mode or ""
+        self.set_tool_rules(tool_grants, tool_denials)
         self.custom_instructions = instructions
         self.workspace_dir = workspace_dir or ""
         self.session_id = session_id
@@ -2671,6 +2815,9 @@ class AgentRosterControl:
             self.rounds_slider.value = max_rounds
         if self.parallel_input:
             self.parallel_input.value = self.parallel_limit
+        if self.tool_mode_select:
+            # conf.json 의 기본 모드가 바뀌었을 수 있으니 목록도 새로 그립니다.
+            self.tool_mode_select.set_options(self._tool_mode_options(), value=self.tool_mode)
         self._sync_parallel_visibility()
         if hasattr(self, "rounds_label") and self.rounds_label:
             self.rounds_label.set_text(str(max_rounds))

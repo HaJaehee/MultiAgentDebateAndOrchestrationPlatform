@@ -1,6 +1,6 @@
 # 데이터베이스와 세션 스냅샷
 
-> 상위: [핵심 기술 개관](README.md) · 이전: [토론 전략](06-debate-strategies.md)
+> 상위: [핵심 기술 개관](README.md) · 이전: [토론 전략](06-debate-strategies.md) · 다음: [도구 보안](08-tool-security.md)
 >
 > 관련 소스: `app/database/models.py` (132줄) · `session.py`
 

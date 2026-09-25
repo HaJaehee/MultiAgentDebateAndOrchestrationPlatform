@@ -7,7 +7,14 @@ import subprocess
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
-from app.config import MCPServerConfig, PROJECT_ROOT, get_config, resolve_workspace_dir
+from urllib.parse import urlparse
+from app.config import (
+    MCPServerConfig,
+    PROJECT_ROOT,
+    active_config_path,
+    get_config,
+    resolve_workspace_dir,
+)
 from app.mcp.client import (
     MCPClientConnection,
     MCPToolDefinition,
@@ -15,6 +22,7 @@ from app.mcp.client import (
     clip_tool_output,
 )
 from app.mcp.guards import binary_write_refusal
+from app.mcp.policy import ToolMeta, hard_refusal, is_loopback_host, profile_call
 
 logger = logging.getLogger(__name__)
 
@@ -348,6 +356,47 @@ def compose_scope(server_name: str, scope: Optional[str], actor: Optional[str]) 
     return scope
 
 
+def protected_files() -> List[Path]:
+    """도구가 어떤 경로로도 닿으면 안 되는 MADO 자신의 파일 (`policy.hard_block`).
+
+    대부분은 설치 폴더 보호에 이미 들어 있습니다. 여기 따로 적는 것은 설정·DB 를
+    설치 폴더 **밖**에 둔 경우까지 막기 위해서입니다.
+    """
+    files: List[Path] = [PROJECT_ROOT / ".env", Path.cwd() / ".env"]
+    config_path = active_config_path()
+    if config_path is not None:
+        files.append(config_path)
+    try:
+        from sqlalchemy.engine import make_url
+
+        database = make_url(get_config().app.db_url).database
+        if database and database != ":memory:":
+            db_path = Path(database)
+            if not db_path.is_absolute():
+                db_path = Path.cwd() / db_path
+            files.extend(db_path.with_name(db_path.name + suffix) for suffix in ("", "-wal", "-shm", "-journal"))
+    except Exception:  # noqa: BLE001 - 주소를 못 풀어도 설치 폴더 보호는 남습니다
+        pass
+    return files
+
+
+def server_is_trusted(server_name: str, remote_host: str = "") -> bool:
+    """이 서버의 도구 이름표와 annotations 를 믿는가.
+
+    `tool_security.trusted_servers` 가 있으면 그 목록이 전부입니다. 없으면 로컬 프로세스
+    서버와 이 PC 안의 원격 서버를 믿습니다 — 사람이 직접 설치해 띄운 것들입니다. 다른
+    호스트의 원격 서버는 도구 이름을 `read_file` 로 지어 읽기로 통과할 수 있으므로 믿지
+    않고, 도구 단위(`mcp(서버/도구)`)로만 판정합니다.
+    """
+    try:
+        listed = get_config().tool_security.trusted_servers
+    except Exception:  # noqa: BLE001 - 설정을 못 읽으면 믿지 않는 쪽으로
+        return False
+    if listed is not None:
+        return server_name in listed
+    return not remote_host or is_loopback_host(remote_host)
+
+
 class MCPManager:
     """작업 공간 하나를 보는 MCP 서버 묶음.
 
@@ -570,13 +619,59 @@ class MCPManager:
         tools = self.get_tools_for_servers(allowed_servers)
         return [t.to_openai_tool() for t in tools]
 
+    def _resolve(self, tool_name: str) -> Optional[Tuple[MCPClientConnection, str]]:
+        """도구 이름(`server__tool` 또는 맨이름)을 (클라이언트, 서버 쪽 이름) 으로."""
+        if tool_name in self._tool_lookup:
+            return self._tool_lookup[tool_name]
+        if "__" in tool_name:
+            server_name, split_tool_name = tool_name.split("__", 1)
+            if server_name in self.clients:
+                return self.clients[server_name], split_tool_name
+        return None
+
+    def tool_meta(self, tool_name: str) -> Optional[ToolMeta]:
+        """도구 보안 판정에 필요한 정보. 모르는 도구면 None."""
+        resolved = self._resolve(tool_name)
+        if resolved is None:
+            return None
+        client, actual = resolved
+        # 테스트 더블처럼 속성이 모자란 연결도 받습니다 — 모르면 로컬 서버로 봅니다.
+        definition = next(
+            (t for t in getattr(client, "tools", None) or () if getattr(t, "name", None) == actual),
+            None,
+        )
+        url = str(getattr(client, "url", "") or "")
+        host = (urlparse(url).hostname or "") if url.strip() else ""
+        return ToolMeta(
+            server=client.server_name,
+            tool=actual,
+            trusted=server_is_trusted(client.server_name, host),
+            annotations=getattr(definition, "annotations", None),
+            remote_host=host,
+        )
+
+    def hard_refusal(self, tool_name: str, arguments: Mapping[str, Any]) -> Optional[Tuple[str, str]]:
+        """설정으로 끌 수 없는 거부 — (문구, 상태) 또는 None (`policy.hard_refusal`)."""
+        meta = self.tool_meta(tool_name)
+        if meta is None:
+            # 모르는 도구는 아래에서 "Unknown tool" 로 끝납니다. 다만 바이너리 쓰기 거부는
+            # 대안 도구를 짚어 주므로 그쪽 안내가 더 쓸모 있습니다.
+            binary = binary_write_refusal(tool_name, arguments, self._tool_lookup.keys())
+            return (binary, "error") if binary else None
+        profile = profile_call(meta, arguments, self.workspace)
+        return hard_refusal(
+            profile, tool_name, arguments, self._tool_lookup.keys(), self.workspace,
+            PROJECT_ROOT, protected_files(),
+        )
+
     async def execute_tool(
         self, tool_name: str, arguments: Any, scope: Optional[str] = None,
         actor: Optional[str] = None,
     ) -> Tuple[str, str]:
         """
         Executes a tool by qualified name (e.g. 'filesystem__read_file') or plain name ('read_file').
-        Returns (output_str, status ['success'|'error']).
+        Returns (output_str, status ['success'|'error'|'denied']).
+        `denied` 는 도구 보안의 고정 보호에 걸려 **실행하지 않은** 호출입니다.
 
         `scope` 는 이 호출이 속한 대화(세션)의, `actor` 는 지금 발언 중인 에이전트의
         식별자입니다. 둘을 어떻게 조합해 서버에 보낼지는 `compose_scope()` 가 정합니다.
@@ -596,24 +691,18 @@ class MCPManager:
         elif not isinstance(arguments, dict):
             arguments = {}
 
-        # 텍스트 도구로 .pptx/.xlsx 를 쓰려는 시도는 여기서 끊습니다. 흘려보내면
-        # 도구는 성공을 보고하고 사용자는 열리지 않는 파일을 받습니다. 자세한 이유는
-        # `app/mcp/guards.py` 를 보세요.
-        refusal = binary_write_refusal(tool_name, arguments, self._tool_lookup.keys())
+        # 고정 보호 — 어떤 모드·규칙·승인으로도 풀 수 없는 거부입니다. 사람에게 묻는
+        # 판정은 이보다 앞(`tool_gate`)에서 끝났고, 여기는 어느 경로로 들어온 호출이든
+        # 거치는 마지막 줄입니다. MADO 설치 폴더·대화별 지식 그래프·`.git` 쓰기, 그리고
+        # 텍스트 도구로 .pptx/.xlsx 를 쓰는 시도를 끊습니다 (`app/mcp/policy.py`).
+        refusal = self.hard_refusal(tool_name, arguments)
         if refusal:
-            logger.info(f"Refused binary write via '{tool_name}' (actor={actor}).")
-            return refusal, "error"
+            logger.warning(f"Hard-refused tool call '{tool_name}' (actor={actor}): {refusal[1]}")
+            return refusal
 
-        client: Optional[MCPClientConnection] = None
-        actual_tool_name = tool_name
-
-        if tool_name in self._tool_lookup:
-            client, actual_tool_name = self._tool_lookup[tool_name]
-        elif "__" in tool_name:
-            # Check if qualified name split works e.g. server__tool
-            server_name, split_tool_name = tool_name.split("__", 1)
-            if server_name in self.clients:
-                client, actual_tool_name = self.clients[server_name], split_tool_name
+        resolved = self._resolve(tool_name)
+        client: Optional[MCPClientConnection] = resolved[0] if resolved else None
+        actual_tool_name = resolved[1] if resolved else tool_name
 
         if client is None:
             known = sorted({name for name in self._tool_lookup})

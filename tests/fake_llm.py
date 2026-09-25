@@ -81,6 +81,7 @@ class FakeLLMCaller:
         self.scopes: List[Optional[str]] = []
         # 각 발언이 받은 MCP 런타임 (작업 공간별로 다른 객체여야 합니다)
         self.runtimes: List[Any] = []
+        self.tool_gates: List[Any] = []
         # 각 호출이 시스템 프롬프트에 실을 결정 장부 (`LLMCaller.build_system_prompt`)
         self.ledgers: List[str] = []
 
@@ -111,8 +112,11 @@ class FakeLLMCaller:
         on_context_trim: Optional[Callable[[int], Any]] = None,
         mcp: Any = None,
         ledger: str = "",
+        tool_gate: Any = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         self.calls.append(agent.key)
+        # 이 발언이 받은 도구 보안 문지기. 턴마다 하나가 모든 발언에 걸리는지 테스트가 읽습니다.
+        self.tool_gates.append(tool_gate)
         self.ledgers.append(ledger)
         self.scopes.append(session_id)
         # 이 발언이 어느 MCP 런타임을 받았는지. 대화마다 작업 공간이 다르면

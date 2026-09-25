@@ -29,6 +29,9 @@ erDiagram
         string summary_through_id "Last message the summary covers"
         boolean personas_locked "True once first user message sent"
         text workspace_dir "Per-session workspace ('' = conf.json default)"
+        string tool_mode "Tool security mode ('' = conf.json default, v0.10.0)"
+        json tool_grants "Rules allowed with 'this conversation' on approval cards"
+        json tool_denials "Rules denied with 'this conversation' on approval cards"
         datetime created_at "UTC timestamp"
         datetime updated_at "UTC timestamp"
     }
@@ -56,7 +59,11 @@ erDiagram
         string tool_name "Qualified tool name (e.g. sandbox__execute_python_code)"
         json arguments "Tool input arguments dictionary"
         text output "Raw tool output or error string"
-        string status "success | error"
+        string status "success | error | denied"
+        string decision "Tool security verdict: allow | approved | deny | hard | rejected | timeout"
+        string risk "Risk class the verdict turned on"
+        text rule "Matched rule, granted scope, mode:<mode> or a marker"
+        string approver "local | remote when a person answered"
         datetime created_at "UTC timestamp"
     }
 
@@ -147,8 +154,14 @@ Logs every MCP tool invocation executed by an agent during a turn.
 | `tool_name` | `VARCHAR(100)` | No | - | Qualified tool name (e.g. `filesystem__write_file`). |
 | `arguments` | `JSON` | No | `{}` | JSON dictionary of inputs sent to the tool. |
 | `output` | `TEXT` | No | `''` | Raw string result or error output returned by the MCP server. |
-| `status` | `VARCHAR(20)` | No | `'success'` | Execution result status (`'success'` or `'error'`). |
+| `status` | `VARCHAR(20)` | No | `'success'` | `'success'`, `'error'`, or `'denied'` (tool security refused it; nothing ran). |
+| `decision` | `VARCHAR(20)` | No | `''` | Tool security verdict (v0.10.0): `allow`, `approved`, `deny`, `hard`, `rejected`, `timeout`. Empty = ran without a gate. |
+| `risk` | `VARCHAR(20)` | No | `''` | Risk class the verdict turned on (`write`, `net`, `exec_flagged`, …). |
+| `rule` | `TEXT` | No | `''` | Matched rule, granted scope, `mode:<mode>`, or a marker (`once`, `repeat`, `unattended`, `gate-error`). |
+| `approver` | `VARCHAR(20)` | No | `''` | `local` (server PC) or `remote` when a person answered the card. |
 | `created_at` | `DATETIME` | No | `utc_now` | UTC execution timestamp. |
+
+The four security columns are explained in [Tool Security §8](../mcp/tool-security.md).
 
 ### 2.4. `artifacts` Table ([ArtifactModel](file:///d:/MultiAgentDebateOrchestration/app/database/models.py#L80-L92))
 Persists individual output artifacts synthesized by the Master Orchestrator at the end of a debate.

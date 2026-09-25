@@ -30,7 +30,8 @@ docs/user_manual/
 │   ├── 04-mcp-host.md ................... MCP 호스트와 클라이언트
 │   ├── 05-orchestration-engine.md ....... 오케스트레이션 엔진
 │   ├── 06-debate-strategies.md .......... 토론 전략 3종
-│   └── 07-persistence.md ................ 데이터베이스와 세션 스냅샷
+│   ├── 07-persistence.md ................ 데이터베이스와 세션 스냅샷
+│   └── 08-tool-security.md .............. 도구 보안 (허용 · 묻기 · 거부)
 │
 ├── 04-workflows/ ........................ 실제로 어떻게 흘러가는가
 │   ├── README.md ........................ 워크플로우 개관
@@ -59,6 +60,7 @@ docs/user_manual/
 | 사내 LLM 게이트웨이 및 원격 API 연동하기 | [conf.json 설정](02-getting-started/02-configuration.md) |
 | 신규 에이전트 추가 및 역할 수정하기 | [로스터 편집](04-workflows/03-roster-editing.md) |
 | 외부 MCP 도구 서버 연동하기 | [MCP 호스트](03-core/04-mcp-host.md) |
+| 에이전트의 도구 사용을 허락·제한하기 | [도구 보안](03-core/08-tool-security.md) |
 | 다자간 토론의 실행 순서와 생애주기 이해하기 | [토론 한 턴의 생애주기](04-workflows/01-debate-turn.md) |
 | 오프라인 폐쇄망 환경에 패키징 및 배포하기 | [폐쇄망 배포](04-workflows/05-airgap-deployment.md) |
 | 코드 수정 전 전체 아키텍처 및 디렉터리 파악하기 | [아키텍처](01-overview/02-architecture.md), [프로젝트 구조](05-reference/02-project-layout.md) |
