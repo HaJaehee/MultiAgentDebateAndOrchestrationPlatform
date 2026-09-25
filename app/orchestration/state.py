@@ -32,6 +32,15 @@ class DebateMessage(BaseModel):
     # 노드의 출력으로 나간 핀 (`MessageModel.graph_port`). 출력이 아닌 기록은 None.
     graph_port: Optional[str] = None
 
+    @property
+    def speaker(self) -> str:
+        """프롬프트에 적는 발언자 — "System Architect (High-Level …)".
+
+        역할이 없으면 이름만 씁니다. 유저 발언이 그렇습니다 — 이 앱의 유저는 한 명이고
+        요청하는 쪽도 늘 그 유저라, 역할 칸이 이름을 되풀이할 뿐입니다.
+        """
+        return f"{self.sender_name} ({self.sender_role})" if self.sender_role else self.sender_name
+
 
 class DebateState(BaseModel):
     session_id: str

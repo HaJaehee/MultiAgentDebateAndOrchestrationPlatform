@@ -1110,7 +1110,8 @@ class OrchestratorEngine:
                 session_id=state.session_id,
                 sender_key="user",
                 sender_name="User",
-                sender_role="Client / Requester",
+                # 역할은 비웁니다 — 유저는 한 명이고 요청하는 쪽도 늘 그 유저입니다.
+                sender_role="",
                 content=content,
                 round_number=round_number,
                 msg_type="user",
@@ -1130,7 +1131,7 @@ class OrchestratorEngine:
             id=msg_id,
             sender_key="user",
             sender_name="User",
-            sender_role="Client / Requester",
+            sender_role="",
             content=content,
             round_number=round_number,
             msg_type="user",
@@ -1380,7 +1381,7 @@ class OrchestratorEngine:
                     # 통째로 "Thought 1: ..." 머리말로 채워져, 정작 결론은 한 글자도
                     # 안 실립니다.
                     history_snippets.append(
-                        f"{m.sender_name}({m.sender_role}): {self._snippet(m, 250)}"
+                        f"{m.speaker}: {self._snippet(m, 250)}"
                     )
                 history_text = "\n".join(history_snippets[-6:])
                 orch_plan_prompt = [
@@ -1863,7 +1864,7 @@ class OrchestratorEngine:
 
         roster = format_roster(candidates, with_keys=True)
         recent = [
-            f"{m.sender_name}({m.sender_role}): {self._snippet(m, 300)}"
+            f"{m.speaker}: {self._snippet(m, 300)}"
             for m in state.messages if m.msg_type != "error"
         ][-8:]
 
@@ -2153,7 +2154,7 @@ class OrchestratorEngine:
 
         roster = format_roster(candidates, with_keys=True)
         recent = [
-            f"{m.sender_name}({m.sender_role}): {self._snippet(m, 300)}"
+            f"{m.speaker}: {self._snippet(m, 300)}"
             for m in state.messages if m.msg_type != "error"
         ][-8:]
 
@@ -2617,7 +2618,7 @@ class OrchestratorEngine:
         if message.msg_type == "error":
             return f"[{message.sender_name}]: (이 발언은 실패해 내용이 없습니다)"
         pinned = placeholders.get(index_of.get(message.id, -1))
-        label = "[User]" if message.sender_key == "user" else f"[{message.sender_name} ({message.sender_role})]"
+        label = "[User]" if message.sender_key == "user" else f"[{message.speaker}]"
         if pinned:
             return f"{label}:\n{pinned}"
         body = strip_reasoning_trace(message.content)
@@ -3269,7 +3270,7 @@ class OrchestratorEngine:
                         "content": f"[User]:\n{placeholders.get(index, msg.content)}"
                     })
                 else:
-                    role_label = f"[{msg.sender_name} ({msg.sender_role})]"
+                    role_label = f"[{msg.speaker}]"
                     context.append({
                         "role": "assistant" if msg.sender_key == agent.key else "user",
                         # 사고 과정은 기록과 화면에만 남기고 프롬프트에는 싣지 않습니다.
@@ -3409,7 +3410,7 @@ class OrchestratorEngine:
         placeholders = memory.placeholders_for(state, record, plan_pinned=False)
 
         def render(index: int, msg: DebateMessage) -> str:
-            prefix = "### [User]" if msg.sender_key == "user" else f"### {msg.sender_name} ({msg.sender_role})"
+            prefix = "### [User]" if msg.sender_key == "user" else f"### {msg.speaker}"
             body = msg.content if msg.sender_key == "user" else strip_reasoning_trace(msg.content)
             return f"{prefix}:\n{placeholders.get(index) or body}\n"
 
@@ -3769,7 +3770,7 @@ class OrchestratorEngine:
             for msg in latest.values():
                 body = strip_reasoning_trace(msg.content).strip() or "(내용 없음)"
                 parts.append(
-                    f"### {msg.sender_name} ({msg.sender_role}) — Round {msg.round_number}\n\n{body}"
+                    f"### {msg.speaker} — Round {msg.round_number}\n\n{body}"
                 )
         else:
             parts.append("_이번 턴에는 기록된 전문가 발언이 없습니다._")

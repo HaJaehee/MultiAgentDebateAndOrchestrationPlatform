@@ -166,7 +166,7 @@ def render_message(msg: DebateMessage, body: Optional[str] = None) -> str:
     if msg.sender_key == "user":
         return f"### [User] · Round {msg.round_number}\n{body or msg.content}"
     return (
-        f"### {msg.sender_name} ({msg.sender_role}) · Round {msg.round_number}\n"
+        f"### {msg.speaker} · Round {msg.round_number}\n"
         f"{body or reference_code_blocks(strip_reasoning_trace(msg.content), msg.tool_calls)}"
     )
 

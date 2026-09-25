@@ -179,3 +179,34 @@ async def test_orchestrator_engine_turn_e2e():
     assert len(state.artifacts) >= 1  # Synthesis report, mermaid, code
     assert any(ev["type"] == "turn_completed" for ev in events)
     assert any(ev["type"] == "artifacts_synthesized" for ev in events)
+
+
+def test_the_user_has_no_role_and_no_empty_brackets():
+    """유저는 한 명이고 요청하는 쪽도 늘 그 유저라 역할 칸을 두지 않습니다.
+
+    역할이 비면 프롬프트의 발언자 표기에 `User()` 같은 빈 괄호가 남지 않아야 합니다.
+    """
+    from app.orchestration.context_memory import render_message
+    from app.orchestration.state import DebateMessage
+
+    user = DebateMessage(sender_key="user", sender_name="User", sender_role="", content="해 줘")
+    agent = DebateMessage(sender_key="coder", sender_name="Dev", sender_role="Coder", content="네")
+    assert user.speaker == "User"
+    assert agent.speaker == "Dev (Coder)"
+    assert "()" not in render_message(agent) and "(Coder)" in render_message(agent)
+
+
+@pytest.mark.asyncio
+async def test_user_messages_are_stored_without_a_role():
+    import uuid
+    db_url = "sqlite+aiosqlite:///:memory:"
+    await init_db(db_url)
+    factory = get_session_factory(db_url)
+    sid = f"no-role-{uuid.uuid4().hex[:8]}"
+    async with factory() as db:
+        db.add(SessionModel(id=sid, title="t", strategy="sequential_debate", max_rounds=1,
+                            active_agents=["orchestrator", "architect"]))
+        await db.commit()
+    state = await OrchestratorEngine(llm_caller=FakeLLMCaller()).run_turn(session_id=sid, user_prompt="설계")
+    user_messages = [m for m in state.messages if m.sender_key == "user"]
+    assert user_messages and all(m.sender_role == "" for m in user_messages)
