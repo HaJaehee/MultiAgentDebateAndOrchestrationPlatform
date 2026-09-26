@@ -103,8 +103,10 @@ MultiAgentDebateOrchestration/
 ├── mcp_node/                 # 공식 Node MCP 서버 (npm install 로 생성, .gitignore 대상)
 ├── mcp_sandbox/              # AirgappedPySandbox (git clone 으로 생성, .gitignore 대상)
 ├── workspace/                # 에이전트 공용 작업 공간 (.gitignore 대상)
+├── trial_templates/          # 체험 서버의 공식 템플릿 (*.json, 형식은 그 폴더의 README.md)
 ├── data/                     # 화면에서 올린 파일 (에이전트 아이콘 등, .gitignore 대상)
-│   └── agent_icons/          # 업로드한 에이전트 아이콘 이미지
+│   ├── agent_icons/          # 업로드한 에이전트 아이콘 이미지
+│   └── trial/secret.key      # 체험 방문자 로그인 쿠키의 서명 키 (처음 한 번 생성)
 ├── app/
 │   ├── main.py               # FastAPI + NiceGUI 실행 엔트리포인트
 │   ├── about.py              # 앱 이름·버전·저작자 (단일 출처)
@@ -122,6 +124,7 @@ MultiAgentDebateOrchestration/
 │   │   ├── base.py           # Agent 모델, 카드 색·아이콘 해석 및 폴백
 │   │   ├── personas.py       # 세션별 페르소나 해석·저장·고정
 │   │   ├── llm.py            # LiteLLM 호출기, Tool 루프, LLMUnavailableError
+│   │   ├── llm_gate.py       # 서버 전체 LLM 동시 요청 상한과 대기열 (app.llm_concurrency)
 │   │   └── pool.py           # 동적 에이전트 풀 레지스트리
 │   ├── orchestration/        # 멀티 에이전트 토론 상태 머신
 │   │   ├── state.py          # DebateState, DebateMessage, ArtifactItem
@@ -129,6 +132,7 @@ MultiAgentDebateOrchestration/
 │   │   ├── engine.py         # 오케스트레이션 엔진 & 산출물 합성기
 │   │   ├── tool_gate.py      # 도구 보안 문지기 (판정 · 승인 카드 · 대화별 허용)
 │   │   └── runner.py         # 세션별 백그라운드 토론 태스크 & 재접속 스냅샷
+│   ├── trial/                # 체험 서버 (방문자 로그인·템플릿·내 대화·운영자 화면, /trial)
 │   └── ui/                   # NiceGUI 반응형 웹 UI
 │       ├── app.py            # UI 페이지 레이아웃 및 리액티브 바인딩
 │       ├── personas_page.py  # /personas/{session_id} 페르소나 편집 페이지
@@ -156,6 +160,11 @@ MultiAgentDebateOrchestration/
     ├── test_tool_security_policy.py # 도구 보안 판정 (코드 검사·규칙·모드·고정 보호·비밀 환경변수)
     ├── test_tool_security_gate.py   # 승인 카드·게이트·도구 루프·매니저·러너·설정 기록
     ├── test_llm_settings.py   # llm 상속, 엔드포인트/단계적 사고 설정
+    ├── test_llm_gate.py       # 서버 전체 LLM 동시 요청 상한 (순서·대기 위치·취소)
+    ├── test_trial_gate.py     # 체험 방문자 통로 (열리는 경로·막히는 경로·주인은 그대로)
+    ├── test_trial_auth.py     # 이름 + PIN 로그인, 서명 쿠키, 잠금, PIN 초기화
+    ├── test_trial_templates.py # 템플릿 형식·검사·스냅샷, 템플릿 대화를 엔진이 끝까지 돌리기
+    ├── test_trial_store.py    # 내 대화만 보이기, 사본·평가, 결과, 운영자 통계
     ├── test_db.py
     ├── test_mcp.py
     └── test_orchestrator.py
@@ -259,6 +268,39 @@ MADO 는 기본적으로 `127.0.0.1` 에만 열립니다. 같은 망의 다른 P
 >
 > ⚠️ **리버스 프록시 뒤에 두지 마세요.** 모든 접속이 프록시의 루프백 주소로 보여 누구나 주인이 됩니다.
 > 토큰 하나는 주인 한 명입니다 — 토큰을 나눠 주면 모든 대화를 나눠 주는 것입니다.
+
+#### 체험 서버 (여러 사람이 URL 만으로 써 보기)
+
+사내 가상머신에 MADO 를 하나 띄워 두고, 설치 없이 URL 로 들어와 멀티 에이전트 토론을 써 보게 합니다.
+`conf.json` 의 `trial.enabled` 를 켜면 **토큰이 없는 원격 접속이 거부 대신 방문자**가 됩니다.
+
+| 접속 | 들어가는 곳 |
+| :--- | :--- |
+| 서버 PC 자신, 또는 접속 토큰으로 로그인한 원격 | 지금과 같은 모든 화면 (주인) + `/trial/admin` 운영자 화면 |
+| 그 밖의 원격 (방문자) | `/trial` 만. `/` 는 체험 첫 화면으로 돌려보내고, 주인 화면·`/api/*`·작업 공간 다운로드는 막습니다 |
+
+1. `conf.json` 에서 `trial.enabled: true`, `app.host: "0.0.0.0"`, 그리고 LLM 서버가 버티는 수로
+   `app.llm_concurrency` (예: `4`) 를 정하고 앱을 다시 시작합니다.
+2. 방문자는 `http://<서버>:<포트>/` 로 들어와 **이름(사번)과 PIN** 으로 로그인합니다. 처음 보는 이름은 PIN 을
+   한 번 더 받아 등록합니다. PIN 은 scrypt 해시로만 남고, 5번 틀리면 그 이름이 15분 잠깁니다.
+3. 방문자는 **템플릿 갤러리**에서 과제를 골라 입력 칸만 채우고 시작합니다. 토론은 스트리밍으로 보이고,
+   끝나면 결과(최종 정리 + 결정 장부의 "모두 동의한 것 / 의견이 갈린 것")가 먼저 나옵니다. 같은 대화에서
+   이어서 요청할 수 있고, 템플릿을 **내 것으로 복사해** 참여자와 지침을 고칠 수 있습니다.
+
+- **방문자에게는 도구가 없습니다.** 템플릿의 참여자는 conf.json 에이전트의 모델만 빌리고
+  `allowed_mcp_servers` 는 비웁니다 (파일·샌드박스·git 이 공용 서버에서 사용자 사이의 벽을 넘기 때문).
+- **내 대화만 보입니다.** 남의 대화 주소를 알아도 "없는 대화" 로 보입니다. 단, **운영자(주인)는 모든 체험
+  대화를 봅니다** — 체험 화면 아래에 늘 그렇게 알립니다 (`trial.notice`).
+- **서버 전체 동시 요청 상한**(`app.llm_concurrency`)을 넘는 요청은 순서대로 기다리고, 방문자 화면은
+  "LLM 서버 순서를 기다리는 중 · 앞에 N건" 을 보여 줍니다. 0 이면 제한하지 않습니다.
+- **공식 템플릿**은 `trial_templates/*.json` 입니다. 형식은 [trial_templates/README.md](trial_templates/README.md).
+  파일을 고치면 재시작 없이 다음 화면부터 반영됩니다. 소스 갱신 패키지는 이 폴더를 통째로 갈아끼우므로,
+  고친 템플릿을 지키려면 `trial.templates_dir` 를 다른 폴더로 두세요.
+- **운영자 화면 `/trial/admin`**: 템플릿별 실행·완료·평균 시간·평가, 최근 의견, 방문자별 대화 수, PIN
+  초기화와 잠금 해제, 템플릿 파일 오류, 지금의 LLM 대기열.
+
+> ⚠️ HTTPS 가 없는 것은 체험 서버도 같습니다. 같은 망에서 트래픽을 볼 수 있는 사람은 방문자의 PIN 과 쿠키를
+> 가로챌 수 있습니다. 방문자에게 **다른 곳에서 쓰는 비밀번호를 PIN 으로 쓰지 말라고** 알리세요.
 
 ---
 

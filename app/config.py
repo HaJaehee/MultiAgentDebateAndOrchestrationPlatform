@@ -247,6 +247,12 @@ class AppConfig(BaseModel):
         description="Async SQLAlchemy database URL",
     )
     debug: bool = Field(default=True, description="Debug mode")
+    # 서버 전체에서 LLM 에 동시에 보내는 요청의 상한. 0 이면 제한하지 않습니다.
+    #
+    # `parallel_limit` 은 대화 하나 안의 상한이라, 대화가 여럿이면 곱으로 늘어납니다.
+    # 단일 GPU 런타임(Ollama·vLLM)이나 여러 사람이 함께 쓰는 서버에서는 이 값으로
+    # 전체를 묶습니다. 넘는 요청은 버리지 않고 온 순서대로 기다립니다 (`app/agents/llm_gate.py`).
+    llm_concurrency: int = Field(default=0, ge=0, description="Max concurrent LLM requests (0 = unlimited)")
 
     @field_validator("port", mode="before")
     @classmethod
@@ -255,6 +261,14 @@ class AppConfig(BaseModel):
             v = v.strip()
             return int(v) if v else 8000
         return int(v)
+
+    @field_validator("llm_concurrency", mode="before")
+    @classmethod
+    def _coerce_concurrency(cls, v: Any) -> int:
+        if isinstance(v, str):
+            v = v.strip()
+            return int(v) if v else 0
+        return int(v or 0)
 
 
 class MCPServerConfig(BaseModel):
@@ -690,12 +704,34 @@ class AgentConfig(BaseModel):
         return self.model.split("/", 1)[0] in {"ollama", "ollama_chat", "lm_studio"}
 
 
+class TrialConfig(BaseModel):
+    """체험 서버 (`trial`). 켜면 원격 방문자가 `/trial` 에서 템플릿으로 토론을 돌려 봅니다.
+
+    주인(루프백 또는 접속 토큰)은 지금처럼 모든 화면을 씁니다. 방문자는 이름과 PIN 으로
+    들어와 자기 대화만 보고, 도구 없이 템플릿의 참여자로만 토론합니다 (`app/trial/`).
+    """
+
+    enabled: bool = Field(default=False)
+    title: str = Field(default="MADO 체험")
+    # 공식 템플릿 폴더. 상대 경로면 프로젝트 루트 기준입니다.
+    templates_dir: str = Field(default="trial_templates")
+    # 모든 체험 화면 아래에 붙는 안내. 운영자가 대화를 볼 수 있다는 사실을 숨기지 않습니다.
+    notice: str = Field(default="운영자가 대화 내용을 볼 수 있습니다. 대외비 문서는 올리지 마세요.")
+    pin_min_length: int = Field(default=4, ge=4, le=32)
+    # 시작 양식 한 칸에 넣을 수 있는 글자 수와 올릴 수 있는 텍스트 파일 크기.
+    max_input_chars: int = Field(default=30000, ge=1000)
+    max_upload_kb: int = Field(default=200, ge=1, le=5000)
+    # 방문자가 고친 템플릿이 가질 수 있는 토론 횟수의 상한.
+    max_rounds: int = Field(default=4, ge=1, le=10)
+
+
 class RootConfig(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     mcp_servers: Dict[str, MCPServerConfig] = Field(default_factory=dict)
     agents: Dict[str, AgentConfig] = Field(default_factory=dict)
     tool_security: ToolSecurityConfig = Field(default_factory=ToolSecurityConfig)
+    trial: TrialConfig = Field(default_factory=TrialConfig)
 
     # 치환 **전** 의 "mcp_servers" 원문. 작업 공간을 런타임마다 다르게 풀 때
     # 이걸 그 작업 공간으로 다시 풉니다. 이미 치환된 경로 문자열을 찾아 바꾸는

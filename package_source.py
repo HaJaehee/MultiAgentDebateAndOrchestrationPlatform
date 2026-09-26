@@ -13,6 +13,7 @@ MCP 서버 설치본까지 들고 있어 수백 MB 입니다. 그 런타임은 �
         ├── mcp_servers/              이 저장소가 직접 들고 있는 MCP 서버
         │   └── memory_scoped/        공식 memory 서버 포크 (대화별 지식 그래프)
         ├── mcp_node/memory-scoped.mjs  그 실행 사본 (설치본의 것을 바로 갈아끼움)
+        ├── trial_templates/          체험 서버의 공식 템플릿 (trial.templates_dir)
         ├── wheels/                   --with-wheels 로 지정했을 때만 (아래 참고)
         ├── docs/
         │   ├── user_manual/          사용 설명서 마크다운 원본
@@ -90,7 +91,10 @@ PACKAGE_NAME = "MultiAgentDebateOrchestration_source"
 # 합니다. 그래서 마크다운 원본·렌더러와 함께 **패키징 시점에 렌더링한 HTML** 을
 # 담습니다 (`render_manual_html`). 전체 번들(`package_offline.py`)이 이미 그렇게
 # 하고 있고, 소스 갱신 패키지만 예외였습니다.
-SOURCE_DIRS = ["app", "mcp_servers", "docs"]
+#
+# trial_templates/ 는 체험 서버의 공식 템플릿입니다. 앱 코드처럼 통째로 갈아끼우므로, 운영자가
+# 고친 템플릿을 갱신에서 지키려면 conf.json 의 `trial.templates_dir` 를 다른 폴더로 두면 됩니다.
+SOURCE_DIRS = ["app", "mcp_servers", "docs", "trial_templates"]
 
 # (원본 경로, 패키지 안에서의 경로). 대부분 루트 파일이지만, 설치본의 같은
 # 자리에 바로 놓여야 하는 파일은 하위 경로로 넣습니다.
@@ -131,6 +135,7 @@ REQUIRED_PACKAGE_PATHS: list[str] = [
     "app/ui/static/graph_editor/THIRD_PARTY_NOTICES.txt",
     "app/ui/static/graph_editor/BUILD.md",
     "mcp_servers/memory_scoped/index.mjs",
+    "trial_templates/report-review.json",
 ]
 
 # 디렉터리를 복사할 때 건너뛸 것들. 소스 트리 안에 런타임 부스러기가 섞이는 것을 막습니다.

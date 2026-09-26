@@ -20,6 +20,7 @@ from app.database.session import init_db
 from app.mcp.manager import get_mcp_manager
 from app.mcp.pool import get_runtime_pool
 from app.orchestration.runner import get_debate_runner
+from app.trial import setup_trial
 from app.ui.app import create_ui
 from app.ui.graph_page import create_graph_page
 from app.ui.personas_page import create_personas_page
@@ -277,6 +278,9 @@ from app.ui.theme import FAVICON_SVG
 create_ui()
 create_personas_page()
 create_graph_page()
+# 체험 서버 (app/trial). 켜져 있지 않으면 화면은 "꺼져 있음" 만 보이고 방문자 통로는 닫혀 있습니다.
+# 로그인 폼이 FastAPI 경로라 `ui.run_with` 보다 먼저 붙입니다.
+trial_gate = setup_trial(server)
 ui.run_with(
     server,
     title=APP_NAME,
@@ -298,7 +302,7 @@ ui.run_with(
 from app.security import AccessMiddleware, get_access_control
 
 get_access_control()
-server.add_middleware(AccessMiddleware)
+server.add_middleware(AccessMiddleware, guest_gate=trial_gate)
 
 
 def start():

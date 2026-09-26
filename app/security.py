@@ -36,6 +36,15 @@ MCP 서버 실행 명령을 바꾸고, 샌드박스로 코드를 실행하고, �
 * **리버스 프록시 뒤에 두면 안 됩니다.** 모든 접속이 프록시의 루프백 주소로 보여 전원이 주인이
   됩니다. `X-Forwarded-For` 는 믿지 않습니다.
 * 토큰 하나 = 주인 하나입니다. 토큰을 나눠 주면 모든 대화를 나눠 주는 것입니다.
+
+## 방문자 (체험 서버)
+
+`guest_gate` 를 주고 그것이 켜져 있으면, 토큰이 없는 원격 접속은 거부 대신 **방문자**가
+됩니다. 방문자는 문지기가 허락한 경로(체험 화면과 그 화면이 쓰는 NiceGUI 자원)만 지나고,
+`/` 는 체험 첫 화면으로 돌려보내며, 그 밖(주인 화면·`/api/*`·작업 공간 다운로드)은 막습니다.
+방문자가 누구인지는 여기서 가리지 않습니다 — 그건 체험 화면의 로그인(`app/trial/auth.py`)이
+합니다. 여기서는 요청마다 `scope["state"]["mado_viewer"]` 에 주인/방문자를 적어, 화면이
+주인만 볼 것을 가릴 수 있게 합니다.
 """
 
 from __future__ import annotations
@@ -54,7 +63,7 @@ from collections import deque
 from dataclasses import dataclass
 from html import escape
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Deque, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Deque, Dict, Iterable, List, Optional, Protocol, Tuple
 from urllib.parse import parse_qs, urlsplit
 
 TOKEN_ENV = "MADO_ACCESS_TOKEN"
@@ -79,6 +88,36 @@ MAX_LOGIN_BODY = 4096
 LOOPBACK_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1"})
 # 추가로 받을 Host 이름 (쉼표 구분). 서버 PC 에서 자기 LAN 이름으로 열어 루프백이 되는 경우 등.
 ALLOWED_HOSTS_ENV = "MADO_ALLOWED_HOSTS"
+
+# 요청을 보낸 쪽이 주인인지 방문자인지 (`scope["state"]` 의 키와 값).
+VIEWER_STATE_KEY = "mado_viewer"
+VIEWER_OWNER = "owner"
+VIEWER_GUEST = "guest"
+
+
+class GuestGate(Protocol):
+    """토큰 없는 원격 접속을 방문자로 받을지 정하는 문지기 (`app/trial/gate.py`)."""
+
+    home_path: str
+
+    def enabled(self) -> bool: ...
+
+    def allows(self, path: str) -> bool: ...
+
+
+def _mark_viewer(scope: Dict[str, Any], role: str) -> None:
+    state = scope.get("state")
+    if not isinstance(state, dict):
+        state = {}
+        scope["state"] = state
+    state[VIEWER_STATE_KEY] = role
+
+
+def viewer_role(scope: Any) -> str:
+    """이 요청을 보낸 쪽. 미들웨어를 거치지 않은 요청은 방문자로 봅니다 (좁은 쪽)."""
+    state = (scope or {}).get("state") if isinstance(scope, dict) else None
+    role = state.get(VIEWER_STATE_KEY) if isinstance(state, dict) else None
+    return role if role in (VIEWER_OWNER, VIEWER_GUEST) else VIEWER_GUEST
 
 
 # ---------------------------------------------------------------------------
@@ -541,9 +580,11 @@ async def _read_body(receive: Receive, limit: int) -> Optional[bytes]:
 class AccessMiddleware:
     """맨 바깥에서 모든 HTTP·웹소켓 요청을 거릅니다."""
 
-    def __init__(self, app: Callable[..., Awaitable[None]], control: Optional[AccessControl] = None):
+    def __init__(self, app: Callable[..., Awaitable[None]], control: Optional[AccessControl] = None,
+                 guest_gate: Optional[GuestGate] = None):
         self.app = app
         self._control = control
+        self.guest_gate = guest_gate
 
     @property
     def control(self) -> AccessControl:
@@ -575,6 +616,7 @@ class AccessMiddleware:
             if kind == "http" and path in (LOGIN_PATH, LOGOUT_PATH):
                 await _respond(send, 303, b"", headers=[("location", "/")])
                 return
+            _mark_viewer(scope, VIEWER_OWNER)
             await self.app(scope, receive, send)
             return
 
@@ -589,12 +631,27 @@ class AccessMiddleware:
             ])
             return
 
-        if not control.status.enabled:
-            await self._deny(scope, send, 403, control.status.reason, page=blocked_page(control.status.reason))
+        if control.status.enabled and control.cookie_valid(_cookie(headers, COOKIE_NAME)):
+            _mark_viewer(scope, VIEWER_OWNER)
+            await self.app(scope, receive, send)
             return
 
-        if control.cookie_valid(_cookie(headers, COOKIE_NAME)):
-            await self.app(scope, receive, send)
+        # 체험 서버가 켜져 있으면 토큰 없는 원격 접속은 방문자입니다. 주인 토큰이 없어도
+        # (원격 주인 접속이 꺼져 있어도) 방문자 통로는 따로 열립니다.
+        gate = self.guest_gate
+        if gate is not None and gate.enabled():
+            if gate.allows(path):
+                _mark_viewer(scope, VIEWER_GUEST)
+                await self.app(scope, receive, send)
+                return
+            if kind == "http" and scope.get("method") == "GET" and "text/html" in headers.get("accept", ""):
+                await _respond(send, 303, b"", headers=[("location", gate.home_path)])
+                return
+            await self._deny(scope, send, 403, "not available to trial visitors")
+            return
+
+        if not control.status.enabled:
+            await self._deny(scope, send, 403, control.status.reason, page=blocked_page(control.status.reason))
             return
 
         if kind == "http" and scope.get("method") == "GET" and "text/html" in headers.get("accept", ""):

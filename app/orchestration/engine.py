@@ -19,6 +19,7 @@ from app.agents.llm import (
     memory_search_tool,
     strip_reasoning_trace,
 )
+from app.agents.llm_gate import LLM_HOLDER
 from app.agents.personas import prepare_agents_for_turn
 from app.agents.pool import AgentPool, get_agent_pool
 from app.timestamps import report_completed_line, to_local
@@ -1212,14 +1213,20 @@ class OrchestratorEngine:
         취소, 예외 전부. 반납을 놓치면 그 런타임은 아무도 안 쓰는 채로 종료 때까지
         남고, 그만큼 다음 대화가 쓸 자리가 줄어듭니다.
         """
+        # 이 턴의 LLM 호출이 어느 대화의 것인지 (서버 전체 동시 요청 상한의 대기열 표시).
+        # 병렬 발언 태스크는 만들어질 때 이 값을 물려받습니다.
+        holder_token = LLM_HOLDER.set(session_id)
         pool = get_runtime_pool()
-        workspace = await self._session_workspace(session_id)
-        await pool.acquire(workspace, holder=session_id)
         try:
-            return await self._run_turn(session_id, user_prompt, workspace, on_event, control)
+            workspace = await self._session_workspace(session_id)
+            await pool.acquire(workspace, holder=session_id)
+            try:
+                return await self._run_turn(session_id, user_prompt, workspace, on_event, control)
+            finally:
+                self._tool_gates.pop(session_id, None)
+                await pool.release(session_id, workspace)
         finally:
-            self._tool_gates.pop(session_id, None)
-            await pool.release(session_id, workspace)
+            LLM_HOLDER.reset(holder_token)
 
     async def _run_turn(
         self,
