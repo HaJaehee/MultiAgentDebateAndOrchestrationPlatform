@@ -574,13 +574,13 @@ class OrchestratorEngine:
             f"> - 엔드포인트: `{exc.endpoint}`\n"
             f"> - 원인: `{exc.reason}`\n"
             f">\n"
-            f"> 이 자리에 들어갈 내용을 대신 지어내지 않았습니다. "
-            f"엔드포인트를 복구한 뒤 같은 요청을 다시 보내주세요."
+            f"> 이 자리에 들어갈 내용을 임의로 생성하지 않았습니다. "
+            f"엔드포인트를 복구하신 후 같은 요청을 다시 전달해 주십시오."
         )
         if streamed.strip():
             return (
                 f"{streamed.rstrip()}\n\n---\n\n{notice}\n>\n"
-                f"> (위 본문은 연결이 끊기기 전까지 도착한 부분입니다.)"
+                f"> (위 본문은 연결이 끊기기 전까지 수신된 내용입니다.)"
             )
         return notice
 
@@ -600,13 +600,13 @@ class OrchestratorEngine:
             f"> - 모델: `{agent.model}`\n"
             f"> - 오류: `{type(exc).__name__}: {exc}`\n"
             f">\n"
-            f"> 이 자리에 들어갈 내용을 대신 지어내지 않았습니다. "
-            f"토론은 나머지 에이전트로 계속됩니다 (자세한 원인은 서버 로그를 보세요)."
+            f"> 이 자리에 들어갈 내용을 임의로 생성하지 않았습니다. "
+            f"토론은 나머지 에이전트로 계속 진행됩니다 (자세한 원인은 서버 로그를 확인해 주십시오)."
         )
         if streamed.strip():
             return (
                 f"{streamed.rstrip()}\n\n---\n\n{notice}\n>\n"
-                f"> (위 본문은 오류가 나기 전까지 도착한 부분입니다.)"
+                f"> (위 본문은 오류가 발생하기 전까지 수신된 내용입니다.)"
             )
         return notice
 
@@ -2340,8 +2340,8 @@ class OrchestratorEngine:
         graph_id = (session_model.graph_id or "").strip()
         if not graph_id:
             raise GraphTurnError(
-                "그래프 토론에 쓸 그래프가 없습니다. 로스터의 그래프 선택에서 고르거나 "
-                "'카드 순서로 만들기' 로 만드세요."
+                "그래프 토론에 쓸 그래프가 없습니다. 에이전트 패널의 그래프 선택 메뉴에서 선택하거나 "
+                "'카드 순서로 만들기'로 생성해 주십시오."
             )
         try:
             spec = load_graph(graph_id)

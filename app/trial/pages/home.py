@@ -70,7 +70,7 @@ def build_home() -> None:
                 await history_view(visitor)
 
             with ui.column().classes("flex-grow min-w-0 gap-3 w-full"):
-                ui.label("무엇을 해 볼까요?").classes("text-xl font-semibold")
+                ui.label("원하시는 작업을 선택해 주십시오").classes("text-xl font-semibold")
                 queue_hint()
                 categories = [ALL] + sorted({t.category for t in catalog.templates.values()})
 
@@ -90,7 +90,7 @@ def build_home() -> None:
                         if state["category"] in (ALL, t.category)
                     ]
                     if not shown:
-                        empty_state("inbox", "준비된 템플릿이 없습니다", "운영자에게 문의하세요.")
+                        empty_state("inbox", "등록된 템플릿이 없습니다", "관리자에게 문의해 주십시오.")
                         return
                     with ui.grid().classes("w-full gap-3 grid-cols-1 sm:grid-cols-2"):
                         for template in shown:
@@ -114,7 +114,7 @@ def queue_hint() -> None:
     def tick() -> None:
         snap = get_llm_gate().snapshot()
         if snap["waiting"]:
-            label.set_text(f"지금 LLM 서버가 붐빕니다 — 대기 {snap['waiting']}건. 시작하면 순서대로 처리됩니다.")
+            label.set_text(f"현재 LLM 서버 요청이 많습니다 — 대기 {snap['waiting']}건. 시작하시면 순차적으로 처리됩니다.")
         else:
             label.set_text("")
 
@@ -130,7 +130,7 @@ async def history_view(visitor: Visitor) -> None:
         async with get_session_factory()() as db:
             rows: List[SessionRow] = await list_user_sessions(db, visitor.id)
         if not rows:
-            ui.label("아직 대화가 없습니다. 오른쪽에서 하나 골라 시작해 보세요.").classes(
+            ui.label("대화 기록이 없습니다. 우측 템플릿을 선택하여 토론을 시작해 주십시오.").classes(
                 "text-sm text-slate-500"
             )
             return
@@ -158,21 +158,21 @@ async def history_view(visitor: Visitor) -> None:
 
     async def confirm_delete(session_id: str, title: str) -> None:
         with ui.dialog() as dialog, ui.card().classes("bg-slate-900 text-slate-100 p-4 gap-3"):
-            ui.label("이 대화를 지울까요?").classes("font-semibold")
+            ui.label("이 대화를 삭제하시겠습니까?").classes("font-semibold")
             ui.label(title).classes("text-sm text-slate-400")
-            ui.label("지운 대화는 되돌릴 수 없습니다.").classes("text-xs text-slate-500")
+            ui.label("삭제된 대화는 복구할 수 없습니다.").classes("text-xs text-slate-500")
             with ui.row().classes("w-full justify-end gap-2"):
                 ui.button("취소", on_click=dialog.close).props("flat no-caps color=grey-4")
-                ui.button("지우기", on_click=lambda: dialog.submit(True)).props("unelevated no-caps color=red-7")
+                ui.button("삭제", on_click=lambda: dialog.submit(True)).props("unelevated no-caps color=red-7")
         if not await dialog:
             return
         if runner.is_running(session_id):
-            ui.notify("진행 중인 대화는 끝난 뒤에 지울 수 있습니다.", type="warning")
+            ui.notify("진행 중인 대화는 완료된 후에 삭제하실 수 있습니다.", type="warning")
             return
         async with get_session_factory()() as db:
             await delete_trial_session(db, visitor.id, session_id)
         runner.forget(session_id)
-        ui.notify("지웠습니다.")
+        ui.notify("대화를 삭제했습니다.")
         history.refresh()
 
     await history()
@@ -197,17 +197,17 @@ async def copies_view(visitor: Visitor) -> None:
                 with ui.column().classes("w-full gap-1"):
                     template_card(template, copy_ref(row.id), "내 템플릿")
                     with ui.row().classes("gap-1 justify-end w-full"):
-                        ui.button("고치기", icon="edit",
+                        ui.button("수정", icon="edit",
                                   on_click=lambda cid=row.id: ui.navigate.to(f"/trial/edit/{cid}")).props(
                             "flat dense no-caps size=sm color=indigo-3")
-                        ui.button("지우기", icon="delete_outline",
+                        ui.button("삭제", icon="delete_outline",
                                   on_click=lambda cid=row.id: remove(cid)).props(
                             "flat dense no-caps size=sm color=grey-6")
 
     async def remove(copy_id: str) -> None:
         async with get_session_factory()() as db:
             await delete_copy(db, visitor.id, copy_id)
-        ui.notify("내 템플릿을 지웠습니다.")
+        ui.notify("템플릿을 삭제했습니다.")
         copies.refresh()
 
     await copies()

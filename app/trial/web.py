@@ -95,19 +95,19 @@ def login_html(*, title: str, notice: str, min_pin: int, name: str = "", message
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         f"<title>{escape(title)} 로그인</title><style>{_STYLE}</style></head><body><div class=\"card\">"
         f"<h1>{escape(title)}</h1>"
-        "<p>이름과 PIN 으로 들어옵니다. 처음이면 지금 적는 PIN 으로 등록되고, "
-        "다음부터 같은 이름과 PIN 으로 내 대화를 이어 볼 수 있습니다.</p>"
+        "<p>이름과 PIN 번호로 로그인합니다. 처음 방문하시는 경우 지금 입력하신 PIN으로 자동 등록되며, "
+        "다음부터 같은 이름과 PIN으로 대화를 이어 보실 수 있습니다.</p>"
         f"<form method=\"post\" action=\"{TRIAL_LOGIN_PATH}\" autocomplete=\"off\">"
         f"<input type=\"hidden\" name=\"next\" value=\"{escape(next_path)}\">"
-        "<label for=\"name\">이름 (사번도 좋습니다)</label>"
+        "<label for=\"name\">이름 (또는 사번)</label>"
         f"<input id=\"name\" name=\"name\" maxlength=\"{MAX_NAME_LENGTH}\" value=\"{escape(name)}\" required{focus_name}>"
         f"<label for=\"pin\">PIN ({min_pin}자 이상)</label>"
         f"<input id=\"pin\" name=\"pin\" type=\"password\" maxlength=\"{MAX_PIN_LENGTH}\" "
         f"autocomplete=\"current-password\" required{focus_pin}>"
         f"{confirm_field}"
-        f"<button type=\"submit\">{'등록하고 시작' if confirm else '들어가기'}</button>{msg}</form>"
+        f"<button type=\"submit\">{'등록하고 시작' if confirm else '로그인'}</button>{msg}</form>"
         f"<div class=\"foot\">{escape(notice)}<br>"
-        f"PIN 을 잊었으면 운영자에게 초기화를 부탁하세요. · <a href=\"{OWNER_LOGIN_PATH}\">운영자 로그인</a></div>"
+        f"PIN 번호를 분실하신 경우 관리자에게 초기화를 요청해 주십시오. · <a href=\"{OWNER_LOGIN_PATH}\">관리자 로그인</a></div>"
         "</div></body></html>"
     )
 
@@ -120,8 +120,8 @@ def _page(status: int = 200, **kwargs) -> HTMLResponse:
 
 def disabled_response() -> HTMLResponse:
     return HTMLResponse(
-        "<!doctype html><meta charset=\"utf-8\"><title>체험 서버 꺼짐</title>"
-        "<p style=\"font-family:sans-serif\">이 서버에서는 체험 화면이 꺼져 있습니다.</p>",
+        "<!doctype html><meta charset=\"utf-8\"><title>체험 서버 비활성화</title>"
+        "<p style=\"font-family:sans-serif\">해당 서버에서는 체험 화면이 비활성화되어 있습니다.</p>",
         status_code=404,
     )
 
@@ -145,7 +145,7 @@ def register_trial_routes(app: FastAPI) -> None:
         ip = request.client.host if request.client else ""
         throttle = get_ip_throttle()
         if throttle.blocked(ip):
-            return _page(429, message="이 자리에서 로그인 실패가 너무 많습니다. 15분 뒤에 다시 시도하세요.")
+            return _page(429, message="로그인 실패 횟수를 초과하였습니다. 15분 후에 다시 시도해 주십시오.")
         try:
             declared = int(request.headers.get("content-length") or 0)
         except ValueError:
@@ -187,8 +187,8 @@ def register_trial_routes(app: FastAPI) -> None:
 
 def owner_only_response() -> HTMLResponse:
     return HTMLResponse(
-        "<!doctype html><meta charset=\"utf-8\"><title>운영자 전용</title>"
-        "<p style=\"font-family:sans-serif\">운영자만 볼 수 있는 화면입니다. "
-        f"<a href=\"{OWNER_LOGIN_PATH}\">운영자 로그인</a></p>",
+        "<!doctype html><meta charset=\"utf-8\"><title>관리자 전용</title>"
+        "<p style=\"font-family:sans-serif\">관리자만 접근할 수 있는 화면입니다. "
+        f"<a href=\"{OWNER_LOGIN_PATH}\">관리자 로그인</a></p>",
         status_code=403,
     )

@@ -73,11 +73,11 @@ def build_edit() -> None:
             except TemplateError:
                 template = None
 
-        page_setup("템플릿 고치기")
+        page_setup("템플릿 편집")
         header(visitor, owner=owner)
         if template is None:
             with ui.column().classes("trial-page px-4"):
-                empty_state("search_off", "내 템플릿을 찾을 수 없습니다", "지워졌거나 다른 사람의 것입니다.")
+                empty_state("search_off", "내 템플릿을 찾을 수 없습니다", "삭제되었거나 접근 권한이 없는 템플릿입니다.")
                 ui.link("처음으로", "/trial").classes("self-center text-indigo-300")
             return
 
@@ -86,8 +86,8 @@ def build_edit() -> None:
 
         with ui.column().classes("trial-page px-4 gap-4 max-w-3xl"):
             ui.link("← 처음으로", "/trial").classes("text-sm text-slate-400")
-            ui.label("내 템플릿 고치기").classes("text-2xl font-semibold")
-            ui.label("고친 내용은 나만 봅니다. 모델과 도구, 시작 양식은 원본 그대로입니다.").classes(
+            ui.label("내 템플릿 편집").classes("text-2xl font-semibold")
+            ui.label("수정한 내용은 본인에게만 적용됩니다. 모델 및 도구, 시작 양식은 원본 설정을 유지합니다.").classes(
                 "text-sm text-slate-400"
             )
 
@@ -110,7 +110,7 @@ def build_edit() -> None:
 
                 strategy_select.on_value_change(lambda _e: (show_help(), participants.refresh()))
                 show_help()
-                ui.textarea("모든 참여자에게 주는 지침 (선택)").bind_value(data, "custom_instructions").props(
+                ui.textarea("모든 참여자 공통 지침 (선택)").bind_value(data, "custom_instructions").props(
                     "outlined dark dense autogrow").classes("w-full")
 
             ui.label("참여자").classes("text-sm font-semibold text-slate-300")
@@ -130,31 +130,31 @@ def build_edit() -> None:
                                     "flat dense round size=sm color=grey-6")
                         with ui.row().classes("w-full gap-2 flex-nowrap"):
                             ui.input("이름").bind_value(p, "name").props("outlined dark dense maxlength=60").classes("w-1/3")
-                            ui.input("역할 (한 줄)").bind_value(p, "role").props(
+                            ui.input("역할 (한 줄 설명)").bind_value(p, "role").props(
                                 "outlined dark dense maxlength=120").classes("flex-grow")
-                        ui.textarea("무엇을 보고 어떻게 말하는지").bind_value(p, "system_prompt").props(
+                        ui.textarea("참여자 관점 및 발언 지침").bind_value(p, "system_prompt").props(
                             "outlined dark dense autogrow").classes("w-full")
                         if adversarial and not is_host:
-                            ui.select(STANCES, label="찬반 대결에서의 편").bind_value(
+                            ui.select(STANCES, label="찬반 대결 입장").bind_value(
                                 p, "stance", backward=lambda v: v or "neutral"
                             ).props("outlined dark dense").classes("w-48")
 
             def remove(index: int) -> None:
                 if len(data["participants"]) <= 2:
-                    ui.notify("사회자 말고 한 명은 남아 있어야 합니다.", type="warning")
+                    ui.notify("사회자 외에 최소 1명의 참여자가 필요합니다.", type="warning")
                     return
                 data["participants"].pop(index)
                 participants.refresh()
 
             def add(role_name: str) -> None:
                 if len(data["participants"]) >= MAX_PARTICIPANTS:
-                    ui.notify(f"참여자는 사회자 포함 {MAX_PARTICIPANTS}명까지입니다.", type="warning")
+                    ui.notify(f"참여자는 사회자를 포함하여 최대 {MAX_PARTICIPANTS}명까지 등록할 수 있습니다.", type="warning")
                     return
                 taken = [p["key"] for p in data["participants"]]
                 source = next((r for r in library if r.name == role_name), None)
                 if source is None:
                     source = TemplateParticipant(key="member", name="새 참여자", role="",
-                                                 system_prompt="이 토론에서 맡을 관점을 적어 주세요.")
+                                                 system_prompt="이 토론에서 담당할 관점과 지침을 입력해 주십시오.")
                 entry = source.model_dump(mode="json")
                 entry["key"] = _unique_key(source.key, taken)
                 data["participants"].append(entry)
@@ -163,10 +163,10 @@ def build_edit() -> None:
             participants()
 
             with ui.row().classes("w-full items-center gap-2"):
-                choices = ["빈 참여자"] + [r.name for r in library]
-                picker = ui.select(choices, value="빈 참여자", label="더할 참여자").props(
+                choices = ["새 참여자 (직접 입력)"] + [r.name for r in library]
+                picker = ui.select(choices, value="새 참여자 (직접 입력)", label="추가할 참여자").props(
                     "outlined dark dense").classes("min-w-[220px]")
-                ui.button("참여자 더하기", icon="person_add", on_click=lambda: add(picker.value)).props(
+                ui.button("참여자 추가", icon="person_add", on_click=lambda: add(picker.value)).props(
                     "flat no-caps color=indigo-3")
 
             async def save(go: bool = False) -> None:
@@ -179,21 +179,21 @@ def build_edit() -> None:
                 async with get_session_factory()() as db:
                     row = await get_copy(db, visitor.id, copy_id)
                     if row is None:
-                        ui.notify("이 템플릿이 지워졌습니다.", type="warning")
+                        ui.notify("해당 템플릿이 삭제되었습니다.", type="warning")
                         return
                     await save_copy(db, row, edited)
                 if go:
                     ui.navigate.to(f"/trial/start/{copy_ref(copy_id)}")
                 else:
-                    ui.notify("저장했습니다.", type="positive")
+                    ui.notify("템플릿을 저장했습니다.", type="positive")
 
             async def remove_copy() -> None:
                 with ui.dialog() as dialog, ui.card().classes("bg-slate-900 text-slate-100 p-4 gap-3"):
-                    ui.label("이 템플릿을 지울까요?").classes("font-semibold")
-                    ui.label("이 템플릿으로 한 대화는 남습니다.").classes("text-xs text-slate-500")
+                    ui.label("이 템플릿을 삭제하시겠습니까?").classes("font-semibold")
+                    ui.label("이 템플릿으로 생성된 대화 기록은 유지됩니다.").classes("text-xs text-slate-500")
                     with ui.row().classes("w-full justify-end gap-2"):
                         ui.button("취소", on_click=dialog.close).props("flat no-caps color=grey-4")
-                        ui.button("지우기", on_click=lambda: dialog.submit(True)).props("unelevated no-caps color=red-7")
+                        ui.button("삭제", on_click=lambda: dialog.submit(True)).props("unelevated no-caps color=red-7")
                 if not await dialog:
                     return
                 async with get_session_factory()() as db:
@@ -201,7 +201,7 @@ def build_edit() -> None:
                 ui.navigate.to("/trial")
 
             with ui.row().classes("w-full items-center justify-between gap-2 pt-2"):
-                ui.button("지우기", icon="delete_outline", on_click=remove_copy).props("flat no-caps color=grey-6")
+                ui.button("삭제", icon="delete_outline", on_click=remove_copy).props("flat no-caps color=grey-6")
                 with ui.row().classes("gap-2"):
                     ui.button("저장", on_click=lambda: save(False)).props("outline no-caps color=indigo-3")
                     ui.button("저장하고 시작", icon="play_arrow", on_click=lambda: save(True)).props(

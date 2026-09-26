@@ -56,7 +56,7 @@ def header(visitor: Optional[Visitor], *, owner: bool = False) -> None:
                 ui.label(cfg.title).classes("text-lg font-semibold")
         with ui.row().classes("items-center gap-3 text-sm"):
             if owner:
-                ui.link("운영자 화면", "/trial/admin").classes("text-indigo-300")
+                ui.link("관리자 화면", "/trial/admin").classes("text-indigo-300")
             if visitor is not None:
                 with ui.row().classes("items-center gap-1 text-slate-300"):
                     ui.icon("person", size="xs")
@@ -127,7 +127,7 @@ def empty_state(icon: str, title: str, body: str = "") -> None:
 def disabled_page(owner: bool) -> None:
     page_setup()
     hint = (
-        "conf.json 의 trial.enabled 를 true 로 바꾸고 앱을 다시 시작하세요."
-        if owner else "지금은 체험 화면을 쓸 수 없습니다."
+        "conf.json의 trial.enabled 설정을 true로 변경한 후 서버를 재시작해 주십시오."
+        if owner else "현재는 체험 화면을 이용하실 수 없습니다."
     )
-    empty_state("block", "체험 화면이 꺼져 있습니다", hint)
+    empty_state("block", "체험 화면이 비활성화되어 있습니다", hint)

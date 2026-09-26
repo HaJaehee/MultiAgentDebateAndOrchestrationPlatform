@@ -189,12 +189,12 @@ class TrialSessionScreen:
                 css = "trial-step-done" if index < now else "trial-step-now" if index == now else ""
                 ui.label(name).classes(f"trial-step {css}")
             tail = {
-                "done": "완료", "failed": "오류로 멈춤", "cancelled": "취소됨",
+                "done": "완료", "failed": "오류 발생", "cancelled": "취소됨",
             }.get(self.phase)
             if tail:
                 color = "text-emerald-300" if self.phase == "done" else "text-amber-300"
                 ui.label(tail).classes(f"text-xs ml-2 {color}")
-            ui.label(f"· 이번 요청의 발언 {self.speeches}개").classes("text-xs text-slate-500 ml-2")
+            ui.label(f"· 이번 요청의 발언 {self.speeches}건").classes("text-xs text-slate-500 ml-2")
 
     def tick_queue(self) -> None:
         if self.queue_label is None or self.queue_label.is_deleted:
@@ -203,9 +203,9 @@ class TrialSessionScreen:
         if position is None:
             self.queue_label.set_text("")
         elif position == 0:
-            self.queue_label.set_text("LLM 서버 순서를 기다리는 중 · 다음 차례")
+            self.queue_label.set_text("LLM 서버 응답 순서를 대기하는 중입니다 · 다음 차례")
         else:
-            self.queue_label.set_text(f"LLM 서버 순서를 기다리는 중 · 앞에 {position}건")
+            self.queue_label.set_text(f"LLM 서버 응답 순서를 대기하는 중입니다 · 대기 {position}건")
 
     # ------------------------------------------------------------ 결과
 
@@ -217,28 +217,28 @@ class TrialSessionScreen:
         running = self.runner.is_running(self.session_id)
         if not result.final:
             if running:
-                empty_state("hourglass_top", "토론이 끝나면 결과가 여기에 나옵니다",
-                            "‘토론 과정’ 탭에서 참여자들의 발언을 실시간으로 볼 수 있습니다.")
+                empty_state("hourglass_top", "토론이 완료되면 결과가 표시됩니다",
+                            "‘토론 과정’ 탭에서 참여자들의 발언을 실시간으로 확인하실 수 있습니다.")
             else:
-                empty_state("error_outline", "아직 결과가 없습니다",
-                            "토론이 결론까지 가지 못했습니다. ‘토론 과정’ 탭 아래 입력칸으로 다시 요청해 보세요.")
+                empty_state("error_outline", "생성된 결과가 없습니다",
+                            "토론이 완료되지 못했습니다. ‘토론 과정’ 탭 하단의 입력창을 통해 다시 요청해 주십시오.")
             return
 
         with ui.column().classes("trial-result w-full gap-3"):
             if running:
                 with ui.row().classes("trial-box-warn p-3 w-full items-center gap-2"):
                     ui.spinner(size="sm", color="amber")
-                    ui.label("새 요청을 토론하는 중입니다. 아래는 이전 결과입니다.").classes("text-sm text-amber-200")
+                    ui.label("새 요청에 대한 토론을 진행하는 중입니다. 아래는 이전 결과입니다.").classes("text-sm text-amber-200")
 
             with ui.row().classes("w-full items-center justify-between gap-2"):
                 meta = [local_time(result.final_at)]
                 if result.turn_seconds is not None:
-                    meta.append(f"걸린 시간 {duration(result.turn_seconds)}")
+                    meta.append(f"소요 시간: {duration(result.turn_seconds)}")
                 ui.label(" · ".join(m for m in meta if m)).classes("text-xs text-slate-500")
                 with ui.row().classes("gap-1"):
                     ui.button("복사", icon="content_copy",
                               on_click=lambda: self._copy(result.final)).props("flat dense no-caps color=grey-4")
-                    ui.button("내려받기", icon="download",
+                    ui.button("다운로드", icon="download",
                               on_click=lambda: ui.download.content(result.final.encode("utf-8"),
                                                                    _filename(self.title))).props(
                         "flat dense no-caps color=grey-4")
@@ -248,11 +248,11 @@ class TrialSessionScreen:
                 with ui.grid().classes("w-full gap-2 grid-cols-1 md:grid-cols-2"):
                     if boxes["agreed"]:
                         with ui.column().classes("trial-box-ok p-3 gap-1"):
-                            ui.label("모두 동의한 것").classes("text-xs font-semibold text-emerald-300")
+                            ui.label("합의된 사항").classes("text-xs font-semibold text-emerald-300")
                             ui.markdown(boxes["agreed"]).classes("text-sm text-emerald-100")
                     if boxes["open"]:
                         with ui.column().classes("trial-box-warn p-3 gap-1"):
-                            ui.label("의견이 갈린 것").classes("text-xs font-semibold text-amber-300")
+                            ui.label("미합의 쟁점").classes("text-xs font-semibold text-amber-300")
                             ui.markdown(boxes["open"]).classes("text-sm text-amber-100")
 
             # 산출물 뷰어는 싣지 않습니다. 엔진이 턴마다 남기는 산출물은 이 합성 발언 그 자체
@@ -269,7 +269,7 @@ class TrialSessionScreen:
         template = self.resolved.template if self.resolved else None
         with ui.card().classes("trial-card w-full p-4 gap-2"):
             ui.label("이어서 요청하기").classes("text-sm font-semibold text-slate-300")
-            ui.label("같은 참여자들이 지금까지의 토론을 기억한 채 다시 논의합니다.").classes("text-xs text-slate-500")
+            ui.label("동일한 참여자들이 이전 토론 맥락을 유지한 상태로 추가 논의를 진행합니다.").classes("text-xs text-slate-500")
             if template and template.followups:
                 with ui.row().classes("gap-2"):
                     for text in template.followups:
@@ -277,7 +277,7 @@ class TrialSessionScreen:
                             "outline dense no-caps color=indigo-3"
                         ).classes("text-xs")
             with ui.row().classes("w-full items-center gap-2 flex-nowrap"):
-                box = ui.input(placeholder="예: 결론을 세 줄로 줄여 주세요").props("outlined dark dense").classes(
+                box = ui.input(placeholder="예: 결론을 세 줄로 요약해 주십시오").props("outlined dark dense").classes(
                     "flex-grow"
                 )
 
@@ -290,12 +290,12 @@ class TrialSessionScreen:
                 box.on("keydown.enter", send_box)
                 ui.button(icon="send", on_click=send_box).props("round unelevated color=indigo-6")
             if running:
-                ui.label("지금 토론이 끝나면 보낼 수 있습니다.").classes("text-xs text-slate-500")
+                ui.label("현재 진행 중인 토론이 완료된 후에 전송하실 수 있습니다.").classes("text-xs text-slate-500")
 
     def _feedback(self, rating: int, comment: str) -> None:
         state = {"rating": rating}
         with ui.card().classes("trial-card w-full p-4 gap-2"):
-            ui.label("결과가 어땠나요?").classes("text-sm font-semibold text-slate-300")
+            ui.label("토론 결과에 만족하셨습니까?").classes("text-sm font-semibold text-slate-300")
 
             @ui.refreshable
             def thumbs() -> None:
@@ -312,22 +312,22 @@ class TrialSessionScreen:
                 thumbs.refresh()
 
             thumbs()
-            note = ui.textarea(placeholder="무엇이 좋았고 무엇이 아쉬웠는지 한 줄이면 충분합니다 (운영자가 템플릿을 고치는 데 씁니다)",
+            note = ui.textarea(placeholder="만족스러웠던 점이나 개선이 필요한 점을 자유롭게 입력해 주십시오 (관리자의 템플릿 개선에 반영됩니다).",
                                value=comment).props("outlined dark dense autogrow").classes("w-full")
 
             async def submit() -> None:
                 async with get_session_factory()() as db:
                     await save_feedback(db, self.visitor.id, self.session_id, self.trial.template_ref,
                                         state["rating"], note.value or "")
-                ui.notify("의견을 남겼습니다. 고맙습니다.", type="positive")
+                ui.notify("소중한 의견이 등록되었습니다. 감사합니다.", type="positive")
 
-            ui.button("의견 남기기", on_click=submit).props("flat dense no-caps color=indigo-3").classes("self-end")
+            ui.button("의견 제출", on_click=submit).props("flat dense no-caps color=indigo-3").classes("self-end")
 
     def _copy_offer(self) -> None:
         if self.resolved is None:
             return
         if self.resolved.is_copy:
-            ui.button("이 템플릿 고치기", icon="edit",
+            ui.button("이 템플릿 수정", icon="edit",
                       on_click=lambda: ui.navigate.to(f"/trial/edit/{self.resolved.copy.id}")).props(
                 "flat dense no-caps color=indigo-3")
             return
@@ -337,12 +337,12 @@ class TrialSessionScreen:
                 copy = await create_copy(db, self.visitor.id, self.resolved.template, self.resolved.ref)
             ui.navigate.to(f"/trial/edit/{copy.id}")
 
-        ui.button("내 템플릿으로 복사해서 고치기", icon="content_copy", on_click=make_copy).props(
+        ui.button("내 템플릿으로 복사하여 수정", icon="content_copy", on_click=make_copy).props(
             "flat dense no-caps color=indigo-3")
 
     def _copy(self, text: str) -> None:
         copy_to_clipboard(text)
-        ui.notify("결과를 복사했습니다.")
+        ui.notify("결과 내용을 클립보드에 복사했습니다.")
 
     # ------------------------------------------------------------ 사람의 입력
 
@@ -351,7 +351,7 @@ class TrialSessionScreen:
         if not prompt or self.feed is None:
             return
         if self.runner.is_running(self.session_id):
-            ui.notify("지금 토론이 끝난 뒤에 보낼 수 있습니다.", type="warning")
+            ui.notify("현재 진행 중인 토론이 완료된 후에 전송하실 수 있습니다.", type="warning")
             self.feed.set_busy(True, "토론 진행 중", "진행 중")
             return
         try:
@@ -370,13 +370,13 @@ class TrialSessionScreen:
 
     async def interject(self, text: str) -> None:
         if not self.runner.interject(self.session_id, text):
-            ui.notify("토론이 이미 끝나 전달하지 못했습니다. 다시 보내 주세요.", type="warning")
+            ui.notify("토론이 이미 종료되어 전달되지 않았습니다. 다시 전송해 주십시오.", type="warning")
             if self.feed is not None:
                 self.feed.restore_input(text)
 
     async def stop(self) -> None:
         if self.runner.request_stop(self.session_id):
-            ui.notify("정지를 요청했습니다. 진행 중인 발언을 마치고 지금까지의 토론으로 정리합니다.")
+            ui.notify("정지를 요청했습니다. 진행 중인 발언을 마친 후 지금까지의 토론 내용을 정리합니다.")
 
     async def decide(self, extra: int, request_id: str) -> None:
         self.runner.resolve_decision(self.session_id, extra, request_id)
@@ -427,8 +427,8 @@ class TrialSessionScreen:
             status = event.get("status", "")
             round_num = event.get("round", "")
             label = f"[{speaker}] 발언 중..." if speaker else {
-                "planning": "사회자가 계획을 세우는 중...",
-                "synthesizing": "사회자가 결과를 정리하는 중...",
+                "planning": "오케스트레이터가 계획을 수립하는 중입니다...",
+                "synthesizing": "최종 보고서를 합성 및 정리하는 중입니다...",
             }.get(status, "진행 중...")
             badge = f"토론 {round_num}회차" if round_num else {"planning": "계획", "synthesizing": "정리"}.get(status, "진행 중")
             feed.set_busy(True, label, badge)
@@ -457,33 +457,33 @@ class TrialSessionScreen:
                 self.total_speeches += 1
                 self.progress_view.refresh()
         elif etype == "stop_requested":
-            feed.set_busy(True, "정지 요청됨 — 진행 중인 발언을 마치고 정리합니다.", "정지 중")
+            feed.set_busy(True, "정지가 요청되었습니다 — 진행 중인 발언을 마친 후 정리합니다.", "정지 중")
             feed.set_stop_pending(True)
         elif etype in ("tool_budget_exhausted", "context_window_exhausted"):
             feed.set_decision_request({k: v for k, v in event.items() if k != "type"})
-            feed.set_busy(True, f"[{event.get('agent_name', '')}] 한도에 닿아 선택을 기다립니다.", "선택 대기")
+            feed.set_busy(True, f"[{event.get('agent_name', '')}] 한도에 도달하여 사용자의 선택을 기다리는 중입니다.", "선택 대기")
         elif etype in ("tool_budget_resolved", "context_window_resolved"):
             feed.clear_budget_request(event.get("id"))
         elif etype == "ledger_update_started":
-            feed.set_busy(True, "합의한 것과 남은 쟁점을 정리하는 중...", "정리")
+            feed.set_busy(True, "합의 사항과 잔여 쟁점을 정리하는 중입니다...", "정리")
         elif etype == "context_summarizing":
-            feed.set_busy(True, "앞선 기록을 요약으로 접는 중...", "요약")
+            feed.set_busy(True, "이전 대화 기록을 요약하는 중입니다...", "요약")
         elif etype == "mermaid_repair_started":
-            feed.set_busy(True, "다이어그램 문법을 고치는 중...", "다이어그램")
+            feed.set_busy(True, "다이어그램 문법을 수정하는 중입니다...", "다이어그램")
         elif etype == "turn_completed":
             failed = event.get("failed_agents") or []
             if failed:
                 feed.set_busy(False, f"완료 — 응답하지 못한 참여자: {', '.join(failed)}", "일부 실패")
             elif event.get("stopped_early"):
-                feed.set_busy(False, "정지 요청대로 지금까지의 토론으로 정리했습니다.", "정지됨")
+                feed.set_busy(False, "정지 요청에 따라 지금까지의 토론 내용을 종합하여 정리했습니다.", "정지됨")
             else:
                 feed.set_busy(False, "토론 완료", "완료")
         elif etype == "run_finished":
             status = event.get("status")
             if status == "failed":
                 self.phase = "failed"
-                feed.set_busy(False, f"오류로 멈췄습니다: {event.get('error') or '알 수 없는 오류'}", "오류")
-                ui.notify("토론이 오류로 멈췄습니다. 잠시 뒤 다시 요청해 보세요.", type="negative")
+                feed.set_busy(False, f"오류로 인해 중단되었습니다: {event.get('error') or '알 수 없는 오류'}", "오류")
+                ui.notify("토론이 오류로 중단되었습니다. 잠시 후 다시 요청해 주십시오.", type="negative")
             elif status == "cancelled":
                 self.phase = "cancelled"
                 feed.set_busy(False, "토론이 취소되었습니다.", "취소")
@@ -494,7 +494,7 @@ class TrialSessionScreen:
             await self.result_view.refresh()
             if status == "completed":
                 self.tabs.set_value("result")
-                ui.notify("토론이 끝났습니다. 결과를 확인하세요.", type="positive")
+                ui.notify("토론이 완료되었습니다. 결과를 확인해 주십시오.", type="positive")
 
 
 def _korean_badge(round_info: str) -> str:
@@ -531,7 +531,7 @@ def build_session() -> None:
         header(visitor, owner=owner)
         if trial is None or session is None:
             with ui.column().classes("trial-page px-4"):
-                empty_state("search_off", "대화를 찾을 수 없습니다", "지워졌거나 다른 사람의 대화입니다.")
+                empty_state("search_off", "대화를 찾을 수 없습니다", "삭제되었거나 접근 권한이 없는 대화입니다.")
                 ui.link("처음으로", "/trial").classes("self-center text-indigo-300")
             return
         screen = TrialSessionScreen(visitor, trial, session, resolved)

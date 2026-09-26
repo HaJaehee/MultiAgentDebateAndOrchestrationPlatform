@@ -524,8 +524,8 @@ def login_page(message: str = "", next_path: str = "/") -> bytes:
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         f"<title>MADO 로그인</title><style>{_PAGE_STYLE}</style></head><body><div class=\"card\">"
         "<h1>MADO 원격 접속</h1>"
-        "<p>이 서버의 주인만 원격에서 쓸 수 있습니다. 서버 PC 의 <code>.env</code> 에 있는 "
-        f"접속 토큰({TOKEN_LENGTH}자)을 입력하세요. 로그인은 7일 유지됩니다.</p>"
+        "<p>이 서버의 관리자만 원격에서 접속할 수 있습니다. 서버 PC의 <code>.env</code> 파일에 설정된 "
+        f"접속 토큰({TOKEN_LENGTH}자)을 입력해 주십시오. 로그인 상태는 7일간 유지됩니다.</p>"
         f"<form method=\"post\" action=\"{LOGIN_PATH}\" autocomplete=\"off\">"
         f"<input type=\"hidden\" name=\"next\" value=\"{escape(next_path)}\">"
         f"<input type=\"password\" name=\"token\" maxlength=\"{TOKEN_LENGTH}\" autofocus "
@@ -537,10 +537,10 @@ def login_page(message: str = "", next_path: str = "/") -> bytes:
 def blocked_page(reason: str) -> bytes:
     return (
         "<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\">"
-        f"<title>MADO 원격 접속 꺼짐</title><style>{_PAGE_STYLE}</style></head><body><div class=\"card\">"
+        f"<title>MADO 원격 접속 비활성화</title><style>{_PAGE_STYLE}</style></head><body><div class=\"card\">"
         "<h1>원격 접속이 꺼져 있습니다</h1>"
-        f"<p>{escape(reason)}. 서버 PC 에서 MADO 첫 화면을 여세요 — 외부에 열린 서버에 토큰이 없으면 "
-        "그때 새 토큰이 만들어집니다. 토큰을 직접 정했다면 오른쪽 위 열쇠 버튼으로 적용하세요.</p>"
+        f"<p>{escape(reason)}. 서버 PC에서 MADO 첫 화면을 열어 주십시오 — 외부에 공개된 서버에 토큰이 없으면 "
+        "그때 새 토큰이 생성됩니다. 토큰을 직접 설정하셨다면 우측 상단의 열쇠 아이콘으로 적용해 주십시오.</p>"
         "</div></body></html>"
     ).encode("utf-8")
 
@@ -680,7 +680,7 @@ class AccessMiddleware:
         remaining = control.locked_for(ip)
         if remaining:
             await _respond(send, 429, login_page(
-                f"로그인 실패가 많아 잠겼습니다. {int(remaining // 60) + 1}분 뒤에 다시 시도하세요."
+                f"로그인 실패 횟수를 초과하여 접속이 제한되었습니다. {int(remaining // 60) + 1}분 후에 다시 시도해 주십시오."
             ))
             return
         body = await _read_body(receive, MAX_LOGIN_BODY)
@@ -689,7 +689,7 @@ class AccessMiddleware:
         next_path = _safe_next((form.get("next") or ["/"])[0])
         if body is None or not control.check_token(token):
             control.record_failure(ip, user_agent=_headers(scope).get("user-agent", ""))
-            await _respond(send, 401, login_page("토큰이 맞지 않습니다.", next_path))
+            await _respond(send, 401, login_page("접속 토큰이 일치하지 않습니다.", next_path))
             return
         control.record_success(ip)
         cookie = (

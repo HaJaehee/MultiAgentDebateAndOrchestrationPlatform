@@ -54,18 +54,18 @@ def build_admin() -> None:
         if not is_owner(request):
             return owner_only_response()
         cfg = get_config().trial
-        page_setup("운영자")
+        page_setup("관리자")
         header(None, owner=True)
 
         with ui.column().classes("trial-page px-4 gap-4"):
             with ui.row().classes("w-full items-center justify-between"):
-                ui.label("체험 서버 운영").classes("text-2xl font-semibold")
+                ui.label("체험 서버 관리").classes("text-2xl font-semibold")
                 with ui.row().classes("gap-3 text-sm"):
-                    ui.link("주인 화면", "/").classes("text-indigo-300")
+                    ui.link("메인 화면", "/").classes("text-indigo-300")
                     ui.link("체험 첫 화면", "/trial").classes("text-indigo-300")
             if not cfg.enabled:
                 with ui.row().classes("trial-box-warn p-3 w-full"):
-                    ui.label("체험 서버가 꺼져 있습니다 (conf.json 의 trial.enabled). 방문자는 들어올 수 없습니다.").classes(
+                    ui.label("체험 서버가 비활성화되어 있습니다 (conf.json의 trial.enabled). 방문자의 접속이 차단됩니다.").classes(
                         "text-sm text-amber-200")
 
             gate_label = ui.label("").classes("text-sm text-slate-300")
@@ -96,11 +96,11 @@ def build_admin() -> None:
                 if report.templates:
                     _template_rows(report.templates)
                 else:
-                    ui.label("아직 체험 대화가 없습니다.").classes("text-sm text-slate-500")
+                    ui.label("진행된 체험 대화가 없습니다.").classes("text-sm text-slate-500")
 
                 ui.label("최근 의견").classes("text-sm font-semibold text-slate-300 mt-2")
                 if not report.feedback:
-                    ui.label("아직 남긴 의견이 없습니다.").classes("text-sm text-slate-500")
+                    ui.label("등록된 사용자 의견이 없습니다.").classes("text-sm text-slate-500")
                 for note in report.feedback:
                     mark = "좋아요" if note.rating > 0 else "아쉬워요" if note.rating < 0 else "의견"
                     with ui.column().classes("trial-card w-full p-3 gap-1"):
@@ -114,7 +114,7 @@ def build_admin() -> None:
 
             await body()
             with ui.row().classes("w-full justify-end"):
-                ui.button("새로 고침", icon="refresh", on_click=body.refresh).props("flat no-caps color=grey-4")
+                ui.button("새로고침", icon="refresh", on_click=body.refresh).props("flat no-caps color=grey-4")
 
             load = official_templates()
             ui.label("공식 템플릿 파일").classes("text-sm font-semibold text-slate-300 mt-2")
@@ -148,14 +148,14 @@ def _person_row(person: UserUsage, body) -> None:
                 async def do_unlock(uid=person.user_id) -> None:
                     async with get_session_factory()() as db:
                         await unlock_user(db, uid)
-                    ui.notify("잠금을 풀었습니다.")
+                    ui.notify("계정 잠금을 해제했습니다.")
                     body.refresh()
                 ui.button("잠금 해제", on_click=do_unlock).props("flat dense no-caps color=indigo-3")
 
             async def do_reset(uid=person.user_id, name=person.name) -> None:
                 with ui.dialog() as dialog, ui.card().classes("bg-slate-900 text-slate-100 p-4 gap-3"):
-                    ui.label(f"{name} 의 PIN 을 초기화할까요?").classes("font-semibold")
-                    ui.label("지금 로그인이 끊기고, 다음에 들어올 때 새 PIN 을 정합니다. 대화는 그대로 남습니다.").classes(
+                    ui.label(f"{name} 님의 PIN 번호를 초기화하시겠습니까?").classes("font-semibold")
+                    ui.label("현재 세션이 로그아웃되며, 다음 접속 시 새 PIN 번호를 등록하게 됩니다. 기존 대화 기록은 유지됩니다.").classes(
                         "text-xs text-slate-400")
                     with ui.row().classes("w-full justify-end gap-2"):
                         ui.button("취소", on_click=dialog.close).props("flat no-caps color=grey-4")
@@ -164,7 +164,7 @@ def _person_row(person: UserUsage, body) -> None:
                     return
                 async with get_session_factory()() as db:
                     await reset_pin(db, uid)
-                ui.notify("PIN 을 초기화했습니다.")
+                ui.notify("PIN 번호를 초기화했습니다.")
                 body.refresh()
 
             ui.button("PIN 초기화", on_click=do_reset).props("flat dense no-caps color=grey-5")

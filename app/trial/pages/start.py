@@ -56,7 +56,7 @@ def build_start() -> None:
         header(visitor, owner=owner)
         if resolved is None:
             with ui.column().classes("trial-page px-4"):
-                empty_state("search_off", "템플릿을 찾을 수 없습니다", "지워졌거나 주소가 잘못되었습니다.")
+                empty_state("search_off", "템플릿을 찾을 수 없습니다", "삭제되었거나 주소가 올바르지 않습니다.")
                 ui.link("처음으로", "/trial").classes("self-center text-indigo-300")
             return
         template = resolved.template
@@ -76,10 +76,10 @@ def build_start() -> None:
                 if template.result_hint:
                     with ui.row().classes("items-center gap-1 text-sm text-slate-300"):
                         ui.icon("task_alt", size="xs").classes("text-emerald-400")
-                        ui.label(f"결과로 받는 것: {template.result_hint}")
+                        ui.label(f"예상 산출물: {template.result_hint}")
             if resolved.problem:
                 with ui.row().classes("trial-box-warn p-3 w-full"):
-                    ui.label(f"이 템플릿은 지금 시작할 수 없습니다: {resolved.problem}").classes("text-sm text-amber-200")
+                    ui.label(f"해당 템플릿은 현재 시작할 수 없습니다: {resolved.problem}").classes("text-sm text-amber-200")
 
             # ---------------------------------------------------------- 입력 칸
             with ui.card().classes("trial-card w-full p-4 gap-3"):
@@ -109,7 +109,7 @@ def build_start() -> None:
                         for key, value in template.example.items():
                             if key in fields:
                                 fields[key].set_value(value)
-                    ui.button("예시로 채우기", icon="auto_awesome", on_click=fill_example).props(
+                    ui.button("예시 입력", icon="auto_awesome", on_click=fill_example).props(
                         "flat dense no-caps color=indigo-3"
                     ).classes("self-start")
 
@@ -130,10 +130,10 @@ def build_start() -> None:
             ).classes("w-full text-sm text-slate-300"):
                 ui.label(description).classes("text-sm text-slate-400")
                 if template.custom_instructions:
-                    ui.label("모든 참여자에게 주는 지침").classes("text-xs text-slate-500 mt-2")
+                    ui.label("모든 참여자 공통 지침").classes("text-xs text-slate-500 mt-2")
                     ui.label(template.custom_instructions).classes("text-sm text-slate-300 whitespace-pre-line")
                 if resolved.is_copy:
-                    ui.button("이 템플릿 고치기", icon="edit",
+                    ui.button("이 템플릿 수정", icon="edit",
                               on_click=lambda: ui.navigate.to(f"/trial/edit/{resolved.copy.id}")).props(
                         "flat dense no-caps color=indigo-3")
                 else:
@@ -141,7 +141,7 @@ def build_start() -> None:
                         async with get_session_factory()() as db:
                             copy = await create_copy(db, visitor.id, template, resolved.ref)
                         ui.navigate.to(f"/trial/edit/{copy.id}")
-                    ui.button("내 템플릿으로 복사해서 고치기", icon="content_copy", on_click=make_copy).props(
+                    ui.button("내 템플릿으로 복사하여 수정", icon="content_copy", on_click=make_copy).props(
                         "flat dense no-caps color=indigo-3")
 
             # ---------------------------------------------------------- 시작
@@ -193,7 +193,7 @@ def _file_loader(field: ui.element, max_bytes: int) -> None:
             ui.notify(str(exc), type="warning")
             return
         field.set_value(text)
-        ui.notify(f"{event.file.name} 의 내용을 넣었습니다.", type="positive")
+        ui.notify(f"{event.file.name} 파일의 내용을 불러왔습니다.", type="positive")
         upload.reset()
 
     # 업로드 상자 자체는 숨기고, 작은 버튼이 파일 고르기 창을 엽니다. 상자를 그대로 두면
@@ -202,7 +202,7 @@ def _file_loader(field: ui.element, max_bytes: int) -> None:
         on_upload=handle,
         auto_upload=True,
         max_file_size=max_bytes,
-        on_rejected=lambda _: ui.notify(f"파일이 너무 큽니다 (최대 {max_bytes // 1024:,}KB).", type="warning"),
+        on_rejected=lambda _: ui.notify(f"파일 용량이 초과되었습니다 (최대 {max_bytes // 1024:,}KB).", type="warning"),
     ).props("accept=.txt,.md,.markdown,.csv,.log").classes("hidden")
     ui.button("텍스트 파일에서 가져오기", icon="upload_file", on_click=lambda: upload.run_method("pickFiles")).props(
         "flat dense no-caps size=sm color=grey-5"

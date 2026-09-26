@@ -79,11 +79,11 @@ def name_key(name: str) -> str:
 
 def name_problem(name: str) -> Optional[str]:
     if not name:
-        return "이름을 적어 주세요."
+        return "이름을 입력해 주십시오."
     if len(name) > MAX_NAME_LENGTH:
-        return f"이름은 {MAX_NAME_LENGTH}자까지 적을 수 있습니다."
+        return f"이름은 최대 {MAX_NAME_LENGTH}자까지 입력하실 수 있습니다."
     if any(unicodedata.category(ch).startswith("C") for ch in name):
-        return "이름에 쓸 수 없는 문자가 들어 있습니다."
+        return "이름에 사용할 수 없는 문자가 포함되어 있습니다."
     return None
 
 
@@ -91,7 +91,7 @@ def pin_problem(pin: str, min_length: int) -> Optional[str]:
     if len(pin) < min_length:
         return f"PIN 은 {min_length}자 이상이어야 합니다."
     if len(pin) > MAX_PIN_LENGTH:
-        return f"PIN 은 {MAX_PIN_LENGTH}자까지 쓸 수 있습니다."
+        return f"PIN 은 최대 {MAX_PIN_LENGTH}자까지 입력하실 수 있습니다."
     return None
 
 
@@ -292,17 +292,17 @@ async def login_or_register(
         locked_until = _aware(user.locked_until)
         if locked_until and locked_until > now:
             minutes = int((locked_until - now).total_seconds() // 60) + 1
-            return LoginOutcome("locked", f"PIN 을 여러 번 틀려 잠겼습니다. {minutes}분 뒤에 다시 시도하세요.")
+            return LoginOutcome("locked", f"PIN 번호 입력 오류 횟수를 초과하여 잠겼습니다. {minutes}분 후에 다시 시도해 주십시오.")
 
     if setting_pin:
         problem = pin_problem(pin, min_pin_length)
         if problem:
             return LoginOutcome("invalid", problem)
         if pin_confirm is None or pin_confirm == "":
-            what = "처음 오셨네요" if user is None else "PIN 이 초기화되었습니다"
-            return LoginOutcome("confirm", f"{what}. 확인을 위해 PIN 을 한 번 더 입력하세요.")
+            what = "처음 방문하셨습니다" if user is None else "PIN 번호가 초기화되었습니다"
+            return LoginOutcome("confirm", f"{what}. 확인을 위해 PIN 번호를 한 번 더 입력해 주십시오.")
         if pin_confirm != pin:
-            return LoginOutcome("mismatch", "두 PIN 이 다릅니다. 다시 입력하세요.")
+            return LoginOutcome("mismatch", "입력하신 두 PIN 번호가 일치하지 않습니다. 다시 입력해 주십시오.")
         digest = await asyncio.to_thread(hash_pin, pin)
         if user is None:
             user = TrialUserModel(name=name, name_key=name_key(name), pin_hash=digest)
@@ -327,10 +327,10 @@ async def login_or_register(
         user.failed_count = 0
         user.locked_until = now + timedelta(seconds=PIN_LOCK_SECONDS)
         await db.commit()
-        return LoginOutcome("locked", f"PIN 을 {MAX_PIN_FAILURES}번 틀려 {PIN_LOCK_SECONDS // 60}분 동안 잠겼습니다.")
+        return LoginOutcome("locked", f"PIN 번호를 {MAX_PIN_FAILURES}회 잘못 입력하여 {PIN_LOCK_SECONDS // 60}분 동안 접속이 제한됩니다.")
     await db.commit()
     left = MAX_PIN_FAILURES - user.failed_count
-    return LoginOutcome("wrong", f"PIN 이 맞지 않습니다. {left}번 더 틀리면 잠깁니다.")
+    return LoginOutcome("wrong", f"PIN 번호가 일치하지 않습니다. {left}번 더 틀리면 접속이 제한됩니다.")
 
 
 def issue_cookie(user: TrialUserModel) -> str:
