@@ -102,7 +102,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except BaseException as exc:  # noqa: BLE001
         logger.error(
             "The default MCP runtime could not be initialized (%s: %s); starting without MCP tools. "
-            "설정 화면에서 서버를 고친 뒤 재연결하세요.",
+            "설정 화면에서 서버 설정을 수정한 후 다시 연결하십시오.",
             type(exc).__name__, exc, exc_info=True,
         )
 

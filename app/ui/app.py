@@ -126,22 +126,22 @@ def create_ui() -> None:
                 chat_feed.set_busy(
                     True,
                     f"[{event.get('agent_name', '')}] 다이어그램 {event.get('broken', 0)}개의 "
-                    f"문법 오류를 발견해 다시 그리는 중입니다 "
+                    f"문법 오류를 발견하여 다시 작성하는 중입니다 "
                     f"({event.get('attempt', 1)}/{event.get('max_attempts', 1)}회차)...",
                     "Fixing diagram",
                 )
             elif etype == "mermaid_repair_finished":
                 if event.get("resolved"):
                     ui.notify(
-                        f"다이어그램 문법 오류를 {event.get('attempts', 1)}회 만에 고쳤습니다.",
+                        f"다이어그램 문법 오류를 {event.get('attempts', 1)}회 만에 수정하였습니다.",
                         type="positive", position="bottom-right",
                     )
                 else:
                     # 고치지 못한 것을 조용히 넘기면, 사람은 아티팩트 탭에서
                     # 빈 화면을 보고 나서야 알게 됩니다.
                     ui.notify(
-                        f"다이어그램 {event.get('remaining', 0)}개는 문법 오류가 남았습니다. "
-                        f"원본을 그대로 두었으니 아티팩트 탭에서 확인하세요.",
+                        f"다이어그램 {event.get('remaining', 0)}개에 문법 오류가 남아 있습니다. "
+                        f"원본을 보존하였으니 산출물 탭에서 확인하십시오.",
                         type="warning", position="bottom-right", close_button="확인",
                     )
             elif etype == "artifacts_synthesized":
@@ -152,12 +152,12 @@ def create_ui() -> None:
                 # 같은 상태를 보아야 합니다.
                 chat_feed.set_busy(
                     True,
-                    "정지 요청됨 — 진행 중인 발언을 마친 뒤 지금까지의 토론으로 합성합니다.",
+                    "정지 요청됨 — 진행 중인 발언을 마친 후 지금까지의 토론 내용을 바탕으로 합성합니다.",
                     "Stopping",
                 )
                 chat_feed.set_stop_pending(True)
                 ui.notify(
-                    "정지를 요청했습니다. 진행 중인 발언을 마치는 대로 합성으로 넘어갑니다.",
+                    "정지를 요청하였습니다. 진행 중인 발언을 마치는 대로 최종 합성 단계로 진행합니다.",
                     type="warning",
                     position="bottom-right",
                 )
@@ -168,21 +168,21 @@ def create_ui() -> None:
                     # "다음 발언 차례에 반영" 이라고 알려 놓고 조용히 버리면 안 됩니다.
                     ui.notify(
                         "최종 합성이 이미 시작되어 이번 턴에는 반영되지 않습니다. "
-                        "기록에는 남고 다음 요청부터 반영됩니다.",
+                        "해당 내용은 기록에 보존되며 다음 요청부터 반영됩니다.",
                         type="warning",
                         position="bottom-right",
                     )
                 else:
                     ui.notify(
-                        f"개입 메시지를 전달했습니다 (대기 {pending}건). 다음 발언 차례에 반영됩니다.",
+                        f"개입 메시지를 전달하였습니다 (대기 {pending}건). 다음 발언 순서에 반영됩니다.",
                         type="info",
                         position="bottom-right",
                     )
             elif etype == "interjections_deferred":
                 count = event.get("count", 0)
                 ui.notify(
-                    f"개입 {count}건은 합성 이후에 도착해 이번 턴에 반영되지 못했습니다. "
-                    f"기록에 남겨 두었으니 다음 요청에서 이어집니다.",
+                    f"개입 메시지 {count}건이 합성 단계 이후에 도착하여 이번 턴에 반영되지 않았습니다. "
+                    f"기록에 저장되었으므로 다음 요청에서 이어집니다.",
                     type="warning",
                     position="bottom-right",
                 )
@@ -192,13 +192,13 @@ def create_ui() -> None:
                 chat_feed.set_budget_request({k: v for k, v in event.items() if k != "type"})
                 chat_feed.set_busy(
                     True,
-                    f"[{event.get('agent_name', '')}] 도구 호출 상한 {event.get('limit', 0)}회 도달 — "
-                    f"상한을 늘릴지 마무리할지 골라 주세요.",
+                    f"[{event.get('agent_name', '')}] 도구 호출 상한({event.get('limit', 0)}회)에 도달하였습니다 — "
+                    f"상한을 늘릴지 마무리할지 선택해 주십시오.",
                     "Tool limit",
                 )
                 ui.notify(
-                    f"{event.get('agent_name', '에이전트')} 가 도구 호출 상한에 도달했습니다. "
-                    f"상한을 늘리거나 지금까지의 관측으로 마무리하도록 선택하세요.",
+                    f"{event.get('agent_name', '에이전트')} 에이전트가 도구 호출 상한에 도달하였습니다. "
+                    f"상한을 늘리거나 지금까지의 결과로 마무리하도록 선택해 주십시오.",
                     type="warning",
                     position="bottom-right",
                 )
@@ -208,20 +208,20 @@ def create_ui() -> None:
                 if granted:
                     ui.notify(
                         f"도구 호출 상한을 {granted}회 늘렸습니다 (총 {event.get('limit', 0)}회). "
-                        f"토론을 이어갑니다.",
+                        f"토론을 계속 진행합니다.",
                         type="info",
                         position="bottom-right",
                     )
                 elif event.get("outcome") == "timeout":
                     ui.notify(
-                        "도구 상한 확장에 답이 없어, 지금까지의 관측만으로 마무리하도록 했습니다. "
-                        "발언과 도구 기록은 그대로 남습니다.",
+                        "도구 상한 확장에 응답이 없어, 지금까지의 관측 결과만으로 마무리합니다. "
+                        "발언 및 도구 기록은 그대로 보존됩니다.",
                         type="warning",
                         position="bottom-right",
                     )
                 else:
                     ui.notify(
-                        "도구를 더 쓰지 않고 지금까지의 관측으로 마무리합니다.",
+                        "도구를 추가로 사용하지 않고 지금까지의 관측 결과로 마무리합니다.",
                         type="info",
                         position="bottom-right",
                     )
@@ -229,13 +229,13 @@ def create_ui() -> None:
                 chat_feed.set_decision_request({k: v for k, v in event.items() if k != "type"})
                 chat_feed.set_busy(
                     True,
-                    f"[{event.get('agent_name', '')}] 컨텍스트 창 가득 참 — "
-                    f"한도를 넓힐지 생략하고 진행할지 골라 주세요.",
+                    f"[{event.get('agent_name', '')}] 컨텍스트 창 용량 초과 — "
+                    f"한도를 확장할지 이전 내용을 생략하고 진행할지 선택해 주십시오.",
                     "Context full",
                 )
                 ui.notify(
-                    f"{event.get('agent_name', '에이전트')} 의 컨텍스트 창이 가득 찼습니다. "
-                    f"한도를 넓히거나, 오래된 기록을 생략하고 진행하도록 선택하세요.",
+                    f"{event.get('agent_name', '에이전트')} 에이전트의 컨텍스트 창이 가득 찼습니다. "
+                    f"한도를 확장하거나, 이전 기록을 생략하고 진행하도록 선택해 주십시오.",
                     type="warning",
                     position="bottom-right",
                 )
@@ -244,20 +244,20 @@ def create_ui() -> None:
                 granted = event.get("granted", 0)
                 if granted:
                     ui.notify(
-                        f"컨텍스트 한도를 {granted:,} 토큰 넓혔습니다 "
-                        f"(총 {event.get('window', 0):,}). 앞선 기록이 그대로 남습니다.",
+                        f"컨텍스트 한도를 {granted:,} 토큰 확장하였습니다 "
+                        f"(총 {event.get('window', 0):,}). 이전 기록은 그대로 유지됩니다.",
                         type="info",
                         position="bottom-right",
                     )
                 elif event.get("outcome") == "timeout":
                     ui.notify(
-                        "컨텍스트 확장에 답이 없어, 오래된 기록부터 생략하며 진행합니다.",
+                        "컨텍스트 확장에 응답이 없어, 이전 기록부터 생략하여 진행합니다.",
                         type="warning",
                         position="bottom-right",
                     )
                 else:
                     ui.notify(
-                        "컨텍스트를 넓히지 않고 지금까지의 기록으로 마무리합니다.",
+                        "컨텍스트를 확장하지 않고 지금까지의 기록으로 마무리합니다.",
                         type="info",
                         position="bottom-right",
                     )
@@ -272,8 +272,8 @@ def create_ui() -> None:
                     "Approval",
                 )
                 ui.notify(
-                    f"{event.get('agent_name', '에이전트')} 가 `{event.get('tool_name', '')}` 실행 "
-                    f"승인을 기다립니다 ({event.get('risk_label', '')}).",
+                    f"{event.get('agent_name', '에이전트')} 에이전트가 `{event.get('tool_name', '')}` 실행 "
+                    f"승인을 기다리고 있습니다 ({event.get('risk_label', '')}).",
                     type="warning",
                     position="bottom-right",
                 )
@@ -285,14 +285,14 @@ def create_ui() -> None:
                     ui.notify(str(event["note"]), type="warning", position="bottom-right")
                 elif event.get("persisted"):
                     ui.notify(
-                        f"conf.json 의 tool_security.{event.get('persisted_as', 'allow')} 에 "
-                        f"저장했습니다: " + ", ".join(event["persisted"]),
+                        f"conf.json의 tool_security.{event.get('persisted_as', 'allow')}에 "
+                        f"저장하였습니다: " + ", ".join(event["persisted"]),
                         type="positive",
                         position="bottom-right",
                     )
                 elif event.get("decision") == "timeout":
                     ui.notify(
-                        f"`{event.get('tool_name', '')}` 승인에 답이 없어 실행하지 않았습니다.",
+                        f"`{event.get('tool_name', '')}` 승인에 응답이 없어 실행하지 않았습니다.",
                         type="warning",
                         position="bottom-right",
                     )
@@ -300,16 +300,16 @@ def create_ui() -> None:
                 verdict = "예" if event.get("decision") == "yes" else "아니오"
                 ui.notify(
                     f"판정 “{event.get('label', '')}”: {verdict}"
-                    + (" (응답을 읽지 못해 기본 갈래)" if event.get("fallback") else "")
+                    + (" (응답을 해석하지 못해 기본 분기로 진행)" if event.get("fallback") else "")
                     + (f" — {event.get('reason')}" if event.get("reason") else ""),
                     type="warning" if event.get("fallback") else "info",
                     position="bottom-right",
                 )
             elif etype == "graph_finished" and event.get("reason") in ("idle", "step_cap"):
                 ui.notify(
-                    "그래프가 최종 합성 노드에 닿기 전에 멈춰, 지금까지의 발언으로 합성합니다."
+                    "그래프가 최종 합성 노드에 도달하기 전에 종료되어, 지금까지의 발언 내용으로 합성합니다."
                     if event.get("reason") == "idle" else
-                    "그래프가 단계 상한에 닿아 지금까지의 발언으로 합성합니다.",
+                    "그래프가 최대 단계 상한에 도달하여 지금까지의 발언 내용으로 합성합니다.",
                     type="warning", position="bottom-right",
                 )
             elif etype == "ledger_update_started":
@@ -320,7 +320,7 @@ def create_ui() -> None:
                 roster_control.set_decision_ledger(event.get("ledger", ""))
             elif etype == "ledger_update_failed":
                 ui.notify(
-                    f"결정 장부를 갱신하지 못해 이전 장부를 유지합니다 ({event.get('reason', '')}): "
+                    f"결정 장부를 갱신하지 못하여 기존 장부를 유지합니다 ({event.get('reason', '')}): "
                     f"{event.get('error', '')}",
                     type="warning",
                     position="bottom-right",
@@ -328,20 +328,20 @@ def create_ui() -> None:
             elif etype == "context_summarizing":
                 chat_feed.set_busy(
                     True,
-                    f"[{event.get('agent_name', '')}] 컨텍스트가 차서 앞선 기록 "
-                    f"{event.get('messages', 0)}건을 요약으로 접는 중...",
+                    f"[{event.get('agent_name', '')}] 컨텍스트 용량 초과로 이전 기록 "
+                    f"{event.get('messages', 0)}건을 요약하는 중입니다...",
                     "Summarizing",
                 )
             elif etype == "context_summarized":
                 ui.notify(
-                    f"컨텍스트가 차서 앞선 기록 {event.get('folded', 0)}건을 요약으로 접었습니다 "
-                    f"(누적 {event.get('total', 0)}건). 유저 발언과 결정 장부는 원문 그대로 남습니다.",
+                    f"컨텍스트 용량 초과로 이전 기록 {event.get('folded', 0)}건을 요약 압축하였습니다 "
+                    f"(누적 {event.get('total', 0)}건). 사용자 발언과 결정 장부는 원문 그대로 유지됩니다.",
                     type="info",
                     position="bottom-right",
                 )
             elif etype == "context_summary_failed":
                 ui.notify(
-                    "앞선 기록을 요약하지 못해, 컨텍스트 한도를 넘는 오래된 기록은 생략합니다.",
+                    "이전 기록을 요약하지 못하여, 컨텍스트 한도를 초과하는 오래된 기록은 생략하고 진행합니다.",
                     type="warning",
                     position="bottom-right",
                 )
@@ -351,8 +351,8 @@ def create_ui() -> None:
                 where = "최종 합성 전사" if event.get("where") == "synthesis" else "발언 맥락"
                 ui.notify(
                     f"{where}에서 기록 {event.get('dropped', 0)}건이 컨텍스트 한도로 "
-                    f"생략됐습니다 (누적 {event.get('total_dropped', 0)}건). "
-                    f"로스터에서 해당 에이전트의 '컨텍스트 창' 을 올리면 줄일 수 있습니다.",
+                    f"생략되었습니다 (누적 {event.get('total_dropped', 0)}건). "
+                    f"로스터 설정에서 해당 에이전트의 '컨텍스트 창' 크기를 늘리시면 생략을 방지할 수 있습니다.",
                     type="warning",
                     position="bottom-right",
                 )
@@ -362,11 +362,11 @@ def create_ui() -> None:
                 # 때까지 남깁니다.
                 saved = event.get("saved_to")
                 where = (
-                    f"내용은 파일로 남겼습니다: {saved}"
-                    if saved else "파일로도 남기지 못했습니다. 콘솔 로그를 확인하세요."
+                    f"내용은 파일로 저장하였습니다: {saved}"
+                    if saved else "파일로도 저장하지 못했습니다. 콘솔 로그를 확인해 주십시오."
                 )
                 ui.notify(
-                    f"{event.get('label') or '기록'}을 DB 에 저장하지 못했습니다 "
+                    f"{event.get('label') or '기록'}을(를) DB 에 저장하지 못했습니다 "
                     f"({event.get('error', '')}). {where}",
                     type="negative",
                     position="top",
@@ -388,16 +388,16 @@ def create_ui() -> None:
                     max_rounds = event.get("max_rounds", 0)
                     chat_feed.set_busy(
                         False,
-                        f"유저 요청으로 정지 — {rounds}/{max_rounds} 라운드까지의 토론으로 합성했습니다.",
+                        f"사용자 요청으로 정지됨 — {rounds}/{max_rounds} 라운드까지의 토론 내용으로 합성하였습니다.",
                         "Stopped",
                     )
                     ui.notify(
-                        "정지 요청대로 지금까지의 토론만으로 최종 산출물을 만들었습니다.",
+                        "정지 요청에 따라 지금까지의 토론 내용만으로 최종 산출물을 생성하였습니다.",
                         type="info",
                         position="bottom-right",
                     )
                 else:
-                    chat_feed.set_busy(False, "토론 완료 및 최종 아티팩트 합성 완료", "Done")
+                    chat_feed.set_busy(False, "토론 완료 및 최종 산출물 합성 완료", "Done")
                 # 첫 턴에서 페르소나가 고정되었으므로 편집 버튼을 잠금 상태로 바꿉니다.
                 roster_control.set_personas_locked(True)
             elif etype == "run_finished":
@@ -407,8 +407,8 @@ def create_ui() -> None:
                 status = event.get("status")
                 if status == "failed":
                     error = event.get("error") or "알 수 없는 오류"
-                    chat_feed.set_busy(False, f"오류로 중단됨: {error}", "Error")
-                    ui.notify(f"토론 실행 중 오류가 발생했습니다: {error}", type="negative")
+                    chat_feed.set_busy(False, f"오류로 인하여 중단되었습니다: {error}", "Error")
+                    ui.notify(f"토론 실행 중 오류가 발생하였습니다: {error}", type="negative")
                 elif status == "cancelled":
                     chat_feed.set_busy(False, "토론이 취소되었습니다.", "Cancelled")
                 else:
@@ -529,14 +529,14 @@ def create_ui() -> None:
             roster_control.refresh_agent_cards(personas)
             if updated:
                 ui.notify(
-                    f"에이전트 {len(updated)}개의 모델·엔드포인트·도구를 conf.json 값으로 "
-                    f"갱신했습니다 ({', '.join(sorted(updated))}). 페르소나는 그대로입니다.",
+                    f"에이전트 {len(updated)}개의 모델·엔드포인트·도구 설정을 conf.json 값으로 "
+                    f"갱신하였습니다 ({', '.join(sorted(updated))}). 페르소나는 유지됩니다.",
                     type="positive", position="bottom-right", multi_line=True,
                 )
             else:
                 ui.notify(
-                    "갱신할 에이전트가 없습니다. 이 대화의 에이전트가 모두 conf.json 에서 "
-                    "사라졌습니다.",
+                    "갱신할 에이전트가 없습니다. 본 세션의 에이전트가 모두 conf.json에서 "
+                    "삭제되었습니다.",
                     type="warning", position="bottom-right", multi_line=True,
                 )
 
@@ -646,7 +646,7 @@ def create_ui() -> None:
             if not accepted:
                 chat_feed.remove_approval(request_id)
                 ui.notify(
-                    "이미 처리된 요청입니다 (시간이 지나 거부되었거나 토론이 끝났습니다).",
+                    "이미 처리된 요청입니다 (유효 시간이 만료되어 거부되었거나 토론이 종료되었습니다).",
                     type="warning",
                     position="bottom-right",
                 )
@@ -680,7 +680,7 @@ def create_ui() -> None:
             ):
                 chat_feed.clear_budget_request(request_id or None)
                 ui.notify(
-                    "이미 처리된 요청입니다 (시간이 지나 자동으로 넘어갔거나 토론이 끝났습니다).",
+                    "이미 처리된 요청입니다 (유효 시간이 만료되어 자동으로 처리되었거나 토론이 종료되었습니다).",
                     type="warning",
                     position="bottom-right",
                 )
@@ -697,7 +697,7 @@ def create_ui() -> None:
                 chat_feed.restore_input(text)
                 chat_feed.set_busy(False, "진행 중인 토론이 없습니다", "Ready")
                 ui.notify(
-                    "토론이 이미 끝나 개입을 전달하지 못했습니다. 그대로 다시 보내면 새 턴으로 진행됩니다.",
+                    "토론이 이미 종료되어 개입 메시지를 전달하지 못했습니다. 다시 전송하시면 새로운 턴으로 진행됩니다.",
                     type="warning",
                     position="bottom-right",
                 )
@@ -716,7 +716,7 @@ def create_ui() -> None:
             if produced is None:
                 chat_feed.set_busy(False, "진행 중인 토론이 없습니다", "Ready")
                 ui.notify(
-                    "이미 끝난 토론입니다. 기록은 그대로 두었습니다.",
+                    "이미 종료된 토론입니다. 기록은 그대로 유지됩니다.",
                     type="warning", position="bottom-right",
                 )
                 return
@@ -737,17 +737,17 @@ def create_ui() -> None:
             restored = chat_feed.restore_input(produced["prompt"])
             chat_feed.set_busy(
                 False,
-                "요청을 되돌렸습니다 — 고쳐서 다시 보내세요" if restored
-                else "요청을 되돌렸습니다 (입력창에 쓰던 글이 있어 그대로 두었습니다)",
+                "요청을 취소하였습니다 — 수정 후 다시 전송하십시오." if restored
+                else "요청을 취소하였습니다 (입력창에 작성 중이던 내용이 있어 유지하였습니다).",
                 "Ready",
             )
             await sidebar.refresh_list()
             ui.notify(
-                ("토론을 중단하고 그 요청을 기록에서 지웠습니다. 입력창의 글을 고쳐 다시 보내세요."
+                ("토론을 중단하고 해당 요청을 기록에서 삭제하였습니다. 입력창의 내용을 수정한 후 다시 전송하십시오."
                  if restored else
-                 "토론을 중단하고 그 요청을 기록에서 지웠습니다. 입력창에 쓰던 글이 있어 "
-                 "보냈던 글을 되돌리지 않았습니다.")
-                + (" 아직 시작 전이므로 에이전트 구성도 다시 바꿀 수 있습니다." if started_over else ""),
+                 "토론을 중단하고 해당 요청을 기록에서 삭제하였습니다. 입력창에 작성 중이던 내용이 있어 "
+                 "기존 입력 내용을 유지하였습니다.")
+                + (" 아직 시작 전이므로 에이전트 구성을 다시 변경하실 수 있습니다." if started_over else ""),
                 type="info", position="bottom-right",
             )
 
@@ -838,7 +838,7 @@ def create_ui() -> None:
 
         def _copy_about() -> None:
             copy_to_clipboard(ABOUT_LINE)
-            ui.notify("정보를 복사했습니다.", type="positive", position="bottom-right")
+            ui.notify("정보를 복사하였습니다.", type="positive", position="bottom-right")
 
         # Top Header
         with ui.header().classes("bg-slate-900 border-b border-slate-800 px-4 py-2 items-center justify-between"):

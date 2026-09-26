@@ -291,7 +291,7 @@ class SessionSidebar:
                 f"icon={'arrow_downward' if self.sort.descending else 'arrow_upward'}"
             )
         if self.sort_direction_tip is not None:
-            self.sort_direction_tip.set_text(f"정렬 방향: {label} — 눌러서 뒤집기")
+            self.sort_direction_tip.set_text(f"정렬 방향: {label} — 클릭하여 정렬 순서 전환")
 
     async def _on_sort_key_change(self, e) -> None:
         """기준을 바꾸면 그 기준의 기본 방향으로. 코드가 값을 맞춘 경우(되살리기)는 무시합니다."""
@@ -443,7 +443,7 @@ class SessionSidebar:
                                 icon="save",
                                 on_click=lambda _, sid=s.id: self._save_session_markdown(sid),
                             ).props("flat round dense size=xs color=teal-4").tooltip(
-                                "이 대화 전체를 마크다운 파일로 저장"
+                                "세션 전체 대화 내역을 마크다운 파일로 저장합니다."
                             )
 
                             continue_btn = ui.button(
@@ -455,12 +455,12 @@ class SessionSidebar:
                                 # 이어받으면 인수인계 쪽지가 반쪽짜리가 됩니다.
                                 continue_btn.disable()
                                 continue_btn.tooltip(
-                                    "토론이 진행 중입니다. 끝난 뒤에 이어받으세요"
+                                    "토론이 진행 중입니다. 토론이 종료된 후 이어받으십시오."
                                 )
                             else:
                                 continue_btn.tooltip(
-                                    "이어서 새 세션 — 작업 공간·지식 그래프·에이전트 구성과 "
-                                    "이전 결론을 물려받고 컨텍스트만 비웁니다"
+                                    "이어서 새 세션 시작 — 작업 공간, 지식 그래프, 에이전트 구성 및 "
+                                    "이전 결론을 인계받고 대화 컨텍스트를 초기화합니다."
                                 )
 
                             ui.button(
@@ -500,14 +500,14 @@ class SessionSidebar:
 
         if result["memory_carried"]:
             self._notify(
-                f"'{result['title']}' 로 이어갑니다. 작업 공간과 지식 그래프를 물려받았습니다.",
+                f"'{result['title']}' 세션으로 이어갑니다. 작업 공간과 지식 그래프를 인계받았습니다.",
                 type="positive", position="top", close_button="확인",
             )
         else:
             self._notify(
-                f"'{result['title']}' 로 이어갑니다. 작업 공간은 물려받았지만 "
-                f"지식 그래프는 옮기지 못했습니다 (이전 대화가 기록한 것이 없거나 "
-                f"memory 서버가 꺼져 있습니다).",
+                f"'{result['title']}' 세션으로 이어갑니다. 작업 공간은 인계받았으나 "
+                f"지식 그래프는 가져오지 못했습니다 (이전 대화 기록이 없거나 "
+                f"memory 서버가 비활성화되어 있습니다).",
                 type="warning", position="top", close_button="확인",
             )
 
@@ -632,7 +632,7 @@ class SessionSidebar:
         filename = safe_filename(session_data["title"], to_local(created) if created else None)
         ui.download(markdown.encode("utf-8"), filename)
         self._notify(
-            f"'{filename}' 저장을 시작했습니다 (발언 {len(messages)}건).",
+            f"'{filename}' 파일 다운로드를 시작하였습니다 (발언 {len(messages)}건).",
             type="positive", position="bottom-right",
         )
 

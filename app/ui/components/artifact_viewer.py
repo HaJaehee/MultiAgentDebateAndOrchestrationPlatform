@@ -77,7 +77,7 @@ class ArtifactViewer:
             with ui.row().classes("w-full items-center justify-between pb-2 border-b border-slate-800 flex-shrink-0"):
                 with ui.row().classes("items-center gap-2"):
                     ui.icon("inventory_2", size="sm").classes("text-indigo-400")
-                    ui.label("아티팩트와 토론 결과 뷰어").classes("text-sm font-bold tracking-wide")
+                    ui.label("산출물 및 토론 결과 뷰어").classes("text-sm font-bold tracking-wide")
                 self.count_badge = ui.badge("0 Items", color="slate-700").props("dense")
 
             # Main content area (Fills vertical space)
@@ -90,8 +90,8 @@ class ArtifactViewer:
     def _render_empty(self) -> None:
         with ui.column().classes("w-full h-full items-center justify-center py-20 text-center text-slate-500"):
             ui.icon("draw", size="xl").classes("text-slate-700 mb-2")
-            ui.label("합성된 산출물이 없습니다").classes("text-sm font-bold text-slate-400")
-            ui.label("멀티 에이전트 토론이 종료되면 최종 보고서, 다이어그램, 코드가 이곳에 렌더링됩니다.").classes("text-xs max-w-xs mt-1")
+            ui.label("생성된 산출물이 없습니다.").classes("text-sm font-bold text-slate-400")
+            ui.label("멀티 에이전트 토론이 완료되면 최종 보고서, 다이어그램, 코드 등의 산출물이 이곳에 표시됩니다.").classes("text-xs max-w-xs mt-1")
 
     def add_artifacts(self, artifacts: List[Dict[str, Any]]) -> None:
         """새 턴의 산출물을 지금 보이는 것 뒤에 붙이고, 그 턴의 보고서를 엽니다."""
@@ -162,7 +162,7 @@ class ArtifactViewer:
                                 "이미지 복사",
                                 icon="photo_library",
                                 on_click=lambda _, wid=wrapper_id: self._copy_mermaid_image(wid),
-                            ).props("flat dense size=sm color=indigo-3").tooltip("PNG 다이어그램 이미지를 클립보드에 복사 (Ctrl+V로 바로 붙여넣기)")
+                            ).props("flat dense size=sm color=indigo-3").tooltip("PNG 다이어그램 이미지를 클립보드에 복사합니다 (Ctrl+V로 붙여넣기 가능).")
                             with ui.button(icon="arrow_drop_down").props("flat dense size=sm color=indigo-3"):
                                 with ui.menu().classes("bg-slate-900 border border-slate-800 text-xs text-slate-200"):
                                     ui.menu_item("🖼️ PNG 이미지 복사", on_click=lambda _, wid=wrapper_id: self._copy_mermaid_image(wid))
@@ -174,31 +174,31 @@ class ArtifactViewer:
                             "PNG",
                             icon="image",
                             on_click=lambda _, wid=wrapper_id, t=title: self._download_mermaid_png(wid, t),
-                        ).props("flat dense size=sm color=emerald-4").tooltip("고해상도(2x) PNG 이미지로 다운로드")
+                        ).props("flat dense size=sm color=emerald-4").tooltip("고해상도(2x) PNG 이미지로 다운로드합니다.")
 
                         ui.button(
                             "SVG",
                             icon="polyline",
                             on_click=lambda _, wid=wrapper_id, t=title: self._download_mermaid_svg(wid, t),
-                        ).props("flat dense size=sm color=sky-4").tooltip("SVG 벡터 이미지로 다운로드")
+                        ).props("flat dense size=sm color=sky-4").tooltip("SVG 벡터 이미지로 다운로드합니다.")
 
                         ui.button(
                             "HTML",
                             icon="code",
                             on_click=lambda _, wid=wrapper_id, t=title, c=content: self._download_mermaid_html(wid, t, c),
-                        ).props("flat dense size=sm color=amber-4").tooltip("줌/패닝 및 소스 보기가 가능한 독립 실행형 HTML (</>) 문서 다운로드 (렌더링된 그림을 함께 담아 오프라인에서도 열립니다)")
+                        ).props("flat dense size=sm color=amber-4").tooltip("확대/축소 및 소스 보기가 가능한 독립 실행형 HTML 문서로 다운로드합니다 (오프라인에서도 열람 가능).")
 
                         ui.button(
                             "StarUML",
                             icon="schema",
                             on_click=lambda _, t=title, c=content: self._download_mermaid_staruml(t, c),
-                        ).props("flat dense size=sm color=purple-4").tooltip("StarUML 호환 프로젝트 (.mdj) 다운로드 (StarUML에서 File > Open으로 즉시 편집 가능)")
+                        ).props("flat dense size=sm color=purple-4").tooltip("StarUML 호환 프로젝트(.mdj) 파일로 다운로드합니다 (StarUML에서 즉시 편집 가능).")
 
                         ui.button(
                             "MMD",
                             icon="text_snippet",
                             on_click=lambda _, t=title, c=content: self._download_artifact(t, c, "mermaid"),
-                        ).props("flat dense size=sm color=slate-4").tooltip("Mermaid 원본 스크립트 (.mmd) 파일 다운로드")
+                        ).props("flat dense size=sm color=slate-4").tooltip("Mermaid 원본 스크립트(.mmd) 파일로 다운로드합니다.")
                 else:
                     with ui.row().classes("items-center gap-1"):
                         if art_type == "markdown" and self.on_open_workspace_files is not None:
@@ -207,7 +207,7 @@ class ArtifactViewer:
                                 icon="folder_zip",
                                 on_click=self._open_workspace_files,
                             ).props("flat dense size=sm color=sky-4").tooltip(
-                                "토론이 작업 공간에 만든 파일을 받습니다 (최근 것부터, 여러 개는 zip)"
+                                "토론 중 작업 공간에 생성된 파일을 다운로드합니다 (여러 파일은 zip으로 압축)."
                             )
                         ui.button(
                             "Copy",
@@ -235,7 +235,7 @@ class ArtifactViewer:
                     if self.on_open_workspace_files is not None:
                         # 긴 보고서를 끝까지 읽은 자리에서도 바로 받게 합니다.
                         ui.button(
-                            "이 작업 공간의 파일 다운로드",
+                            "작업 공간 파일 다운로드",
                             icon="download",
                             on_click=self._open_workspace_files,
                         ).props("outline dense no-caps size=sm color=sky-4").classes("mt-3")
@@ -267,7 +267,7 @@ class ArtifactViewer:
                 with error_box:
                     with ui.row().classes("items-center gap-1.5"):
                         ui.icon("error_outline", size="xs").classes("text-rose-400")
-                        ui.label("Mermaid 문법 오류로 다이어그램을 그리지 못했습니다.").classes(
+                        ui.label("Mermaid 문법 오류로 다이어그램을 렌더링하지 못했습니다.").classes(
                             "text-xs font-semibold text-rose-300"
                         )
                     if reason:
@@ -292,7 +292,7 @@ class ArtifactViewer:
         # `navigator.clipboard` 는 보안 컨텍스트에서만 있습니다. 이 앱은 LAN 의 다른
         # PC 에서 http 로 열리기도 하므로, 폴백이 있는 공용 헬퍼를 씁니다.
         copy_to_clipboard(text)
-        ui.notify("클립보드에 복사되었습니다!", type="positive", position="top")
+        ui.notify("클립보드에 복사되었습니다.", type="positive", position="top")
 
     def _copy_mermaid_image(self, wrapper_id: str) -> None:
         ui.run_javascript(f"window.MadoMermaid && window.MadoMermaid.copyImageToClipboard('{wrapper_id}')")
@@ -343,13 +343,13 @@ class ArtifactViewer:
         ui.download(html_str.encode("utf-8"), filename)
         if svg:
             ui.notify(
-                f"'{filename}' 다운로드가 시작되었습니다. (그림이 파일에 포함되어 오프라인에서도 열립니다)",
+                f"'{filename}' 다운로드를 시작하였습니다. (이미지가 포함되어 오프라인에서도 열람하실 수 있습니다)",
                 type="positive", position="top",
             )
         else:
             ui.notify(
-                f"'{filename}' 다운로드가 시작되었습니다. 렌더링된 그림을 가져오지 못해, "
-                f"이 파일은 열 때 인터넷으로 Mermaid 렌더러를 받아옵니다.",
+                f"'{filename}' 다운로드를 시작하였습니다. 렌더링된 이미지를 가져오지 못하여, "
+                f"해당 파일 실행 시 인터넷 연결을 통해 Mermaid 렌더러를 불러옵니다.",
                 type="warning", position="top",
             )
 
@@ -359,7 +359,7 @@ class ArtifactViewer:
         filename = f"{clean_title}.mdj"
         ui.download(mdj_json.encode("utf-8"), filename)
         ui.notify(
-            f"StarUML 호환 프로젝트 '{filename}' 다운로드가 시작되었습니다. (StarUML에서 File > Open으로 열기 가능)",
+            f"StarUML 호환 프로젝트 '{filename}' 다운로드를 시작하였습니다. (StarUML의 File > Open 메뉴로 열람 가능)",
             type="positive",
             position="top",
             close_button="확인",
@@ -372,4 +372,4 @@ class ArtifactViewer:
         filename = f"{clean_title}.{ext}"
 
         ui.download(content.encode("utf-8"), filename)
-        ui.notify(f"'{filename}' 다운로드가 시작되었습니다.", type="info", position="top")
+        ui.notify(f"'{filename}' 다운로드를 시작하였습니다.", type="info", position="top")
