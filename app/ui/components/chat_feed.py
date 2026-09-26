@@ -64,8 +64,8 @@ def clip_tool_output(text: str, limit: int = MAX_RELOADED_TOOL_OUTPUT) -> str:
 # 입력창 문구. 토론이 도는 중에는 같은 칸이 "새 요청" 이 아니라 "개입" 으로
 # 동작하므로, 무엇이 될지 문구로 먼저 알려 줍니다. props 로 넘어가는 값이라
 # 큰따옴표는 쓰지 않습니다.
-IDLE_PLACEHOLDER = "멀티 에이전트에게 토론 및 설계를 요청할 목표/질문을 입력하세요... (Shift+Enter 줄바꿈)"
-INTERJECT_PLACEHOLDER = "토론 진행 중 — 지금 보내면 다음 발언 차례에 개입으로 전달됩니다 (Shift+Enter 줄바꿈)"
+IDLE_PLACEHOLDER = "멀티 에이전트에게 토론 및 설계를 요청할 목표나 질문을 입력하십시오... (Shift+Enter 줄바꿈)"
+INTERJECT_PLACEHOLDER = "토론 진행 중 — 지금 전송하시면 다음 발언 순서에 개입 메시지로 전달됩니다 (Shift+Enter 줄바꿈)"
 
 # 입력칸에서 무엇이 '보내기' 인가.
 #
@@ -344,9 +344,9 @@ class ChatFeed:
                                       on_click=self._handle_follow)
                             .props("flat dense no-caps color=amber-4 size=sm")
                             .tooltip(
-                                "새 발언을 따라 내려가지 않는 상태입니다. 직접 스크롤을 "
-                                "움직여서라면 이 버튼이 따라가기를 되살리고, 카드를 펼쳐 "
-                                "두어서라면 그 카드를 접으면 다시 따라갑니다."
+                                "새 발언 자동 스크롤이 비활성화된 상태입니다. 스크롤을 직접 이동하셨다면 "
+                                "이 버튼을 클릭하여 자동 스크롤을 재개할 수 있으며, 카드를 펼쳐 "
+                                "두셨다면 해당 카드를 접으면 다시 자동 스크롤됩니다."
                             )
                         )
                         self.follow_button.set_visibility(False)
@@ -354,8 +354,8 @@ class ChatFeed:
                             ui.button("정지", icon="stop_circle", on_click=self._handle_stop)
                             .props("flat dense no-caps color=rose-4 size=sm")
                             .tooltip(
-                                "남은 라운드를 건너뛰고 지금까지의 토론으로 최종 산출물을 만듭니다. "
-                                "진행 중인 발언은 끝까지 받습니다."
+                                "남은 라운드를 건너뛰고 지금까지의 토론 내용을 바탕으로 최종 산출물을 생성합니다. "
+                                "진행 중인 발언은 완료될 때까지 대기합니다."
                             )
                         )
                         self.stop_button.set_visibility(False)
@@ -363,9 +363,9 @@ class ChatFeed:
                             ui.button("긴급 종료", icon="cancel", on_click=self._handle_abort)
                             .props("flat dense no-caps color=red-5 size=sm")
                             .tooltip(
-                                "요청을 잘못 보냈을 때. 진행 중인 발언을 즉시 끊고 이번 "
-                                "요청과 그에 딸린 발언을 기록에서 지운 뒤, 보낸 글을 "
-                                "입력창으로 되돌립니다."
+                                "요청을 취소할 때 사용합니다. 진행 중인 발언을 즉시 중단하고 이번 "
+                                "요청과 관련 발언을 기록에서 삭제한 후, 보낸 내용을 "
+                                "입력창으로 복원합니다."
                             )
                         )
                         self.abort_button.set_visibility(False)
@@ -395,13 +395,13 @@ class ChatFeed:
                         # 앰버 바탕에는 흰 글자가 묻힙니다. Quasar 기본값이
                         # 흰색이라 글자색을 명시해야 합니다.
                         .props("unelevated dense no-caps color=amber-7 text-color=grey-10 size=sm")
-                        .tooltip("이 발언에 한해 도구 호출 횟수를 늘려 줍니다. 토론은 그 자리에서 이어집니다.")
+                        .tooltip("해당 발언에 한하여 도구 호출 횟수 상한을 늘립니다. 토론은 즉시 계속 진행됩니다.")
                     )
                     self.budget_wrap_up_button = (
                         ui.button("지금 마무리", icon="done_all",
                                   on_click=self._handle_budget_wrap_up)
                         .props("flat dense no-caps color=amber-3 size=sm")
-                        .tooltip("더 쓰지 않고, 지금까지 얻은 것만으로 결론을 쓰게 합니다.")
+                        .tooltip("도구를 추가로 호출하지 않고 지금까지의 결과만으로 결론을 작성하도록 합니다.")
                     )
                 self.budget_bar.set_visibility(False)
 
@@ -465,16 +465,16 @@ class ChatFeed:
             with ui.dialog() as self.abort_dialog, ui.card().classes(
                 "bg-slate-900 border border-red-800 text-slate-200 max-w-md"
             ):
-                ui.label("긴급 종료하고 요청을 수정할까요?").classes(
+                ui.label("긴급 종료하고 요청을 수정하시겠습니까?").classes(
                     "text-base font-bold text-red-300"
                 )
                 ui.label(
-                    "진행 중인 발언을 즉시 끊고, 이번 요청과 지금까지 나온 발언을 "
-                    "기록에서 지웁니다. 보낸 글은 입력창으로 돌아옵니다."
+                    "진행 중인 발언을 즉시 중단하고 이번 요청과 지금까지 생성된 발언을 "
+                    "기록에서 삭제합니다. 작성하셨던 내용은 입력창으로 복원됩니다."
                 ).classes("text-xs text-slate-300")
                 ui.label(
-                    "지금까지의 토론으로 결론만 받고 싶다면 '정지' 를 쓰세요. "
-                    "이 작업은 되돌릴 수 없습니다."
+                    "지금까지의 토론 결과로 결론만 도출하시려면 '정지'를 이용하십시오. "
+                    "이 작업은 취소할 수 없습니다."
                 ).classes("text-[11px] text-slate-400")
                 with ui.row().classes("w-full justify-end gap-2 mt-2"):
                     ui.button("취소", on_click=self.abort_dialog.close).props(
@@ -516,8 +516,8 @@ class ChatFeed:
     def _render_empty_placeholder(self) -> None:
         with ui.column().classes("w-full items-center justify-center py-16 text-center text-slate-500") as self._placeholder:
             ui.icon("forum", size="xl").classes("text-slate-700 mb-2")
-            ui.label("새로운 토론을 시작해 보세요").classes("text-base font-bold text-slate-400")
-            ui.label("유저 요청을 입력하면 Master Orchestrator가 목표를 분해하고 전문가 토론을 진행합니다.").classes("text-xs max-w-md")
+            ui.label("새로운 토론을 시작해 보십시오.").classes("text-base font-bold text-slate-400")
+            ui.label("요청을 입력하시면 Master Orchestrator가 목표를 분석하고 전문가 토론을 진행합니다.").classes("text-xs max-w-md")
 
     # ------------------------------------------------------------------ 입력
 
@@ -580,9 +580,9 @@ class ChatFeed:
             ui.label("워크스페이스에 파일 업로드").classes("text-sm font-bold")
             ui.label(
                 f"저장 위치: {destination}\n"
-                f"파일 하나 최대 {format_size(MAX_UPLOAD_BYTES)}. 같은 이름이 있으면 덮어쓰지 않고 "
-                f"'이름 (2)' 로 저장합니다. 올린 파일은 입력창에 @경로로 들어가며, 내용은 대화에 "
-                f"붙지 않고 에이전트가 필요할 때 도구로 읽습니다."
+                f"파일당 최대 {format_size(MAX_UPLOAD_BYTES)}까지 가능합니다. 동일한 파일명이 존재할 경우 덮어쓰지 않고 "
+                f"'파일명 (2)' 형식으로 저장합니다. 업로드한 파일은 입력창에 @경로 형태로 추가되며, 본문 내용은 대화에 "
+                f"직접 포함되지 않고 에이전트가 필요 시 도구를 통해 읽어옵니다."
             ).classes("text-[11px] text-slate-400 leading-snug whitespace-pre-line")
 
             async def handle_upload(ev) -> None:
@@ -594,7 +594,7 @@ class ChatFeed:
                     ui.notify(f"{ev.file.name}: {exc}", type="negative", position="bottom-right")
                     return
                 self.insert_mention(rel)
-                ui.notify(f"{rel} 에 저장했습니다.", type="positive", position="bottom-right")
+                ui.notify(f"{rel}에 저장하였습니다.", type="positive", position="bottom-right")
 
             ui.upload(
                 on_upload=handle_upload,
@@ -602,7 +602,7 @@ class ChatFeed:
                 multiple=True,
                 max_file_size=MAX_UPLOAD_BYTES,
                 on_rejected=lambda _: ui.notify(
-                    f"파일이 너무 큽니다 (최대 {format_size(MAX_UPLOAD_BYTES)}).",
+                    f"파일 크기가 너무 큽니다 (최대 {format_size(MAX_UPLOAD_BYTES)}).",
                     type="warning", position="bottom-right",
                 ),
             ).props("dark flat bordered color=indigo-6").classes("w-full")
@@ -701,30 +701,30 @@ class ChatFeed:
         # 셈이고, 사람은 사라진 버튼을 찾게 됩니다.
         can_widen = step > 0
         if info.get("kind") == "context_window":
-            head = f"{who} 의 컨텍스트 창 {int(info.get('limit', 0)):,} 토큰이 가득 찼습니다."
+            head = f"{who}의 컨텍스트 창 {int(info.get('limit', 0)):,} 토큰이 모두 소진되었습니다."
             if can_widen:
-                label = f"{head} 한도를 넓힐까요, 오래된 기록을 생략하고 진행할까요?"
+                label = f"{head} 한도를 확장하시겠습니까, 아니면 이전 기록을 생략하고 진행하시겠습니까?"
                 if not info.get("headroom_known", True):
                     # 모델의 실제 한도를 조회하지 못했습니다. 넓혀도 되는지는 자기
                     # 엔드포인트를 아는 사람만 판단할 수 있으므로 그 사실을 밝힙니다.
-                    label += " (이 모델의 실제 한도는 확인하지 못했습니다)"
+                    label += " (해당 모델의 실제 한도는 확인되지 않았습니다)"
             else:
                 label = (
-                    f"{head} 이 모델의 실제 한도까지 다 써서 더 넓힐 수 없습니다 — "
-                    f"오래된 기록을 생략하며 진행하거나, 지금 마무리할 수 있습니다."
+                    f"{head} 해당 모델의 실제 한도에 도달하여 더 이상 확장할 수 없습니다 — "
+                    f"이전 기록을 생략하며 진행하거나, 지금 마무리하실 수 있습니다."
                 )
-            extend_text = f"+{step:,} 토큰 넓히기"
+            extend_text = f"+{step:,} 토큰 확장"
         else:
             head = (
-                f"{who} 가 도구 호출 상한 {info.get('limit', 0)}회를 모두 썼습니다 "
+                f"{who}의 도구 호출 상한 {info.get('limit', 0)}회를 모두 소진하였습니다 "
                 f"(도구 {info.get('tool_calls', 0)}건 실행)."
             )
             if can_widen:
-                label = f"{head} 상한을 늘릴까요, 지금까지의 관측으로 마무리할까요?"
+                label = f"{head} 상한을 늘리시겠습니까, 아니면 지금까지의 결과를 바탕으로 마무리하시겠습니까?"
             else:
                 label = (
-                    f"{head} 하드 상한까지 다 써서 더 늘릴 수 없습니다 — "
-                    f"지금까지의 관측으로 마무리합니다."
+                    f"{head} 최대 상한에 도달하여 더 이상 늘릴 수 없습니다 — "
+                    f"지금까지의 결과를 바탕으로 마무리합니다."
                 )
             extend_text = f"+{step}회 확장"
 
@@ -741,14 +741,14 @@ class ChatFeed:
                 # 발언을 여기서 접고, 후자는 생략하며 계속 돕니다.
                 self.budget_wrap_up_button.set_text("지금 마무리")
                 self.budget_wrap_up_button.tooltip(
-                    "한도를 넓히지 않고, 지금 남아 있는 기록만으로 이 발언의 결론을 "
-                    "쓰게 합니다. (답하지 않고 두면 대신 오래된 기록부터 생략하며 "
-                    "토론이 계속됩니다.)"
+                    "한도를 확장하지 않고, 현재 남아 있는 기록만으로 발언의 결론을 "
+                    "작성하도록 합니다. (응답하지 않으시면 이전 기록부터 생략하며 "
+                    "토론이 계속 진행됩니다.)"
                 )
             else:
                 self.budget_wrap_up_button.set_text("지금 마무리")
                 self.budget_wrap_up_button.tooltip(
-                    "도구를 더 쓰지 않고, 지금까지 얻은 관측만으로 결론을 쓰게 합니다."
+                    "도구를 추가로 사용하지 않고, 지금까지 수집된 결과를 바탕으로 결론을 작성하도록 합니다."
                 )
         self._paint_budget_bar(str(info.get("kind") or "tool_budget"))
         self.budget_bar.set_visibility(True)
@@ -866,14 +866,14 @@ class ChatFeed:
                 # 기억할 범위. 허용과 거부가 같은 칸을 씁니다 — 허용을 기억할 수 없는
                 # 호출(ask 규칙)이면 거부용 범위로 채워 둡니다.
                 prefill = info.get("suggestions") if can_remember else info.get("deny_suggestions")
-                hint = "기억할 범위 (한 줄에 규칙 하나) — '이 대화에서'·'항상' 버튼이 이 범위를 씁니다"
+                hint = "기억할 범위 (한 줄에 하나의 규칙) — '이 대화에서' 및 '항상' 적용 시 해당 범위를 사용합니다"
                 if info.get("tool_wide"):
-                    hint += ". `mcp(서버/도구)` 는 그 도구의 모든 호출입니다"
+                    hint += ". `mcp(서버/도구)`는 해당 도구의 모든 호출에 적용됩니다"
                 entry["scope"] = ui.textarea(
                     label=hint, value="\n".join(prefill or []),
                 ).props("outlined dense dark autogrow rows=1").classes("w-full text-xs")
                 entry["reason"] = ui.input(
-                    label="거부 사유 (선택) — 에이전트에게 그대로 전달됩니다",
+                    label="거부 사유 (선택 사항) — 에이전트에게 그대로 전달됩니다",
                 ).props("outlined dense dark").classes("w-full text-xs")
 
                 with ui.row().classes("w-full items-center gap-1 flex-wrap justify-end"):
@@ -886,15 +886,15 @@ class ChatFeed:
                             "이 대화에서 허용", icon="playlist_add_check",
                             on_click=lambda _e, rid=request_id: self._answer_approval(rid, "allow_session"),
                         ).props("flat dense no-caps color=sky-3 size=sm").tooltip(
-                            "위 범위를 이 대화에서 묻지 않고 실행합니다. 거부·묻기 규칙은 그대로 이깁니다. "
-                            "로스터의 '대화 규칙' 에서 지울 수 있습니다."
+                            "위 범위를 현재 대화에서 확인 없이 항상 실행합니다. 기존 거부 및 확인 규칙이 우선 적용됩니다. "
+                            "로스터의 '대화 규칙'에서 삭제하실 수 있습니다."
                         )
                         if local:
                             ui.button(
                                 "항상 허용", icon="bookmark_added",
                                 on_click=lambda _e, rid=request_id: self._answer_approval(rid, "allow_always"),
                             ).props("flat dense no-caps color=sky-3 size=sm").tooltip(
-                                "위 범위를 conf.json 의 tool_security.allow 에 저장합니다 (서버 PC 에서만)."
+                                "위 범위를 conf.json의 tool_security.allow에 영구 저장합니다 (서버 환경에서만 지원)."
                             )
                     ui.element("div").classes("w-3")
                     ui.button(
@@ -905,16 +905,16 @@ class ChatFeed:
                         "이 대화에서 거부", icon="playlist_remove",
                         on_click=lambda _e, rid=request_id: self._answer_approval(rid, "deny_session"),
                     ).props("flat dense no-caps color=red-4 size=sm").tooltip(
-                        "위 범위를 이 대화에서 묻지 않고 거부합니다. 다음 턴에도 이어지고, "
-                        "로스터의 '대화 규칙' 에서 지울 수 있습니다."
+                        "위 범위를 현재 대화에서 확인 없이 자동으로 거부합니다. 다음 턴에도 유지되며, "
+                        "로스터의 '대화 규칙'에서 삭제하실 수 있습니다."
                     )
                     if local:
                         ui.button(
                             "항상 거부", icon="gpp_bad",
                             on_click=lambda _e, rid=request_id: self._answer_approval(rid, "deny_always"),
                         ).props("flat dense no-caps color=red-4 size=sm").tooltip(
-                            "위 범위를 conf.json 의 tool_security.deny 에 저장합니다 (서버 PC 에서만). "
-                            "기본 거부 목록은 그대로 둡니다."
+                            "위 범위를 conf.json의 tool_security.deny에 영구 저장합니다 (서버 환경에서만 지원). "
+                            "기본 거부 목록은 그대로 유지됩니다."
                         )
 
         entry["card"] = card
@@ -1434,7 +1434,7 @@ class ChatFeed:
                     if node_badge:
                         ui.badge(node_badge, color="teal-10").props("dense text-[10px]").classes(
                             "text-teal-100"
-                        ).tooltip("그래프 토론에서 이 발언을 낸 노드")
+                        ).tooltip("그래프 토론에서 해당 발언을 생성한 노드입니다.")
                     if round_num > 0:
                         # 그래프 토론의 라운드는 단계입니다 (상태 줄의 "N단계" 와 같은 수).
                         round_word = "Step" if msg.get("graph_node_id") else "Round"
@@ -1442,7 +1442,7 @@ class ChatFeed:
                     ui.button(
                         icon="content_copy", on_click=lambda: self._copy_card(info)
                     ).props("flat dense round size=sm color=slate-4").tooltip(
-                        "이 발언을 클립보드에 복사"
+                        "해당 발언을 클립보드에 복사합니다."
                     )
                     expand_btn = ui.button(
                         icon="unfold_more", on_click=lambda: self._toggle_card(info)
@@ -1552,7 +1552,7 @@ class ChatFeed:
             ui.notify("복사할 내용이 없습니다.", type="warning", position="bottom-right")
             return
         copy_to_clipboard(text)
-        ui.notify("클립보드에 복사했습니다.", type="positive", position="bottom-right")
+        ui.notify("클립보드에 복사하였습니다.", type="positive", position="bottom-right")
 
     def _render_tool_accordion(self, tc: Dict[str, Any]) -> None:
         tool_name = tc.get("tool_name", "unknown_tool")

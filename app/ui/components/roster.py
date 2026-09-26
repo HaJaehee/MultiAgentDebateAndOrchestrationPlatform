@@ -508,17 +508,17 @@ class AgentRosterControl:
                             "그래프 편집", icon="edit",
                             on_click=lambda: ui.navigate.to(f"/graphs/{self.graph_id}"),
                         ).props("unelevated dense no-caps size=sm color=teal-8")
-                        self.graph_edit_btn.tooltip("고른 그래프를 편집 화면에서 엽니다")
+                        self.graph_edit_btn.tooltip("선택한 그래프를 편집 화면에서 엽니다.")
                         ui.button(
                             "새 그래프", icon="add", on_click=self._create_blank_graph,
                         ).props("flat dense no-caps size=sm color=teal-4").tooltip(
-                            "시작과 최종 합성만 있는 새 그래프를 만들어 편집 화면을 엽니다"
+                            "시작 및 최종 합성 노드로 구성된 새 그래프를 생성하여 편집 화면을 엽니다."
                         )
                         ui.button(
                             "현재 카드 순서로 만들기", icon="account_tree",
                             on_click=self._create_graph_from_cards,
                         ).props("flat dense no-caps size=sm color=teal-4").tooltip(
-                            "참여로 체크한 전문가를 카드 순서대로 일렬로 이은 그래프를 새로 만들어 고릅니다"
+                            "참여로 선택된 전문가 에이전트를 카드 순서대로 연결한 새 그래프를 생성하여 선택합니다."
                         )
                     self.graph_status = ui.label("").classes("text-[10px] leading-snug w-full")
                     with ui.row().classes("w-full items-center gap-2 no-wrap"):
@@ -528,7 +528,7 @@ class AgentRosterControl:
                         self.graph_size_btn = ui.button(
                             "크게 보기", icon="open_in_full", on_click=self._open_graph_dialog,
                         ).props("flat dense no-caps size=sm color=slate-4")
-                        self.graph_size_btn.tooltip("그래프와 실행 표시를 넓은 창에서 봅니다")
+                        self.graph_size_btn.tooltip("그래프와 실행 상태를 확대 창에서 확인합니다.")
                     self.graph_preview_box = ui.element("div").classes(
                         "w-full h-[220px] rounded-lg overflow-hidden border border-slate-700"
                     )
@@ -538,7 +538,7 @@ class AgentRosterControl:
                 with ui.column().classes("w-full gap-1 mt-1"):
                     ui.label("세션 전용 커스텀 지침 (선택사항):").classes("text-[11px] font-semibold text-slate-400")
                     self.custom_instr_input = ui.textarea(
-                        placeholder="이 세션에 특화된 추가 지침을 입력하세요 (예: '비동기 FastAPI 및 Pydantic v2 기준으로 작성')...",
+                        placeholder="본 세션에 적용할 추가 지침을 입력하십시오 (예: '비동기 FastAPI 및 Pydantic v2 기준으로 작성')...",
                         value=self.custom_instructions,
                         on_change=self._on_instructions_change,
                     ).props("outlined dark dense autogrow rows=2").classes("w-full text-xs")
@@ -548,10 +548,10 @@ class AgentRosterControl:
                     "w-full mt-1 bg-slate-800/40 rounded-lg border border-slate-800 text-xs"
                 ) as self.ledger_expansion:
                     ui.label(
-                        "오케스트레이터가 라운드마다, 그리고 최종 합성 뒤에 요구사항·결정·기각안·"
-                        "미해결 쟁점·담당을 정리합니다. 모든 에이전트에게 매번 이번 차례 지시 바로 "
-                        "앞에 실려, 앞선 기록이 생략돼도 남습니다. 읽기 전용이며, "
-                        "틀린 항목은 채팅으로 바로잡으면 다음 갱신에 반영됩니다."
+                        "오케스트레이터가 각 라운드 및 최종 합성 완료 후 요구사항, 결정 사항, 기각안, "
+                        "미해결 쟁점, 담당 업무를 정리합니다. 모든 에이전트의 지시문 앞에 포함되어 "
+                        "이전 기록이 생략되더라도 유지됩니다. 읽기 전용이며, "
+                        "수정이 필요한 항목은 채팅으로 전달하시면 다음 갱신 시 반영됩니다."
                     ).classes("text-[10px] text-slate-500 leading-snug px-2")
                     self.ledger_view = ui.markdown("").classes(
                         "w-full px-2 pb-2 text-[11px] text-slate-300 break-words"
@@ -670,7 +670,7 @@ class AgentRosterControl:
             if not ({"proponent", "critic"} <= stances):
                 return "한쪽 진영이 비어 대립이 성립하지 않습니다 · 우선순위 순으로 진행"
             return "제안 ↔ 비판 교차 · 중립은 맨 뒤 (카드 순서와 다를 수 있습니다)"
-        return "카드 순서 그대로 · 각자 앞 에이전트의 결론을 이어받습니다"
+        return "카드 순서 그대로 진행 · 각 에이전트가 이전 발언자의 결론을 이어받습니다"
 
     def _refresh_order_preview(self) -> None:
         """발언 순서 미리보기를 지금 설정으로 다시 그립니다."""
@@ -688,11 +688,11 @@ class AgentRosterControl:
             )
             if strategy is not None and strategy.runs_graph:
                 ui.label(
-                    "그래프가 정합니다 — 참여자·순서·병렬·반복은 아래에서 고른 그래프를 따릅니다"
+                    "그래프 설정에 따름 — 참여자, 순서, 병렬 처리, 반복은 선택된 그래프 정의를 따릅니다."
                 ).classes("text-[11px] text-slate-400")
                 return
             if strategy is None or not speakers:
-                ui.label("참여할 전문가 에이전트가 없습니다").classes(
+                ui.label("참여할 전문가 에이전트가 없습니다.").classes(
                     "text-[11px] text-amber-400"
                 )
                 return
@@ -793,7 +793,7 @@ class AgentRosterControl:
                         if reorderable:
                             ui.icon("drag_indicator", size="14px").classes(
                                 "text-slate-600 flex-shrink-0"
-                            ).tooltip("끌어서 발언 순서를 바꿉니다")
+                            ).tooltip("드래그하여 발언 순서를 변경합니다.")
                         ui.avatar(agent.avatar, color=agent.color, text_color="white", size="22px").classes(
                             "flex-shrink-0"
                         )
@@ -816,15 +816,15 @@ class AgentRosterControl:
                                 ui.badge(
                                     STANCE_LABELS[agent.debate_stance],
                                     color=STANCE_COLORS[agent.debate_stance],
-                                ).props("dense text-[8px]").classes("flex-shrink-0").tooltip(
+                                    ).props("dense text-[8px]").classes("flex-shrink-0").tooltip(
                                     "디베이트 전략에서의 진영"
                                 )
                             if self.personas_locked and self.agent_pool.get(agent.key) is None:
                                 ui.badge("이 대화 전용", color="amber-8").props(
                                     "dense text-[8px]"
                                 ).classes("flex-shrink-0").tooltip(
-                                    "conf.json 에서는 지워졌지만, 이 대화는 토론을 시작할 때 "
-                                    "굳은 구성으로 계속 씁니다"
+                                    "conf.json에서는 삭제되었으나, 본 세션은 시작 시점의 "
+                                    "구성을 계속 유지합니다."
                                 )
                         ui.label(display_role).classes("text-[9px] text-slate-400 truncate w-full")
 
@@ -840,12 +840,12 @@ class AgentRosterControl:
                             # 그래프 토론의 참여자는 그래프가 정합니다. 여기서 끄고 켜도 반영되지
                             # 않으므로 손잡이를 잠그고 그래프를 따라 보여 줍니다.
                             cb.disable()
-                            cb.tooltip("그래프 토론은 그래프에 놓인 에이전트가 참여합니다 — 그래프 편집에서 바꾸세요")
+                            cb.tooltip("그래프 토론은 그래프에 배치된 에이전트가 참여합니다 — 그래프 편집 화면에서 변경하십시오.")
                         elif self.personas_locked:
                             cb.disable()
-                            cb.tooltip("이 대화는 이미 토론이 시작되어 에이전트가 고정되었습니다")
+                            cb.tooltip("본 세션은 이미 토론이 시작되어 에이전트 구성이 고정되었습니다.")
                         else:
-                            cb.tooltip("이 대화의 토론에 참여시킬지 (conf.json 은 그대로)")
+                            cb.tooltip("본 세션의 토론 참여 여부를 설정합니다 (conf.json 설정은 유지됩니다).")
                         # 진영·끄기·삭제는 conf.json 을 고치는 조작이라, 이 대화에만
                         # 걸리는 위의 참여 체크박스와 나란히 두면 반드시 헷갈립니다.
                         # 한 겹 안에 둡니다.
@@ -875,7 +875,7 @@ class AgentRosterControl:
                                     )
                                 ui.separator().classes("bg-slate-700")
                                 ui.menu_item(
-                                    "비활성화 (설정은 남김)",
+                                    "비활성화 (설정 유지)",
                                     on_click=lambda k=agent.key: self._on_agent_disable(k),
                                 ).classes("text-xs")
                                 ui.menu_item(
@@ -913,7 +913,7 @@ class AgentRosterControl:
                     tools_button.disable()
                     tools_button.tooltip(tools_reason)
                 else:
-                    tools_button.tooltip("이 에이전트가 호출할 수 있는 MCP 서버 고르기")
+                    tools_button.tooltip("해당 에이전트가 호출할 수 있는 MCP 서버를 선택합니다.")
 
             ui.tooltip(
                 f"model: {agent.model}\r\n"
@@ -927,7 +927,7 @@ class AgentRosterControl:
 
     def _open_persona_editor(self) -> None:
         if not self.session_id:
-            ui.notify("먼저 세션을 선택하거나 새로 만드세요.", type="warning", position="bottom-right")
+            ui.notify("먼저 세션을 선택하거나 새로 생성하십시오.", type="warning", position="bottom-right")
             return
         ui.navigate.to(f"/personas/{self.session_id}")
 
@@ -941,11 +941,11 @@ class AgentRosterControl:
             if self.personas_locked:
                 self.persona_button.set_text("페르소나 보기")
                 self.persona_button.props("icon=lock")
-                tip = "토론이 시작되어 고정되었습니다. 값은 확인할 수 있습니다."
+                tip = "토론이 시작되어 고정되었습니다. 설정값 열람만 가능합니다."
             else:
                 self.persona_button.set_text("페르소나 편집")
                 self.persona_button.props("icon=badge")
-                tip = "첫 메시지를 보내기 전까지 이름·역할·시스템 프롬프트를 수정할 수 있습니다"
+                tip = "첫 메시지를 전송하기 전까지 이름, 역할, 시스템 프롬프트를 수정할 수 있습니다."
             if self.persona_tooltip is not None and not self.persona_tooltip.is_deleted:
                 self.persona_tooltip.set_text(tip)
 
@@ -1012,8 +1012,8 @@ class AgentRosterControl:
                     tip = f"{name}: conf.json 에서 enabled = false"
                 elif info is None:
                     icon, icon_cls, color, detail = "help_outline", "text-slate-500", "grey-8", "미기동"
-                    tip = (f"{name}: 이 대화의 작업 공간에는 아직 서버가 뜨지 않았습니다.\r\n"
-                           f"첫 토론을 시작하면 그 폴더의 서버 묶음이 기동됩니다 (수 초).")
+                    tip = (f"{name}: 본 세션의 작업 공간에는 아직 서버가 기동되지 않았습니다.\r\n"
+                           f"첫 토론을 시작하면 해당 폴더의 서버가 기동됩니다.")
                 elif info["connected"]:
                     connected_count += 1
                     icon, icon_cls, color = "check_circle", "text-emerald-400", "green-8"
@@ -1024,14 +1024,14 @@ class AgentRosterControl:
                            f"등록된 도구: {info['tool_count']}개")
                 elif info["available"]:
                     icon, icon_cls, color, detail = "sync_problem", "text-amber-400", "amber-9", "연결 끊김"
-                    tip = f"{name}: 세션이 끊겼습니다. 다음 도구 호출 시 자동 재연결을 시도합니다."
+                    tip = f"{name}: 연결이 끊어졌습니다. 다음 도구 호출 시 자동으로 재연결을 시도합니다."
                 else:
                     icon, icon_cls, color, detail = "error", "text-rose-400", "red-9", "연결 실패"
                     where = "url" if info.get("remote") else "command"
                     tip = (f"{name}: 기동 실패 ({info.get('transport', 'stdio')})\r\n"
                            f"{where}: {info.get('endpoint') or info['command']}\r\n"
                            f"{info.get('error') or '원인을 확인할 수 없습니다'}\r\n"
-                           f"에이전트는 이 서버의 도구 없이 토론을 진행합니다.")
+                           f"에이전트는 해당 서버의 도구 없이 토론을 진행합니다.")
 
                 with ui.element("div").classes(
                     "flex items-center gap-1 pl-2 pr-1 py-1 rounded-md bg-slate-800/70 border border-slate-700"
@@ -1057,7 +1057,7 @@ class AgentRosterControl:
                         toggle.tooltip(self.mcp_lock_reason)
                         remove.tooltip(self.mcp_lock_reason)
                     else:
-                        remove.tooltip(f"'{name}' 서버를 conf.json 에서 삭제")
+                        remove.tooltip(f"'{name}' 서버를 conf.json에서 삭제합니다.")
 
         enabled_total = len([c for c in configured.values() if c.enabled])
         if self.mcp_badge:
@@ -1085,8 +1085,8 @@ class AgentRosterControl:
             return ""
         return (
             f"토론이 진행 중인 대화가 {len(running)}개 있습니다. MCP 서버 구성은 "
-            f"conf.json 하나로 모든 작업 공간의 서버를 정하므로, 모든 라운드가 "
-            f"끝나거나 정지되어 최종 아티팩트가 나온 뒤에 바꿀 수 있습니다."
+            f"conf.json 파일로 전체 작업 공간을 일괄 설정하므로, 모든 토론이 "
+            f"종료되거나 정지되어 최종 산출물이 생성된 후에 변경할 수 있습니다."
         )
 
     def _sync_mcp_lock(self) -> None:
@@ -1186,9 +1186,9 @@ class AgentRosterControl:
             return self.mcp_lock_reason
         if self.personas_locked:
             return (
-                "이 대화는 이미 토론이 시작되어 에이전트 구성이 고정되었습니다. "
-                "에이전트 추가·삭제, 진영, 발언 순서, 도구를 바꾸려면 새 대화를 "
-                "시작하세요."
+                "본 세션은 이미 토론이 시작되어 에이전트 구성이 고정되었습니다. "
+                "에이전트 추가·삭제, 진영, 발언 순서, 도구를 변경하시려면 새 세션을 "
+                "시작하십시오."
             )
         return ""
 
@@ -1212,7 +1212,7 @@ class AgentRosterControl:
         if self.add_agent_tooltip is not None and not self.add_agent_tooltip.is_deleted:
             self.add_agent_tooltip.set_text(
                 reason
-                or "conf.json 에 새 에이전트를 추가합니다 (.env 와 llm 의 기본값이 미리 채워집니다)"
+                or "conf.json에 새 에이전트를 추가합니다 (.env 및 llm의 기본값이 미리 적용됩니다)."
             )
 
         # 설정 갱신은 잠긴 대화에서만 뜻이 있습니다. 아직 시작하지 않은 대화는
@@ -1286,8 +1286,8 @@ class AgentRosterControl:
                         enable_btn.tooltip(reason)
                         delete_btn.tooltip(reason)
                     else:
-                        enable_btn.tooltip("이 에이전트를 다시 켭니다")
-                        delete_btn.tooltip("conf.json 에서 이 에이전트를 삭제합니다")
+                        enable_btn.tooltip("해당 에이전트를 다시 활성화합니다.")
+                        delete_btn.tooltip("conf.json에서 해당 에이전트를 삭제합니다.")
 
     async def _on_resync_agent_configs(self) -> None:
         """잠긴 대화가 굳혀 둔 구성을 지금 conf.json 값으로 다시 맞춥니다.
@@ -1351,7 +1351,7 @@ class AgentRosterControl:
 
         await self._apply_agent_change(
             lambda: set_agent_debate_order_in_conf_file(keys, self._conf_path()),
-            "발언 순서를 저장했습니다: "
+            "발언 순서를 저장하였습니다: "
             + " → ".join(
                 a.name for a in self._roster_agents() if a.key != ORCHESTRATOR_KEY
             ),
@@ -1365,7 +1365,7 @@ class AgentRosterControl:
         display = agent.name if agent is not None else agent_key
         await self._apply_agent_change(
             lambda: set_agent_debate_stance_in_conf_file(agent_key, stance, self._conf_path()),
-            f"'{display}' 를 {STANCE_LABELS[stance]} 으로 바꿨습니다.",
+            f"'{display}' 에이전트의 진영을 {STANCE_LABELS[stance]}(으)로 변경하였습니다.",
         )
 
     async def _apply_agent_change(self, write, done_message: str) -> None:
@@ -1388,7 +1388,7 @@ class AgentRosterControl:
             return
         await self._apply_agent_change(
             lambda: set_agent_enabled_in_conf_file(agent_key, False, self._conf_path()),
-            f"'{agent_key}' 에이전트를 껐습니다. '꺼둔 에이전트' 에서 다시 켤 수 있습니다.",
+            f"'{agent_key}' 에이전트를 비활성화하였습니다. '비활성 에이전트' 목록에서 다시 활성화할 수 있습니다.",
         )
 
     async def _on_agent_enable(self, agent_key: str) -> None:
@@ -1396,7 +1396,7 @@ class AgentRosterControl:
             return
         await self._apply_agent_change(
             lambda: set_agent_enabled_in_conf_file(agent_key, True, self._conf_path()),
-            f"'{agent_key}' 에이전트를 다시 켰습니다.",
+            f"'{agent_key}' 에이전트를 다시 활성화하였습니다.",
         )
 
     def _open_agent_delete_dialog(self, agent_key: str) -> None:
@@ -1417,26 +1417,26 @@ class AgentRosterControl:
         ):
             ui.label("에이전트 삭제").classes("text-lg font-bold text-red-400 mb-1")
             ui.label(
-                f"conf.json 에서 agents.{agent_key} 을 지웁니다. 모델·프롬프트 설정이 "
-                f"함께 사라지며 되돌릴 수 없습니다."
+                f"conf.json에서 agents.{agent_key} 설정을 삭제합니다. 모델 및 프롬프트 설정이 "
+                f"함께 삭제되며 복구할 수 없습니다."
             ).classes("text-xs text-slate-300 leading-snug")
             # 예전에는 여기서 "이어서 진행하면 더 이상 발언하지 않습니다" 를 경고해야
             # 했습니다. 이제는 대화가 첫 발언 때 구성을 통째로 굳히므로 그렇지 않습니다.
             ui.label(
-                "이미 토론이 시작된 대화는 영향을 받지 않습니다. 그 대화들은 첫 발언 때 "
-                "이 에이전트의 구성(모델·엔드포인트·키·도구·프롬프트)을 통째로 저장해 "
-                "두었고, 이어서 진행해도 그 구성 그대로 발언합니다."
+                "이미 토론이 시작된 세션은 영향을 받지 않습니다. 해당 세션들은 시작 시점의 "
+                "에이전트 구성(모델·엔드포인트·키·도구·프롬프트)이 저장되어 "
+                "있으므로 기존 설정 그대로 토론을 진행합니다."
             ).classes("text-[11px] text-slate-400 mt-2 leading-snug")
             ui.label(
-                "영향을 받는 것은 아직 시작하지 않은 대화와 앞으로 만드는 대화입니다. "
-                "설정을 남겨 두고 참여만 막으려면 대신 '비활성화' 를 쓰세요."
+                "아직 시작하지 않은 세션과 향후 생성할 세션에 변경 사항이 적용됩니다. "
+                "설정을 보존하면서 참여만 제외하시려면 '비활성화'를 선택하십시오."
             ).classes("text-[10px] text-slate-500 mt-2 leading-snug")
 
             async def do_delete() -> None:
                 dialog.close()
                 await self._apply_agent_change(
                     lambda: remove_agent_from_conf_file(agent_key, self._conf_path()),
-                    f"'{display}' 에이전트를 삭제했습니다.",
+                    f"'{display}' 에이전트를 삭제하였습니다.",
                 )
 
             async def do_disable() -> None:
@@ -1497,8 +1497,8 @@ class AgentRosterControl:
         ):
             ui.label("에이전트 추가").classes("text-lg font-bold")
             ui.label(
-                "conf.json 에 저장되어 앞으로 만드는 모든 대화에서 쓰입니다. "
-                "이미 토론이 시작된 대화는 그때 고정된 구성을 그대로 씁니다."
+                "conf.json에 저장되어 향후 생성되는 모든 세션에 적용됩니다. "
+                "이미 토론이 시작된 세션은 시작 시점의 구성을 그대로 유지합니다."
             ).classes("text-[11px] text-amber-400 mb-1 leading-snug")
 
             with ui.column().classes("w-full gap-2 max-h-[62vh] overflow-y-auto pr-1"):
@@ -1506,7 +1506,7 @@ class AgentRosterControl:
                     key_in = ui.input("에이전트 키", placeholder="data_analyst").props(
                         "outlined dense dark"
                     ).classes("w-44 text-xs")
-                    key_in.tooltip("conf.json 의 agents.<키>. 영문/숫자/밑줄/하이픈만 쓸 수 있습니다")
+                    key_in.tooltip("conf.json의 agents.<키>. 영문/숫자/밑줄/하이픈만 사용할 수 있습니다.")
                     name_in = ui.input("이름", placeholder="Data Analyst").props(
                         "outlined dense dark"
                     ).classes("flex-grow text-xs")
@@ -1523,7 +1523,7 @@ class AgentRosterControl:
                         "다른 전략에서는 쓰이지 않습니다"
                     )
                 ui.label(
-                    "발언 순서는 목록의 맨 뒤에 붙습니다. 추가한 뒤 카드를 끌어서 바꾸세요."
+                    "발언 순서는 목록 맨 뒤에 추가됩니다. 추가 후 카드를 드래그하여 순서를 변경하십시오."
                 ).classes("text-[10px] text-slate-500 -mt-1 leading-snug")
 
                 ui.label("카드 색 & 아이콘").classes(
@@ -1540,14 +1540,14 @@ class AgentRosterControl:
                 )
                 prompt_in = ui.textarea(
                     placeholder=(
-                        "이 에이전트가 토론에서 맡을 관점과 책임, 지켜야 할 원칙을 적으세요.\r\n"
-                        "예: 당신은 데이터 분석가입니다. 주장에 근거가 되는 지표를 요구하고, "
+                        "해당 에이전트가 토론에서 담당할 관점과 역할, 준수해야 할 원칙을 입력하십시오.\r\n"
+                        "예: 당신은 데이터 분석가입니다. 주장의 근거가 되는 지표를 요구하고, "
                         "표본과 측정 방식의 한계를 지적합니다."
                     ),
                 ).props("outlined dense dark rows=5").classes("w-full text-xs")
                 ui.label(
-                    "페르소나는 대화별로 다시 고칠 수 있습니다 (로스터의 '페르소나 편집'). "
-                    "여기 적은 값은 그 기본값이 됩니다."
+                    "페르소나는 세션별로 개별 수정할 수 있습니다 (로스터의 '페르소나 편집'). "
+                    "여기서 입력한 값은 기본값으로 적용됩니다."
                 ).classes("text-[10px] text-slate-500 -mt-1 leading-snug")
 
                 with ui.expansion("LLM 설정", icon="smart_toy", value=False).classes(
@@ -1626,15 +1626,15 @@ class AgentRosterControl:
                 role = (role_in.value or "").strip()
 
                 if not key or not name or not role:
-                    ui.notify("키·이름·역할은 반드시 입력해야 합니다.",
+                    ui.notify("키, 이름, 역할은 필수 입력 항목입니다.",
                               type="warning", position="bottom-right")
                     return
                 if not BARE_KEY_PATTERN.fullmatch(key):
-                    ui.notify("키는 영문/숫자/밑줄/하이픈만 쓰고 숫자나 하이픈으로 "
-                              "시작하지 마세요.", type="warning", position="bottom-right")
+                    ui.notify("키는 영문, 숫자, 밑줄, 하이픈만 사용할 수 있으며, "
+                              "숫자나 하이픈으로 시작할 수 없습니다.", type="warning", position="bottom-right")
                     return
                 if key in existing_keys:
-                    ui.notify(f"'{key}' 에이전트가 이미 있습니다. 다른 키를 쓰세요.",
+                    ui.notify(f"'{key}' 키를 가진 에이전트가 이미 존재합니다. 다른 키를 입력해 주십시오.",
                               type="warning", position="bottom-right")
                     return
 
@@ -1687,7 +1687,7 @@ class AgentRosterControl:
                         icon=appearance.icon,
                         config_path=self._conf_path(),
                     ),
-                    f"'{name}' 에이전트를 추가했습니다."
+                    f"'{name}' 에이전트를 추가하였습니다."
                     + (f" (도구 {len(chosen)}개)" if chosen else " (도구 없음)"),
                 )
 
@@ -1765,7 +1765,7 @@ class AgentRosterControl:
             return
         await self._apply_conf_change(
             lambda: set_mcp_server_enabled_in_conf_file(server_name, enabled, self._conf_path()),
-            f"'{server_name}' 서버를 {'켰습니다' if enabled else '껐습니다'}.",
+            f"'{server_name}' 서버를 {'활성화하였습니다' if enabled else '비활성화하였습니다'}.",
         )
 
     def _open_mcp_add_dialog(self) -> None:
@@ -1777,8 +1777,8 @@ class AgentRosterControl:
         ):
             ui.label("MCP 서버 추가").classes("text-lg font-bold")
             ui.label(
-                "conf.json 에 저장되어 지금 열려 있는 모든 대화와 앞으로 만드는 "
-                "모든 대화에 함께 적용됩니다."
+                "conf.json에 저장되어 현재 열려 있는 모든 세션과 향후 생성할 "
+                "모든 세션에 함께 적용됩니다."
             ).classes("text-[11px] text-amber-400 mb-2 leading-snug")
 
             name_in = ui.input("서버 이름", placeholder="everything").props(
@@ -1822,8 +1822,8 @@ class AgentRosterControl:
                     value="auto", label="전송 방식",
                 ).props("outlined dense dark options-dense").classes("w-full text-xs")
                 ui.label(
-                    "토큰은 값에 직접 쓰지 말고 ${환경변수} 로 적으세요. conf.json 에는 그 "
-                    "표기가 그대로 저장되고, 실제 값은 .env 에서 읽습니다."
+                    "토큰 등 민감 정보는 직접 입력하지 마시고 ${환경변수} 형식으로 지정하십시오. conf.json에는 해당 "
+                    "표기가 저장되고, 실제 값은 .env에서 불러옵니다."
                 ).classes("text-[10px] text-amber-400/90 leading-snug")
 
             def _sync_kind() -> None:
@@ -1845,7 +1845,7 @@ class AgentRosterControl:
             async def do_add() -> None:
                 name = (name_in.value or "").strip()
                 if not name:
-                    ui.notify("서버 이름은 반드시 입력해야 합니다.",
+                    ui.notify("서버 이름은 필수 입력 항목입니다.",
                               type="warning", position="bottom-right")
                     return
                 enabled = bool(enabled_cb.value)
@@ -1853,7 +1853,7 @@ class AgentRosterControl:
                 if kind_toggle.value == "remote":
                     url = (url_in.value or "").strip()
                     if not url:
-                        ui.notify("원격 서버는 주소(url)가 필요합니다.",
+                        ui.notify("원격 서버는 주소(URL)를 입력해야 합니다.",
                                   type="warning", position="bottom-right")
                         return
                     headers: Dict[str, str] = {}
@@ -1862,7 +1862,7 @@ class AgentRosterControl:
                             continue
                         if ":" not in line:
                             ui.notify(f"헤더 형식이 올바르지 않습니다: '{line.strip()}' "
-                                      f"(이름: 값 으로 적어주세요)",
+                                      f"(이름: 값 형식으로 입력해 주십시오)",
                                       type="warning", position="bottom-right")
                             return
                         key, _, value = line.partition(":")
@@ -1875,13 +1875,13 @@ class AgentRosterControl:
                             name, enabled=enabled, config_path=self._conf_path(),
                             url=url, headers=headers, transport=transport,
                         ),
-                        f"'{name}' 원격 서버를 추가했습니다." + ("" if enabled else " (꺼진 상태)"),
+                        f"'{name}' 원격 서버를 추가하였습니다." + ("" if enabled else " (비활성 상태)"),
                     )
                     return
 
                 command = (command_in.value or "").strip()
                 if not command:
-                    ui.notify("로컬 서버는 실행 명령(command)이 필요합니다.",
+                    ui.notify("로컬 서버는 실행 명령(command)을 입력해야 합니다.",
                               type="warning", position="bottom-right")
                     return
 
@@ -1892,7 +1892,7 @@ class AgentRosterControl:
                         continue
                     if "=" not in line:
                         ui.notify(f"환경변수 형식이 올바르지 않습니다: '{line.strip()}' "
-                                  f"(KEY=VALUE 로 적어주세요)", type="warning", position="bottom-right")
+                                  f"(KEY=VALUE 형식으로 입력해 주십시오)", type="warning", position="bottom-right")
                         return
                     key, _, value = line.partition("=")
                     env[key.strip()] = value.strip()
@@ -1902,7 +1902,7 @@ class AgentRosterControl:
                     lambda: add_mcp_server_to_conf_file(
                         name, command, args, env, enabled, self._conf_path()
                     ),
-                    f"'{name}' 서버를 추가했습니다." + ("" if enabled else " (꺼진 상태)"),
+                    f"'{name}' 서버를 추가하였습니다." + ("" if enabled else " (비활성 상태)"),
                 )
 
             with ui.row().classes("w-full justify-end gap-2 mt-3"):
@@ -1927,13 +1927,13 @@ class AgentRosterControl:
         ):
             ui.label("MCP 서버 삭제").classes("text-lg font-bold text-red-400 mb-1")
             ui.label(
-                f"conf.json 에서 mcp_servers.{server_name} 을 지우고 서버를 내립니다. "
-                f"모든 대화에 함께 적용됩니다."
+                f"conf.json에서 mcp_servers.{server_name} 설정을 삭제하고 서버를 종료합니다. "
+                f"모든 세션에 함께 적용됩니다."
             ).classes("text-xs text-slate-300 leading-snug")
             if users:
                 ui.label(
-                    f"이 서버를 쓰도록 지정된 에이전트: {', '.join(users)}. "
-                    f"삭제 후 이 에이전트들은 해당 도구 없이 토론합니다."
+                    f"해당 서버를 사용하도록 설정된 에이전트: {', '.join(users)}. "
+                    f"삭제 후 해당 에이전트들은 관련 도구 없이 토론을 진행합니다."
                 ).classes("text-[11px] text-amber-400 mt-2 leading-snug")
             ui.label("서버 위에 적어 둔 설명 주석은 그대로 남습니다.").classes(
                 "text-[10px] text-slate-500 mt-2"
@@ -1943,7 +1943,7 @@ class AgentRosterControl:
                 dialog.close()
                 await self._apply_conf_change(
                     lambda: remove_mcp_server_from_conf_file(server_name, self._conf_path()),
-                    f"'{server_name}' 서버를 삭제했습니다.",
+                    f"'{server_name}' 서버를 삭제하였습니다.",
                 )
 
             with ui.row().classes("w-full justify-end gap-2 mt-3"):
@@ -2020,11 +2020,11 @@ class AgentRosterControl:
             if self._mcp_fingerprint() != before_mcp:
                 try:
                     await get_runtime_pool().reload_all()
-                    ui.notify("MCP 서버 구성도 바뀌어 함께 다시 띄웠습니다.",
+                    ui.notify("MCP 서버 구성이 변경되어 함께 재시작하였습니다.",
                               type="info", position="bottom-right")
                 except Exception as e:  # noqa: BLE001
                     logger.error(f"MCP reload after conf reload failed: {e}", exc_info=True)
-                    ui.notify(f"에이전트는 갱신했지만 MCP 서버를 다시 띄우지 못했습니다: {e}",
+                    ui.notify(f"에이전트는 갱신하였으나 MCP 서버를 재시작하지 못했습니다: {e}",
                               type="negative", position="bottom-right")
 
             parts = [f"에이전트 {len(after_agents)}개"]
@@ -2033,8 +2033,8 @@ class AgentRosterControl:
             if removed:
                 parts.append(f"제거: {', '.join(removed)}")
             if not added and not removed:
-                parts.append("목록은 그대로 (모델·프롬프트 등은 갱신됨)")
-            ui.notify("conf.json 을 다시 읽었습니다 — " + " · ".join(parts),
+                parts.append("목록 변경 없음 (모델·프롬프트 등 설정 갱신됨)")
+            ui.notify("conf.json을 다시 불러왔습니다 — " + " · ".join(parts),
                       type="positive", position="bottom-right", multi_line=True)
         finally:
             self._dismiss_toast(progress)
@@ -2126,8 +2126,8 @@ class AgentRosterControl:
                     lambda: set_agent_allowed_mcp_servers_in_conf_file(
                         agent_key, servers, self._conf_path()
                     ),
-                    f"'{agent.name}' 의 도구를 {len(servers)}개로 저장했습니다."
-                    if servers else f"'{agent.name}' 에게 도구를 할당하지 않았습니다.",
+                    f"'{agent.name}' 에이전트의 도구를 {len(servers)}개로 저장하였습니다."
+                    if servers else f"'{agent.name}' 에이전트에 도구를 할당하지 않았습니다.",
                     # 서버 구성은 그대로입니다. 다시 띄울 이유가 없습니다.
                     restart_servers=False,
                 )
@@ -2186,7 +2186,7 @@ class AgentRosterControl:
             # 이 대화의 폴더에는 아직 서버 묶음이 없습니다. 여기서 띄워 버리면
             # 아무도 반납하지 않는 런타임이 남아 다음 대화의 자리를 먹습니다.
             ui.notify(
-                "이 대화의 작업 공간에는 아직 MCP 서버가 뜨지 않았습니다. "
+                "본 세션의 작업 공간에는 아직 MCP 서버가 기동되지 않았습니다. "
                 "첫 토론을 시작하면 기동됩니다.",
                 type="info", position="bottom-right",
             )
@@ -2201,11 +2201,11 @@ class AgentRosterControl:
             if changed:
                 ui.notify("MCP 서버에 다시 연결되었습니다.", type="positive", position="bottom-right")
             else:
-                ui.notify("재연결할 서버가 없거나 여전히 실패했습니다. 서버 로그를 확인하세요.",
+                ui.notify("재연결할 서버가 없거나 연결에 실패하였습니다. 서버 로그를 확인하십시오.",
                           type="warning", position="bottom-right")
         except Exception as e:  # noqa: BLE001
             logger.error(f"MCP reconnect failed: {e}")
-            ui.notify(f"재연결 중 오류: {e}", type="negative", position="bottom-right")
+            ui.notify(f"재연결 중 오류가 발생하였습니다: {e}", type="negative", position="bottom-right")
         finally:
             self._dismiss_toast(progress)
             if self.mcp_reconnect_btn:
@@ -2216,12 +2216,13 @@ class AgentRosterControl:
         if self.workspace_hint is None or self.workspace_hint.is_deleted:
             return
         saved = resolve_workspace_dir(self.workspace_dir or None)
-        typed = resolve_workspace_dir((self.workspace_input.value or "").strip() or None)             if self.workspace_input is not None else saved
+        typed = resolve_workspace_dir((self.workspace_input.value or "").strip() or None) \
+            if self.workspace_input is not None else saved
         live = get_runtime_pool().get(saved) is not None
         text = f"이 대화의 작업 공간: {saved}"
         text += "   |   MCP 서버 기동됨" if live else "   |   MCP 서버는 첫 토론 때 기동됩니다"
         if typed != saved:
-            text += f"   |   적용 대기: {typed}  ('적용' 을 누르세요)"
+            text += f"   |   적용 대기: {typed}  ('적용' 버튼을 누르십시오)"
         self.workspace_hint.set_text(text)
         btn = self.workspace_download_btn
         if btn is not None and not btn.is_deleted:
@@ -2251,7 +2252,7 @@ class AgentRosterControl:
         if self.session_id and get_debate_runner().is_running(self.session_id):
             # 진행 중인 토론은 이미 런타임을 빌려 쓰고 있습니다. 도중에 바꾸면
             # 화면과 도구가 서로 다른 폴더를 가리킵니다.
-            ui.notify("이 대화의 토론이 진행 중입니다. 끝난 뒤에 바꾸세요.",
+            ui.notify("본 세션의 토론이 진행 중입니다. 토론이 종료된 후 변경하십시오.",
                       type="warning", position="bottom-right")
             return
 
@@ -2265,13 +2266,13 @@ class AgentRosterControl:
             if self.on_config_changed:
                 await self.on_config_changed()
             ui.notify(
-                f"이 대화의 작업 공간을 '{target}' 로 바꿨습니다. "
-                f"다음 토론부터 그 폴더의 MCP 서버가 붙습니다.",
+                f"본 세션의 작업 공간을 '{target}'(으)로 변경하였습니다. "
+                f"다음 토론부터 해당 폴더의 MCP 서버가 연결됩니다.",
                 type="positive", position="bottom-right",
             )
         except Exception as e:  # noqa: BLE001
             logger.error(f"Workspace switch failed: {e}", exc_info=True)
-            ui.notify(f"작업 공간 변경 실패: {e}", type="negative", position="bottom-right")
+            ui.notify(f"작업 공간 변경에 실패하였습니다: {e}", type="negative", position="bottom-right")
         finally:
             if self.workspace_apply_btn and not self.workspace_apply_btn.is_deleted:
                 self.workspace_apply_btn.enable()
@@ -2371,9 +2372,9 @@ class AgentRosterControl:
 
         if not self.graph_id:
             text, tone = (
-                "그래프를 고르세요. 없으면 ‘현재 카드 순서로 만들기’ 로 시작할 수 있습니다."
+                "그래프를 선택하십시오. 없으시면 ‘현재 카드 순서로 만들기’로 시작하실 수 있습니다."
                 if options else
-                "아직 그래프가 없습니다. ‘현재 카드 순서로 만들기’ 로 시작하세요."
+                "생성된 그래프가 없습니다. ‘현재 카드 순서로 만들기’로 시작하십시오."
             ), "text-amber-400"
         else:
             try:
@@ -2563,7 +2564,7 @@ class AgentRosterControl:
         ]
         keys = [a.key for a in order_by_priority(specialists_of(selected))]
         if not keys:
-            ui.notify("참여로 체크한 전문가 에이전트가 없습니다.", type="warning", position="bottom-right")
+            ui.notify("참여하도록 선택된 전문가 에이전트가 없습니다.", type="warning", position="bottom-right")
             return
         spec = graph_from_card_order(
             free_graph_id("cards"),
@@ -2578,7 +2579,7 @@ class AgentRosterControl:
         self.graph_id = spec.id
         self._sync_graph_row()
         ui.notify(
-            f"‘{spec.name}’ 그래프를 만들어 골랐습니다 (data/graphs/{spec.id}.json).",
+            f"‘{spec.name}’ 그래프를 생성하여 선택하였습니다 (data/graphs/{spec.id}.json).",
             type="positive", position="bottom-right",
         )
         if self.on_config_changed:
@@ -2602,8 +2603,8 @@ class AgentRosterControl:
         self.tool_mode = str(e.value or "")
         if self.tool_mode == "auto":
             ui.notify(
-                "자동 모드는 거부 규칙과 고정 보호 말고는 묻지 않고 실행합니다. "
-                "격리된 환경에서만 쓰세요.",
+                "자동 모드는 거부 규칙 및 고정 보호 항목 외에는 확인 없이 실행합니다. "
+                "격리된 환경에서만 사용하십시오.",
                 type="warning", position="bottom-right",
             )
         if self.on_config_changed:
@@ -2682,7 +2683,7 @@ class AgentRosterControl:
             await self.on_tool_rules_changed(grants, denials)
         # 알림을 먼저 띄웁니다. 다시 그리면 방금 누른 버튼이 지워지고, 그 버튼 자리에서는
         # 더 이상 알림을 띄울 수 없습니다.
-        ui.notify(f"대화 규칙을 지웠습니다: {rule}", type="info", position="bottom-right")
+        ui.notify(f"세션 대화 규칙을 삭제하였습니다: {rule}", type="info", position="bottom-right")
         self.set_tool_rules(grants, denials)
 
     def _on_parallel_limit_change(self, e) -> None:

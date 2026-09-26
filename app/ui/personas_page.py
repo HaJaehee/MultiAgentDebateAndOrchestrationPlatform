@@ -81,7 +81,7 @@ def create_personas_page() -> None:
                     )
                     ui.label(session_title).classes("text-[11px] text-slate-400")
             if locked:
-                ui.badge("고정됨 (토론 시작함)", color="amber-8").props("dense")
+                ui.badge("고정됨 (토론 진행 중)", color="amber-8").props("dense")
             else:
                 ui.badge("편집 가능 (토론 시작 전)", color="green-7").props("dense")
 
@@ -98,8 +98,8 @@ def create_personas_page() -> None:
                                 "text-sm font-bold text-indigo-200"
                             )
                             ui.label(
-                                "이 화면에 들어와도 토론은 중단되지 않습니다. "
-                                "토론 화면으로 돌아가면 그동안 오간 발언이 이어서 표시됩니다."
+                                "해당 화면으로 이동하셔도 토론은 중단되지 않습니다. "
+                                "토론 화면으로 돌아가시면 그동안 진행된 발언이 이어서 표시됩니다."
                             ).classes("text-[11px] text-indigo-300/80 leading-relaxed")
 
             # ---------------- 안내 배너 ----------------
@@ -114,16 +114,16 @@ def create_personas_page() -> None:
                                 "text-sm font-bold text-amber-200"
                             )
                             ui.label(
-                                f"메시지 {msg_count}건이 기록되어 있습니다. 토론 중간에 인격이 바뀌면 "
-                                "앞뒤 발언의 화자가 달라져 기록을 해석할 수 없게 되므로 수정할 수 없습니다. "
-                                "다른 페르소나로 토론하려면 새 세션을 시작하세요."
+                                f"메시지 {msg_count}건이 기록되어 있습니다. 토론 도중에 페르소나가 변경되면 "
+                                "발언 화자의 일관성이 훼손되므로 수정할 수 없습니다. "
+                                "다른 페르소나로 진행하시려면 새 세션을 시작하십시오."
                             ).classes("text-[11px] text-amber-300/80 leading-relaxed")
                     ui.button(
                         "토론 화면으로 돌아가기",
                         icon="arrow_back",
                         on_click=lambda: ui.navigate.to("/"),
                     ).props("unelevated color=amber-8 dense").classes("mt-2 text-xs").tooltip(
-                        "사이드바의 '+ 새 토론 세션' 으로 새 세션을 만들면 다시 편집할 수 있습니다"
+                        "사이드바의 '+ 새 토론 세션'으로 새 세션을 생성하시면 다시 편집하실 수 있습니다."
                     )
             else:
                 with ui.card().classes(
@@ -132,12 +132,12 @@ def create_personas_page() -> None:
                     with ui.row().classes("items-center gap-2 no-wrap"):
                         ui.icon("edit_note", size="sm").classes("text-indigo-400")
                         with ui.column().classes("gap-0.5"):
-                            ui.label("첫 메시지를 보내기 전까지만 편집할 수 있습니다.").classes(
+                            ui.label("첫 메시지를 전송하기 전까지만 편집하실 수 있습니다.").classes(
                                 "text-sm font-bold text-slate-100"
                             )
                             ui.label(
-                                "저장한 값은 conf.json 및 이 세션에 즉시 반영됩니다. "
-                                "토론을 시작하면 이 시점의 값이 DB 에 기록되어 세션을 다시 열어도 그대로 사용됩니다."
+                                "저장된 값은 conf.json 및 현재 세션에 즉시 반영됩니다. "
+                                "토론이 시작되면 해당 시점의 설정이 DB에 영구 기록되어 세션을 다시 열어도 그대로 유지됩니다."
                             ).classes("text-[11px] text-slate-400 leading-relaxed")
 
             # ---------------- 에이전트 카드 ----------------
@@ -170,7 +170,7 @@ def create_personas_page() -> None:
             look: AgentAppearanceEditor = fields["appearance"]
 
             if not name:
-                ui.notify("이름은 비울 수 없습니다.", type="warning", position="bottom-right")
+                ui.notify("이름은 필수 입력 항목입니다.", type="warning", position="bottom-right")
                 return
 
             async with session_factory() as db:
@@ -185,7 +185,7 @@ def create_personas_page() -> None:
                     )
                 except PersonasLockedError:
                     ui.notify(
-                        "토론이 이미 시작되어 저장할 수 없습니다. 페이지를 새로고침하세요.",
+                        "토론이 이미 시작되어 저장할 수 없습니다. 페이지를 새로고침해 주십시오.",
                         type="negative",
                         position="bottom-right",
                     )
@@ -202,7 +202,7 @@ def create_personas_page() -> None:
 
             fields["badge"].set_text("기본값과 다름")
             fields["badge"].set_visibility(True)
-            ui.notify(f"'{name}' 페르소나를 저장하고 conf.json 에 반영했습니다.", type="positive", position="bottom-right")
+            ui.notify(f"'{name}' 페르소나를 저장하고 conf.json에 반영하였습니다.", type="positive", position="bottom-right")
 
         async def _handle_reset(agent_key: str) -> None:
             async with session_factory() as db:
@@ -226,7 +226,7 @@ def create_personas_page() -> None:
             fields["system_prompt"].value = base.system_prompt
             fields["appearance"].set_values(base.card_color, base.icon)
             fields["badge"].set_visibility(False)
-            ui.notify("conf.json 기본값으로 되돌렸습니다.", type="info", position="bottom-right")
+            ui.notify("conf.json 기본값으로 초기화하였습니다.", type="info", position="bottom-right")
 
 
 def _build_agent_card(
@@ -261,7 +261,7 @@ def _build_agent_card(
                     ui.label(model_label).classes("text-[10px] text-slate-500 truncate")
             with ui.row().classes("items-center gap-1.5"):
                 badge = ui.badge("기본값과 다름", color="indigo-7").props("dense")
-                badge.tooltip("conf.json 의 전역 기본값과 다른 값이 이 세션에 적용됩니다")
+                badge.tooltip("conf.json의 전역 기본값과 다른 설정이 현재 세션에 적용되어 있습니다.")
                 badge.set_visibility(persona.is_customized)
                 fields["badge"] = badge
                 if agent_key == "orchestrator":
@@ -310,7 +310,7 @@ def _build_agent_card(
                     ui.button("기본값으로", icon="restart_alt", on_click=on_reset).props(
                         "flat dense color=slate-4"
                     ).classes("text-xs").tooltip(
-                        f"conf.json 값으로 되돌립니다 ({default_persona.name})"
+                        f"conf.json 기본 설정값으로 되돌립니다 ({default_persona.name})."
                     )
                     ui.button("저장", icon="save", on_click=on_save).props(
                         "unelevated dense color=indigo-6"
@@ -340,7 +340,7 @@ def _repaint_card_header(
 def _render_missing_session(session_id: str) -> None:
     with ui.column().classes("w-full h-screen items-center justify-center gap-3"):
         ui.icon("search_off", size="xl").classes("text-slate-600")
-        ui.label("세션을 찾을 수 없습니다").classes("text-lg font-bold text-slate-300")
+        ui.label("세션을 찾을 수 없습니다.").classes("text-lg font-bold text-slate-300")
         ui.label(session_id).classes("text-xs font-mono text-slate-600")
         ui.button("토론 화면으로", icon="arrow_back", on_click=lambda: ui.navigate.to("/")).props(
             "unelevated color=indigo-6"

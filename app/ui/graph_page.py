@@ -42,16 +42,16 @@ logger = logging.getLogger(__name__)
 PREVIEW_MAX_VISITS = 3
 
 CARRY_HELP = {
-    "full": "발언 원문을 그대로 넘깁니다",
-    "digest": "발언 끝의 ## 요지 만 넘깁니다 (없으면 긴 코드만 참조로 바꾼 원문)",
-    "refs": "원문이되 긴 코드 블록은 한 줄 참조로 바꿉니다",
+    "full": "발언 원문을 그대로 전달합니다.",
+    "digest": "발언 끝의 ## 요지만 전달합니다 (없을 경우 긴 코드만 참조로 치환한 원문).",
+    "refs": "원문 형태로 전달하되 긴 코드 블록은 한 줄 참조로 치환합니다.",
 }
 NODE_HELP = {
-    "start": "이번 턴 요청이 여기서 나갑니다. 계획을 켜면 오케스트레이터 계획도 함께 나갑니다.",
-    "agent": "에이전트 한 명의 발언. 들어온 선만(또는 전체 기록을) 보고 말합니다.",
-    "merge": "오케스트레이터가 들어온 발언을 하나로 합치고 어긋나는 점을 정리합니다.",
-    "gate": "오케스트레이터가 질문에 예/아니오로 판정해 한쪽 갈래로 보냅니다. 루프는 반드시 판정을 거쳐야 합니다.",
-    "end": "여기 닿으면 그래프를 끝내고 최종 합성으로 넘어갑니다.",
+    "start": "이번 턴의 요청이 시작되는 노드입니다. 계획을 활성화하면 오케스트레이터 계획도 함께 전달됩니다.",
+    "agent": "에이전트 1인의 발언 노드입니다. 연결된 입력선(또는 전체 기록)을 참조하여 발언합니다.",
+    "merge": "오케스트레이터가 전달받은 발언들을 하나로 취합하고 상충되는 내용을 정리합니다.",
+    "gate": "오케스트레이터가 질문에 대해 예/아니오로 판정하여 분기합니다. 반복 루프는 반드시 판정을 거쳐야 합니다.",
+    "end": "해당 노드에 도달하면 그래프 실행을 종료하고 최종 합성 단계로 진행합니다.",
 }
 
 
@@ -97,7 +97,7 @@ def create_graph_page() -> None:
             with ui.row().classes("items-center gap-2.5 no-wrap min-w-0"):
                 ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/")).props(
                     "flat dense round color=grey-4"
-                ).tooltip("토론 화면으로 돌아가기 (저장하지 않은 변경이 있으면 브라우저가 물어봅니다)")
+                ).tooltip("토론 화면으로 돌아갑니다 (저장하지 않은 변경사항이 있으면 확인창이 표시됩니다).")
                 ui.icon("hub", size="sm").classes("text-teal-400")
                 with ui.column().classes("gap-0 min-w-0"):
                     ui.label("그래프 편집").classes("text-base font-bold text-white tracking-wide")
@@ -144,7 +144,7 @@ def create_graph_page() -> None:
                 ui.separator().classes("bg-slate-800 my-1")
                 ui.label("에이전트").classes("text-[11px] font-semibold text-slate-400 tracking-wider")
                 if not agents:
-                    ui.label("켜진 전문가 에이전트가 없습니다.").classes("text-xs text-amber-400")
+                    ui.label("활성화된 전문가 에이전트가 없습니다.").classes("text-xs text-amber-400")
                 for key, (name, role, color) in agents.items():
                     with ui.button(
                         on_click=lambda k=key: add_node({
@@ -168,8 +168,8 @@ def create_graph_page() -> None:
                     "flat dense no-caps align=left color=grey-4"
                 ).classes("w-full text-xs")
                 ui.label(
-                    "핀을 끌어 다른 노드의 왼쪽 핀에 놓으면 선이 생깁니다. 노드나 선을 누르면 오른쪽에서 "
-                    "고칠 수 있고, Delete 키로 지웁니다. 빈 곳을 끌면 화면이 움직이고 휠로 확대합니다."
+                    "출력 핀을 드래그하여 다른 노드의 입력 핀에 연결하면 선이 생성됩니다. 노드나 선을 클릭하면 우측에서 "
+                    "속성을 수정할 수 있으며, Delete 키로 삭제합니다. 빈 영역을 드래그하면 화면이 이동하고 휠로 확대/축소합니다."
                 ).classes("text-[10px] text-slate-500 leading-snug mt-2")
 
             # ---------------- 캔버스 ----------------
@@ -194,10 +194,10 @@ def create_graph_page() -> None:
         def show_empty() -> None:
             inspector.clear()
             with inspector:
-                ui.label("선택한 것 없음").classes("text-xs font-semibold text-slate-400")
+                ui.label("선택된 요소 없음").classes("text-xs font-semibold text-slate-400")
                 ui.label(
-                    "노드나 선을 누르면 여기서 고칩니다. 선 색이 무엇을 넘기는지 뜻합니다 — "
-                    "보라: 전문 · 청록: 요지 · 주황: 참조. 판정의 아니오 선은 점선입니다."
+                    "노드나 선을 클릭하면 이곳에서 속성을 수정할 수 있습니다. 선 색상은 전달 방식을 나타냅니다 — "
+                    "보라: 전문 · 청록: 요지 · 주황: 참조. 판정 노드의 '아니오' 선은 점선으로 표시됩니다."
                 ).classes("text-[11px] text-slate-500 leading-snug")
 
         def field_label(text: str) -> None:
@@ -211,10 +211,10 @@ def create_graph_page() -> None:
                     ui.label(f"노드 · {node_id}").classes("text-xs font-semibold text-slate-300 font-mono")
                     ui.button(icon="delete", on_click=lambda: canvas.run_method("removeElement", "node", node_id)).props(
                         "flat dense round size=sm color=red-4"
-                    ).tooltip("이 노드와 이어진 선을 지웁니다")
+                    ).tooltip("해당 노드 및 연결된 선을 삭제합니다.")
                 ui.label(NODE_HELP.get(kind, "")).classes("text-[11px] text-slate-500 leading-snug")
 
-                ui.input("이름 (비우면 기본)", value=data.get("label") or "",
+                ui.input("이름 (비워둘 시 기본값 적용)", value=data.get("label") or "",
                          on_change=lambda e: update_node(node_id, label=e.value or "")).props(
                     "outlined dense dark debounce=300").classes("w-full text-xs")
 
@@ -226,7 +226,7 @@ def create_graph_page() -> None:
                     options = {k: f"{v[0]} ({k})" for k, v in agents.items()}
                     current = data.get("agent") or None
                     if current and current not in options:
-                        options[current] = f"(없거나 꺼짐) {current}"
+                        options[current] = f"(없거나 비활성화됨) {current}"
 
                     def choose_agent(e, nid=node_id):
                         key = e.value or ""
@@ -242,29 +242,29 @@ def create_graph_page() -> None:
                                 on_change=lambda e: update_node(node_id, question=e.value or "")).props(
                         "outlined dense dark autogrow debounce=300").classes("w-full text-xs")
                     ui.select({"yes": "예", "no": "아니오"}, value=data.get("default") or "yes",
-                              label="판정을 읽지 못하면 갈 갈래",
+                              label="판정 실패 시 기본 분기",
                               on_change=lambda e: update_node(node_id, default=e.value)).props(
                         "outlined dense dark options-dense").classes("w-full text-xs")
 
                 if kind in ("agent", "merge"):
-                    ui.textarea("이 노드의 지시", value=data.get("instruction") or "",
+                    ui.textarea("노드 개별 지시사항", value=data.get("instruction") or "",
                                 on_change=lambda e: update_node(node_id, instruction=e.value or "")).props(
                         "outlined dense dark autogrow debounce=300").classes("w-full text-xs")
 
                 if kind == "agent":
-                    ui.select({"inputs": "들어온 선만", "all": "전체 기록 (기존 세 층)"},
-                              value=data.get("sees") or "inputs", label="보는 맥락",
+                    ui.select({"inputs": "연결된 선만 참조", "all": "전체 기록 참조"},
+                              value=data.get("sees") or "inputs", label="참조 맥락",
                               on_change=lambda e: update_node(node_id, sees=e.value)).props(
                         "outlined dense dark options-dense").classes("w-full text-xs")
 
                 if kind in ("agent", "merge", "gate", "end"):
-                    ui.select({"any": "하나라도 도착하면", "all": "모두 도착하면 (첫 활성만)"},
-                              value=data.get("wait") or "any", label="입력이 여럿일 때",
+                    ui.select({"any": "하나라도 도착하면 실행", "all": "모두 도착하면 실행 (첫 활성화 시)"},
+                              value=data.get("wait") or "any", label="다중 입력 대기 조건",
                               on_change=lambda e: update_node(node_id, wait=e.value)).props(
                         "outlined dense dark options-dense").classes("w-full text-xs")
 
                 if kind in ("agent", "merge", "gate"):
-                    ui.number("최대 방문 (비우면 대화의 최대 라운드)", value=data.get("max_visits"),
+                    ui.number("최대 방문 횟수 (비워둘 시 세션 최대 라운드 적용)", value=data.get("max_visits"),
                               min=1, max=20, step=1, format="%.0f",
                               on_change=lambda e: update_node(
                                   node_id, max_visits=int(e.value) if e.value else None)).props(
@@ -277,7 +277,7 @@ def create_graph_page() -> None:
                     ui.label(f"선 · {edge_id}").classes("text-xs font-semibold text-slate-300 font-mono")
                     ui.button(icon="delete", on_click=lambda: canvas.run_method("removeElement", "edge", edge_id)).props(
                         "flat dense round size=sm color=red-4"
-                    ).tooltip("이 선을 지웁니다")
+                    ).tooltip("해당 선을 삭제합니다.")
                 source, target = data.get("from") or ["?", "?"], data.get("to") or ["?", "?"]
                 branch = {"yes": " (예)", "no": " (아니오)"}.get(source[1], "")
                 ui.label(f"{source[0]}{branch} → {target[0]}").classes("text-[11px] text-slate-400 font-mono")
@@ -289,7 +289,7 @@ def create_graph_page() -> None:
                     help_label.set_text(CARRY_HELP.get(e.value, ""))
                     mark_dirty()
 
-                ui.select({k: v for k, v in CARRY_LABELS.items()}, value=carry, label="넘기는 것",
+                ui.select({k: v for k, v in CARRY_LABELS.items()}, value=carry, label="전달 방식",
                           on_change=choose_carry).props("outlined dense dark options-dense").classes("w-full text-xs")
 
         def on_select(e) -> None:
@@ -316,7 +316,7 @@ def create_graph_page() -> None:
                 for warning in report.warnings:
                     ui.label(f"경고 · {warning}").classes("text-[11px] text-amber-300 leading-snug")
                 ui.label(
-                    f"호출 수는 상한을 적지 않은 노드를 {PREVIEW_MAX_VISITS}회로 셌습니다. 실제로는 그 대화의 최대 라운드입니다."
+                    f"호출 횟수는 상한이 지정되지 않은 노드를 {PREVIEW_MAX_VISITS}회로 계산하였습니다. 실제 토론 시에는 해당 세션의 최대 라운드가 적용됩니다."
                 ).classes("text-[10px] text-slate-500 leading-snug")
 
         async def current_spec(graph_id_: str, name: str):
@@ -343,7 +343,7 @@ def create_graph_page() -> None:
             try:
                 save_graph(candidate)
             except OSError as exc:
-                ui.notify(f"저장하지 못했습니다: {exc}", type="negative", position="bottom-right")
+                ui.notify(f"저장하지 못하였습니다: {exc}", type="negative", position="bottom-right")
                 return False
             show_report(report)
             if target_id is None:
@@ -351,8 +351,8 @@ def create_graph_page() -> None:
                 state["dirty"] = False
                 dirty_badge.set_visibility(False)
             ui.notify(
-                f"저장했습니다 — {report.summary()}"
-                + ("  (오류가 있으면 이 그래프로는 토론이 시작되지 않습니다)" if report.errors else ""),
+                f"저장하였습니다 — {report.summary()}"
+                + ("  (오류가 존재할 경우 해당 그래프로는 토론을 시작할 수 없습니다)" if report.errors else ""),
                 type="warning" if report.errors else "positive", position="bottom-right",
             )
             return True
@@ -362,7 +362,7 @@ def create_graph_page() -> None:
             ui.label("다른 이름으로 저장").classes("text-sm font-bold")
             copy_name = ui.input("새 그래프 이름", value=f"{spec.name or spec.id} 사본").props(
                 "outlined dense dark").classes("w-full")
-            ui.label("새 파일로 저장하고 그 그래프를 엽니다. 지금 파일은 바뀌지 않습니다.").classes(
+            ui.label("새 파일로 저장한 후 해당 그래프를 엽니다. 현재 파일은 변경되지 않습니다.").classes(
                 "text-[11px] text-slate-400")
 
             async def do_save_as():
@@ -379,14 +379,14 @@ def create_graph_page() -> None:
         with ui.dialog() as refill_dialog, ui.card().classes("bg-slate-900 text-white p-4 w-96 gap-3"):
             ui.label("카드 순서로 다시 채우기").classes("text-sm font-bold")
             ui.label(
-                "캔버스의 노드와 선을 모두 지우고, 켜진 전문가를 로스터 카드 순서(debate_priority)대로 "
-                "일렬로 이은 그래프로 바꿉니다. 저장하기 전에는 파일이 바뀌지 않습니다."
+                "캔버스의 모든 노드와 연결선을 초기화하고, 활성화된 전문가 에이전트를 로스터 순서대로 "
+                "순차 연결한 그래프로 재구성합니다. 저장하기 전까지는 파일에 반영되지 않습니다."
             ).classes("text-[11px] text-slate-400 leading-snug")
 
             def do_refill():
                 keys = [a.key for a in order_by_priority(specialists_of(get_agent_pool().list_all()))]
                 if not keys:
-                    ui.notify("켜진 전문가 에이전트가 없습니다.", type="warning", position="bottom-right")
+                    ui.notify("활성화된 전문가 에이전트가 없습니다.", type="warning", position="bottom-right")
                     return
                 chain = graph_from_card_order(spec.id, name_input.value or spec.id, keys)
                 canvas.run_method("replaceGraph", spec_to_canvas(chain, agents))
