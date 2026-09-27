@@ -108,6 +108,9 @@ class GraphRunTracker:
         etype = event.get("type")
         if etype == "graph_started":
             self.__init__(event.get("spec"), int(event.get("max_steps") or 0))
+            # 끊긴 턴을 이어 가면 그 전에 돈 노드의 기록이 함께 옵니다 (ADR-024).
+            for msg in event.get("history") or []:
+                self.observe_message(msg)
             return True
         if etype == "graph_step_started":
             self.step = int(event.get("step") or 0)

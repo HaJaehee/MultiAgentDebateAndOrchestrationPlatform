@@ -26,10 +26,11 @@
 실제로 이어 가는 일은 `OrchestratorEngine.resume_turn` 이 합니다.
 """
 
+import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from sqlalchemy import func, select, update
 
@@ -44,6 +45,8 @@ from app.database.models import (
     TurnModel,
     utc_now,
 )
+from app.orchestration.graph import Activation, GraphScheduler, GraphSpec
+from app.orchestration.graph_run import OUTPUT_PORTS
 from app.timestamps import _as_datetime
 
 logger = logging.getLogger(__name__)
@@ -143,6 +146,124 @@ def last_activity(turn: Any, messages: Iterable[Any], tool_times: Iterable[Any] 
     return max(known) if known else None
 
 
+# ---------------------------------------------------------------- 커서
+
+def round_progress(messages: Iterable[Any]) -> Tuple[int, Set[str]]:
+    """라운드 전략이 어디까지 돌았나 — (마지막으로 발언이 있던 라운드, 그 라운드에 발언한 에이전트).
+
+    실패로 끝난 발언도 "발언한 것" 으로 셉니다. 도는 중이던 엔진도 실패한 발언자를 다시 부르지
+    않고 다음 사람으로 넘어갔습니다. 아직 아무도 발언하지 않았으면 (0, 빈 집합).
+
+    순서는 자리가 아니라 **에이전트 키**로 맞춥니다. 끊긴 사이에 카드 순서를 바꿨어도, 이번
+    라운드에 아직 말하지 않은 사람만 지금의 순서대로 이어서 말합니다.
+    """
+    speeches = [m for m in messages if kind_of(m) == KIND_SPEECH]
+    if not speeches:
+        return 0, set()
+    last = max(int(_get(m, "round_number") or 0) for m in speeches)
+    return last, {
+        _get(m, "sender_key") for m in speeches if int(_get(m, "round_number") or 0) == last
+    }
+
+
+@dataclass
+class GraphReplay:
+    """기록을 따라 다시 돌린 그래프 스케줄러 (`replay_graph`)."""
+
+    scheduler: GraphScheduler
+    # 기록에 남은 마지막 단계. 0 이면 아직 어떤 노드도 돌지 않았습니다.
+    step: int
+    # 그 단계에 돈 노드 전부와, 그중 출력을 내지 못한 노드. 끊긴 단계가 아니면 둘 다 비어 있습니다.
+    activations: List[Activation] = field(default_factory=list)
+    pending: List[Activation] = field(default_factory=list)
+    # 끊긴 단계에서 이미 나온 출력 {노드 id: (핀, 값)}.
+    outputs: Dict[str, Tuple[str, List[str]]] = field(default_factory=dict)
+
+
+def replay_graph(
+    spec: GraphSpec, max_visits: int, start_value: List[str], messages: Sequence[Any],
+) -> GraphReplay:
+    """턴의 기록을 따라 그래프 스케줄러를 다시 돌립니다. LLM 을 부르지 않습니다.
+
+    스케줄러는 결정적입니다 — 같은 출력을 같은 순서로 넣으면 같은 노드를 같은 단계에 깨웁니다.
+    노드가 낸 발언에는 단계(`round_number`)·노드·나간 핀이 적혀 있으므로, 단계마다 `ready()` 로
+    깨운 노드의 출력을 기록에서 찾아 넣으면 끊기기 직전의 받은편지함과 방문 수가 그대로 섭니다.
+    판정 노드의 값은 도는 중과 같이 "판정 기록 + 판정한 입력" 입니다.
+
+    마지막 단계에서 출력이 없는 노드가 있으면 그 단계가 끊긴 것이고, 그 노드들이 `pending` 입니다.
+    그보다 앞 단계에서 출력이 빠져 있으면 기록이 이 그래프와 맞지 않는 것이라 ValueError.
+    """
+    scheduler = GraphScheduler(spec, max_visits)
+    scheduler.deliver(spec.start.id, "out", start_value)
+    present = {_get(m, "id") for m in messages}
+    by_step: Dict[int, Dict[str, Any]] = {}
+    for msg in messages:
+        node_id = _get(msg, "graph_node_id")
+        if node_id and _get(msg, "graph_port") in OUTPUT_PORTS:
+            by_step.setdefault(int(_get(msg, "round_number") or 0), {})[node_id] = msg
+    last_step = max(by_step, default=0)
+
+    step = 0
+    while step < last_step:
+        ready = scheduler.ready()
+        if not ready or any(n.type == "end" for n in ready):
+            raise ValueError(f"기록에는 {last_step}단계까지 있는데 그래프가 {step}단계에서 멈춥니다.")
+        step += 1
+        activations = [scheduler.activate(node) for node in ready]
+        recorded = by_step.get(step, {})
+        outputs: Dict[str, Tuple[str, List[str]]] = {}
+        for activation in activations:
+            msg = recorded.get(activation.node.id)
+            if msg is None:
+                continue
+            value = [_get(msg, "id")]
+            if activation.node.type == "gate":
+                # 도는 중의 판정 노드가 내보낸 값과 같게 — 판정 기록 + 판정한 입력 (`_run_gate`).
+                seen: List[str] = []
+                for _edge, ids in activation.inputs:
+                    for mid in ids:
+                        if mid in present and mid not in seen:
+                            seen.append(mid)
+                value += seen
+            outputs[activation.node.id] = (_get(msg, "graph_port"), value)
+        pending = [a for a in activations if a.node.id not in outputs]
+        if pending:
+            if step < last_step:
+                raise ValueError(
+                    f"{step}단계의 노드 출력이 기록에 없습니다: {', '.join(a.node.id for a in pending)}"
+                )
+            return GraphReplay(scheduler, step, activations, pending, outputs)
+        for activation in activations:
+            port, value = outputs[activation.node.id]
+            scheduler.deliver(activation.node.id, port, value)
+    return GraphReplay(scheduler, step)
+
+
+def resume_notice(calls: Sequence[Mapping[str, Any]], output_chars: int = 300) -> str:
+    """끊긴 발언을 다시 하는 에이전트에게 붙이는 안내 — 이미 실행한 도구와 결과.
+
+    발언의 글은 남지 않았지만 도구는 실행됐습니다. 모르고 같은 파일 쓰기를 되풀이하지 않도록,
+    실행된 것을 관찰 결과로 건넵니다 (ADR-014: 도구의 결과는 관찰입니다).
+    """
+    lines = []
+    for call in calls:
+        try:
+            args = json.dumps(call.get("arguments") or {}, ensure_ascii=False)
+        except (TypeError, ValueError):
+            args = str(call.get("arguments"))
+        output = str(call.get("output") or "").strip().replace("\n", " ")
+        if len(output) > output_chars:
+            output = output[:output_chars] + "…"
+        lines.append(f"- {call.get('tool_name')}({args[:200]}) → {call.get('status') or 'success'}: {output}")
+    return (
+        "[재개 안내] 서버가 다시 시작되어 당신의 직전 발언이 끝나지 못했고, 그 글은 남아 있지 "
+        "않습니다. 끊기기 전에 당신이 이미 실행한 도구와 결과입니다:\n"
+        + "\n".join(lines)
+        + "\n같은 작업(특히 파일 쓰기)을 모르고 되풀이하지 말고, 필요하면 결과를 먼저 확인한 뒤 "
+        "발언을 처음부터 다시 작성하세요."
+    )
+
+
 # ---------------------------------------------------------------- 감지
 
 async def mark_interrupted_turns(db) -> Dict[str, int]:
@@ -192,8 +313,13 @@ async def abandon_unfinished(db, session_id: str) -> int:
 
 # ---------------------------------------------------------------- 안내
 
-# 이어 가기를 지원하는 전략. 여기 없는 전략은 결론 내기·버리기만 고를 수 있습니다.
-CONTINUABLE_STRATEGIES: frozenset = frozenset()
+# 이어 가기를 지원하는 전략. 여기 없는 전략은 합성 중에 끊긴 턴만 이어 갈 수 있고, 그 밖에는 결론
+# 내기·버리기만 고를 수 있습니다.
+CONTINUABLE_STRATEGIES = frozenset({"sequential_debate", "adversarial_debate", "graph_debate"})
+
+
+def can_continue(strategy: str, phase: str) -> bool:
+    return strategy in CONTINUABLE_STRATEGIES or phase == "synthesizing"
 
 
 @dataclass
@@ -254,6 +380,6 @@ async def unfinished_turn(db, session_id: str) -> Optional[UnfinishedTurn]:
         stopped_at=last_activity(turn, messages, orphans),
         speeches=speeches,
         orphan_tools=len(orphans),
-        can_continue=str(config.get("strategy") or "") in CONTINUABLE_STRATEGIES,
+        can_continue=can_continue(str(config.get("strategy") or ""), turn.phase),
         can_finish=speeches > 0,
     )
