@@ -128,6 +128,44 @@ class TurnModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # 끝나지 못한 발언의 초안 (ADR-025). 턴을 ORM 으로 지우면 함께 지워집니다. 초안은 크므로
+    # 턴을 읽을 때 함께 싣지 않습니다 (lazy="select" — 지울 때만 불러옵니다).
+    drafts: Mapped[List["SpeechDraftModel"]] = relationship(
+        "SpeechDraftModel", back_populates="turn", cascade="all, delete-orphan", lazy="select"
+    )
+
+
+class SpeechDraftModel(Base):
+    """도구를 쓰는 중인 발언의 초안 — 서버가 내려가도 도구 단위로 이어 가기 위해 (ADR-025).
+
+    도구 루프가 도구를 부를 때와 도구 결과를 받을 때마다 **모델이 보고 있던 메시지 그대로**와
+    루프의 셈(부른 횟수, 사람이 늘려 준 상한, 넓혀 준 창, 판마다 나온 글)을 남깁니다. 발언이
+    기록되면 같은 커밋에서 지워지므로, 남아 있는 초안은 곧 끝나지 못한 발언입니다. 끊긴 턴을
+    이어 가면 그 발언은 처음부터가 아니라 마지막으로 남긴 판 다음부터 이어집니다.
+
+    `id` 는 그 발언이 기록될 `messages.id` 입니다. 끊기기 전에 실행된 도구 기록이 이어 간 발언에
+    그대로 이어지도록 미리 정해 둡니다.
+    """
+
+    __tablename__ = "speech_drafts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(36), index=True)
+    turn_id: Mapped[str] = mapped_column(String(36), ForeignKey("turns.id", ondelete="CASCADE"), index=True)
+    # 이어 갈 때 어느 발언의 초안인지 맞추는 값 (`OrchestratorEngine._speak`).
+    agent_key: Mapped[str] = mapped_column(String(50))
+    kind: Mapped[str] = mapped_column(String(20), default="speech")
+    round_number: Mapped[int] = mapped_column(Integer, default=0)
+    graph_node_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # 발언이 실제로 시작된 시각. 이어 간 발언의 카드는 처음 시작한 시각부터 셉니다.
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    # 도구 루프의 상태 (`app/agents/llm.py` 의 `SPEECH_STATE_VERSION`)와, 그 발언이 이미 기록한
+    # 도구 호출의 id (`tool_record_ids`).
+    state: Mapped[Any] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    turn: Mapped["TurnModel"] = relationship("TurnModel", back_populates="drafts")
+
 
 class MessageModel(Base):
     __tablename__ = "messages"

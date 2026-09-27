@@ -6,6 +6,31 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## Unreleased
+
+**Interrupted turns can be continued, finished or discarded.** Every turn is recorded (`turns`) in the same
+commit as its request, and every message and tool call points to it with its role in the flow
+(`turn_meta`). At start-up a turn still marked running is marked interrupted; a turn stopped by an engine
+exception is marked failed. Opening such a conversation shows a bar with *이어서 진행* (continue from the
+records), *지금까지로 결론* (synthesize what was said; never consensus) and *버리기* (discard). Rounds,
+nominations, parallel assignments and graph steps are rebuilt from the records; the turn finishes with the
+configuration it started with. The report names the pause inside the total elapsed time.
+→ [Interrupted Turns](orchestration/turn-recovery.md) · ADR-024
+
+**A cut speech continues after its last finished tool.** A speech that uses tools saves the tool loop's state
+after it asks for tools and after each result (`speech_drafts`). On continue it resumes from those exact
+messages instead of starting over; a call that was running at the cut is answered "result unknown".
+→ [Interrupted Turns §5](orchestration/turn-recovery.md) · [LLM Integration §2.8](agents/llm-integration.md) · ADR-025
+
+**Tool calls are recorded as they run**, not with the finished speech, so a cut speech no longer loses the
+record of tools it ran. → [Database Schema §2.3](architecture/database-schema.md)
+
+**Fixed.** A parallel round recorded a speech's cancellation as a failure and carried on; it now re-raises it
+after the other speeches are recorded, like graph steps. The summary JSON's `consensus_reached` no longer
+reports a stopped turn as consensus.
+
+---
+
 ## v0.10.0
 
 **Tool security: allow, ask, deny.** Every MCP tool call now passes a gate before it runs. Calls become

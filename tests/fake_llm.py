@@ -113,6 +113,8 @@ class FakeLLMCaller:
         mcp: Any = None,
         ledger: str = "",
         tool_gate: Any = None,
+        checkpoint: Any = None,
+        resume_state: Any = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         self.calls.append(agent.key)
         # 이 발언이 받은 도구 보안 문지기. 턴마다 하나가 모든 발언에 걸리는지 테스트가 읽습니다.

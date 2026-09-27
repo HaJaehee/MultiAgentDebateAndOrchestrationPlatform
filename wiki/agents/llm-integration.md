@@ -408,6 +408,20 @@ the tool budget is spent, a call cannot be retried, so the markup is removed and
 
 ---
 
+### 2.8. Saving the loop so a cut speech can continue
+
+`call_agent(..., checkpoint=..., resume_state=...)`. The loop hands its state to `checkpoint` right after
+the model asks for tools and after every tool result — the messages exactly as sent, the text segments,
+calls used, the (possibly extended) limit, the (possibly widened) window and the tool logs
+(`SPEECH_STATE_VERSION`). The engine stores it as a speech draft.
+
+Given `resume_state`, `call_agent` builds no prompt: the loop starts from the saved messages, so the model
+sees the same conversation it saw before the cut, not one rebuilt from a ledger that moved on meanwhile.
+`close_open_tool_calls` answers every tool call that was asked for but never returned with
+`UNKNOWN_TOOL_RESULT` — an unpaired `tool_call` is a 400, and a made-up result would be read as fact —
+and `RESUMED_SPEECH_NOTICE` tells the model it is continuing, not starting over. See
+[Interrupted Turns §5](../orchestration/turn-recovery.md).
+
 ## 3. Sequential Thinking (Step-by-Step Reasoning)
 
 Sequential Thinking enforces deliberate reasoning before answering. Configured in ``llm.sequential_thinking`` or `agents.<key>.sequential_thinking`, it supports three operational modes:
