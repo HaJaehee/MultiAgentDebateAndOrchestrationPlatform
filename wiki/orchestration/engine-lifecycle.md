@@ -160,3 +160,16 @@ folder, because the MCP servers were shared process-wide and switching the works
 a running debate would have pointed its tools at someone else's files. With one runtime per
 workspace there is nothing to clash over; the only remaining refusal is
 `RuntimeCapacityError` when the runtime budget is exhausted.
+
+---
+
+## 5. Turns Are Recorded, and an Interrupted Turn Can Be Resumed
+
+`run_turn()` now writes a `turns` row in the same commit as the opening request and splits its body into
+`_setup_turn` → `_plan` → `_debate` → `_conclude`. `resume_turn(session_id, turn_id, mode)` reuses the same
+phases to finish (`finish`) or continue (`continue`) a turn that was cut by a restart or an engine
+exception: it rebuilds the state from the records, resumes the round, graph step or speech where it
+stopped, and continues a tool-using speech after its last finished tool from its draft.
+`DebateRunner.resume()` runs it in the background like a new turn. Full description:
+[Interrupted Turns](turn-recovery.md).
+

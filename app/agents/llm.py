@@ -406,6 +406,59 @@ BUDGET_EXHAUSTED_INSTRUCTION = (
     "없는 사실을 지어내지 마세요."
 )
 
+# 발언 초안 저장 (ADR-025). 도구 루프가 한 판을 마칠 때마다 이어 갈 수 있는 상태를 넘깁니다.
+# 받는 쪽(`OrchestratorEngine._speak`)이 DB 에 남기고, 서버가 다시 뜨면 그 상태로 이어 갑니다.
+SpeechCheckpoint = Callable[[Dict[str, Any]], Awaitable[None]]
+
+# 초안의 형식. 필드를 바꾸면 올립니다 — 모르는 형식의 초안은 이어 가지 않고 발언을 처음부터 합니다.
+SPEECH_STATE_VERSION = 1
+
+# 도구 단위로 이어 가는 발언의 첫 판 앞에 붙는 안내.
+RESUMED_SPEECH_NOTICE = (
+    "[재개] 서버가 다시 시작되어 이 발언이 잠시 끊겼다가 이어집니다. 위 대화는 끊기기 전까지의 "
+    "진행 그대로입니다 — 앞서 쓴 글을 되풀이하거나 이미 결과를 받은 도구를 다시 실행하지 말고, "
+    "멈춘 자리에서 이어 가세요."
+)
+
+# 끊긴 순간 실행 중이던 도구 호출에 채우는 결과. 짝 없는 tool_call 을 남기면 다음 요청이 400 입니다.
+UNKNOWN_TOOL_RESULT = (
+    "[결과 모름] 서버가 다시 시작되어 이 도구 호출의 결과를 받지 못했습니다. 실행되었는지 알 수 "
+    "없습니다. 결과가 필요하면(특히 파일 쓰기·명령 실행) 먼저 지금 상태를 확인한 뒤 다시 호출할지 "
+    "정하세요."
+)
+
+
+def close_open_tool_calls(messages: List[Dict[str, Any]]) -> List[str]:
+    """마지막 assistant 발언이 부른 도구 중 결과가 없는 것에 "결과 모름" 을 채웁니다. 채운 도구 이름.
+
+    도구를 부른 발언과 그 결과는 짝이 맞아야 합니다 (`_assistant_turn`). 서버가 도구를 실행하는
+    도중에 내려가면 부른 기록만 있고 결과가 없는 호출이 남습니다. 그 자리를 비워 두면 요청이
+    거절되고, 지어낸 결과를 넣으면 모델이 그것을 사실로 읽습니다. 모른다고 적습니다.
+    """
+    for index in range(len(messages) - 1, -1, -1):
+        msg = messages[index]
+        if msg.get("role") != "assistant":
+            continue
+        calls = msg.get("tool_calls") or []
+        if not calls:
+            return []
+        answered = {
+            m.get("tool_call_id") for m in messages[index + 1:] if m.get("role") == "tool"
+        }
+        missing: List[str] = []
+        for call in calls:
+            call_id = call.get("id")
+            if call_id in answered:
+                continue
+            name = ((call.get("function") or {}).get("name")) or "unknown_tool"
+            messages.append({
+                "role": "tool", "tool_call_id": call_id, "name": name, "content": UNKNOWN_TOOL_RESULT,
+            })
+            missing.append(name)
+        return missing
+    return []
+
+
 BUDGET_EXTENDED_INSTRUCTION = (
     "[도구 호출 예산 확장] 유저가 상한을 {extra}회 늘려 총 {limit}회가 되었습니다 "
     "(남은 호출 {remaining}회). 늘어난 몫은 결론을 내는 데 꼭 필요한 확인에만 쓰고, "
@@ -1424,10 +1477,16 @@ class LLMCaller:
         mcp: Optional[MCPManager] = None,
         ledger: str = "",
         tool_gate: Optional[Any] = None,
+        checkpoint: Optional[SpeechCheckpoint] = None,
+        resume_state: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Executes a turn for the given agent.
         Returns (response_text, tool_call_logs).
+
+        `checkpoint` 는 도구 루프가 한 판을 마칠 때마다(도구를 부른 직후, 도구 결과를 받을 때마다)
+        이어 갈 수 있는 상태를 넘겨받는 콜백입니다 (ADR-025). `resume_state` 는 그렇게 남긴 상태로,
+        주면 프롬프트를 새로 만들지 않고 그 상태의 메시지에서 다음 LLM 호출부터 이어 갑니다.
 
         `mcp` 는 이 발언이 쓸 MCP 런타임입니다. 대화마다 작업 공간이 다를 수
         있고 런타임은 작업 공간마다 따로 뜨므로, 어느 것을 쓸지는 턴을 여는
@@ -1466,28 +1525,34 @@ class LLMCaller:
         if tool_gate is not None:
             tools = tool_gate.filter_tools(agent.key, tools, mcp)
 
-        formatted_messages: List[Dict[str, Any]] = [
-            {"role": "system",
-             "content": self.build_system_prompt(agent, custom_instructions, tools)}
-        ]
-        prompt = place_ledger_last(messages, ledger)
-        formatted_messages.extend(prompt)
-        # 발언을 시작할 때의 마지막 사용자 메시지(장부 + 이번 차례 지시). 도구 루프가 넘쳐
-        # 이것을 버리게 되면 다시 붙입니다 (`fit_tool_loop_context` 의 `keep`).
-        turn_anchor = (
-            prompt[-1]["content"]
-            if prompt and prompt[-1].get("role") == "user" and isinstance(prompt[-1].get("content"), str)
-            else ""
-        )
+        if resume_state is not None:
+            # 끊긴 발언을 이어 갑니다. 모델이 보던 메시지를 그대로 씁니다 — 프롬프트를 다시 만들면
+            # 그 사이 바뀐 장부·요약이 섞여, 모델이 보던 것과 다른 대화가 됩니다.
+            formatted_messages = [dict(m) for m in resume_state.get("messages") or []]
+            turn_anchor = str(resume_state.get("turn_anchor") or "")
+        else:
+            formatted_messages = [
+                {"role": "system",
+                 "content": self.build_system_prompt(agent, custom_instructions, tools)}
+            ]
+            prompt = place_ledger_last(messages, ledger)
+            formatted_messages.extend(prompt)
+            # 발언을 시작할 때의 마지막 사용자 메시지(장부 + 이번 차례 지시). 도구 루프가 넘쳐
+            # 이것을 버리게 되면 다시 붙입니다 (`fit_tool_loop_context` 의 `keep`).
+            turn_anchor = (
+                prompt[-1]["content"]
+                if prompt and prompt[-1].get("role") == "user" and isinstance(prompt[-1].get("content"), str)
+                else ""
+            )
 
-        # 순서 주의: 먼저 한도에 맞춰 자르고, 그 다음 role 을 합칩니다. 생략 안내가
-        # user 로 들어가므로 합치기를 나중에 해야 교대가 보장됩니다.
-        formatted_messages, trimmed = fit_context_window(
-            agent, formatted_messages, memory_search_tool(tools), tools=tools,
-        )
-        if trimmed and on_context_trim:
-            on_context_trim(trimmed)
-        formatted_messages = merge_consecutive_roles(formatted_messages)
+            # 순서 주의: 먼저 한도에 맞춰 자르고, 그 다음 role 을 합칩니다. 생략 안내가
+            # user 로 들어가므로 합치기를 나중에 해야 교대가 보장됩니다.
+            formatted_messages, trimmed = fit_context_window(
+                agent, formatted_messages, memory_search_tool(tools), tools=tools,
+            )
+            if trimmed and on_context_trim:
+                on_context_trim(trimmed)
+            formatted_messages = merge_consecutive_roles(formatted_messages)
 
         # Real endpoint if an API URL, an API key, or a keyless local runtime is configured
         if not agent.is_live:
@@ -1503,6 +1568,7 @@ class LLMCaller:
                 session_id=session_id, budget_arbiter=budget_arbiter,
                 context_arbiter=context_arbiter, on_context_trim=on_context_trim,
                 mcp=mcp, turn_anchor=turn_anchor, tool_gate=tool_gate,
+                checkpoint=checkpoint, resume_state=resume_state,
             )
         except LLMUnavailableError:
             raise
@@ -2243,6 +2309,8 @@ class LLMCaller:
         mcp: Optional[MCPManager] = None,
         turn_anchor: str = "",
         tool_gate: Optional[Any] = None,
+        checkpoint: Optional[SpeechCheckpoint] = None,
+        resume_state: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """도구 루프. 상한은 두 겹의 안전장치와 함께 돕니다.
 
@@ -2286,6 +2354,47 @@ class LLMCaller:
         # 발언이 끝나는 순간 사라졌습니다 (짧은 답변은 이터레이션이 한 번이라
         # 마지막 판 == 전체였고, 그래서 이 손실이 오래 눈에 띄지 않았습니다).
         segments: List[str] = []
+
+        # 끊긴 발언을 이어 가면 판 단위로 남긴 상태에서 시작합니다 (ADR-025). 끊긴 순간 실행 중이던
+        # 도구에는 "결과 모름" 을 채우고, 이어진다는 사실을 모델에게 알립니다.
+        if resume_state is not None:
+            current_messages = [dict(m) for m in resume_state.get("messages") or current_messages]
+            segments = list(resume_state.get("segments") or [])
+            used = int(resume_state.get("used") or 0)
+            limit = max(limit, int(resume_state.get("limit") or 0))
+            window = int(resume_state.get("window") or window)
+            tool_logs = [dict(log) for log in resume_state.get("tool_logs") or []]
+            leaked_retries = int(resume_state.get("leaked_retries") or 0)
+            context_asked = bool(resume_state.get("context_asked"))
+            announced_bands = set(resume_state.get("announced_bands") or [])
+            unknown = close_open_tool_calls(current_messages)
+            notice = RESUMED_SPEECH_NOTICE
+            if unknown:
+                notice += f" 결과를 받지 못한 호출: {', '.join(unknown)}."
+            self._append_budget_notice(current_messages, notice)
+
+        async def save_progress() -> None:
+            """지금까지를 이어 갈 수 있게 넘깁니다. 넘기다 실패해도 발언은 계속됩니다."""
+            if checkpoint is None:
+                return
+            try:
+                await checkpoint({
+                    "version": SPEECH_STATE_VERSION,
+                    "messages": current_messages,
+                    "segments": segments,
+                    "used": used,
+                    "limit": limit,
+                    "window": window,
+                    "tool_logs": tool_logs,
+                    "leaked_retries": leaked_retries,
+                    "context_asked": context_asked,
+                    "announced_bands": sorted(announced_bands, key=str),
+                    "turn_anchor": turn_anchor,
+                })
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"Could not save the progress of {agent.name}'s speech: {exc}")
 
         while True:
             while used < limit:
@@ -2458,6 +2567,8 @@ class LLMCaller:
 
                 # Append assistant message with tool calls to context
                 current_messages.append(self._assistant_turn(message, parsed))
+                # 도구를 실행하기 전에 남깁니다. 실행 도중 끊기면 무엇을 부르던 중이었는지 압니다.
+                await save_progress()
 
                 # Execute all requested tool calls
                 #
@@ -2507,6 +2618,8 @@ class LLMCaller:
                         "name": fn_name or "unknown_tool",
                         "content": output,
                     })
+                    # 도구 하나가 끝날 때마다 남깁니다. 끊기면 그 다음 도구부터 이어 갑니다.
+                    await save_progress()
 
                 # 잘렸다는 사실은 **말로** 알려야 합니다. 도구 서버가 돌려준
                 # "Input validation error" 만으로는 모델이 원인을 알 수 없어,
@@ -2555,6 +2668,8 @@ class LLMCaller:
                         extra=granted, limit=limit, remaining=limit - used
                     ),
                 )
+                # 사람이 늘려 준 상한도 끊겼다 이어 갈 때 남아 있어야 합니다.
+                await save_progress()
                 continue
 
             return await self._wrap_up_without_tools(

@@ -12,6 +12,8 @@ erDiagram
     sessions ||--o{ tool_calls : "has (cascade)"
     sessions ||--o{ artifacts : "has (cascade)"
     sessions ||--o{ session_agents : "has (cascade)"
+    sessions ||--o{ turns : "has"
+    turns ||--o{ speech_drafts : "has (cascade)"
     messages ||--o{ tool_calls : "contains (set null)"
 
     sessions {
@@ -49,6 +51,37 @@ erDiagram
         datetime started_at "Nullable: when the speech actually started"
         datetime finished_at "Nullable: when the speech actually finished"
         datetime turn_started_at "Nullable: set only on the synthesis row that closed a turn"
+        string turn_id "Nullable: the turn this record belongs to"
+        json turn_meta "Nullable: role in the turn's flow (kind + nomination/assignment values)"
+    }
+
+    turns {
+        string id PK "UUID4"
+        string session_id FK "References sessions(id)"
+        string status "running | completed | failed | interrupted | abandoned"
+        string phase "planning | debating | synthesizing | completed"
+        string opening_message_id "The request that opened the turn"
+        json config "Participants, strategy, rounds, parallel limit, instructions, workspace at start"
+        boolean stopped_early "Entered synthesis after a stop"
+        integer paused_seconds "Time spent interrupted"
+        integer resumed_count "Times resumed"
+        text error "Why a failed turn stopped"
+        datetime started_at "UTC timestamp"
+        datetime updated_at "UTC timestamp"
+        datetime finished_at "Nullable"
+    }
+
+    speech_drafts {
+        string id PK "The future messages.id of the speech"
+        string session_id "Owning session"
+        string turn_id FK "References turns(id)"
+        string agent_key "Speaker"
+        string kind "speech | plan | merge | synthesis"
+        integer round_number "Round or graph step"
+        string graph_node_id "Nullable: graph node"
+        datetime started_at "When the speech first started"
+        json state "Tool loop state + tool_record_ids"
+        datetime updated_at "UTC timestamp"
     }
 
     tool_calls {
@@ -64,6 +97,7 @@ erDiagram
         string risk "Risk class the verdict turned on"
         text rule "Matched rule, granted scope, mode:<mode> or a marker"
         string approver "local | remote when a person answered"
+        string turn_id "Nullable: the turn that ran it"
         datetime created_at "UTC timestamp"
     }
 
@@ -139,6 +173,8 @@ Stores the sequential transcript of messages exchanged during a debate.
 | `turn_started_at` | `DATETIME` | Yes | - | Set **only** on the synthesis speech that closed a turn: when that turn's opening request was recorded. `finished_at - turn_started_at` is the turn's total elapsed time, shown in the report footer and the Markdown export. Recorded explicitly rather than inferred, because an interjection right after planning is also a `user` row with `round_number=0`. `NULL` elsewhere, which also marks the row that closed a turn. |
 | `graph_node_id` | `VARCHAR(64)` | Yes | - | Graph debate only: the node that produced this message. Needed because one agent can sit on several nodes. |
 | `graph_port` | `VARCHAR(8)` | Yes | - | Graph debate only: the output port this message left through — `out` for agent and merge speeches, `yes`/`no` for a gate verdict. NULL for notes attached to a node that are not its output (the visit-cap notice). The live overlay, a refreshed page and a reopened conversation all count visits, gate branches and flowed wires from this column. |
+| `turn_id` | `VARCHAR(36)` | Yes | - | The turn this record belongs to (`turns.id`). NULL for rows written before turns were recorded. |
+| `turn_meta` | `JSON` | Yes | - | The record's role in the turn's flow: `{"kind": ...}` with `opening`, `interjection`, `plan`, `speech`, `merge`, `gate`, `nomination` (+ `speakers`), `assignment` (+ `tasks`), `note`, `failure`, `interrupted`, `synthesis`. Interrupted turns are rebuilt from these values, not from the sentences in `content`. See [Interrupted Turns](../orchestration/turn-recovery.md). |
 
 `started_at` equals `finished_at` for records that take no time (a person's message, a speaker-selection note). Both are `NULL` for rows written before v0.6.1.2: the migration deliberately adds them without a default, because backfilling would make every old speech appear to start and finish at the moment of migration. The chat feed and the Markdown export show such rows with the single `created_at` value and without calling it a start or an end ([`app/timestamps.py` `speech_timing`](file:///d:/MultiAgentDebateOrchestration/app/timestamps.py)).
 
@@ -159,9 +195,15 @@ Logs every MCP tool invocation executed by an agent during a turn.
 | `risk` | `VARCHAR(20)` | No | `''` | Risk class the verdict turned on (`write`, `net`, `exec_flagged`, …). |
 | `rule` | `TEXT` | No | `''` | Matched rule, granted scope, `mode:<mode>`, or a marker (`once`, `repeat`, `unattended`, `gate-error`). |
 | `approver` | `VARCHAR(20)` | No | `''` | `local` (server PC) or `remote` when a person answered the card. |
+| `turn_id` | `VARCHAR(36)` | Yes | - | The turn that ran the call. |
 | `created_at` | `DATETIME` | No | `utc_now` | UTC execution timestamp. |
 
 The four security columns are explained in [Tool Security §8](../mcp/tool-security.md).
+
+**A call is committed the moment the tool returns**, with `message_id` empty; the speech's own commit
+fills it in. Previously the rows went in with the speech, so a speech cut by a restart lost the record
+of tools it had already run. A row whose `message_id` is still empty after its turn was interrupted
+belongs to a speech that never finished; resuming links it to that speech or to an "interrupted" note.
 
 ### 2.4. `artifacts` Table ([ArtifactModel](file:///d:/MultiAgentDebateOrchestration/app/database/models.py#L80-L92))
 Persists individual output artifacts synthesized by the Master Orchestrator at the end of a debate.
@@ -199,6 +241,37 @@ because drawing a card needs them without parsing JSON, and because they must at
 before the snapshot column existed.
 
 > **Unique Constraint**: A compound unique constraint `uq_session_agent` exists across `(session_id, agent_key)`, ensuring only one persona record exists per agent per session.
+
+### 2.6. `turns` Table ([TurnModel](file:///d:/MultiAgentDebateOrchestration/app/database/models.py))
+One debate turn — from a person's request to its synthesis. Written in the same commit as the opening
+request; every message and tool call of the turn points to it.
+
+| Column | Type | Nullable | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `VARCHAR(36)` | No | `uuid4()` | Primary key. |
+| `session_id` | `VARCHAR(36)` | No | - | Owning session. |
+| `status` | `VARCHAR(20)` | No | `'running'` | `running`, `completed`, `failed` (engine exception), `interrupted` (found `running` at start-up), `abandoned` (a new request was sent instead of resuming). |
+| `phase` | `VARCHAR(20)` | No | `'planning'` | `planning`, `debating`, `synthesizing`, `completed` — the first hint of where to resume. |
+| `opening_message_id` | `VARCHAR(36)` | Yes | - | The request that opened the turn. |
+| `config` | `JSON` | No | `{}` | Participants, strategy, rounds, parallel limit, custom instructions and workspace at the start. A resumed turn finishes with these even if the roster changed meanwhile. |
+| `stopped_early` | `BOOLEAN` | No | `0` | Set when synthesis starts after a stop request, so a turn cut during synthesis keeps that fact. |
+| `paused_seconds` / `resumed_count` | `INTEGER` | No | `0` | Time spent interrupted and times resumed; the report's elapsed time names them. |
+| `error` | `TEXT` | No | `''` | Why a `failed` turn stopped. |
+| `started_at` / `updated_at` / `finished_at` | `DATETIME` | | | Turn timestamps. |
+
+### 2.7. `speech_drafts` Table ([SpeechDraftModel](file:///d:/MultiAgentDebateOrchestration/app/database/models.py))
+The in-progress state of a speech that uses tools, so an interrupted speech continues after its last
+finished tool instead of starting over. Deleted in the speech's own commit; a surviving row is an
+unfinished speech. Details in [Interrupted Turns §5](../orchestration/turn-recovery.md).
+
+| Column | Type | Nullable | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `VARCHAR(36)` | No | - | The `messages.id` the speech will be recorded under — fixed in advance so tool rows written before a cut link to the resumed speech. |
+| `session_id` / `turn_id` | `VARCHAR(36)` | No | - | Owners. `turn_id` cascades on ORM delete of the turn. |
+| `agent_key` / `kind` / `round_number` / `graph_node_id` | | | | Which speech this draft belongs to (`turns.draft_key`). |
+| `started_at` | `DATETIME` | No | `utc_now` | When the speech first started; the resumed card counts from here. |
+| `state` | `JSON` | No | `{}` | Tool loop state (`SPEECH_STATE_VERSION`): messages as sent, text segments, calls used, limit, window, tool logs — plus `tool_record_ids`. |
+| `updated_at` | `DATETIME` | No | `utc_now` | Last save. |
 
 ---
 
@@ -281,6 +354,9 @@ skipped entirely for a table `create_all` just created.
 
 ```python
 _ADDED_COLUMNS = {
+    "messages": {..., "turn_id": "VARCHAR(36)", "turn_meta": "JSON"},
+    "tool_calls": {..., "turn_id": "VARCHAR(36)"},
+    "turns": {"stopped_early": "BOOLEAN NOT NULL DEFAULT 0"},
     "sessions": {"personas_locked": ..., "workspace_dir": ..., "known_agents": ..., "parallel_limit": ...,
                  "decision_ledger": ..., "ledger_through_id": ..., "transcript_summary": ..., "summary_through_id": ...,
                  "graph_id": ..., "graph_snapshot": ...},

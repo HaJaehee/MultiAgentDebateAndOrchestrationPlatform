@@ -32,7 +32,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 
 from app.database.models import (
     TURN_ABANDONED,
@@ -41,10 +41,12 @@ from app.database.models import (
     TURN_RUNNING,
     TURN_UNFINISHED,
     MessageModel,
+    SpeechDraftModel,
     ToolCallRecordModel,
     TurnModel,
     utc_now,
 )
+from app.agents.llm import SPEECH_STATE_VERSION
 from app.orchestration.graph import Activation, GraphScheduler, GraphSpec
 from app.orchestration.graph_run import OUTPUT_PORTS
 from app.timestamps import _as_datetime
@@ -68,6 +70,18 @@ KIND_SYNTHESIS = "synthesis"        # 턴을 마무리한 합성
 
 # 실패로 끝나면 "그 에이전트가 이번 턴에 말하지 못했다" 는 뜻이 되는 자리.
 _SPEAKING_KINDS = (KIND_PLAN, KIND_SPEECH, KIND_MERGE, KIND_SYNTHESIS)
+
+
+def draft_key(agent_key: str, kind: str, round_number: int, graph_node_id: Optional[str]) -> str:
+    """발언 초안(ADR-025)이 어느 발언의 것인지 맞추는 열쇠.
+
+    이어 가는 턴에서 같은 자리의 발언이 다시 불릴 때 이 열쇠로 초안을 찾습니다 — 같은 에이전트,
+    같은 종류, 같은 라운드(그래프는 단계), 같은 노드. 계획과 합성은 턴에 하나뿐이라 라운드를 보지
+    않습니다 (합성의 라운드 번호는 합성 직전의 라운드에서 셉니다).
+    """
+    if kind in (KIND_PLAN, KIND_SYNTHESIS):
+        return f"{agent_key}|{kind}"
+    return f"{agent_key}|{kind}|{int(round_number or 0)}|{graph_node_id or ''}"
 
 
 def meta(kind: str, **data: Any) -> Dict[str, Any]:
@@ -327,6 +341,8 @@ async def mark_interrupted_turns(db) -> Dict[str, int]:
             turn.phase = "completed"
             turn.finished_at = turn.finished_at or utc_now()
             counts["completed"] += 1
+            # 끝난 턴에는 이어 갈 발언이 없습니다.
+            await db.execute(delete(SpeechDraftModel).where(SpeechDraftModel.turn_id == turn.id))
         else:
             turn.status = TURN_INTERRUPTED
             counts["interrupted"] += 1
@@ -340,7 +356,16 @@ async def mark_interrupted_turns(db) -> Dict[str, int]:
 
 
 async def abandon_unfinished(db, session_id: str) -> int:
-    """이 대화의 끊긴 턴을 "버려짐" 으로 적습니다. 새 요청이 들어올 때 부릅니다. 커밋은 부르는 쪽이."""
+    """이 대화의 끊긴 턴을 "버려짐" 으로 적습니다. 새 요청이 들어올 때 부릅니다. 커밋은 부르는 쪽이.
+
+    버린 턴의 발언 초안(ADR-025)은 더 이어 갈 일이 없으므로 함께 지웁니다.
+    """
+    await db.execute(delete(SpeechDraftModel).where(SpeechDraftModel.turn_id.in_(
+        select(TurnModel.id).where(
+            TurnModel.session_id == session_id,
+            TurnModel.status.in_(TURN_UNFINISHED + (TURN_RUNNING,)),
+        )
+    )))
     result = await db.execute(
         update(TurnModel)
         .where(
@@ -380,9 +405,10 @@ class UnfinishedTurn:
     workspace_dir: str
     started_at: Optional[datetime]
     stopped_at: Optional[datetime]
-    # 전문가가 남긴 발언 수, 끝나지 못한 발언이 실행한 도구 수.
+    # 전문가가 남긴 발언 수, 끝나지 못한 발언이 실행한 도구 수, 도구 단위로 이어 갈 수 있는 발언 수.
     speeches: int
     orphan_tools: int
+    resumable_speeches: int
     can_continue: bool
     can_finish: bool
 
@@ -408,6 +434,10 @@ async def unfinished_turn(db, session_id: str) -> Optional[UnfinishedTurn]:
             ToolCallRecordModel.turn_id == turn.id, ToolCallRecordModel.message_id.is_(None),
         )
     )).scalars().all()
+    drafts = (await db.execute(
+        select(SpeechDraftModel.state).where(SpeechDraftModel.turn_id == turn.id)
+    )).scalars().all()
+    resumable = sum(1 for s in drafts if (s or {}).get("version") == SPEECH_STATE_VERSION)
     opening = next((m for m in messages if m.id == turn.opening_message_id), None)
     config = turn.config or {}
     speeches = specialist_speeches(messages)
@@ -424,6 +454,7 @@ async def unfinished_turn(db, session_id: str) -> Optional[UnfinishedTurn]:
         stopped_at=last_activity(turn, messages, orphans),
         speeches=speeches,
         orphan_tools=len(orphans),
+        resumable_speeches=resumable,
         can_continue=can_continue(str(config.get("strategy") or ""), turn.phase),
         can_finish=speeches > 0,
     )

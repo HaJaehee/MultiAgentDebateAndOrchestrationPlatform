@@ -8,9 +8,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Coroutine, Dict, List, Optional, Set, Tuple
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from app.agents.base import Agent
 from app.agents.llm import (
+    SPEECH_STATE_VERSION,
     LLMCaller,
     LLMUnavailableError,
     context_budget,
@@ -36,6 +37,7 @@ from app.database.models import (
     ArtifactModel,
     MessageModel,
     SessionModel,
+    SpeechDraftModel,
     ToolCallRecordModel,
     TurnModel,
     utc_now,
@@ -795,10 +797,20 @@ class OrchestratorEngine:
         `message_id` 를 비워 둘 수밖에 없었고, 그래서 새로고침한 화면과 저장
         파일에서 도구 기록이 발언과 따로 놀았습니다.
         """
-        msg_id = str(uuid.uuid4())
+        # 끊긴 턴을 이어 가는 중이고 이 발언의 초안이 남아 있으면, 처음부터가 아니라 초안의 마지막
+        # 판 다음부터 이어 갑니다 (ADR-025). 발언 id 와 시작 시각은 초안의 것을 그대로 씁니다 —
+        # 끊기기 전에 실행된 도구 기록이 이 발언에 이어지고, 카드는 처음 시작한 시각부터 셉니다.
+        draft = state.resume_drafts.pop(
+            turns.draft_key(agent.key, kind, round_number, graph_node_id), None
+        )
+        draft_state: Optional[Dict[str, Any]] = draft["state"] if draft else None
+        msg_id = draft["id"] if draft else str(uuid.uuid4())
         # 벽시계 시작 시각. `created_at` 과 따로 둡니다 — 그쪽은 발언이 끝난 뒤에
         # 들어가는 정렬 키라서, 병렬 라운드에서는 실제 시각이 아닙니다.
-        started_at = utc_now()
+        started_at = (draft.get("started_at") if draft else None) or utc_now()
+        # 끊기기 전에 이미 화면에 흘렀던 글과, 이미 기록된 도구 호출.
+        prior_text = "\n\n".join((draft_state or {}).get("segments") or [])
+        prior_record_ids: List[str] = list((draft_state or {}).get("tool_record_ids") or [])
         if on_event:
             await on_event({
                 "type": "message_stream_start",
@@ -807,7 +819,7 @@ class OrchestratorEngine:
                     "sender_key": agent.key,
                     "sender_name": agent.name,
                     "sender_role": agent.role,
-                    "content": "",
+                    "content": f"{prior_text}\n\n" if prior_text else "",
                     "round_number": round_number,
                     "msg_type": msg_type,
                     "started_at": started_at,
@@ -846,7 +858,42 @@ class OrchestratorEngine:
             trimmed_here.append(dropped)
 
         trimmed_here: List[int] = []
-        streamed: List[str] = []
+        streamed: List[str] = [f"{prior_text}\n\n"] if prior_text else []
+
+        # 도구 루프가 한 판을 마칠 때마다 이어 갈 수 있는 상태를 초안으로 남깁니다 (ADR-025).
+        # 도구를 부르지 않는 발언은 한 번도 불리지 않으므로 초안이 생기지 않습니다.
+        draft_saved = draft is not None
+
+        async def _checkpoint(loop_state: Dict[str, Any]) -> None:
+            nonlocal draft_saved
+            payload = json.loads(json.dumps(
+                {**loop_state, "tool_record_ids": prior_record_ids + list(recorded_tools.values())},
+                ensure_ascii=False, default=str,
+            ))
+            async with (db_lock or nullcontext()):
+                try:
+                    if draft_saved:
+                        await db.execute(
+                            update(SpeechDraftModel)
+                            .where(SpeechDraftModel.id == msg_id)
+                            .values(state=payload, updated_at=utc_now())
+                        )
+                    else:
+                        db.add(SpeechDraftModel(
+                            id=msg_id, session_id=state.session_id, turn_id=state.turn_id,
+                            agent_key=agent.key, kind=kind, round_number=round_number,
+                            graph_node_id=graph_node_id, started_at=started_at, state=payload,
+                        ))
+                    await db.commit()
+                    draft_saved = True
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - 초안을 못 남겨도 발언은 계속됩니다
+                    logger.warning(f"Could not save the draft of {agent.name}'s speech: {exc}")
+                    try:
+                        await db.rollback()
+                    except Exception:  # noqa: BLE001
+                        logger.debug("Rollback after a failed draft save also failed", exc_info=True)
 
         # 조각은 모았다가 `STREAM_EVENT_INTERVAL` 마다 한 통으로 보냅니다.
         #
@@ -910,6 +957,8 @@ class OrchestratorEngine:
                 on_context_trim=_on_context_trim,
                 mcp=self._mcp_for(state), tool_gate=self._gate_for(state),
                 ledger=state.decision_ledger,
+                checkpoint=_checkpoint if state.turn_id else None,
+                resume_state=draft_state,
             )
             # 다이어그램 교정 같은 후처리는 시간이 걸립니다. 그동안 카드가 마지막 조각
             # 직전에서 멈춰 보이지 않게, 흘러온 글을 먼저 다 내보냅니다.
@@ -991,7 +1040,7 @@ class OrchestratorEngine:
                     rows.append(self._tool_row(state, agent, call_log, message_id=msg_id))
             return rows
 
-        linked = list(recorded_tools.values())
+        linked = prior_record_ids + list(recorded_tools.values())
 
         async def _link_tools() -> None:
             if linked:
@@ -1000,6 +1049,9 @@ class OrchestratorEngine:
                     .where(ToolCallRecordModel.id.in_(linked))
                     .values(message_id=msg_id)
                 )
+            # 발언이 기록되면 초안은 할 일을 마쳤습니다. 같은 커밋에서 지웁니다.
+            if draft_saved:
+                await db.execute(delete(SpeechDraftModel).where(SpeechDraftModel.id == msg_id))
 
         # 최종 합성이면 파일 이름과 알림에서 그렇다고 밝힙니다. 사람이 먼저 찾는 것이
         # 그 보고서입니다. `turn_started_at` 은 합성 발언에만 주어집니다.
@@ -1559,10 +1611,34 @@ class OrchestratorEngine:
                     "messages": [m.model_dump() for m in state.messages[start:]],
                 })
 
+            # 도구 단위로 이어 갈 발언의 초안 (ADR-025). 이어 가기에서만 씁니다 — 결론 내기는 발언을
+            # 더 하지 않으므로, 초안이 들고 있던 도구 기록도 아래의 "끊김" 안내로 돌립니다.
+            drafts = (await db.execute(
+                select(SpeechDraftModel).where(SpeechDraftModel.turn_id == turn_id)
+            )).scalars().all()
+            usable = [
+                d for d in drafts
+                if mode == "continue" and (d.state or {}).get("version") == SPEECH_STATE_VERSION
+            ]
+            state.resume_drafts = {
+                turns.draft_key(d.agent_key, d.kind, d.round_number, d.graph_node_id): {
+                    "id": d.id, "kind": d.kind, "started_at": d.started_at, "state": d.state,
+                }
+                for d in usable
+            }
+            owned = {rid for d in usable for rid in (d.state or {}).get("tool_record_ids") or []}
+            stale = [d.id for d in drafts if d not in usable]
+            if stale:
+                await db.execute(delete(SpeechDraftModel).where(SpeechDraftModel.id.in_(stale)))
+                await db.commit()
+
             # 끝나지 못한 발언이 실행한 도구는 "끊겼다" 는 안내에 잇습니다. 그 발언의 글은 기록되지
             # 않았으므로 남아 있지 않다는 것도 함께 적습니다. 이어 가면 그 에이전트가 다시 말할 때
-            # 이 기록을 관찰로 건넵니다.
-            redo = await self._note_interrupted_speeches(db, state, setup, orphans, on_event=on_event)
+            # 이 기록을 관찰로 건넵니다. 초안이 있는 발언은 초안에서 이어 가므로 빼고, 그 도구 기록은
+            # 이어 간 발언에 그대로 이어집니다.
+            redo = await self._note_interrupted_speeches(
+                db, state, setup, [o for o in orphans if o.id not in owned], on_event=on_event,
+            )
 
             if mode == "finish":
                 # 정지와 같은 의미입니다. 기록된 발언만으로 합성하고, 합의로 적지 않습니다.
@@ -1599,6 +1675,9 @@ class OrchestratorEngine:
                     ],
                     resume=True, redo=redo,
                 )
+                # 정지 등으로 다시 불리지 않은 발언의 초안은, 그 도구 기록을 "끊김" 안내로 돌립니다.
+                # 합성의 초안은 바로 아래 합성이 씁니다.
+                await self._settle_drafts(db, state, setup, on_event=on_event, keep=(turns.KIND_SYNTHESIS,))
             await self._conclude(
                 db, state, setup, stopped_early=stopped_early, turn_started_at=opening.started_at,
                 control=control, on_event=on_event,
@@ -1825,6 +1904,45 @@ class OrchestratorEngine:
                 before_commit=_link,
             )
         return executed
+
+    async def _settle_drafts(
+        self,
+        db,
+        state: DebateState,
+        setup: "TurnSetup",
+        *,
+        on_event: Optional[EventCallback],
+        keep: Tuple[str, ...] = (),
+    ) -> None:
+        """이어 가지 않을 초안을 정리합니다 — 그 도구 기록은 "끊김" 안내로, 초안 행은 지웁니다.
+
+        `keep` 에 든 종류의 초안은 남깁니다 (이어서 합성이 쓸 합성 초안). 턴이 끝날 때는 이 턴의
+        초안을 모두 지웁니다 — 이어 가기가 아닌 턴(새 턴, 결론 내기)의 초안도 여기서 사라집니다.
+        """
+        leftover = {k: d for k, d in state.resume_drafts.items() if d.get("kind") not in keep}
+        ids = {rid for d in leftover.values() for rid in (d.get("state") or {}).get("tool_record_ids") or []}
+        if ids:
+            rows = (await db.execute(
+                select(ToolCallRecordModel)
+                .where(ToolCallRecordModel.id.in_(ids), ToolCallRecordModel.message_id.is_(None))
+                .order_by(ToolCallRecordModel.created_at)
+            )).scalars().all()
+            await self._note_interrupted_speeches(db, state, setup, rows, on_event=on_event)
+        for key in leftover:
+            state.resume_drafts.pop(key, None)
+        if not state.turn_id:
+            return
+        remove = delete(SpeechDraftModel).where(SpeechDraftModel.turn_id == state.turn_id)
+        if keep:
+            remove = remove.where(SpeechDraftModel.kind.not_in(keep))
+        try:
+            await db.execute(remove)
+            await db.commit()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 초안 정리를 못 해도 턴은 끝납니다
+            logger.warning(f"Could not clear the speech drafts of turn {state.turn_id}: {exc}")
+            await db.rollback()
 
     async def _set_turn(self, db, state: DebateState, **values: Any) -> None:
         """턴 기록의 단계·상태를 고칩니다. 못 적어도 턴은 계속됩니다 — 기록의 부산물이라."""
@@ -2279,6 +2397,9 @@ class OrchestratorEngine:
         await self._persist_memory(db, state, on_event)
 
         state.status = "completed"
+        # 쓰이지 않은 초안이 남았으면 그 도구 기록을 "끊김" 안내로 돌리고 지웁니다. 턴이 끝났으니
+        # 더 이어 갈 발언이 없습니다.
+        await self._settle_drafts(db, state, setup, on_event=on_event)
         await self._set_turn(
             db, state, status=TURN_COMPLETED, phase="completed", finished_at=utc_now(),
         )

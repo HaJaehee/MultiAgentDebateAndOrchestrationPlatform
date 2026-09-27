@@ -1,10 +1,10 @@
 # ADR-024. 서버가 턴 도중에 내려가도 그 턴을 이어 가거나 마무리할 수 있게 한다
 
-> [ADR 목록](README.md) · 이전: [ADR-023](ADR-023-keep-litellm-and-own-engine.md)
+> [ADR 목록](README.md) · 이전: [ADR-023](ADR-023-keep-litellm-and-own-engine.md) · 다음: [ADR-025](ADR-025-resume-speeches-by-tool-step.md)
 
 ## 상태 (Status)
 
-채택됨 · 2026-09-27 (1~3단계 구현) · 관련: [ADR-001](ADR-001-python-single-process.md), [ADR-008](ADR-008-background-debate-runner.md), [ADR-014](ADR-014-tool-failure-is-observation.md), [ADR-017](ADR-017-never-lose-a-write.md), [ADR-020](ADR-020-conversation-memory.md), [ADR-023](ADR-023-keep-litellm-and-own-engine.md)
+채택됨 · 2026-09-27 (1~3단계 구현) · 복구 단위는 [ADR-025](ADR-025-resume-speeches-by-tool-step.md)에서 도구 호출 단위로 좁힘 · 관련: [ADR-001](ADR-001-python-single-process.md), [ADR-008](ADR-008-background-debate-runner.md), [ADR-014](ADR-014-tool-failure-is-observation.md), [ADR-017](ADR-017-never-lose-a-write.md), [ADR-020](ADR-020-conversation-memory.md), [ADR-023](ADR-023-keep-litellm-and-own-engine.md)
 
 ## 맥락 (Context)
 

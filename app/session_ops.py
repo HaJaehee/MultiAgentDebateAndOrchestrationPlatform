@@ -32,6 +32,7 @@ from app.database.models import (
     MessageModel,
     SessionAgentModel,
     SessionModel,
+    SpeechDraftModel,
     ToolCallRecordModel,
     TurnModel,
     utc_now,
@@ -84,6 +85,10 @@ async def discard_turn(
     않아 조용히 남을 뿐입니다).
     """
     if turn_id:
+        await db.execute(delete(SpeechDraftModel).where(
+            SpeechDraftModel.turn_id == turn_id,
+            SpeechDraftModel.session_id == session_id,
+        ))
         await db.execute(delete(ToolCallRecordModel).where(
             ToolCallRecordModel.turn_id == turn_id,
             ToolCallRecordModel.session_id == session_id,

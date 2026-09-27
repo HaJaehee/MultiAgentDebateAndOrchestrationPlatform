@@ -105,7 +105,8 @@ class _SelectingLLM(FakeLLMCaller):
     async def call_agent(self, agent, messages, custom_instructions="",
                          on_tool_call=None, on_chunk=None, session_id=None,
                          budget_arbiter=None,
-                         context_arbiter=None, on_context_trim=None, mcp=None, ledger="", tool_gate=None):
+                         context_arbiter=None, on_context_trim=None, mcp=None, ledger="", tool_gate=None,
+                         checkpoint=None, resume_state=None):
         if self._is_selection(messages):
             self.selector_agents.append(agent)
             self.calls.append(f"{agent.key}:select")
