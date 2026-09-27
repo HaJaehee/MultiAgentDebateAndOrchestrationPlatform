@@ -6,7 +6,7 @@ changed*, not a second copy of the documentation.
 
 ---
 
-## Unreleased
+## v1.0
 
 **Interrupted turns can be continued, finished or discarded.** Every turn is recorded (`turns`) in the same
 commit as its request, and every message and tool call points to it with its role in the flow

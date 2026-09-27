@@ -58,8 +58,8 @@ ADR은 **기존 내용을 수정하지 않고 불변의 문서로 누적 보존�
 | [021](ADR-021-graph-debate.md) | 사람이 그린 그래프로 토론 흐름을 정한다 | 09-17 | 채택됨 | v0.9.0 |
 | [022](ADR-022-knowledge-base-deferred.md) | 지식베이스(RAG) 도구는 근거를 모을 때까지 보류한다 | 09-21 | **보류** | 미정 |
 | [023](ADR-023-keep-litellm-and-own-engine.md) | LangChain·LangGraph로 옮기지 않고 LiteLLM과 자체 엔진을 유지한다 | 09-27 | 채택됨 | - |
-| [024](ADR-024-resume-interrupted-turns.md) | 서버가 턴 도중에 내려가도 그 턴을 이어 가거나 마무리할 수 있게 한다 | 09-27 | 채택됨 | - |
-| [025](ADR-025-resume-speeches-by-tool-step.md) | 끊긴 발언은 마지막으로 끝난 도구 다음부터 이어 간다 | 09-28 | 채택됨 | - |
+| [024](ADR-024-resume-interrupted-turns.md) | 서버가 턴 도중에 내려가도 그 턴을 이어 가거나 마무리할 수 있게 한다 | 09-27 | 채택됨 | v1.0 |
+| [025](ADR-025-resume-speeches-by-tool-step.md) | 끊긴 발언은 마지막으로 끝난 도구 다음부터 이어 간다 | 09-28 | 채택됨 | v1.0 |
 
 날짜는 모두 2026년 기준입니다.
 
