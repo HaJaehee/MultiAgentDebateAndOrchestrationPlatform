@@ -248,6 +248,11 @@ class TurnRun:
         etype = event.get("type")
         if etype == "turn_opened" and event.get("turn_id"):
             self.turn_id = event["turn_id"]
+            # 끊긴 턴을 이어 가는 실행은 그 턴의 앞선 기록도 들고 시작합니다. 새로 붙는 화면의
+            # 그래프 진행 표시가 스냅샷의 발언에서 다시 그려지기 때문입니다.
+            for msg in event.get("messages") or []:
+                if msg.get("id"):
+                    self._upsert(dict(msg))
         if etype == "graph_started":
             self.graph = GraphRunTracker()
         if self.graph is not None:

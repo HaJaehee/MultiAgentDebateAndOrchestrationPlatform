@@ -59,6 +59,10 @@ _ADDED_COLUMNS = {
         # 턴 기록 (ADR-024). 발언이 끝나기 전에 기록된 호출도 어느 턴의 것인지 압니다.
         "turn_id": "VARCHAR(36)",
     },
+    "turns": {
+        # 합성에 들어갈 때 정지로 덜 논의된 턴이었는지 (ADR-024 2단계).
+        "stopped_early": "BOOLEAN NOT NULL DEFAULT 0",
+    },
     "session_agents": {
         # NULL 이면 "이 컬럼이 생기기 전에 잠긴 대화" 입니다. 그런 대화는 예전처럼
         # 살아 있는 conf.json 을 그대로 씁니다. 빈 JSON 을 기본값으로 넣으면 그

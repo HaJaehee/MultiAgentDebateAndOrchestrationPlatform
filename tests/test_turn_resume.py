@@ -376,3 +376,205 @@ def test_the_report_line_names_the_pause_inside_the_total():
     assert "총 경과 30분" in line and "서버 중단 20분 포함, 1회 재개" in line
     plain = report_completed_line("2026-09-27T10:30:00+00:00", "2026-09-27T10:00:00+00:00")
     assert "서버 중단" not in plain
+
+
+# =============================================================== 6. 이어 가기 (2단계)
+
+
+def test_round_progress_counts_who_already_spoke_in_the_last_round():
+    def speech(key, rnd, msg_type="agent"):
+        return {"sender_key": key, "round_number": rnd, "msg_type": msg_type,
+                "turn_meta": turns.meta(turns.KIND_SPEECH)}
+
+    assert turns.round_progress([]) == (0, set())
+    messages = [
+        {"sender_key": "user", "round_number": 0, "turn_meta": turns.meta(turns.KIND_OPENING)},
+        speech("architect", 1), speech("coder", 1), speech("architect", 2),
+        speech("coder", 2, msg_type="error"),
+    ]
+    assert turns.round_progress(messages) == (2, {"architect", "coder"}), "실패한 발언도 말한 것으로 셉니다"
+
+
+@pytest.mark.asyncio
+async def test_continuing_picks_up_with_the_speaker_who_was_cut_off():
+    sid = await _session()
+    turn_id = await _crash(sid)  # 1라운드 coder 가 도구를 쓰다 끊겼습니다
+
+    async with get_session_factory(DB_URL)() as db:
+        info = await turns.unfinished_turn(db, sid)
+    assert info.can_continue
+
+    llm = CrashingLLM()
+    state = await _engine(llm).resume_turn(session_id=sid, turn_id=turn_id, mode="continue")
+
+    assert state.status == "completed" and state.is_consensus_reached
+    assert not state.stopped_early and not state.interrupted
+    speakers = [k for k, m in llm.sent if "[결정 장부 갱신]" not in m[-1]["content"]]
+    assert speakers == ["coder", "architect", "coder", "orchestrator"], \
+        "1라운드의 architect 는 다시 부르지 않고, 끊긴 coder 부터 이어 갑니다"
+    first_ledger = next(i for i, (_k, m) in enumerate(llm.sent) if "[결정 장부 갱신]" in m[-1]["content"])
+    first_coder = next(i for i, (k, _m) in enumerate(llm.sent) if k == "coder")
+    assert first_ledger < first_coder, "이어 가기 전에 끊기기 전의 발언을 장부에 접습니다"
+
+    redo_prompt = next(m for k, m in llm.sent if k == "coder")[-1]["content"]
+    assert "[재개 안내]" in redo_prompt and "filesystem__write_file" in redo_prompt
+    later_coder = [m for k, m in llm.sent if k == "coder"][1][-1]["content"]
+    assert "[재개 안내]" not in later_coder, "안내는 다시 하는 발언에 한 번만"
+
+    messages, _tools, (turn,), artifacts = await _rows(sid)
+    rounds = [(m.sender_key, m.round_number) for m in messages if turns.kind_of(m) == turns.KIND_SPEECH]
+    assert rounds == [("architect", 1), ("coder", 1), ("architect", 2), ("coder", 2)]
+    assert (turn.status, turn.resumed_count) == (TURN_COMPLETED, 1)
+    report = next(a for a in artifacts if a.title.endswith("최종 결론"))
+    assert "1회 재개" in report.content
+
+
+@pytest.mark.asyncio
+async def test_a_turn_cut_during_planning_starts_again_with_the_plan():
+    sid = await _session(max_rounds=1)
+    turn_id = await _crash(sid, crash_at=("orchestrator", 1), crash_tools=())
+
+    llm = CrashingLLM()
+    await _engine(llm).resume_turn(session_id=sid, turn_id=turn_id, mode="continue")
+
+    messages, _tools, (turn,), _arts = await _rows(sid)
+    kinds = [turns.kind_of(m) for m in messages]
+    assert kinds == [
+        turns.KIND_OPENING, turns.KIND_PLAN, turns.KIND_SPEECH, turns.KIND_SPEECH, turns.KIND_SYNTHESIS,
+    ]
+    assert turn.status == TURN_COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_a_turn_cut_during_synthesis_only_synthesizes_and_keeps_the_stop():
+    sid = await _session(max_rounds=1)
+    turn_id = await _crash(sid, crash_at=("orchestrator", 2), crash_tools=())  # 계획 다음이 합성
+    async with get_session_factory(DB_URL)() as db:
+        turn = await db.get(TurnModel, turn_id)
+        assert turn.phase == "synthesizing"
+        turn.stopped_early = True  # 사람이 정지시켜 합성에 들어간 턴이었다고 칩니다
+        await db.commit()
+
+    llm = CrashingLLM()
+    state = await _engine(llm).resume_turn(session_id=sid, turn_id=turn_id, mode="continue")
+
+    assert [k for k, m in llm.sent if "[결정 장부 갱신]" not in m[-1]["content"]] == ["orchestrator"]
+    assert state.stopped_early and not state.interrupted and not state.is_consensus_reached
+
+
+@pytest.mark.asyncio
+async def test_strategies_without_a_cursor_cannot_continue_yet():
+    sid = await _session(strategy="parallel_dispatch")
+    turn_id = await _crash(sid, crash_at=("coder", 1), crash_tools=())
+    async with get_session_factory(DB_URL)() as db:
+        info = await turns.unfinished_turn(db, sid)
+    assert not info.can_continue and info.can_finish
+    with pytest.raises(ValueError):
+        await _engine(CrashingLLM()).resume_turn(session_id=sid, turn_id=turn_id, mode="continue")
+
+
+# --------------------------------------------------------------- 그래프
+
+
+@pytest.fixture
+def graphs(tmp_path, monkeypatch):
+    from app import graph_store
+    monkeypatch.setattr(graph_store, "graphs_dir", lambda: tmp_path)
+    return tmp_path
+
+
+def _graph_llm(**kwargs):
+    from tests.test_graph_debate import GraphLLM
+
+    class CrashingGraphLLM(GraphLLM):
+        """`crash_on` 에이전트의 첫 노드 발언에서 서버가 내려간 것처럼 끊깁니다."""
+
+        def __init__(self, crash_on: Optional[str] = None, **kw):
+            super().__init__(**kw)
+            self.crash_on = crash_on
+
+        async def call_agent(self, agent, messages, *args, **kw):
+            if agent.key == self.crash_on and "[Graph Step]" in messages[-1]["content"]:
+                self.crash_on = None
+                self.sent.append((agent.key, messages))
+                raise asyncio.CancelledError()
+            return await super().call_agent(agent, messages, *args, **kw)
+
+    return CrashingGraphLLM(**kwargs)
+
+
+async def _graph_session() -> str:
+    from app import graph_store
+    from app.orchestration.graph import parse_graph
+    from tests.test_graph_debate import example
+    graph_store.save_graph(parse_graph(example()))
+    await init_db(DB_URL)
+    sid = f"graph-{uuid.uuid4().hex[:8]}"
+    async with get_session_factory(DB_URL)() as db:
+        db.add(SessionModel(
+            id=sid, title="Graph", strategy="graph_debate", graph_id="review-loop",
+            max_rounds=3, active_agents=["orchestrator", "architect"],
+        ))
+        await db.commit()
+    return sid
+
+
+GATE_ANSWERS = ['{"decision": "no", "reason": "인증 누락"}', '{"decision": "yes", "reason": "해결됨"}']
+
+
+@pytest.mark.asyncio
+async def test_replaying_a_finished_graph_turn_lands_on_its_end(graphs):
+    from app.orchestration.graph import parse_graph
+    from tests.test_graph_debate import _pool as graph_pool, example
+    sid = await _graph_session()
+    llm = _graph_llm(gate_answers=list(GATE_ANSWERS))
+    state = await OrchestratorEngine(agent_pool=graph_pool(), llm_caller=llm).run_turn(
+        session_id=sid, user_prompt=REQUEST,
+    )
+    turn_messages = state.messages[state.turn_message_start:]
+    replay = turns.replay_graph(
+        parse_graph(example()), 3, [state.messages[state.plan_index].id], turn_messages,
+    )
+    assert replay.step == 7 and not replay.pending
+    assert [n.type for n in replay.scheduler.ready()] == ["end"], "재생한 스케줄러가 도는 중과 같은 자리에 섭니다"
+
+
+@pytest.mark.asyncio
+async def test_continuing_a_graph_turn_reruns_only_the_node_that_was_cut_off(graphs):
+    from tests.test_graph_debate import _pool as graph_pool
+    sid = await _graph_session()
+    # 2단계에서 구현(coder)과 보안 검토(critic)가 함께 돌다 critic 쪽에서 끊겼습니다.
+    crashing = _graph_llm(crash_on="critic")
+    with pytest.raises(asyncio.CancelledError):
+        await OrchestratorEngine(agent_pool=graph_pool(), llm_caller=crashing).run_turn(
+            session_id=sid, user_prompt=REQUEST,
+        )
+    async with get_session_factory(DB_URL)() as db:
+        await turns.mark_interrupted_turns(db)
+        info = await turns.unfinished_turn(db, sid)
+    assert info.can_continue
+
+    llm = _graph_llm(gate_answers=list(GATE_ANSWERS))
+    events: List[Dict[str, Any]] = []
+
+    async def on_event(event):
+        events.append(event)
+
+    state = await OrchestratorEngine(agent_pool=graph_pool(), llm_caller=llm).resume_turn(
+        session_id=sid, turn_id=info.turn_id, mode="continue", on_event=on_event,
+    )
+    assert state.status == "completed"
+
+    started = next(e for e in events if e["type"] == "graph_started")
+    assert [h["graph_node_id"] for h in started["history"]] == ["design", "impl"]
+    steps = [(e["step"], [n["id"] for n in e["nodes"]]) for e in events if e["type"] == "graph_step_started"]
+    assert steps == [(2, ["sec"]), (3, ["merge"]), (4, ["gate"]), (5, ["impl"]), (6, ["merge"]), (7, ["gate"])], \
+        "끊긴 단계의 남은 노드만 먼저, 그 뒤는 도는 중과 같은 순서"
+    assert [k for k, m in llm.sent if "[Graph Step]" in m[-1]["content"]][0] == "critic"
+
+    messages, _tools, _turns, _arts = await _rows(sid)
+    by_node = [(m.graph_node_id, m.round_number) for m in messages if m.graph_node_id]
+    assert by_node == [
+        ("design", 1), ("impl", 2), ("sec", 2), ("merge", 3), ("gate", 4),
+        ("impl", 5), ("merge", 6), ("gate", 7),
+    ]

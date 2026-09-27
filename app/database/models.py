@@ -121,6 +121,9 @@ class TurnModel(Base):
     # 끊긴 채로 있던 시간의 합(초)과 이어 간 횟수. 보고서의 총 경과에 함께 적습니다.
     paused_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     resumed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 합성에 들어갈 때 정지(사람의 정지 요청)로 덜 논의된 턴이었는지. 합성 도중에 끊긴 턴을
+    # 이어 갈 때 합성 지시와 합의 판정이 이 값을 씁니다 — 정지 요청 자체는 메모리에만 있었습니다.
+    stopped_early: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

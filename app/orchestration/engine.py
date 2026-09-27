@@ -1552,11 +1552,17 @@ class OrchestratorEngine:
             state.paused_seconds = turn.paused_seconds
             state.resumed_count = turn.resumed_count
             if on_event:
-                await on_event({"type": "turn_opened", "turn_id": turn_id, "resumed": True, "mode": mode})
+                # 끊기기 전의 기록도 싣습니다. 러너의 스냅샷이 턴 전체를 들고 있어야, 이어 가는 중에
+                # 새로고침한 화면이 그래프 진행 표시를 처음부터 다시 그립니다.
+                await on_event({
+                    "type": "turn_opened", "turn_id": turn_id, "resumed": True, "mode": mode,
+                    "messages": [m.model_dump() for m in state.messages[start:]],
+                })
 
             # 끝나지 못한 발언이 실행한 도구는 "끊겼다" 는 안내에 잇습니다. 그 발언의 글은 기록되지
-            # 않았으므로 남아 있지 않다는 것도 함께 적습니다.
-            await self._note_interrupted_speeches(db, state, setup, orphans, on_event=on_event)
+            # 않았으므로 남아 있지 않다는 것도 함께 적습니다. 이어 가면 그 에이전트가 다시 말할 때
+            # 이 기록을 관찰로 건넵니다.
+            redo = await self._note_interrupted_speeches(db, state, setup, orphans, on_event=on_event)
 
             if mode == "finish":
                 # 정지와 같은 의미입니다. 기록된 발언만으로 합성하고, 합의로 적지 않습니다.
@@ -1568,7 +1574,36 @@ class OrchestratorEngine:
                 )
                 return state
 
-            raise ValueError("이 턴은 아직 이어서 진행할 수 없습니다. 지금까지로 결론을 내거나 버려 주십시오.")
+            if not turns.can_continue(setup.strategy_name, turn.phase):
+                raise ValueError("이 전략의 턴은 아직 이어서 진행할 수 없습니다. 지금까지로 결론을 내거나 버려 주십시오.")
+
+            if turn.phase == "synthesizing":
+                # 토론은 끝났고 합성만 남았습니다. 정지로 덜 논의된 턴이었는지는 턴 기록이 압니다.
+                stopped_early = bool(turn.stopped_early)
+            else:
+                # 계획이 기록되기 전에 끊겼으면 계획부터 다시 합니다.
+                plan_expected = setup.graph_spec is None or setup.graph_spec.start.plan
+                if plan_expected and not turns.count_kind(state.messages[start:], turns.KIND_PLAN):
+                    await self._plan(db, state, setup, on_event=on_event, control=control)
+                await self._set_turn(db, state, phase="debating")
+                # 끊기기 전의 발언까지 장부에 접어 두고 이어 갑니다 (라운드 중간에 끊겼으면 장부가
+                # 그 라운드를 모릅니다). 새 발언이 없으면 부르지 않습니다.
+                await self._update_ledger(
+                    state=state, orchestrator=setup.orchestrator, on_event=on_event, reason="재개",
+                )
+                stopped_early = await self._debate(
+                    db, state, setup, control=control, on_event=on_event,
+                    start_value=[
+                        state.messages[state.plan_index].id
+                        if state.plan_index is not None else opening.id
+                    ],
+                    resume=True, redo=redo,
+                )
+            await self._conclude(
+                db, state, setup, stopped_early=stopped_early, turn_started_at=opening.started_at,
+                control=control, on_event=on_event,
+            )
+            return state
 
     # ------------------------------------------------------------ 턴의 단계
 
@@ -1928,8 +1963,17 @@ class OrchestratorEngine:
         control: Optional[TurnControl],
         on_event: Optional[EventCallback],
         start_value: List[str],
+        resume: bool = False,
+        redo: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> bool:
-        """전문가 토론 라운드. 사람이 정지시켰으면 True."""
+        """전문가 토론 라운드. 사람이 정지시켰으면 True.
+
+        `resume` 이면 끊긴 턴을 이어 갑니다 — 기록에서 어디까지 돌았는지 다시 세어(`turns`),
+        라운드 전략은 마지막 라운드에 아직 발언하지 않은 사람부터, 그래프는 스케줄러를 재생해
+        끊긴 단계의 남은 노드부터 돕니다. `redo` 는 끝나지 못한 발언이 실행한 도구 {에이전트 키:
+        기록}으로, 그 에이전트가 다시 말할 때 지침 앞에 한 번 붙습니다.
+        """
+        redo = dict(redo or {})
         strategy = get_strategy(setup.strategy_name)
         orchestrator_agent = setup.orchestrator
         max_rounds = setup.max_rounds
@@ -1944,6 +1988,12 @@ class OrchestratorEngine:
         if setup.graph_spec is not None:
             # 그래프 토론은 라운드 대신 그래프의 단계로 돕니다. 계획·합성·산출물·장부는
             # 다른 전략과 같은 코드를 씁니다.
+            replay = None
+            if resume:
+                replay = turns.replay_graph(
+                    setup.graph_spec, max_rounds, start_value,
+                    state.messages[state.turn_message_start:],
+                )
             return await self._run_graph(
                 db=db,
                 state=state,
@@ -1955,9 +2005,18 @@ class OrchestratorEngine:
                 control=control,
                 on_event=on_event,
                 start_value=start_value,
+                replay=replay,
+                redo=redo,
             )
 
-        for round_num in range(1, max_rounds + 1):
+        # 이어 가는 턴이면 마지막으로 발언이 있던 라운드부터, 그 라운드에 이미 말한 사람은 건너뜁니다.
+        start_round, spoken = 1, set()
+        if resume:
+            last_round, spoken_keys = turns.round_progress(state.messages[state.turn_message_start:])
+            if last_round:
+                start_round, spoken = last_round, spoken_keys
+
+        for round_num in range(start_round, max_rounds + 1):
             if control is not None and control.stop_requested:
                 stopped_early = True
                 break
@@ -2006,7 +2065,10 @@ class OrchestratorEngine:
                 on_event=on_event,
             )
 
+            skip = spoken if round_num == start_round else set()
             for speaker_index, agent in enumerate(speakers):
+                if agent.key in skip:
+                    continue
                 # 발언과 발언 사이. 사용자의 개입과 정지는 여기서만 반영됩니다.
                 # 진행 중이던 발언을 끊지 않으므로 잘린 기록이 남지 않습니다.
                 await self._apply_interjections(
@@ -2026,6 +2088,9 @@ class OrchestratorEngine:
                         "round": round_num,
                     })
 
+                instruction = strategy.turn_instruction(agent, speakers, speaker_index, state)
+                if agent.key in redo:
+                    instruction = f"{turns.resume_notice(redo.pop(agent.key))}\n\n{instruction}".strip()
                 await self._speak(
                     db=db,
                     state=state,
@@ -2033,7 +2098,7 @@ class OrchestratorEngine:
                     prompt_messages=await self._context_for_speech(
                         state,
                         agent,
-                        strategy.turn_instruction(agent, speakers, speaker_index, state),
+                        instruction,
                         orchestrator=orchestrator_agent,
                         on_event=on_event,
                     ),
@@ -2089,7 +2154,7 @@ class OrchestratorEngine:
 
         state.status = "synthesizing"
         state.current_speaker = orchestrator_agent.name
-        await self._set_turn(db, state, phase="synthesizing")
+        await self._set_turn(db, state, phase="synthesizing", stopped_early=stopped_early)
         if on_event:
             await on_event({
                 "type": "status_changed",
@@ -2569,6 +2634,13 @@ class OrchestratorEngine:
         if {m.id for m in spoken} == {m.id for m in produced}:
             state.messages[start_index:] = spoken
 
+        # 취소는 실패가 아닙니다 (ADR-014: 취소만 전파합니다). `return_exceptions=True` 는 발언
+        # 하나의 취소도 결과로 돌려주므로, 그대로 두면 서버 종료로 끊긴 발언이 "실패" 로 기록되고
+        # 토론이 계속됩니다. 다른 발언이 기록을 마친 뒤 올려 보냅니다 (그래프 단계와 같습니다).
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+
         for (agent, _task), result in zip(assignments, results):
             if isinstance(result, BaseException):
                 logger.error(
@@ -2938,16 +3010,23 @@ class OrchestratorEngine:
         control: Optional[TurnControl],
         on_event: Optional[EventCallback],
         start_value: List[str],
+        replay: Optional["turns.GraphReplay"] = None,
+        redo: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> bool:
         """그래프를 단계별로 돕니다. 사용자가 정지시켰으면 True.
 
         끝나는 경우는 넷입니다: 최종 합성 노드에 닿음 · 더 돌 노드가 없음 · 단계 상한 · 정지.
         정지가 아닌 셋은 모두 합성으로 넘어가고, 앞의 것이 아니면 왜 멈췄는지 기록에 남깁니다.
+
+        `replay` 가 있으면 끊긴 턴을 이어 갑니다 (`turns.replay_graph`). 기록을 따라 세운
+        스케줄러에서 시작하고, 끊긴 단계에 출력을 내지 못한 노드가 있으면 그 노드만 먼저 돌립니다.
         """
         agents = {a.key: a for a in active_agents}
-        scheduler = GraphScheduler(spec, max_visits)
+        redo = redo if redo is not None else {}
+        scheduler = replay.scheduler if replay is not None else GraphScheduler(spec, max_visits)
         max_steps = scheduler.max_steps()
-        announced_exhausted = 0
+        # 재생한 스케줄러가 이미 상한에 닿았다고 본 노드는 끊기기 전에 안내가 기록됐습니다.
+        announced_exhausted = len(scheduler.exhausted)
 
         if on_event:
             await on_event({
@@ -2958,10 +3037,29 @@ class OrchestratorEngine:
                 # 화면이 이번 턴에 실제로 도는 그림을 그립니다 (파일은 턴 도중에 바뀔 수 있습니다).
                 "spec": spec.dump(),
                 "max_steps": max_steps,
+                # 이어 가는 턴이면 끊기기 전에 돈 노드의 기록. 실행 표시가 처음부터 다시 그려집니다.
+                "history": [
+                    {
+                        "id": m.id, "graph_node_id": m.graph_node_id, "graph_port": m.graph_port,
+                        "round_number": m.round_number, "msg_type": m.msg_type,
+                    }
+                    for m in state.messages[state.turn_message_start:] if m.graph_node_id
+                ] if replay is not None else [],
             })
-        scheduler.deliver(spec.start.id, "out", start_value)
 
         step = 0
+        if replay is None:
+            scheduler.deliver(spec.start.id, "out", start_value)
+        else:
+            step = replay.step
+            state.current_round = step
+            if replay.pending:
+                await self._finish_graph_step(
+                    db=db, state=state, spec=spec, replay=replay, agents=agents,
+                    orchestrator=orchestrator, parallel_limit=parallel_limit,
+                    max_steps=max_steps, control=control, on_event=on_event, redo=redo,
+                )
+
         while True:
             await self._apply_interjections(
                 db=db, state=state, control=control, round_number=step, on_event=on_event
@@ -3032,20 +3130,82 @@ class OrchestratorEngine:
             outputs = await self._run_graph_step(
                 db=db, state=state, spec=spec, scheduler=scheduler, activations=activations,
                 agents=agents, orchestrator=orchestrator, step=step,
-                parallel_limit=parallel_limit, control=control, on_event=on_event,
+                parallel_limit=parallel_limit, control=control, on_event=on_event, redo=redo,
             )
             for activation in activations:
                 port, value = outputs[activation.node.id]
                 scheduler.deliver(activation.node.id, port, value)
+            await self._after_graph_step(state, spec, scheduler, orchestrator, step, control, on_event)
 
-            # 곧바로 합성으로 가는 단계 뒤에는 장부를 건너뜁니다 (합성 뒤 갱신이 대신합니다).
-            heading_to_end = any(
-                scheduler.fresh[n.id] for n in spec.nodes if n.type == "end"
+    async def _after_graph_step(
+        self,
+        state: DebateState,
+        spec: GraphSpec,
+        scheduler: GraphScheduler,
+        orchestrator: Agent,
+        step: int,
+        control: Optional[TurnControl],
+        on_event: Optional[EventCallback],
+    ) -> None:
+        # 곧바로 합성으로 가는 단계 뒤에는 장부를 건너뜁니다 (합성 뒤 갱신이 대신합니다).
+        heading_to_end = any(
+            scheduler.fresh[n.id] for n in spec.nodes if n.type == "end"
+        )
+        if not heading_to_end and not (control is not None and control.stop_requested):
+            await self._update_ledger(
+                state=state, orchestrator=orchestrator, on_event=on_event, reason=f"Step {step}",
             )
-            if not heading_to_end and not (control is not None and control.stop_requested):
-                await self._update_ledger(
-                    state=state, orchestrator=orchestrator, on_event=on_event, reason=f"Step {step}",
-                )
+
+    async def _finish_graph_step(
+        self,
+        *,
+        db,
+        state: DebateState,
+        spec: GraphSpec,
+        replay: "turns.GraphReplay",
+        agents: Dict[str, Agent],
+        orchestrator: Agent,
+        parallel_limit: int,
+        max_steps: int,
+        control: Optional[TurnControl],
+        on_event: Optional[EventCallback],
+        redo: Dict[str, List[Dict[str, Any]]],
+    ) -> None:
+        """끊긴 단계를 마저 돌립니다 — 출력을 내지 못한 노드만, 그 단계가 시작된 시점의 기록으로.
+
+        도는 중의 단계는 프롬프트를 전부 먼저 만든 뒤 동시에 돌립니다(같은 단계의 결과가 섞이지
+        않게). 이어 갈 때도 같아야 하므로, 이 단계에 이미 나온 출력은 프롬프트의 기록에서 뺍니다.
+        """
+        step = replay.step
+        pending = replay.pending
+        if on_event:
+            await on_event({"type": "round_started", "round": step, "max_rounds": max_steps})
+            await on_event({
+                "type": "graph_step_started",
+                "step": step,
+                "max_steps": max_steps,
+                "nodes": [{"id": a.node.id, "label": a.node.display, "visit": a.visit} for a in pending],
+            })
+            await on_event({
+                "type": "status_changed",
+                "status": "debating",
+                "speaker": " · ".join(a.node.display for a in pending),
+                "round": step,
+            })
+        view = state.model_copy(update={"messages": [
+            m for m in state.messages if not (m.graph_node_id and m.round_number == step)
+        ]})
+        outputs = dict(replay.outputs)
+        outputs.update(await self._run_graph_step(
+            db=db, state=state, spec=spec, scheduler=replay.scheduler, activations=pending,
+            agents=agents, orchestrator=orchestrator, step=step,
+            parallel_limit=parallel_limit, control=control, on_event=on_event,
+            view=view, redo=redo,
+        ))
+        for activation in replay.activations:
+            port, value = outputs[activation.node.id]
+            replay.scheduler.deliver(activation.node.id, port, value)
+        await self._after_graph_step(state, spec, replay.scheduler, orchestrator, step, control, on_event)
 
     @staticmethod
     async def _graph_finished(on_event: Optional[EventCallback], reason: str, steps: int) -> None:
@@ -3066,12 +3226,18 @@ class OrchestratorEngine:
         parallel_limit: int,
         control: Optional[TurnControl],
         on_event: Optional[EventCallback],
+        view: Optional[DebateState] = None,
+        redo: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> Dict[str, Tuple[str, List[str]]]:
         """한 단계의 노드들을 동시에 돌리고, 노드마다 (출력 핀, 값) 을 돌려줍니다.
 
         병렬 지시 라운드와 같은 규칙입니다 — 프롬프트는 전부 먼저 만들고(같은 단계의 결과가
         섞이지 않게), 기록 구간만 잠그고, 기록 시각은 노드 순서로 박습니다.
+
+        `view` 가 있으면 프롬프트를 그 기록으로 만듭니다 (끊긴 단계를 마저 돌릴 때, 그 단계가
+        시작된 시점의 기록). 발언은 언제나 실제 상태에 쌓입니다.
         """
+        redo = redo if redo is not None else {}
         prompts: Dict[str, List[Dict[str, Any]]] = {}
         for activation in activations:
             node = activation.node
@@ -3079,8 +3245,10 @@ class OrchestratorEngine:
                 continue
             speaker = orchestrator if node.type == "merge" else agents[node.agent]
             prompts[node.id] = await self._context_for_node(
-                state=state, spec=spec, scheduler=scheduler, activation=activation,
-                speaker=speaker, step=step, orchestrator=orchestrator, on_event=on_event,
+                state=view if view is not None else state, spec=spec, scheduler=scheduler,
+                activation=activation, speaker=speaker, step=step, orchestrator=orchestrator,
+                on_event=on_event,
+                notice=turns.resume_notice(redo.pop(speaker.key)) if speaker.key in redo else "",
             )
 
         base_time = utc_now()
@@ -3190,8 +3358,11 @@ class OrchestratorEngine:
         step: int,
         orchestrator: Agent,
         on_event: Optional[EventCallback],
+        notice: str = "",
     ) -> List[Dict[str, Any]]:
         """노드 하나의 프롬프트. 기본은 **들어온 선만** — 전사 전체 대신.
+
+        `notice` 는 지침 앞에 붙일 안내입니다 (끊긴 발언을 다시 할 때의 `turns.resume_notice`).
 
         고정 맥락(요청 · 사용자 발언 기록 · 이번 턴 계획)은 모든 노드에 들어가고, 결정 장부는
         호출기가 마지막 메시지 앞에 붙입니다. 루프로 다시 불린 노드는 자기 직전 발언을 함께 봅니다.
@@ -3199,6 +3370,8 @@ class OrchestratorEngine:
         """
         node = activation.node
         instruction = self._graph_turn_instruction(spec, activation, step)
+        if notice:
+            instruction = f"{notice}\n\n{instruction}"
         if node.type == "agent" and node.sees == "all":
             return await self._context_for_speech(
                 state, speaker, instruction, orchestrator=orchestrator, on_event=on_event,
