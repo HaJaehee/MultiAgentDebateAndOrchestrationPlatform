@@ -148,22 +148,63 @@ def last_activity(turn: Any, messages: Iterable[Any], tool_times: Iterable[Any] 
 
 # ---------------------------------------------------------------- 커서
 
+# 라운드 안에서 남는 기록. 이 중 가장 늦은 라운드가 끊긴 라운드입니다 — 지명·분배만 기록되고
+# 아무도 발언하지 못한 채 끊긴 라운드도 있습니다.
+_ROUND_KINDS = (KIND_SPEECH, KIND_NOMINATION, KIND_ASSIGNMENT, KIND_MERGE, KIND_FAILURE)
+
+
 def round_progress(messages: Iterable[Any]) -> Tuple[int, Set[str]]:
-    """라운드 전략이 어디까지 돌았나 — (마지막으로 발언이 있던 라운드, 그 라운드에 발언한 에이전트).
+    """라운드 전략이 어디까지 돌았나 — (마지막 라운드, 그 라운드에 이미 발언한 에이전트).
 
-    실패로 끝난 발언도 "발언한 것" 으로 셉니다. 도는 중이던 엔진도 실패한 발언자를 다시 부르지
-    않고 다음 사람으로 넘어갔습니다. 아직 아무도 발언하지 않았으면 (0, 빈 집합).
+    실패로 끝난 발언도 "발언한 것" 으로 셉니다 (병렬 발언이 예외로 끝난 안내 포함). 도는 중이던
+    엔진도 실패한 발언자를 다시 부르지 않고 다음 사람으로 넘어갔습니다. 아직 어떤 라운드도
+    시작되지 않았으면 (0, 빈 집합).
 
-    순서는 자리가 아니라 **에이전트 키**로 맞춥니다. 끊긴 사이에 카드 순서를 바꿨어도, 이번
+    순서는 자리가 아니라 **에이전트 키**로 맞춥니다. 끊긴 사이에 카드 순서를 바꿨어도, 그
     라운드에 아직 말하지 않은 사람만 지금의 순서대로 이어서 말합니다.
     """
-    speeches = [m for m in messages if kind_of(m) == KIND_SPEECH]
-    if not speeches:
+    rows = [m for m in messages if kind_of(m) in _ROUND_KINDS]
+    if not rows:
         return 0, set()
-    last = max(int(_get(m, "round_number") or 0) for m in speeches)
+    last = max(int(_get(m, "round_number") or 0) for m in rows)
     return last, {
-        _get(m, "sender_key") for m in speeches if int(_get(m, "round_number") or 0) == last
+        _get(m, "sender_key") for m in rows
+        if int(_get(m, "round_number") or 0) == last
+        and kind_of(m) in (KIND_SPEECH, KIND_FAILURE)
+        and _get(m, "sender_key") != "orchestrator"
     }
+
+
+@dataclass
+class RoundRecord:
+    """한 라운드에서 오케스트레이터가 정한 것 — 끊긴 라운드를 이어 갈 때 다시 묻지 않습니다."""
+
+    # 기록된 지명 (에이전트 키, 발언 순서). 지명 전에 끊겼으면 None.
+    nominated: Optional[List[str]] = None
+    # 기록된 병렬 분배 [(에이전트 키, 과업)]. 분배 전에 끊겼으면 None.
+    tasks: Optional[List[Tuple[str, str]]] = None
+    # 병렬 라운드의 취합까지 기록됐는지.
+    merged: bool = False
+
+
+def round_record(messages: Iterable[Any], round_num: int) -> RoundRecord:
+    """`round_num` 라운드의 지명·분배·취합 기록. 문장이 아니라 `turn_meta` 의 값을 읽습니다."""
+    record = RoundRecord()
+    for msg in messages:
+        if int(_get(msg, "round_number") or 0) != round_num:
+            continue
+        kind = kind_of(msg)
+        data = _get(msg, "turn_meta") or {}
+        if kind == KIND_NOMINATION and isinstance(data.get("speakers"), list):
+            record.nominated = [str(key) for key in data["speakers"]]
+        elif kind == KIND_ASSIGNMENT and isinstance(data.get("tasks"), list):
+            record.tasks = [
+                (str(item.get("agent") or ""), str(item.get("task") or ""))
+                for item in data["tasks"] if isinstance(item, Mapping)
+            ]
+        elif kind == KIND_MERGE:
+            record.merged = True
+    return record
 
 
 @dataclass
@@ -314,8 +355,11 @@ async def abandon_unfinished(db, session_id: str) -> int:
 # ---------------------------------------------------------------- 안내
 
 # 이어 가기를 지원하는 전략. 여기 없는 전략은 합성 중에 끊긴 턴만 이어 갈 수 있고, 그 밖에는 결론
-# 내기·버리기만 고를 수 있습니다.
-CONTINUABLE_STRATEGIES = frozenset({"sequential_debate", "adversarial_debate", "graph_debate"})
+# 내기·버리기만 고를 수 있습니다. 지금은 다섯 전략 모두입니다 — 지명·분배처럼 LLM 이 정한 경로도
+# 기록에 값으로 남으므로(`round_record`) 다시 묻지 않고 그대로 이어 갑니다.
+CONTINUABLE_STRATEGIES = frozenset({
+    "sequential_debate", "adversarial_debate", "orchestrator_led", "parallel_dispatch", "graph_debate",
+})
 
 
 def can_continue(strategy: str, phase: str) -> bool:

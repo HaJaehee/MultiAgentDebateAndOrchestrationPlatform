@@ -4,7 +4,7 @@
 
 ## 상태 (Status)
 
-제안됨 · 2026-09-27 · 관련: [ADR-001](ADR-001-python-single-process.md), [ADR-008](ADR-008-background-debate-runner.md), [ADR-014](ADR-014-tool-failure-is-observation.md), [ADR-017](ADR-017-never-lose-a-write.md), [ADR-020](ADR-020-conversation-memory.md), [ADR-023](ADR-023-keep-litellm-and-own-engine.md)
+채택됨 · 2026-09-27 (1~3단계 구현) · 관련: [ADR-001](ADR-001-python-single-process.md), [ADR-008](ADR-008-background-debate-runner.md), [ADR-014](ADR-014-tool-failure-is-observation.md), [ADR-017](ADR-017-never-lose-a-write.md), [ADR-020](ADR-020-conversation-memory.md), [ADR-023](ADR-023-keep-litellm-and-own-engine.md)
 
 ## 맥락 (Context)
 
@@ -93,3 +93,10 @@
 - 복구 단위는 발언입니다. 끊긴 발언의 스트림 본문은 버리고, 그 발언의 LLM 호출을 처음부터 다시 합니다.
 - 끊긴 순간 실행 중이던 도구 호출 하나는 기록도 결과도 없이 사라질 수 있고, 다시 하는 발언이 같은 호출을 되풀이할 수 있습니다. 적어도 한 번 실행을 보장할 뿐, 정확히 한 번은 보장하지 않습니다.
 - 끊긴 사이에 에이전트 설정을 다시 맞추면(resync), 재개된 발언은 새 설정으로 돕니다. 구성 스냅샷은 참여자와 전략까지만 굳힙니다.
+- 턴을 여는 요청과 턴 기록을 쓰는 커밋이 재시도 끝에 실패하면, [ADR-017](ADR-017-never-lose-a-write.md)에 따라 파일로 남기고 토론은 계속됩니다. 이때 그 턴은 기록 없이 돌기 때문에 끊겨도 알아볼 수 없습니다.
+
+**구현하며 드러난 것**
+
+- 병렬 지시 라운드는 발언 하나가 `CancelledError` 로 끝나면 그것을 "병렬 발언 실패" 로 기록하고 토론을 계속했습니다. `asyncio.gather(return_exceptions=True)` 가 취소도 결과로 돌려주기 때문입니다. 그래프 단계는 이미 취소를 다시 올리고 있었으므로, 병렬 라운드도 다른 발언의 기록을 마친 뒤 취소를 올리도록 맞췄습니다 ([ADR-014](ADR-014-tool-failure-is-observation.md): 취소만 전파합니다).
+- 요약 JSON 의 `consensus_reached` 가 정지된 턴을 합의로 적고 있었습니다. 화면의 판정과 같은 기준(정지하지 않았을 것)으로 맞췄습니다.
+- 턴 구성의 순수 함수(전략), 그래프 스케줄러의 결정성, 발언마다 남긴 노드·포트 기록([ADR-021](ADR-021-graph-debate.md))이 모두 복구의 근거가 되었습니다. 복구를 위해 새로 적어야 했던 것은 턴의 경계, 발언의 자리, 지명·분배의 값, 정지 여부뿐이었습니다.

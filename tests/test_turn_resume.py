@@ -81,6 +81,17 @@ class CrashingLLM(FakeLLMCaller):
         self.speeches: Dict[str, int] = {}
         self.sent: List[Tuple[str, List[Dict[str, Any]]]] = []
 
+    def _reply_for(self, agent, messages):
+        last = messages[-1]["content"] if messages else ""
+        # 병렬 지시의 과업 분배와 오케스트레이터 지명에는 읽을 수 있는 JSON 으로 답합니다.
+        if "[과업을 맡길 수 있는 에이전트]" in last:
+            return json.dumps({"assignments": [
+                {"agent": "architect", "task": "스키마 설계"}, {"agent": "coder", "task": "캐시 구현"},
+            ], "reason": "분담"}, ensure_ascii=False)
+        if "[이번 라운드에 부를 수 있는 에이전트]" in last:
+            return json.dumps({"speakers": ["coder", "architect"], "reason": "구현 먼저"}, ensure_ascii=False)
+        return super()._reply_for(agent, messages)
+
     async def call_agent(self, agent, messages, custom_instructions="", on_tool_call=None, *args, **kwargs):
         self.sent.append((agent.key, messages))
         last = messages[-1]["content"] if messages else ""
@@ -462,15 +473,74 @@ async def test_a_turn_cut_during_synthesis_only_synthesizes_and_keeps_the_stop()
     assert state.stopped_early and not state.interrupted and not state.is_consensus_reached
 
 
+def _speeches(llm) -> List[str]:
+    """장부 갱신을 뺀 호출 순서 (에이전트 키)."""
+    return [k for k, m in llm.sent if "[결정 장부 갱신]" not in m[-1]["content"]]
+
+
 @pytest.mark.asyncio
-async def test_strategies_without_a_cursor_cannot_continue_yet():
-    sid = await _session(strategy="parallel_dispatch")
-    turn_id = await _crash(sid, crash_at=("coder", 1), crash_tools=())
+async def test_continuing_a_parallel_round_reruns_only_the_missing_task_then_merges():
+    sid = await _session(strategy="parallel_dispatch", max_rounds=1)
+    turn_id = await _crash(sid, crash_at=("coder", 1))  # architect 는 끝냈고 coder 가 끊겼습니다
+
+    messages, _tools, _turns, _arts = await _rows(sid)
+    assignment = next(m for m in messages if turns.kind_of(m) == turns.KIND_ASSIGNMENT)
+    assert assignment.turn_meta["tasks"] == [
+        {"agent": "architect", "task": "스키마 설계"}, {"agent": "coder", "task": "캐시 구현"},
+    ], "분배는 문장과 함께 값으로도 남습니다"
     async with get_session_factory(DB_URL)() as db:
-        info = await turns.unfinished_turn(db, sid)
-    assert not info.can_continue and info.can_finish
-    with pytest.raises(ValueError):
-        await _engine(CrashingLLM()).resume_turn(session_id=sid, turn_id=turn_id, mode="continue")
+        assert (await turns.unfinished_turn(db, sid)).can_continue
+
+    llm = CrashingLLM()
+    state = await _engine(llm).resume_turn(session_id=sid, turn_id=turn_id, mode="continue")
+
+    assert state.status == "completed" and state.is_consensus_reached
+    assert _speeches(llm) == ["coder", "orchestrator", "orchestrator"], \
+        "분배를 다시 묻지 않고, coder 만 돌린 뒤 취합과 합성"
+    coder_prompt = next(m for k, m in llm.sent if k == "coder")
+    assert "캐시 구현" in coder_prompt[-1]["content"] and "[재개 안내]" in coder_prompt[-1]["content"]
+    assert not any("아키텍처 제안" in part["content"] for part in coder_prompt), \
+        "같은 라운드 동료의 결과는 도는 중처럼 보이지 않습니다"
+    merge_prompt = [
+        m for k, m in llm.sent if k == "orchestrator" and "[결정 장부 갱신]" not in m[-1]["content"]
+    ][0]
+    assert "[Round 1 취합]" in merge_prompt[-1]["content"]
+
+    messages, _tools, _turns, _arts = await _rows(sid)
+    kinds = [(turns.kind_of(m), m.sender_key) for m in messages]
+    assert kinds.count((turns.KIND_SPEECH, "architect")) == 1
+    assert kinds.count((turns.KIND_SPEECH, "coder")) == 1
+    assert kinds.count((turns.KIND_ASSIGNMENT, "orchestrator")) == 1
+    assert kinds.count((turns.KIND_MERGE, "orchestrator")) == 1
+
+
+@pytest.mark.asyncio
+async def test_continuing_a_nominated_round_keeps_the_recorded_nomination():
+    sid = await _session(strategy="orchestrator_led", max_rounds=1)
+    turn_id = await _crash(sid, crash_at=("architect", 1), crash_tools=())  # 지명 순서 coder → architect
+
+    messages, _tools, _turns, _arts = await _rows(sid)
+    nomination = next(m for m in messages if turns.kind_of(m) == turns.KIND_NOMINATION)
+    assert nomination.turn_meta["speakers"] == ["coder", "architect"]
+
+    llm = CrashingLLM()
+    await _engine(llm).resume_turn(session_id=sid, turn_id=turn_id, mode="continue")
+
+    assert _speeches(llm) == ["architect", "orchestrator"], "지명을 다시 묻지 않고 남은 architect 부터"
+    messages, _tools, (turn,), _arts = await _rows(sid)
+    assert [m.sender_key for m in messages if turns.kind_of(m) == turns.KIND_SPEECH] == ["coder", "architect"]
+    assert turn.status == TURN_COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_a_parallel_round_cut_before_the_merge_only_merges():
+    sid = await _session(strategy="parallel_dispatch", max_rounds=1)
+    # 계획(1) · 분배(2) 다음 오케스트레이터 호출이 취합(3)입니다.
+    turn_id = await _crash(sid, crash_at=("orchestrator", 3), crash_tools=())
+
+    llm = CrashingLLM()
+    await _engine(llm).resume_turn(session_id=sid, turn_id=turn_id, mode="continue")
+    assert _speeches(llm) == ["orchestrator", "orchestrator"], "취합과 합성만"
 
 
 # --------------------------------------------------------------- 그래프
