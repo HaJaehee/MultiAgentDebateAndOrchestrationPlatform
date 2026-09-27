@@ -28,6 +28,7 @@ from app.config import get_config
 from app.database.models import MessageModel, SessionModel
 from app.database.session import get_session_factory
 from app.orchestration.runner import TurnRun, get_debate_runner
+from app.orchestration.turns import unfinished_turn
 from app.trial.catalog import ResolvedTemplate, resolve_template
 from app.trial.models import TrialSessionModel
 from app.trial.pages.common import (
@@ -114,6 +115,9 @@ class TrialSessionScreen:
         run = self.runner.get(self.session_id)
         running = run is not None and run.status == "running"
         streaming: Set[str] = set()
+        # 서버 중단·오류로 끝나지 못한 요청 (ADR-024). 방문자는 이어서 진행하거나 지금까지로
+        # 결론을 낼 수 있습니다. 버리기는 주지 않습니다 — 긴급 종료처럼 기록을 지우는 일은 주인 몫입니다.
+        unfinished = None if running else await self._unfinished()
         if running:
             snapshot = run.snapshot()
             known = {m["id"] for m in messages if m.get("id")}
@@ -140,7 +144,7 @@ class TrialSessionScreen:
             ) as self.tabs:
                 self.result_tab = ui.tab("result", label="결과", icon="task_alt")
                 self.debate_tab = ui.tab("debate", label="토론 과정", icon="forum")
-            with ui.tab_panels(self.tabs, value="debate" if running else "result").props(
+            with ui.tab_panels(self.tabs, value="debate" if running or unfinished else "result").props(
                 "keep-alive animated dark"
             ).classes("w-full bg-transparent"):
                 with ui.tab_panel("result").classes("p-0 pt-2"):
@@ -152,6 +156,7 @@ class TrialSessionScreen:
                             on_interject=self.interject,
                             on_stop=self.stop,
                             on_decision=self.decide,
+                            on_resume_turn=self.resume,
                         )
                         self.feed.build_ui()
                     self.feed.set_agent_styles(agents)
@@ -161,6 +166,8 @@ class TrialSessionScreen:
                         self.feed.set_stop_pending(bool(run.control.stop_requested))
                         if run.decision_request:
                             self.feed.set_decision_request(dict(run.decision_request))
+                    else:
+                        self.feed.set_unfinished_turn(unfinished)
 
         ui.timer(1.0, self.tick_queue)
         self.client.on_delete(self.detach)
@@ -209,16 +216,26 @@ class TrialSessionScreen:
 
     # ------------------------------------------------------------ 결과
 
+    async def _unfinished(self) -> Optional[Dict[str, Any]]:
+        async with get_session_factory()() as db:
+            info = await unfinished_turn(db, self.session_id)
+        return info.to_dict() if info else None
+
     @ui.refreshable_method
     async def result_view(self) -> None:
         async with get_session_factory()() as db:
             result = await session_result(db, self.session_id)
             feedback = await get_feedback(db, self.visitor.id, self.session_id)
         running = self.runner.is_running(self.session_id)
+        unfinished = None if running else await self._unfinished()
         if not result.final:
             if running:
                 empty_state("hourglass_top", "토론이 완료되면 결과가 표시됩니다",
                             "‘토론 과정’ 탭에서 참여자들의 발언을 실시간으로 확인하실 수 있습니다.")
+            elif unfinished:
+                empty_state("history", "요청이 끝나지 못했습니다",
+                            "서버가 다시 시작되어(또는 오류로) 토론이 중간에 멈췄습니다. ‘토론 과정’ 탭 위쪽의 "
+                            "안내에서 이어서 진행하거나, 지금까지의 발언으로 결론을 내실 수 있습니다.")
             else:
                 empty_state("error_outline", "생성된 결과가 없습니다",
                             "토론이 완료되지 못했습니다. ‘토론 과정’ 탭 하단의 입력창을 통해 다시 요청해 주십시오.")
@@ -229,11 +246,22 @@ class TrialSessionScreen:
                 with ui.row().classes("trial-box-warn p-3 w-full items-center gap-2"):
                     ui.spinner(size="sm", color="amber")
                     ui.label("새 요청에 대한 토론을 진행하는 중입니다. 아래는 이전 결과입니다.").classes("text-sm text-amber-200")
+            elif unfinished:
+                with ui.row().classes("trial-box-warn p-3 w-full items-center gap-2 flex-nowrap"):
+                    ui.icon("history", size="sm").classes("text-violet-300 flex-shrink-0")
+                    ui.label(
+                        "가장 최근 요청은 서버가 다시 시작되어(또는 오류로) 끝나지 못했습니다. 아래는 그 전의 "
+                        "결과입니다. ‘토론 과정’ 탭에서 이어서 진행하거나 지금까지로 결론을 내실 수 있습니다."
+                    ).classes("text-sm text-amber-200")
 
             with ui.row().classes("w-full items-center justify-between gap-2"):
                 meta = [local_time(result.final_at)]
                 if result.turn_seconds is not None:
-                    meta.append(f"소요 시간: {duration(result.turn_seconds)}")
+                    spent = f"소요 시간: {duration(result.turn_seconds)}"
+                    if result.resumed_count:
+                        # 끊겼다가 이어진 요청이면 그 안에 든 서버 중단 시간을 함께 적습니다.
+                        spent += f" (서버 중단 {duration(result.paused_seconds)} 포함)"
+                    meta.append(spent)
                 ui.label(" · ".join(m for m in meta if m)).classes("text-xs text-slate-500")
                 with ui.row().classes("gap-1"):
                     ui.button("복사", icon="content_copy",
@@ -354,6 +382,8 @@ class TrialSessionScreen:
             ui.notify("현재 진행 중인 토론이 완료된 후에 전송하실 수 있습니다.", type="warning")
             self.feed.set_busy(True, "토론 진행 중", "진행 중")
             return
+        # 끊긴 요청이 있었다면 새 요청이 그것을 "버려짐" 으로 적습니다. 안내도 걷습니다.
+        self.feed.set_unfinished_turn(None)
         try:
             run = self.runner.start(self.session_id, prompt)
         except Exception as exc:  # noqa: BLE001 - 입력이 잠긴 채로 남으면 안 됩니다
@@ -366,6 +396,39 @@ class TrialSessionScreen:
         self.feed.set_busy(True, run.status_text, _korean_badge(run.round_info))
         self.progress_view.refresh()
         self.result_view.refresh()
+        self.attach(run)
+
+    async def resume(self, turn_id: str, mode: str) -> None:
+        """끊긴 요청을 이어 가거나(`continue`) 지금까지의 발언으로 정리합니다(`finish`)."""
+        if self.feed is None:
+            return
+        if self.runner.is_running(self.session_id):
+            ui.notify("현재 진행 중인 토론이 완료된 후에 이용하실 수 있습니다.", type="warning")
+            return
+        async with get_session_factory()() as db:
+            info = await unfinished_turn(db, self.session_id)
+        if info is None or info.turn_id != turn_id:
+            ui.notify("이미 처리된 요청입니다.", type="warning")
+            self.feed.set_unfinished_turn(info.to_dict() if info else None)
+            return
+        try:
+            run = self.runner.resume(
+                self.session_id, turn_id, mode,
+                user_prompt=info.prompt, workspace=info.workspace_dir or None,
+            )
+        except Exception as exc:  # noqa: BLE001 - 시작하지 못한 사유를 그대로 보여 줍니다
+            logger.error("Could not resume a trial turn: %s", exc, exc_info=True)
+            self.feed.set_busy(False, f"토론을 다시 시작하지 못했습니다: {exc}", "오류")
+            ui.notify(f"토론을 다시 시작하지 못했습니다: {exc}", type="negative")
+            self.feed.set_unfinished_turn(info.to_dict())
+            return
+        # "이번 요청의 발언" 은 끊기기 전에 이미 나온 발언부터 셉니다.
+        self.phase = "synthesizing" if mode == "finish" else "debating"
+        self.round, self.speeches = 0, info.speeches
+        self.tabs.set_value("debate")
+        self.feed.set_busy(True, run.status_text, "정리" if mode == "finish" else "재개")
+        self.progress_view.refresh()
+        await self.result_view.refresh()
         self.attach(run)
 
     async def interject(self, text: str) -> None:
@@ -474,6 +537,8 @@ class TrialSessionScreen:
             failed = event.get("failed_agents") or []
             if failed:
                 feed.set_busy(False, f"완료 — 응답하지 못한 참여자: {', '.join(failed)}", "일부 실패")
+            elif event.get("interrupted"):
+                feed.set_busy(False, "서버 중단으로 멈춘 요청을 지금까지의 발언으로 정리했습니다.", "정리됨")
             elif event.get("stopped_early"):
                 feed.set_busy(False, "정지 요청에 따라 지금까지의 토론 내용을 종합하여 정리했습니다.", "정지됨")
             else:
@@ -483,7 +548,9 @@ class TrialSessionScreen:
             if status == "failed":
                 self.phase = "failed"
                 feed.set_busy(False, f"오류로 인해 중단되었습니다: {event.get('error') or '알 수 없는 오류'}", "오류")
-                ui.notify("토론이 오류로 중단되었습니다. 잠시 후 다시 요청해 주십시오.", type="negative")
+                ui.notify("토론이 오류로 중단되었습니다. 잠시 후 이어서 진행하거나 다시 요청해 주십시오.", type="negative")
+                # 멈춘 요청은 "실패" 로 기록됩니다. 이어서 진행·결론 내기 안내를 다시 띄웁니다.
+                feed.set_unfinished_turn(await self._unfinished())
             elif status == "cancelled":
                 self.phase = "cancelled"
                 feed.set_busy(False, "토론이 취소되었습니다.", "취소")

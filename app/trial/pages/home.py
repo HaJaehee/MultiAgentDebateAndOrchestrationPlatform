@@ -30,6 +30,7 @@ ALL = "전체"
 
 _STATE_LABEL = {
     "running": ("진행 중", "text-indigo-300"),
+    "interrupted": ("중단됨 · 이어서 진행 가능", "text-violet-300"),
     "done": ("완료", "text-emerald-300"),
     "started": ("결과 없음", "text-amber-300"),
     "empty": ("시작 전", "text-slate-400"),

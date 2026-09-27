@@ -5,6 +5,7 @@
 3. 사본과 평가는 사람마다 따로다.
 4. 결과 화면은 가장 최근 합성 발언과 결정 장부의 두 칸(합의·이견)을 보여 준다.
 5. 운영자 통계는 기록에서 센다.
+6. 서버 중단으로 끝나지 못한 요청은 목록에서 먼저 보이고, 이어서 마친 결과는 중단 시간을 함께 적는다 (ADR-024).
 """
 
 import uuid
@@ -14,7 +15,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.database.models import Base, MessageModel, SessionModel
+from app.database.models import TURN_INTERRUPTED, Base, MessageModel, SessionModel, TurnModel
 from app.trial import models as trial_models  # noqa: F401 - 테이블 등록
 from app.trial.models import TrialSessionModel, TrialUserModel
 from app.trial.stats import usage_report
@@ -158,6 +159,33 @@ async def test_the_result_is_the_latest_synthesis_with_its_ledger(db):
     assert "FastAPI" in boxes["agreed"]
     assert boxes["open"] == "", "'- 없음' 은 의견이 갈린 것으로 보이면 안 됩니다"
 
+
+
+@pytest.mark.asyncio
+async def test_an_interrupted_request_comes_first_in_the_list(db):
+    kim = await _user(db, "kim")
+    sid = await _session(db, kim, finished=True)  # 이전 결과가 있는 대화
+    db.add(TurnModel(session_id=sid, status=TURN_INTERRUPTED, phase="debating", started_at=T0))
+    await db.commit()
+    rows = await list_user_sessions(db, kim.id)
+    assert [r.state for r in rows] == ["interrupted"], "할 일(이어서 진행·결론 내기)이 남은 대화입니다"
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_result_names_the_pause_inside_its_time(db):
+    kim = await _user(db, "kim")
+    sid = await _session(db, kim, finished=True)
+    turn = TurnModel(session_id=sid, status="completed", phase="completed", started_at=T0,
+                     paused_seconds=120, resumed_count=1)
+    db.add(turn)
+    await db.commit()
+    final = next(m for m in (await db.get(SessionModel, sid)).messages if m.turn_started_at is not None)
+    final.turn_id = turn.id
+    await db.commit()
+
+    result = await session_result(db, sid)
+    assert result.turn_seconds == 180
+    assert (result.paused_seconds, result.resumed_count) == (120, 1)
 
 def test_ledger_boxes_pick_decisions_and_open_issues():
     ledger = "## 결정 사항\n- A안으로 간다\n\n## 미해결 쟁점\n- 예산 출처\n"

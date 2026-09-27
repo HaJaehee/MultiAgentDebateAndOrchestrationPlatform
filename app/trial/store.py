@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import MessageModel, SessionModel
+from app.database.models import TURN_UNFINISHED, MessageModel, SessionModel, TurnModel
 from app.trial.models import (
     TrialFeedbackModel,
     TrialSessionModel,
@@ -42,7 +42,8 @@ class SessionRow:
     template_ref: str
     template_title: str
     created_at: Optional[datetime]
-    # done · started (돌았지만 결과가 없음) · empty (아직 요청 전). 진행 중인지는 러너가 압니다.
+    # interrupted (가장 최근 요청이 서버 중단·오류로 끝나지 못함) · done · started (돌았지만 결과가
+    # 없음) · empty (아직 요청 전). 진행 중인지는 러너가 압니다.
     state: str
 
 
@@ -59,7 +60,18 @@ async def _session_states(db: AsyncSession, session_ids: List[str]) -> Dict[str,
         .where(MessageModel.session_id.in_(session_ids), MessageModel.msg_type == "user")
         .distinct()
     )).scalars().all())
-    return {sid: "done" if sid in done else "started" if sid in started else "empty" for sid in session_ids}
+    # 끊긴 요청이 있으면 그것이 먼저입니다 — 이전 결과가 있어도, 방문자가 할 일(이어서 진행·결론
+    # 내기)이 남아 있습니다 (ADR-024).
+    interrupted = set((await db.execute(
+        select(TurnModel.session_id)
+        .where(TurnModel.session_id.in_(session_ids), TurnModel.status.in_(TURN_UNFINISHED))
+        .distinct()
+    )).scalars().all())
+    return {
+        sid: "interrupted" if sid in interrupted else "done" if sid in done
+        else "started" if sid in started else "empty"
+        for sid in session_ids
+    }
 
 
 async def list_user_sessions(db: AsyncSession, user_id: str) -> List[SessionRow]:
@@ -113,6 +125,9 @@ class SessionResult:
     final: str = ""
     final_at: Optional[datetime] = None
     turn_seconds: Optional[float] = None
+    # 그 턴이 서버 중단으로 끊겼다가 이어진 경우: 소요 시간 안에 든 중단 시간과 재개 횟수 (ADR-024).
+    paused_seconds: int = 0
+    resumed_count: int = 0
     ledger: str = ""
     user_turns: int = 0
 
@@ -136,6 +151,10 @@ async def session_result(db: AsyncSession, session_id: str) -> SessionResult:
         started, finished = aware(final.turn_started_at), aware(final.finished_at)
         if started and finished:
             result.turn_seconds = max(0.0, (finished - started).total_seconds())
+        turn = await db.get(TurnModel, final.turn_id) if final.turn_id else None
+        if turn is not None and turn.resumed_count:
+            result.paused_seconds = int(turn.paused_seconds or 0)
+            result.resumed_count = int(turn.resumed_count)
     result.user_turns = int((await db.execute(
         select(func.count()).select_from(MessageModel)
         .where(MessageModel.session_id == session_id, MessageModel.msg_type == "user")
