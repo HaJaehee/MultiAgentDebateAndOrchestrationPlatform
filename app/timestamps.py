@@ -106,7 +106,13 @@ def turn_elapsed_seconds(turn_started_at: Any, completed_at: Any) -> Optional[fl
     return max(0.0, (end - start).total_seconds())
 
 
-def report_completed_line(completed_at: Any, turn_started_at: Any = None) -> str:
+def report_completed_line(
+    completed_at: Any,
+    turn_started_at: Any = None,
+    *,
+    paused_seconds: float = 0,
+    resumed_count: int = 0,
+) -> str:
     """종합 보고서 끝에 붙일 완료 시각 한 줄. 시각이 없으면 빈 문자열.
 
     보고서는 아티팩트로 따로 복사·저장되어 대화 기록과 떨어져 돌아다닙니다. 그래서
@@ -114,6 +120,9 @@ def report_completed_line(completed_at: Any, turn_started_at: Any = None) -> str
     문서의 머리말에만 있으면, 보고서만 떼어 온 사람은 그 시각을 알 수 없습니다.
 
     `turn_started_at` 이 있으면 완료 시각 오른쪽에 그 턴의 총 경과 시간을 붙입니다.
+    서버가 끊겼다가 이어 간 턴이면(`resumed_count`) 총 경과는 그대로 벽시계로 재되, 그
+    안에 든 중단 시간을 함께 적습니다 — 빼고 적으면 기록의 두 시각과 어긋나고, 안 적으면
+    토론이 그만큼 오래 걸린 것처럼 읽힙니다.
     """
     at = _as_datetime(completed_at)
     if at is None:
@@ -122,6 +131,10 @@ def report_completed_line(completed_at: Any, turn_started_at: Any = None) -> str
     total = turn_elapsed_seconds(turn_started_at, at)
     if total is not None:
         line += f" · 총 경과 {format_duration(total)}"
+        if resumed_count:
+            line += f" (서버 중단 {format_duration(paused_seconds)} 포함, {resumed_count}회 재개)"
+    elif resumed_count:
+        line += f" · 서버 중단 뒤 {resumed_count}회 재개"
     return f"*{line}*"
 
 

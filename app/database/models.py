@@ -77,6 +77,55 @@ class SessionModel(Base):
     )
 
 
+# 턴의 상태 (`TurnModel.status`).
+#
+#   running     : 도는 중. 서버가 뜰 때 이 값으로 남아 있으면 죽은 턴입니다 (프로세스가 하나뿐).
+#   completed   : 합성까지 마쳤습니다.
+#   failed      : 엔진이 예외로 멈췄습니다. 끊긴 턴과 똑같이 이어 가거나 마무리할 수 있습니다.
+#   interrupted : 서버가 턴 도중에 내려갔습니다.
+#   abandoned   : 끊긴 채로 두고 새 요청을 보냈습니다. 기록은 남기되 더는 묻지 않습니다.
+TURN_RUNNING = "running"
+TURN_COMPLETED = "completed"
+TURN_FAILED = "failed"
+TURN_INTERRUPTED = "interrupted"
+TURN_ABANDONED = "abandoned"
+# 사람이 이어 가기·마무리·버리기를 고를 수 있는 턴.
+TURN_UNFINISHED = (TURN_FAILED, TURN_INTERRUPTED)
+
+
+class TurnModel(Base):
+    """토론 한 턴 — 사람의 요청 하나로 시작해 합성으로 끝나는 단위 (ADR-024).
+
+    예전에는 턴을 따로 기록하지 않았습니다. 턴이 끝났다는 표시는 합성 발언의
+    `turn_started_at` 하나뿐이라, 서버가 턴 도중에 내려가면 그 턴은 흔적 없이 피드에 남아
+    다음 요청의 맥락에 섞였습니다. 이 행이 있어야 끊긴 턴을 알아보고, 이어 가거나
+    마무리하거나 버릴 수 있습니다.
+
+    여는 요청과 **같은 커밋**에 들어갑니다. 턴에 딸린 발언과 도구 기록은 `turn_id` 로 이 행을
+    가리킵니다.
+    """
+
+    __tablename__ = "turns"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(20), default=TURN_RUNNING, nullable=False)
+    # planning · debating · synthesizing · completed. 끊긴 턴을 어디서부터 이을지 정하는 첫 근거입니다.
+    phase: Mapped[str] = mapped_column(String(20), default="planning", nullable=False)
+    opening_message_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    # 턴이 시작될 때의 구성 — 참여자·전략·라운드 수·동시 실행 상한·커스텀 지침·작업 공간.
+    # 끊긴 사이에 로스터를 바꿨더라도 그 턴은 이 구성으로 마칩니다.
+    config: Mapped[Any] = mapped_column(JSON, default=dict)
+    # 엔진이 예외로 멈췄을 때의 사유 (`failed`).
+    error: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # 끊긴 채로 있던 시간의 합(초)과 이어 간 횟수. 보고서의 총 경과에 함께 적습니다.
+    paused_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    resumed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class MessageModel(Base):
     __tablename__ = "messages"
 
@@ -118,6 +167,12 @@ class MessageModel(Base):
     # 이 발언이 노드의 **출력**으로 나간 핀 — 에이전트·취합은 `out`, 판정은 `yes`/`no`. 노드에 붙었지만
     # 출력이 아닌 기록(방문 상한 안내)은 NULL. 새로고침한 화면이 어느 선으로 흘렀는지 다시 그리는 근거입니다.
     graph_port: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    # 이 기록이 속한 턴 (`TurnModel`). 이 컬럼이 생기기 전의 기록은 NULL.
+    turn_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    # 이 기록이 턴의 흐름에서 맡은 자리 (`app/orchestration/turns.py` 의 KIND_*). 끊긴 턴을 다시
+    # 세울 때 기록을 문장이 아니라 이것으로 읽습니다 — 지명·분배는 누가 불렸고 무엇을 맡았는지를
+    # 값으로 함께 적습니다. 화면에 보이는 문장은 `content` 에 그대로 있습니다.
+    turn_meta: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
 
     session: Mapped["SessionModel"] = relationship("SessionModel", back_populates="messages")
     tool_calls: Mapped[List["ToolCallRecordModel"]] = relationship(
@@ -130,7 +185,11 @@ class ToolCallRecordModel(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
+    # 이 호출을 낸 발언. 도구는 실행하는 **즉시** 기록되고(발언이 끝나기 전에 서버가 죽어도
+    # 무엇을 실행했는지 남도록), 발언이 기록될 때 같은 커밋에서 여기가 채워집니다. 턴이
+    # 끊긴 뒤에도 NULL 이면 끝나지 못한 발언이 실행한 것입니다.
     message_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True)
+    turn_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     agent_key: Mapped[str] = mapped_column(String(50))
     tool_name: Mapped[str] = mapped_column(String(100))
     arguments: Mapped[Any] = mapped_column(JSON, default=dict)

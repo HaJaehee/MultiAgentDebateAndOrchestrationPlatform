@@ -6,7 +6,7 @@ from nicegui import ui
 from app.agents.base import style_for_agent
 from app.mcp.policy import OUTCOME_LABELS, describe_verdict, tool_outcome
 from app.orchestration.graph_run import NodeBadges
-from app.timestamps import format_duration, speech_time_text, speech_timing
+from app.timestamps import format_duration, speech_time_text, speech_timing, to_local
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.mention_input import MENTION_INPUT_CLASS, MENTION_QUERY_EVENT
 from app.workspace_files import (
@@ -151,6 +151,11 @@ OUTCOME_STYLES = {
 }
 
 BAR_CLASSES = "w-full items-center gap-2 px-3 py-2 rounded-lg text-xs flex-nowrap"
+# 끊긴 턴 안내 줄 (ADR-024). 한도·승인 물음과 달리 토론이 돌지 않을 때 뜨므로 보라색으로 구분합니다.
+UNFINISHED_BAR_CLASSES = (
+    "w-full items-center gap-2 px-3 py-2 rounded-lg text-xs border "
+    "bg-violet-950/50 border-violet-700/70"
+)
 LABEL_CLASSES = "font-semibold min-w-0 flex-grow"
 COUNTDOWN_CLASSES = "font-mono flex-shrink-0 whitespace-nowrap"
 
@@ -158,6 +163,30 @@ COUNTDOWN_CLASSES = "font-mono flex-shrink-0 whitespace-nowrap"
 def _all_decision_classes(slot: str) -> str:
     """모든 종류가 쓰는 색 클래스. 다시 칠하기 전에 통째로 걷어냅니다."""
     return " ".join(style[slot] for style in DECISION_STYLES.values())
+
+
+def unfinished_turn_text(info: Dict[str, Any]) -> str:
+    """끊긴 턴 안내 줄의 문장. 무엇이 남았고 무엇을 고를 수 있는지."""
+    if info.get("status") == "failed":
+        head = "이전 턴이 오류로 멈췄습니다"
+        if info.get("error"):
+            head += f" ({str(info['error']).splitlines()[0][:160]})"
+    else:
+        head = "서버가 다시 시작되어 이전 턴이 끝나지 못했습니다"
+    parts = [head + "."]
+    facts = []
+    started = info.get("started_at")
+    if started:
+        try:
+            facts.append(f"{to_local(started).strftime('%m-%d %H:%M')} 요청")
+        except (TypeError, ValueError):
+            pass
+    facts.append(f"전문가 발언 {int(info.get('speeches') or 0)}개 기록됨")
+    if info.get("orphan_tools"):
+        facts.append(f"끝나지 못한 발언이 실행한 도구 {int(info['orphan_tools'])}건")
+    parts.append(" · ".join(facts) + ".")
+    parts.append("새 요청을 보내면 이 턴은 기록에 그대로 남고 더는 묻지 않습니다.")
+    return " ".join(parts)
 
 
 def card_time_text(msg: Dict[str, Any]) -> Tuple[str, str]:
@@ -217,8 +246,20 @@ class ChatFeed:
         mention_provider: Optional[MentionProvider] = None,
         on_upload_file: Optional[UploadHandler] = None,
         upload_destination: Optional[Callable[[], str]] = None,
+        on_resume_turn: Optional[Callable[[str, str], Coroutine[None, None, None]]] = None,
+        on_discard_turn: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
     ):
         self.on_send_message = on_send_message
+        # 끊긴 턴 (ADR-024). (턴 id, "finish"·"continue") 와 (턴 id). 주어지지 않으면 안내 줄도 없습니다.
+        self.on_resume_turn = on_resume_turn
+        self.on_discard_turn = on_discard_turn
+        self._unfinished: Optional[Dict[str, Any]] = None
+        self.unfinished_bar: Optional[ui.row] = None
+        self.unfinished_label: Optional[ui.label] = None
+        self.unfinished_continue_button: Optional[ui.button] = None
+        self.unfinished_finish_button: Optional[ui.button] = None
+        self.unfinished_discard_button: Optional[ui.button] = None
+        self.discard_turn_dialog: Optional[ui.dialog] = None
         # 입력창의 @언급과 작업 공간 업로드. 주어지지 않으면 둘 다 없습니다.
         self.mention_provider = mention_provider
         self.on_upload_file = on_upload_file
@@ -405,6 +446,38 @@ class ChatFeed:
                     )
                 self.budget_bar.set_visibility(False)
 
+                # 끊긴 턴 안내 (ADR-024). 서버가 턴 도중에 내려갔거나 엔진이 오류로 멈춘 턴을
+                # 이어 가기 · 지금까지로 결론 내기 · 버리기 중에서 고릅니다. 토론이 돌지 않을
+                # 때만 보입니다.
+                with ui.row().classes(UNFINISHED_BAR_CLASSES) as self.unfinished_bar:
+                    ui.icon("history", size="sm").classes("text-violet-300 flex-shrink-0")
+                    self.unfinished_label = ui.label("").classes(
+                        "min-w-0 flex-grow text-violet-100 leading-snug"
+                    )
+                    with ui.row().classes("items-center gap-1 flex-shrink-0 flex-nowrap"):
+                        self.unfinished_continue_button = (
+                            ui.button("이어서 진행", icon="play_arrow",
+                                      on_click=lambda: self._handle_resume_turn("continue"))
+                            .props("unelevated dense no-caps color=violet-7 size=sm")
+                            .tooltip("기록에서 어디까지 진행되었는지 다시 계산하여 남은 발언부터 이어 갑니다.")
+                        )
+                        self.unfinished_finish_button = (
+                            ui.button("지금까지로 결론", icon="done_all",
+                                      on_click=lambda: self._handle_resume_turn("finish"))
+                            .props("flat dense no-caps color=violet-3 size=sm")
+                            .tooltip(
+                                "기록된 발언만으로 최종 결론을 작성합니다. '정지'와 같은 의미이므로 "
+                                "합의로 표시하지 않으며, 보고서에 서버 중단 사실을 적습니다."
+                            )
+                        )
+                        self.unfinished_discard_button = (
+                            ui.button("버리기", icon="delete_sweep",
+                                      on_click=self._handle_discard_turn)
+                            .props("flat dense no-caps color=red-4 size=sm")
+                            .tooltip("이 턴의 요청과 발언을 기록에서 삭제하고, 요청 내용을 입력창으로 복원합니다.")
+                        )
+                self.unfinished_bar.set_visibility(False)
+
                 # 도구 승인 카드. 병렬 라운드에서는 여러 장이 동시에 뜨므로 쌓고, 너무
                 # 길어지면 이 칸 안에서 스크롤합니다 — 타임라인을 밀어내지 않습니다.
                 self.approval_column = ui.column().classes(
@@ -481,6 +554,27 @@ class ChatFeed:
                         "flat dense no-caps color=grey-4"
                     )
                     ui.button("긴급 종료", icon="cancel", on_click=self._confirm_abort).props(
+                        "unelevated dense no-caps color=red-6"
+                    )
+
+            # 끊긴 턴 버리기 확인. 긴급 종료와 같이 되돌릴 수 없는 삭제라 한 번 묻습니다.
+            with ui.dialog() as self.discard_turn_dialog, ui.card().classes(
+                "bg-slate-900 border border-red-800 text-slate-200 max-w-md"
+            ):
+                ui.label("끊긴 턴을 버리시겠습니까?").classes("text-base font-bold text-red-300")
+                ui.label(
+                    "이 턴의 요청과 기록된 발언, 끝나지 못한 발언이 남긴 도구 기록을 삭제합니다. "
+                    "요청 내용은 입력창으로 복원됩니다. 작업 공간의 파일은 그대로 남습니다."
+                ).classes("text-xs text-slate-300")
+                ui.label(
+                    "지금까지의 발언으로 결론만 받으시려면 '지금까지로 결론'을 이용하십시오. "
+                    "이 작업은 취소할 수 없습니다."
+                ).classes("text-[11px] text-slate-400")
+                with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                    ui.button("취소", on_click=self.discard_turn_dialog.close).props(
+                        "flat dense no-caps color=grey-4"
+                    )
+                    ui.button("버리기", icon="delete_sweep", on_click=self._confirm_discard_turn).props(
                         "unelevated dense no-caps color=red-6"
                     )
 
@@ -643,6 +737,58 @@ class ChatFeed:
         if self.on_abort is None:
             return
         await self.on_abort()
+
+    # ------------------------------------------------------------ 끊긴 턴
+
+    def set_unfinished_turn(self, info: Optional[Dict[str, Any]]) -> None:
+        """끊긴 턴 안내를 띄우거나(`info`) 걷습니다(None). 토론이 도는 동안에는 숨깁니다."""
+        self._unfinished = dict(info) if info else None
+        self._refresh_unfinished_bar()
+
+    @property
+    def unfinished_turn(self) -> Optional[Dict[str, Any]]:
+        return self._unfinished
+
+    def _refresh_unfinished_bar(self) -> None:
+        if not self.alive or self.unfinished_bar is None or self.unfinished_bar.is_deleted:
+            return
+        info = self._unfinished
+        show = bool(info) and not self.is_busy and self.on_resume_turn is not None
+        self.unfinished_bar.set_visibility(show)
+        if not show:
+            return
+        if self.unfinished_label is not None:
+            self.unfinished_label.set_text(unfinished_turn_text(info))
+        if self.unfinished_continue_button is not None:
+            self.unfinished_continue_button.set_visibility(bool(info.get("can_continue")))
+        if self.unfinished_finish_button is not None:
+            if info.get("can_finish"):
+                self.unfinished_finish_button.enable()
+            else:
+                # 기록된 전문가 발언이 없으면 합성할 것이 없습니다.
+                self.unfinished_finish_button.disable()
+
+    async def _handle_resume_turn(self, mode: str) -> None:
+        info = self._unfinished
+        if not info or self.is_busy or self.on_resume_turn is None:
+            return
+        # 한 번만 누르게 합니다. 실행이 시작되면 바쁨 표시가 줄을 숨깁니다.
+        self.set_unfinished_turn(None)
+        await self.on_resume_turn(info["turn_id"], mode)
+
+    def _handle_discard_turn(self) -> None:
+        if not self._unfinished or self.is_busy or self.discard_turn_dialog is None:
+            return
+        self.discard_turn_dialog.open()
+
+    async def _confirm_discard_turn(self) -> None:
+        if self.discard_turn_dialog is not None:
+            self.discard_turn_dialog.close()
+        info = self._unfinished
+        if not info or self.on_discard_turn is None:
+            return
+        self.set_unfinished_turn(None)
+        await self.on_discard_turn(info["turn_id"])
 
     # ------------------------------------------------------------ 도구 상한
 
@@ -998,6 +1144,7 @@ class ChatFeed:
             self.status_label.set_text(status_text)
         if self.round_badge and round_info:
             self.round_badge.set_text(round_info)
+        self._refresh_unfinished_bar()
         self._refresh_live_indicator()
 
     # ------------------------------------------------------------ 생성 중 표시

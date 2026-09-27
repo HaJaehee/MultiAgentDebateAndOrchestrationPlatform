@@ -25,6 +25,7 @@ from app.database.session import get_session_factory
 from app.orchestration.graph_run import GraphRunTracker, last_graph_turn, node_labels
 from app.orchestration.runner import TurnRun, get_debate_runner
 from app.orchestration.strategies import resolve_strategy_name
+from app.orchestration.turns import unfinished_turn
 from app.security import is_loopback
 from app.session_ops import discard_turn
 from app.ui.components.access_token import build_access_buttons
@@ -383,6 +384,17 @@ def create_ui() -> None:
                         type="warning",
                         position="bottom-right",
                     )
+                elif event.get("interrupted"):
+                    chat_feed.set_busy(
+                        False,
+                        "끊긴 턴을 지금까지의 발언으로 마무리하였습니다 (서버 중단으로 덜 논의됨).",
+                        "Resumed",
+                    )
+                    ui.notify(
+                        "서버 중단으로 끊긴 턴을 기록된 발언만으로 합성하였습니다. 보고서에 중단 사실을 적었습니다.",
+                        type="info",
+                        position="bottom-right",
+                    )
                 elif event.get("stopped_early"):
                     rounds = event.get("rounds_completed", 0)
                     max_rounds = event.get("max_rounds", 0)
@@ -409,6 +421,9 @@ def create_ui() -> None:
                     error = event.get("error") or "알 수 없는 오류"
                     chat_feed.set_busy(False, f"오류로 인하여 중단되었습니다: {error}", "Error")
                     ui.notify(f"토론 실행 중 오류가 발생하였습니다: {error}", type="negative")
+                    # 멈춘 턴은 "실패" 로 기록됩니다. 이어 가거나 마무리하거나 버릴 수 있게
+                    # 안내 줄을 다시 띄웁니다.
+                    await refresh_unfinished_turn()
                 elif status == "cancelled":
                     chat_feed.set_busy(False, "토론이 취소되었습니다.", "Cancelled")
                 else:
@@ -596,6 +611,9 @@ def create_ui() -> None:
                 # Save latest config before running
                 await on_config_changed()
 
+                # 끊긴 턴이 있었다면 새 턴이 그것을 "버려짐" 으로 적습니다. 안내도 걷습니다.
+                chat_feed.set_unfinished_turn(None)
+
                 # 토론은 이 페이지가 아니라 프로세스가 소유합니다. 새로고침하거나
                 # 페르소나 화면에 다녀와도 중단되지 않고, 돌아오면 다시 이어 붙습니다.
                 # 작업 공간이 다른 대화가 이미 돌고 있어도 막지 않습니다. 폴더마다
@@ -728,6 +746,7 @@ def create_ui() -> None:
                     current_session_id,
                     produced["message_ids"],
                     produced["artifact_ids"],
+                    turn_id=produced.get("turn_id"),
                 )
 
             # 기록이 바뀌었으므로 화면을 DB 기준으로 다시 세웁니다. 취소된 실행의
@@ -747,6 +766,68 @@ def create_ui() -> None:
                  if restored else
                  "토론을 중단하고 해당 요청을 기록에서 삭제하였습니다. 입력창에 작성 중이던 내용이 있어 "
                  "기존 입력 내용을 유지하였습니다.")
+                + (" 아직 시작 전이므로 에이전트 구성을 다시 변경하실 수 있습니다." if started_over else ""),
+                type="info", position="bottom-right",
+            )
+
+        async def refresh_unfinished_turn() -> None:
+            """이 대화에 끊긴 턴이 있으면 안내 줄을 띄웁니다 (ADR-024)."""
+            if not current_session_id or runner.is_running(current_session_id):
+                chat_feed.set_unfinished_turn(None)
+                return
+            async with session_factory() as db:
+                info = await unfinished_turn(db, current_session_id)
+            chat_feed.set_unfinished_turn(info.to_dict() if info else None)
+
+        async def on_resume_turn(turn_id: str, mode: str) -> None:
+            """끊긴 턴을 마무리하거나(`finish`) 이어 갑니다(`continue`). 실행은 러너가 맡습니다."""
+            if not current_session_id:
+                return
+            if runner.is_running(current_session_id):
+                ui.notify("이 세션의 토론이 아직 진행 중입니다.", type="warning", position="bottom-right")
+                return
+            async with session_factory() as db:
+                info = await unfinished_turn(db, current_session_id)
+            if info is None or info.turn_id != turn_id:
+                ui.notify("이미 처리된 턴입니다.", type="warning", position="bottom-right")
+                await load_session_state(current_session_id)
+                return
+            try:
+                run = runner.resume(
+                    current_session_id, turn_id, mode,
+                    user_prompt=info.prompt, workspace=info.workspace_dir or None,
+                )
+            except Exception as exc:  # noqa: BLE001 - 시작하지 못한 사유를 그대로 보여 줍니다
+                logger.error(f"Could not resume the turn: {exc}", exc_info=True)
+                chat_feed.set_busy(False, f"턴을 다시 시작하지 못했습니다: {exc}", "Error")
+                ui.notify(f"턴을 다시 시작하지 못했습니다: {exc}", type="negative")
+                await refresh_unfinished_turn()
+                return
+            chat_feed.set_busy(True, run.status_text, run.round_info)
+            roster_control.refresh_mcp_lock()
+            attach_to_run(run)
+            if run.status != "running":
+                chat_feed.set_busy(False, run.status_text, run.round_info)
+
+        async def on_discard_turn(turn_id: str) -> None:
+            """끊긴 턴을 버립니다. 긴급 종료처럼 요청 글을 입력창으로 돌려줍니다."""
+            if not current_session_id:
+                return
+            async with session_factory() as db:
+                info = await unfinished_turn(db, current_session_id)
+                if info is None or info.turn_id != turn_id:
+                    ui.notify("이미 처리된 턴입니다.", type="warning", position="bottom-right")
+                    started_over = None
+                else:
+                    started_over = await discard_turn(db, current_session_id, [], [], turn_id=turn_id)
+            await load_session_state(current_session_id)
+            if started_over is None:
+                return
+            restored = chat_feed.restore_input(info.prompt)
+            await sidebar.refresh_list()
+            ui.notify(
+                "끊긴 턴을 기록에서 삭제하였습니다."
+                + (" 요청 내용을 입력창에 복원하였습니다." if restored else "")
                 + (" 아직 시작 전이므로 에이전트 구성을 다시 변경하실 수 있습니다." if started_over else ""),
                 type="info", position="bottom-right",
             )
@@ -773,6 +854,8 @@ def create_ui() -> None:
             mention_provider=mention_provider,
             on_upload_file=on_upload_file,
             upload_destination=upload_destination,
+            on_resume_turn=on_resume_turn,
+            on_discard_turn=on_discard_turn,
         )
         # 작업 공간 파일 다운로드. 입력란 아래와 보고서 탭, 두 곳에서 같은 창을 엽니다.
         workspace_download = WorkspaceDownloadDialog(workspace_root)
@@ -1054,6 +1137,7 @@ def create_ui() -> None:
             else:
                 chat_feed.set_busy(False, "대기 중", "Ready")
                 chat_feed.set_budget_request(None)
+            await refresh_unfinished_turn()
 
         # Initialize on initial load: select most recent session or create new
         async with session_factory() as db:

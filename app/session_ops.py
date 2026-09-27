@@ -33,6 +33,7 @@ from app.database.models import (
     SessionAgentModel,
     SessionModel,
     ToolCallRecordModel,
+    TurnModel,
     utc_now,
 )
 from app.mcp.manager import carry_over_memory_graph
@@ -64,8 +65,13 @@ async def discard_turn(
     session_id: str,
     message_ids: Sequence[str],
     artifact_ids: Sequence[str] = (),
+    turn_id: Optional[str] = None,
 ) -> bool:
     """한 턴이 남긴 발언·도구 기록·산출물을 지웁니다.
+
+    `turn_id` 를 주면 그 턴의 기록(`TurnModel`)과 그 턴에 딸린 발언·도구 기록을 **전부**
+    지웁니다. 끊긴 턴을 버릴 때는 지울 발언을 화면의 스냅샷이 아니라 기록이 압니다 — 끝나지
+    못한 발언이 남긴 도구 기록(발언 id 가 빈 것)도 여기서 함께 사라집니다.
 
     돌려주는 값은 **이 대화가 시작 전 상태로 돌아갔는지**입니다. 남은 발언이
     하나도 없으면 페르소나 잠금을 풀어 줍니다 — 첫 요청을 지웠다면 이 대화는
@@ -77,6 +83,20 @@ async def discard_turn(
     지우면 아무도 가리키지 않는 기록이 남습니다 (SQLite 가 외래키를 검사하지
     않아 조용히 남을 뿐입니다).
     """
+    if turn_id:
+        await db.execute(delete(ToolCallRecordModel).where(
+            ToolCallRecordModel.turn_id == turn_id,
+            ToolCallRecordModel.session_id == session_id,
+        ))
+        await db.execute(delete(MessageModel).where(
+            MessageModel.turn_id == turn_id,
+            MessageModel.session_id == session_id,
+        ))
+        await db.execute(delete(TurnModel).where(
+            TurnModel.id == turn_id,
+            TurnModel.session_id == session_id,
+        ))
+
     ids = _clean(message_ids)
     if ids:
         await db.execute(
