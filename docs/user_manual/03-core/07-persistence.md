@@ -2,7 +2,7 @@
 
 > 상위: [핵심 기술 개관](README.md) · 이전: [토론 전략](06-debate-strategies.md) · 다음: [도구 보안](08-tool-security.md)
 >
-> 관련 소스: `app/database/models.py` (132줄) · `session.py`
+> 관련 소스: `app/database/models.py` (262줄) · `session.py` · `app/orchestration/turns.py`
 
 ---
 
@@ -14,6 +14,7 @@ sessions ─────┬──▶ messages ──────▶ tool_calls
               │         └────────────────┘  (message_id 외래키, ON DELETE SET NULL)
               ├──▶ artifacts
               ├──▶ tool_calls
+              ├──▶ turns                   (발언·도구 기록이 turn_id 로 가리킴)
               └──▶ session_agents          (session_id + agent_key 복합 유니크 제약)
 ```
 
@@ -55,6 +56,8 @@ sessions ─────┬──▶ messages ──────▶ tool_calls
 | `finished_at` | 발언 생성이 실제로 **완료되거나 중단된** 타임스탬프 (UTC) |
 | `turn_started_at` | **턴을 마무리한 최종 합성 발언에만 기록**: 해당 턴을 시작한 유저 요청이 등록된 시각 |
 | `created_at` | **대화 기록 정렬 기준 타임스탬프** (실제 발언 시각이 아님, 하단 설명 참고) |
+| `turn_id` | 이 기록이 속한 턴 (`turns.id`). 기능 도입 이전의 기록은 NULL |
+| `turn_meta` | 이 기록이 턴의 흐름에서 맡은 자리 (JSON). `kind` 는 `opening` · `interjection` · `plan` · `speech` · `merge` · `gate` · `nomination` · `assignment` · `note` · `failure` · `interrupted` · `synthesis` 중 하나이며, 지명(`speakers`)과 병렬 분배(`tasks`)는 결과를 값으로 함께 적습니다 |
 
 메시지 테이블에는 에이전트의 내부 키(`sender_key`)뿐만 아니라 당시의 표시 이름(`sender_name`)과 역할명(`sender_role`)을 함께 영구 기록합니다. 훗날 관리자가 에이전트를 삭제하거나 이름을 변경하더라도 과거 토론 기록 속의 화자 정보는 원형 그대로 보존되어야 하기 때문입니다.
 
@@ -75,8 +78,27 @@ sessions ─────┬──▶ messages ──────▶ tool_calls
 | `output` | 도구 실행 결과 문자열 또는 오류 메시지 본문 |
 | `status` | 도구 실행 결과 상태 (`success` / `error`) |
 | `message_id` | 도구를 호출한 상위 메시지 ID (`ON DELETE SET NULL`) |
+| `turn_id` | 도구를 호출한 턴 (`turns.id`) |
+
+**도구 호출은 실행되는 즉시 기록합니다.** 이때는 `message_id` 를 비워 두고, 발언이 끝나 메시지가 기록될 때 같은 트랜잭션에서 채웁니다. 예전에는 발언이 끝날 때 메시지와 함께 넣었기 때문에, 발언 도중 서버가 내려가면 이미 실행된 도구(승인받은 파일 쓰기 포함)의 기록이 사라졌습니다. 턴이 끊긴 뒤에도 `message_id` 가 비어 있는 기록은 끝나지 못한 발언이 실행한 것이며, 그 턴을 이어 가거나 마무리할 때 "발언이 끊겼다" 는 안내 기록에 이어집니다.
 
 `message_id` 외래키에 `ON DELETE SET NULL`이 지정된 이유: 유저가 특정 발언을 삭제하거나 되돌리더라도, **해당 발언 중에 도구가 실제로 실행되었다는 사실과 그 결과는 데이터베이스에 영구 보존**되어야 하기 때문입니다. 이미 디스크 상의 파일이 실제로 변경되었거나 외부 작업이 실행되었기 때문입니다.
+
+### `turns` 테이블
+
+사람의 요청 하나로 시작해 합성으로 끝나는 토론 한 턴입니다 ([ADR-024](../../../lectures/05-adr/ADR-024-resume-interrupted-turns.md)). 턴을 여는 요청과 **같은 트랜잭션**에 기록됩니다.
+
+| 컬럼명 | 설명 |
+| :--- | :--- |
+| `status` | `running` · `completed` · `failed`(엔진 예외) · `interrupted`(서버 중단) · `abandoned`(끊긴 채로 두고 새 요청을 보냄) |
+| `phase` | `planning` · `debating` · `synthesizing` · `completed`. 끊긴 턴을 어디서부터 이을지 정하는 첫 근거입니다 |
+| `opening_message_id` | 턴을 연 유저 요청 |
+| `config` | 턴이 시작될 때의 구성 (참여자, 전략, 라운드 수, 동시 실행 상한, 커스텀 지침, 작업 공간). 끊긴 사이에 로스터를 바꿔도 그 턴은 이 구성으로 마칩니다 |
+| `stopped_early` | 합성에 들어갈 때 유저의 정지로 덜 논의된 턴이었는지 |
+| `paused_seconds` · `resumed_count` | 끊긴 채로 있던 시간의 합과 이어 간 횟수. 보고서의 총 경과에 함께 적습니다 |
+| `error` | `failed` 일 때의 사유 |
+
+서버가 기동하면 `running` 으로 남은 턴을 정리합니다. 프로세스가 하나뿐이므로 기동 시점의 `running` 은 죽은 턴입니다. 합성 발언까지 기록된 턴은 `completed`, 나머지는 `interrupted` 로 적습니다.
 
 ### `artifacts` 테이블
 

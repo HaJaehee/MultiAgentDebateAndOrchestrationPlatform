@@ -7,7 +7,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Coroutine, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Coroutine, Dict, List, Optional, Set, Tuple
 from sqlalchemy import select, update
 from app.agents.base import Agent
 from app.agents.llm import (
@@ -2009,14 +2009,18 @@ class OrchestratorEngine:
                 redo=redo,
             )
 
-        # 이어 가는 턴이면 마지막으로 발언이 있던 라운드부터, 그 라운드에 이미 말한 사람은 건너뜁니다.
-        start_round, spoken = 1, set()
+        # 이어 가는 턴이면 마지막 라운드부터, 그 라운드에 이미 말한 사람은 건너뜁니다. 그 라운드의
+        # 지명·분배가 기록돼 있으면 다시 묻지 않고 그대로 씁니다.
+        start_round, spoken, record = 1, set(), turns.RoundRecord()
         if resume:
-            last_round, spoken_keys = turns.round_progress(state.messages[state.turn_message_start:])
+            turn_messages = state.messages[state.turn_message_start:]
+            last_round, spoken_keys = turns.round_progress(turn_messages)
             if last_round:
                 start_round, spoken = last_round, spoken_keys
+                record = turns.round_record(turn_messages, last_round)
 
         for round_num in range(start_round, max_rounds + 1):
+            resuming_round = resume and round_num == start_round
             if control is not None and control.stop_requested:
                 stopped_early = True
                 break
@@ -2044,6 +2048,9 @@ class OrchestratorEngine:
                     parallel_limit=setup.parallel_limit,
                     control=control,
                     on_event=on_event,
+                    resume=record if resuming_round else None,
+                    done=spoken if resuming_round else None,
+                    redo=redo,
                 )
                 if stopped_early:
                     break
@@ -2054,18 +2061,22 @@ class OrchestratorEngine:
                     )
                 continue
 
-            speakers = await self._select_speakers(
-                db=db,
-                state=state,
-                strategy=strategy,
-                orchestrator=orchestrator_agent,
-                active_agents=setup.active_agents,
-                round_num=round_num,
-                custom_instructions=setup.custom_instructions,
-                on_event=on_event,
-            )
+            if resuming_round and record.nominated is not None:
+                by_key = {a.key: a for a in setup.active_agents}
+                speakers = [by_key[key] for key in record.nominated if key in by_key]
+            else:
+                speakers = await self._select_speakers(
+                    db=db,
+                    state=state,
+                    strategy=strategy,
+                    orchestrator=orchestrator_agent,
+                    active_agents=setup.active_agents,
+                    round_num=round_num,
+                    custom_instructions=setup.custom_instructions,
+                    on_event=on_event,
+                )
 
-            skip = spoken if round_num == start_round else set()
+            skip = spoken if resuming_round else set()
             for speaker_index, agent in enumerate(speakers):
                 if agent.key in skip:
                     continue
@@ -2416,6 +2427,8 @@ class OrchestratorEngine:
                     f"[발언자 지명 실패] {why}\n"
                     f"우선순위 순서로 진행합니다: {', '.join(a.name for a in fallback)}"
                 ),
+                kind=turns.KIND_NOMINATION,
+                data={"speakers": [a.key for a in fallback], "fallback": True},
             )
             return fallback
 
@@ -2448,7 +2461,7 @@ class OrchestratorEngine:
         await self._record_note(
             db=db, state=state, on_event=on_event, agent=orchestrator,
             round_number=round_num, msg_type="orchestrator", content=summary,
-            kind=turns.KIND_NOMINATION,
+            kind=turns.KIND_NOMINATION, data={"speakers": [a.key for a in picked]},
         )
         return picked
 
@@ -2551,45 +2564,72 @@ class OrchestratorEngine:
         parallel_limit: int,
         control: Optional[TurnControl],
         on_event: Optional[EventCallback],
+        resume: Optional["turns.RoundRecord"] = None,
+        done: Optional[Set[str]] = None,
+        redo: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> bool:
         """한 라운드를 병렬로 돕니다. 정지 요청으로 라운드를 접었으면 True.
 
         순서: 개입 반영 → 과업 분배 → 동시 실행 → 취합. 사람의 개입과 정지를 보는
         지점이 라운드 경계뿐인 것은 이 전략의 성질입니다 — 다른 전략은 발언과 발언
         사이에서 볼 수 있지만, 여기서는 그 '사이' 에 전원이 이미 달리고 있습니다.
+
+        `resume` 은 끊긴 라운드의 기록입니다 (ADR-024). 분배가 기록돼 있으면 다시 묻지 않고
+        그 과업으로, `done` 에 든 에이전트는 건너뛰고 남은 사람만 돌린 뒤 취합합니다. 남은 사람의
+        프롬프트는 이 라운드의 발언을 뺀 기록으로 만듭니다 — 도는 중에도 서로의 이번 라운드
+        결과는 보지 못했습니다. 취합까지 기록돼 있으면 할 일이 없습니다.
         """
-        candidates = strategy.get_speakers_for_round(active_agents, round_num, state)
-        if not candidates:
+        if resume is not None and resume.merged:
             return False
+        redo = redo if redo is not None else {}
+        done = set(done or ())
+        resumed = resume is not None and resume.tasks is not None
 
-        # 분배 **전에** 개입을 반영합니다. 이 라운드의 과업을 정하는 근거가
-        # 되어야지, 이미 나눠 준 뒤에 들어와서는 다음 라운드까지 놀게 됩니다.
-        await self._apply_interjections(
-            db=db, state=state, control=control, round_number=round_num, on_event=on_event
-        )
-        if control is not None and control.stop_requested:
-            return True
+        if resumed:
+            by_key = {a.key: a for a in active_agents}
+            assignments = [(by_key[key], task) for key, task in resume.tasks if key in by_key]
+        else:
+            candidates = strategy.get_speakers_for_round(active_agents, round_num, state)
+            if not candidates:
+                return False
 
-        assignments = await self._dispatch_parallel_tasks(
-            db=db, state=state, strategy=strategy, orchestrator=orchestrator,
-            candidates=candidates, round_num=round_num,
-            custom_instructions=custom_instructions,
-            parallel_limit=parallel_limit, on_event=on_event,
-        )
+            # 분배 **전에** 개입을 반영합니다. 이 라운드의 과업을 정하는 근거가
+            # 되어야지, 이미 나눠 준 뒤에 들어와서는 다음 라운드까지 놀게 됩니다.
+            await self._apply_interjections(
+                db=db, state=state, control=control, round_number=round_num, on_event=on_event
+            )
+            if control is not None and control.stop_requested:
+                return True
+
+            assignments = await self._dispatch_parallel_tasks(
+                db=db, state=state, strategy=strategy, orchestrator=orchestrator,
+                candidates=candidates, round_num=round_num,
+                custom_instructions=custom_instructions,
+                parallel_limit=parallel_limit, on_event=on_event,
+            )
         if not assignments:
             return False
 
         board = self._assignment_board(assignments)
+        todo = [i for i, (agent, _task) in enumerate(assignments) if agent.key not in done]
+        prompt_state = state
+        if resumed:
+            prompt_state = state.model_copy(update={"messages": [
+                m for m in state.messages
+                if not (m.round_number == round_num and turns.kind_of(m) in (turns.KIND_SPEECH, turns.KIND_FAILURE))
+            ]})
         # 프롬프트는 **전부 먼저** 만듭니다. 코루틴 안에서 만들면 먼저 끝난 동료의
         # 발언이 늦게 시작한 쪽의 맥락에 섞여 들어가, 같은 라운드인데 누구는 남의
         # 답을 보고 누구는 못 보는 상태가 됩니다. 그건 병렬이 아닙니다.
-        prompts = [
-            await self._context_for_speech(
-                state, agent, self._parallel_turn_instruction(strategy, agent, task, board),
-                orchestrator=orchestrator, on_event=on_event,
+        prompts: Dict[int, List[Dict[str, Any]]] = {}
+        for index in todo:
+            agent, task = assignments[index]
+            instruction = self._parallel_turn_instruction(strategy, agent, task, board)
+            if agent.key in redo:
+                instruction = f"{turns.resume_notice(redo.pop(agent.key))}\n\n{instruction}"
+            prompts[index] = await self._context_for_speech(
+                prompt_state, agent, instruction, orchestrator=orchestrator, on_event=on_event,
             )
-            for agent, task in assignments
-        ]
 
         # 기록 시각을 지시 순서로 박아 둡니다 (`_speak` 의 `created_at` 주석 참고).
         base_time = utc_now()
@@ -2614,17 +2654,15 @@ class OrchestratorEngine:
                     created_at=base_time + timedelta(milliseconds=index),
                 )
 
-        if on_event:
+        if on_event and todo:
             await on_event({
                 "type": "status_changed",
                 "status": "debating",
-                "speaker": " · ".join(a.name for a, _ in assignments),
+                "speaker": " · ".join(assignments[i][0].name for i in todo),
                 "round": round_num,
             })
 
-        results = await asyncio.gather(
-            *(run_one(i) for i in range(len(assignments))), return_exceptions=True
-        )
+        results = await asyncio.gather(*(run_one(i) for i in todo), return_exceptions=True)
 
         # 완료 순서가 아니라 지시 순서로 정렬합니다. 실시간 화면은 카드가 만들어진
         # 순서(= 지시 순서)로 보여주는데, 기록은 `created_at` 순으로 다시 읽히므로
@@ -2641,7 +2679,8 @@ class OrchestratorEngine:
             if isinstance(result, asyncio.CancelledError):
                 raise result
 
-        for (agent, _task), result in zip(assignments, results):
+        for index, result in zip(todo, results):
+            agent = assignments[index][0]
             if isinstance(result, BaseException):
                 logger.error(
                     f"Parallel turn for '{agent.key}' failed: {type(result).__name__}: {result}",
@@ -2702,6 +2741,8 @@ class OrchestratorEngine:
                     f"과업 없이 전원을 동시에 진행합니다: "
                     f"{', '.join(a.name for a in candidates)}"
                 ),
+                kind=turns.KIND_ASSIGNMENT,
+                data={"tasks": [{"agent": a.key, "task": ""} for a in candidates], "fallback": True},
             )
             return fallback
 
@@ -2749,6 +2790,7 @@ class OrchestratorEngine:
             db=db, state=state, on_event=on_event, agent=orchestrator,
             round_number=round_num, msg_type="orchestrator", content=summary,
             kind=turns.KIND_ASSIGNMENT,
+            data={"tasks": [{"agent": agent.key, "task": task} for agent, task in assignments]},
         )
         return assignments
 
