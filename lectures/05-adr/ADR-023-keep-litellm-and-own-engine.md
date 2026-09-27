@@ -1,6 +1,6 @@
 # ADR-023. LangChain·LangGraph로 옮기지 않고 LiteLLM과 자체 엔진을 유지한다
 
-> [ADR 목록](README.md) · 이전: [ADR-022](ADR-022-knowledge-base-deferred.md)
+> [ADR 목록](README.md) · 이전: [ADR-022](ADR-022-knowledge-base-deferred.md) · 다음: [ADR-024](ADR-024-resume-interrupted-turns.md)
 
 ## 상태 (Status)
 
