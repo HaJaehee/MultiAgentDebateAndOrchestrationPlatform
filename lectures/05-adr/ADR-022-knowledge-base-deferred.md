@@ -1,6 +1,6 @@
 # ADR-022. 지식베이스(RAG) 도구는 근거를 모을 때까지 보류한다
 
-> [ADR 목록](README.md) · 이전: [ADR-021](ADR-021-graph-debate.md)
+> [ADR 목록](README.md) · 이전: [ADR-021](ADR-021-graph-debate.md) · 다음: [ADR-023](ADR-023-keep-litellm-and-own-engine.md)
 
 ## 상태 (Status)
 
