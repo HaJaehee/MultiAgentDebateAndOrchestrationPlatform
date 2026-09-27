@@ -75,6 +75,11 @@ class SessionModel(Base):
     agent_personas: Mapped[List["SessionAgentModel"]] = relationship(
         "SessionAgentModel", back_populates="session", cascade="all, delete-orphan", order_by="SessionAgentModel.agent_key", lazy="selectin"
     )
+    # 턴 기록 (ADR-024). 세션을 ORM 으로 지울 때(`db.delete(session)`, 체험 서버) 함께 지워지도록
+    # 관계를 둡니다. SQLite 가 외래키를 검사하지 않아, 관계가 없으면 턴 행만 남습니다.
+    turns: Mapped[List["TurnModel"]] = relationship(
+        "TurnModel", back_populates="session", cascade="all, delete-orphan", order_by="TurnModel.started_at", lazy="selectin"
+    )
 
 
 # 턴의 상태 (`TurnModel.status`).
@@ -127,6 +132,8 @@ class TurnModel(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    session: Mapped["SessionModel"] = relationship("SessionModel", back_populates="turns")
 
 
 class MessageModel(Base):

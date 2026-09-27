@@ -334,6 +334,18 @@ async def test_discarding_an_interrupted_turn_removes_everything_it_left():
     assert messages[0].content == "앞선 요청", "앞선 턴은 그대로"
 
 
+
+@pytest.mark.asyncio
+async def test_deleting_a_session_through_the_orm_takes_its_turns_along():
+    """체험 서버는 세션을 `db.delete(session)` 으로 지웁니다. 턴 행이 남으면 안 됩니다."""
+    sid = await _session(max_rounds=1)
+    await _engine(FakeLLMCaller()).run_turn(session_id=sid, user_prompt=REQUEST)
+    async with get_session_factory(DB_URL)() as db:
+        await db.delete(await db.get(SessionModel, sid))
+        await db.commit()
+    _messages, _tools, turn_rows, _arts = await _rows(sid)
+    assert turn_rows == []
+
 # =============================================================== 러너
 
 
