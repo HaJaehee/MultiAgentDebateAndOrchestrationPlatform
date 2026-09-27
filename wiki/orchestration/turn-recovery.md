@@ -45,7 +45,7 @@ the conversation shows a violet bar above the feed (the session list shows a clo
 | :--- | :--- |
 | **이어서 진행** (continue) | Recomputes the cursor from the records and continues from the next unfinished speech. |
 | **지금까지로 결론** (finish) | Synthesizes from the recorded speeches only. Same meaning as *stop*: never marked consensus; the report says the debate was cut by a restart. |
-| **버리기** (discard) | Deletes everything the turn left and puts the request back into the input box, like abort. |
+| **버리기** (discard) | Deletes everything the turn left and puts the request back into the input box, like abort. Not offered to trial visitors. |
 
 Sending a new request instead marks the unfinished turn `abandoned`; its records stay but it is no longer offered.
 
