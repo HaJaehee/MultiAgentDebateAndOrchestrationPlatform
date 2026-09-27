@@ -25,6 +25,9 @@ _ADDED_COLUMNS = {
         # 그래프 토론의 노드 (v0.9.0). 그 밖의 발언은 NULL.
         "graph_node_id": "VARCHAR(64)",
         "graph_port": "VARCHAR(8)",
+        # 턴 기록 (ADR-024). 이 컬럼 이전의 기록은 NULL.
+        "turn_id": "VARCHAR(36)",
+        "turn_meta": "JSON",
     },
     "sessions": {
         "personas_locked": "BOOLEAN NOT NULL DEFAULT 0",
@@ -53,6 +56,8 @@ _ADDED_COLUMNS = {
         "risk": "VARCHAR(20) NOT NULL DEFAULT ''",
         "rule": "TEXT NOT NULL DEFAULT ''",
         "approver": "VARCHAR(20) NOT NULL DEFAULT ''",
+        # 턴 기록 (ADR-024). 발언이 끝나기 전에 기록된 호출도 어느 턴의 것인지 압니다.
+        "turn_id": "VARCHAR(36)",
     },
     "session_agents": {
         # NULL 이면 "이 컬럼이 생기기 전에 잠긴 대화" 입니다. 그런 대화는 예전처럼

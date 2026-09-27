@@ -21,7 +21,7 @@ NiceGUI 엘리먼트를 건드릴 일이 없으니 클라이언트가 사라져�
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
 from app.config import resolve_workspace_dir
 from app.orchestration.control import TurnControl
@@ -55,12 +55,25 @@ CANCEL_TIMEOUT = 20.0
 class TurnRun:
     """진행 중이거나 방금 끝난 토론 한 턴."""
 
-    def __init__(self, session_id: str, user_prompt: str, workspace: Optional[str] = None):
+    def __init__(
+        self,
+        session_id: str,
+        user_prompt: str,
+        workspace: Optional[str] = None,
+        *,
+        turn_id: Optional[str] = None,
+        resume_mode: Optional[str] = None,
+    ):
         self.session_id = session_id
         self.user_prompt = user_prompt
         self.workspace = resolve_workspace_dir(workspace or None)
         self.status: str = "running"  # running | completed | failed | cancelled
         self.error: Optional[str] = None
+        # 이 실행이 돌리는 턴 (`TurnModel`). 새 턴이면 엔진이 요청을 기록하는 순간
+        # (`turn_opened`) 정해지고, 끊긴 턴을 이어 가는 실행이면 처음부터 압니다.
+        self.turn_id: Optional[str] = turn_id
+        # 끊긴 턴을 다시 세운 실행이면 "finish" · "continue" (ADR-024).
+        self.resume_mode: Optional[str] = resume_mode
         self.busy: bool = True
         self.status_text: str = "토론 준비 중..."
         self.round_info: str = "Debating"
@@ -233,6 +246,8 @@ class TurnRun:
     def apply(self, event: Dict[str, Any]) -> None:
         """이벤트를 정본 스냅샷에 반영합니다. 새로 붙는 화면이 이걸 그립니다."""
         etype = event.get("type")
+        if etype == "turn_opened" and event.get("turn_id"):
+            self.turn_id = event["turn_id"]
         if etype == "graph_started":
             self.graph = GraphRunTracker()
         if self.graph is not None:
@@ -500,6 +515,7 @@ class TurnRun:
         """지금 화면을 그리는 데 필요한 전부."""
         return {
             "session_id": self.session_id,
+            "turn_id": self.turn_id,
             "status": self.status,
             "error": self.error,
             "busy": self.busy,
@@ -564,16 +580,56 @@ class DebateRunner:
         run = TurnRun(session_id, user_prompt, workspace)
         self._runs[session_id] = run
 
+        async def body(on_event) -> None:
+            await self.engine.run_turn(
+                session_id=session_id, user_prompt=user_prompt, on_event=on_event,
+                control=run.control,
+            )
+
+        return self._launch(run, body)
+
+    def resume(self, session_id: str, turn_id: str, mode: str, user_prompt: str = "",
+               workspace: Optional[str] = None) -> TurnRun:
+        """끊긴 턴을 백그라운드에서 마무리하거나(`finish`) 이어 갑니다(`continue`).
+
+        이미 돌고 있는 실행이 있으면 그것을 돌려줍니다 (한 대화에 한 턴만 돕니다). 화면은 새
+        턴을 시작할 때와 똑같이 이 실행에 붙습니다. `user_prompt` 는 그 턴을 연 요청입니다 —
+        긴급 종료하면 입력창으로 돌려줄 글입니다.
+        """
+        existing = self._runs.get(session_id)
+        if existing is not None and existing.status == "running":
+            return existing
+
+        run = TurnRun(session_id, user_prompt, workspace, turn_id=turn_id, resume_mode=mode)
+        run.status_text = (
+            "끊긴 턴을 지금까지의 발언으로 마무리하는 중..." if mode == "finish"
+            else "끊긴 턴을 이어 가는 중..."
+        )
+        self._runs[session_id] = run
+
+        async def body(on_event) -> None:
+            await self.engine.resume_turn(
+                session_id=session_id, turn_id=turn_id, mode=mode, on_event=on_event,
+                control=run.control,
+            )
+
+        return self._launch(run, body)
+
+    def _launch(
+        self,
+        run: TurnRun,
+        body: Callable[[Callable[[Dict[str, Any]], Awaitable[None]]], Awaitable[None]],
+    ) -> TurnRun:
+        """실행을 태스크로 띄웁니다. 끝나는 방식(완료·취소·실패)을 스냅샷과 화면에 알립니다."""
+        session_id = run.session_id
+
         async def on_event(event: Dict[str, Any]) -> None:
             run.apply(event)
             run._fanout(event)  # noqa: SLF001 - 같은 모듈 안의 협력 객체입니다
 
         async def driver() -> None:
             try:
-                await self.engine.run_turn(
-                    session_id=session_id, user_prompt=user_prompt, on_event=on_event,
-                    control=run.control,
-                )
+                await body(on_event)
                 run.status = "completed"
             except asyncio.CancelledError:
                 run.status = "cancelled"
@@ -634,7 +690,8 @@ class DebateRunner:
         지우는 일은 하지 않습니다. 무엇을 지워야 하는지만 알려 줍니다 (기록은
         DB 를 아는 쪽의 몫입니다). 돌려주는 값:
 
-            {"prompt": 사람이 보냈던 글, "message_ids": [...], "artifact_ids": [...]}
+            {"prompt": 사람이 보냈던 글, "message_ids": [...], "artifact_ids": [...],
+             "turn_id": 턴 기록 id 또는 None}
 
         진행 중인 토론이 없으면 None.
         """
@@ -648,6 +705,9 @@ class DebateRunner:
             "prompt": run.user_prompt,
             "message_ids": [m.get("id") for m in run.messages if m.get("id")],
             "artifact_ids": [a.get("id") for a in run.artifacts if a.get("id")],
+            # 턴을 아는 쪽이 턴째로 지웁니다 — 끊겼다 이어 간 턴이면 앞선 실행이 남긴 발언과,
+            # 끝나지 못한 발언의 도구 기록까지 이 턴의 것입니다.
+            "turn_id": run.turn_id,
         }
         await self.cancel(session_id)
         logger.info(

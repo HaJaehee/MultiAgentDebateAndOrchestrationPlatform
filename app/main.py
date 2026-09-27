@@ -16,10 +16,11 @@ from app.about import (
     AUTHOR_EMAIL,
 )
 from app.config import DEFAULT_CONFIG_PATH, PROJECT_ROOT, get_config, resolve_agent_icon
-from app.database.session import init_db
+from app.database.session import get_session_factory, init_db
 from app.mcp.manager import get_mcp_manager
 from app.mcp.pool import get_runtime_pool
 from app.orchestration.runner import get_debate_runner
+from app.orchestration.turns import mark_interrupted_turns
 from app.ui.app import create_ui
 from app.ui.graph_page import create_graph_page
 from app.ui.personas_page import create_personas_page
@@ -80,6 +81,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 2. Initialize Database Tables
     await init_db(cfg.app.db_url)
     logger.info("SQLite database tables initialized.")
+
+    # 2-b. 서버가 턴 도중에 내려갔다면 그 턴을 "끊김" 으로 적습니다 (ADR-024). 프로세스가
+    # 하나뿐이라 지금 "도는 중" 인 턴은 없습니다. 자동으로 다시 돌리지 않습니다 — 그 대화를
+    # 연 사람이 이어 가기·결론 내기·버리기를 고릅니다.
+    try:
+        async with get_session_factory(cfg.app.db_url)() as db:
+            await mark_interrupted_turns(db)
+    except Exception as exc:  # noqa: BLE001 - 적지 못해도 앱은 떠야 합니다
+        logger.error("Could not check for interrupted debate turns: %s: %s", type(exc).__name__, exc)
 
     # 3. MCP 런타임 준비
     #

@@ -8,7 +8,14 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional, Sequence
 from nicegui import background_tasks, ui
 from sqlalchemy import desc, func, select, delete
 from app.agents.pool import get_agent_pool
-from app.database.models import ArtifactModel, MessageModel, SessionModel, ToolCallRecordModel
+from app.database.models import (
+    TURN_UNFINISHED,
+    ArtifactModel,
+    MessageModel,
+    SessionModel,
+    ToolCallRecordModel,
+    TurnModel,
+)
 from app.database.session import get_session_factory
 from app.export import build_session_markdown, safe_filename, to_local
 from app.orchestration.runner import get_debate_runner
@@ -360,6 +367,10 @@ class SessionSidebar:
             completed_times = (
                 await last_completion_times(db) if self.sort.key == "completed" else {}
             )
+            # 끊긴 턴이 남은 대화 (ADR-024). 열어서 이어 가기·결론 내기·버리기를 고릅니다.
+            unfinished = set((await db.execute(
+                select(TurnModel.session_id).where(TurnModel.status.in_(TURN_UNFINISHED))
+            )).scalars().all())
         sessions = sort_sessions(
             sessions, self.sort, started=started_times, completed=completed_times,
         )
@@ -398,6 +409,13 @@ class SessionSidebar:
                                 # 다른 화면에 있어도 토론은 계속됩니다. 어느 세션이
                                 # 돌고 있는지 목록에서 바로 보이게 합니다.
                                 ui.spinner("dots", size="xs", color="indigo-4")
+                            elif s.id in unfinished:
+                                ui.icon("history", size="xs").classes(
+                                    "text-violet-300 flex-shrink-0"
+                                ).tooltip(
+                                    "끝나지 못한 턴이 있습니다. 세션을 열어 이어서 진행하거나, "
+                                    "지금까지로 결론을 내거나, 버리십시오."
+                                )
                             # 이름 변경은 연필 버튼으로만 합니다. 제목 더블클릭도 달아
                             # 봤지만, 첫 클릭이 세션 선택으로 이어져 목록이 다시
                             # 그려지면서 라벨이 사라지는 탓에 두 번째 클릭이 갈 곳이
@@ -675,6 +693,7 @@ class SessionSidebar:
                     await db.execute(delete(ToolCallRecordModel).where(ToolCallRecordModel.session_id == session_id))
                     await db.execute(delete(MessageModel).where(MessageModel.session_id == session_id))
                     await db.execute(delete(ArtifactModel).where(ArtifactModel.session_id == session_id))
+                    await db.execute(delete(TurnModel).where(TurnModel.session_id == session_id))
                     await db.execute(delete(SessionModel).where(SessionModel.id == session_id))
                     await db.commit()
 

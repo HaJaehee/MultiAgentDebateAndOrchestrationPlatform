@@ -31,6 +31,8 @@ class DebateMessage(BaseModel):
     graph_node_id: Optional[str] = None
     # 노드의 출력으로 나간 핀 (`MessageModel.graph_port`). 출력이 아닌 기록은 None.
     graph_port: Optional[str] = None
+    # 이 기록이 턴의 흐름에서 맡은 자리 (`MessageModel.turn_meta`, `app/orchestration/turns.py`).
+    turn_meta: Optional[Dict[str, Any]] = None
 
     @property
     def speaker(self) -> str:
@@ -45,6 +47,14 @@ class DebateMessage(BaseModel):
 class DebateState(BaseModel):
     session_id: str
     user_prompt: str
+    # 이 턴의 기록 (`TurnModel`). 발언·도구 기록이 모두 이것을 가리킵니다.
+    turn_id: Optional[str] = None
+    # 끊긴 턴을 다시 세운 경우 (ADR-024). `stopped_early` 와 함께 켜지면 사람이 아니라 서버
+    # 중단으로 덜 논의된 것이라, 합성 지시와 보고서가 그렇게 적습니다.
+    interrupted: bool = False
+    # 이 턴이 끊긴 채로 있던 시간의 합(초)과 이어 간 횟수. 보고서의 총 경과에 함께 적습니다.
+    paused_seconds: int = 0
+    resumed_count: int = 0
     # 이 턴이 빌린 MCP 런타임의 작업 공간. 런타임 객체 자체가 아니라 **키**를
     # 들고 다닙니다 — 살아 있는 프로세스 묶음의 소유권은 풀에 있고, 상태는
     # 직렬화되어 화면과 기록으로 흘러가기 때문입니다 (`app/mcp/pool.py`).

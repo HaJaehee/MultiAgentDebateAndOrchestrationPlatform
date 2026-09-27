@@ -1,0 +1,378 @@
+"""끊긴 턴 — 기록하고, 알아보고, 마무리하거나 버린다 (ADR-024).
+
+지키려는 것.
+
+1. **턴이 기록된다** — 여는 요청과 턴 기록이 같은 커밋에 들어가고, 턴의 모든 기록이 턴을 가리키며
+   흐름의 자리(`turn_meta`)를 적는다.
+2. **도구는 실행 즉시 기록된다** — 발언이 끝나기 전에 서버가 내려가도 무엇이 실행됐는지 남고, 발언이
+   끝나면 그 발언에 이어진다 (두 번 기록되지 않는다).
+3. **감지** — 기동할 때 "도는 중" 으로 남은 턴은 "끊김", 합성까지 기록된 턴은 "완료". 엔진이 예외로
+   멈춘 턴은 "실패".
+4. **마무리** — 끊긴 턴은 기록된 발언만으로 합성하고, 합의로 적지 않으며, 보고서에 중단 시간을 적는다.
+   끝나지 못한 발언의 도구 기록은 "끊겼다" 는 안내에 이어진다. 턴은 시작할 때의 구성으로 마친다.
+5. **버리기·새 요청** — 버리면 그 턴이 남긴 것이 모두 사라지고, 새 요청을 보내면 끊긴 턴은 버려짐으로
+   적힌다.
+"""
+
+import asyncio
+import json
+import uuid
+from typing import Any, Dict, List, Optional, Tuple
+
+import pytest
+from sqlalchemy import select
+
+from app.agents.pool import AgentPool
+from app.config import AgentConfig
+from app.database.models import (
+    TURN_ABANDONED,
+    TURN_COMPLETED,
+    TURN_FAILED,
+    TURN_INTERRUPTED,
+    TURN_RUNNING,
+    ArtifactModel,
+    MessageModel,
+    SessionModel,
+    ToolCallRecordModel,
+    TurnModel,
+)
+from app.database.session import get_session_factory, init_db
+from app.orchestration import turns
+from app.orchestration.engine import OrchestratorEngine
+from app.orchestration.runner import DebateRunner
+from app.session_ops import discard_turn
+from app.timestamps import report_completed_line
+from tests.fake_llm import FakeLLMCaller
+
+DB_URL = "sqlite+aiosqlite:///:memory:"
+REQUEST = "캐시 서비스를 설계해줘"
+WRITE_CALL = {
+    "tool_name": "filesystem__write_file",
+    "arguments": {"path": "cache.py"},
+    "output": "ok",
+    "status": "success",
+}
+
+
+def _pool() -> AgentPool:
+    return AgentPool({
+        key: AgentConfig(name=name, role=role, model="fake/model", api_key="k")
+        for key, name, role in (
+            ("orchestrator", "Master Orchestrator", "Moderator"),
+            ("architect", "System Architect", "Architecture"),
+            ("coder", "Senior Engineer", "Implementation"),
+            ("critic", "Quality Critic", "Review"),
+        )
+    })
+
+
+class CrashingLLM(FakeLLMCaller):
+    """`crash_at` (에이전트 키, 그 에이전트의 몇 번째 발언) 에서 서버가 내려간 것처럼 취소됩니다.
+
+    내려가기 전에 `crash_tools` 를 실행합니다 — 발언 도중 도구를 쓰다 끊긴 상황입니다. 발언이 아닌
+    호출(장부·지명)은 세지 않습니다.
+    """
+
+    def __init__(self, crash_at: Optional[Tuple[str, int]] = None,
+                 crash_tools: Optional[List[Dict[str, Any]]] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.crash_at = crash_at
+        self.crash_tools = crash_tools or []
+        self.speeches: Dict[str, int] = {}
+        self.sent: List[Tuple[str, List[Dict[str, Any]]]] = []
+
+    async def call_agent(self, agent, messages, custom_instructions="", on_tool_call=None, *args, **kwargs):
+        self.sent.append((agent.key, messages))
+        last = messages[-1]["content"] if messages else ""
+        routing = any(marker in last for marker in ("[결정 장부 갱신]", "[대화 요약 갱신]"))
+        if not routing:
+            self.speeches[agent.key] = self.speeches.get(agent.key, 0) + 1
+            if self.crash_at == (agent.key, self.speeches[agent.key]):
+                for spec in self.crash_tools:
+                    await on_tool_call(dict(spec))
+                raise asyncio.CancelledError()
+        return await super().call_agent(agent, messages, custom_instructions, on_tool_call, *args, **kwargs)
+
+
+async def _session(strategy: str = "sequential_debate", max_rounds: int = 2,
+                   agents=("orchestrator", "architect", "coder")) -> str:
+    await init_db(DB_URL)
+    sid = f"turn-{uuid.uuid4().hex[:8]}"
+    async with get_session_factory(DB_URL)() as db:
+        db.add(SessionModel(
+            id=sid, title="Turns", strategy=strategy, max_rounds=max_rounds,
+            active_agents=list(agents),
+        ))
+        await db.commit()
+    return sid
+
+
+def _engine(llm) -> OrchestratorEngine:
+    return OrchestratorEngine(agent_pool=_pool(), llm_caller=llm)
+
+
+async def _crash(sid: str, crash_at=("coder", 1), crash_tools=(WRITE_CALL,)) -> str:
+    """턴을 돌리다 `crash_at` 에서 서버가 내려간 것처럼 끊고, 다시 뜬 것처럼 정리합니다. 턴 id."""
+    llm = CrashingLLM(crash_at=crash_at, crash_tools=list(crash_tools))
+    with pytest.raises(asyncio.CancelledError):
+        await _engine(llm).run_turn(session_id=sid, user_prompt=REQUEST)
+    async with get_session_factory(DB_URL)() as db:
+        turn = (await db.execute(
+            select(TurnModel).where(TurnModel.session_id == sid).order_by(TurnModel.started_at.desc())
+        )).scalars().first()
+        assert turn.status == TURN_RUNNING, "취소는 기록하지 않습니다 — 다음 기동이 알아봅니다"
+        await turns.mark_interrupted_turns(db)
+        return turn.id
+
+
+async def _rows(sid: str):
+    async with get_session_factory(DB_URL)() as db:
+        messages = (await db.execute(
+            select(MessageModel).where(MessageModel.session_id == sid).order_by(MessageModel.created_at)
+        )).scalars().all()
+        tools = (await db.execute(
+            select(ToolCallRecordModel).where(ToolCallRecordModel.session_id == sid)
+        )).scalars().all()
+        turn_rows = (await db.execute(
+            select(TurnModel).where(TurnModel.session_id == sid).order_by(TurnModel.started_at)
+        )).scalars().all()
+        artifacts = (await db.execute(
+            select(ArtifactModel).where(ArtifactModel.session_id == sid)
+        )).scalars().all()
+        return messages, tools, turn_rows, artifacts
+
+
+# =============================================================== 1. 턴 기록
+
+
+@pytest.mark.asyncio
+async def test_a_turn_is_recorded_and_every_record_points_to_it():
+    sid = await _session()
+    state = await _engine(FakeLLMCaller()).run_turn(session_id=sid, user_prompt=REQUEST)
+
+    messages, _tools, turn_rows, _arts = await _rows(sid)
+    (turn,) = turn_rows
+    assert state.turn_id == turn.id
+    assert (turn.status, turn.phase) == (TURN_COMPLETED, "completed")
+    assert turn.finished_at is not None
+    assert turn.opening_message_id == messages[0].id and messages[0].content == REQUEST
+    assert turn.config["strategy"] == "sequential_debate"
+    assert turn.config["max_rounds"] == 2
+    assert turn.config["active_agents"] == ["orchestrator", "architect", "coder"]
+
+    assert {m.turn_id for m in messages} == {turn.id}
+    kinds = [turns.kind_of(m) for m in messages]
+    assert kinds[:2] == [turns.KIND_OPENING, turns.KIND_PLAN]
+    assert kinds[2:6] == [turns.KIND_SPEECH] * 4, "두 라운드 × 두 전문가"
+    assert kinds[-1] == turns.KIND_SYNTHESIS
+
+
+@pytest.mark.asyncio
+async def test_tool_calls_are_linked_to_their_speech_exactly_once():
+    sid = await _session(max_rounds=1)
+    llm = FakeLLMCaller(tool_calls={"architect": [dict(WRITE_CALL)]})
+    await _engine(llm).run_turn(session_id=sid, user_prompt=REQUEST)
+
+    messages, tools, (turn,), _arts = await _rows(sid)
+    architect = [m for m in messages if m.sender_key == "architect"]
+    assert len(tools) == 1, "즉시 기록한 호출을 발언과 함께 한 번 더 넣지 않습니다"
+    assert tools[0].message_id == architect[0].id
+    assert tools[0].turn_id == turn.id
+
+
+# =============================================================== 2·3. 끊김과 감지
+
+
+@pytest.mark.asyncio
+async def test_a_restart_mid_speech_keeps_what_the_speech_already_ran():
+    sid = await _session()
+    turn_id = await _crash(sid)
+
+    messages, tools, (turn,), _arts = await _rows(sid)
+    assert turn.status == TURN_INTERRUPTED
+    assert [m.sender_key for m in messages] == ["user", "orchestrator", "architect"], \
+        "끊긴 발언은 기록되지 않습니다"
+    (orphan,) = tools
+    assert orphan.message_id is None and orphan.turn_id == turn_id and orphan.agent_key == "coder"
+
+    async with get_session_factory(DB_URL)() as db:
+        info = await turns.unfinished_turn(db, sid)
+    assert info.turn_id == turn_id and info.status == TURN_INTERRUPTED
+    assert info.prompt == REQUEST
+    assert (info.speeches, info.orphan_tools) == (1, 1)
+    assert info.can_finish and info.phase == "debating"
+
+
+@pytest.mark.asyncio
+async def test_a_turn_whose_synthesis_was_recorded_counts_as_completed_after_a_restart():
+    sid = await _session(max_rounds=1)
+    await _engine(FakeLLMCaller()).run_turn(session_id=sid, user_prompt=REQUEST)
+    async with get_session_factory(DB_URL)() as db:
+        turn = (await db.execute(select(TurnModel).where(TurnModel.session_id == sid))).scalar_one()
+        turn.status = TURN_RUNNING  # 합성 뒤 장부를 갱신하다 내려갔습니다
+        await db.commit()
+        counts = await turns.mark_interrupted_turns(db)
+        await db.refresh(turn)
+    assert counts == {"interrupted": 0, "completed": 1}
+    assert turn.status == TURN_COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_an_engine_error_marks_the_turn_failed(monkeypatch):
+    sid = await _session()
+    engine = _engine(FakeLLMCaller())
+
+    async def broken_ledger(**_kwargs):
+        raise RuntimeError("장부 저장소가 사라졌습니다")
+
+    monkeypatch.setattr(engine, "_update_ledger", broken_ledger)
+    with pytest.raises(RuntimeError):
+        await engine.run_turn(session_id=sid, user_prompt=REQUEST)
+
+    async with get_session_factory(DB_URL)() as db:
+        info = await turns.unfinished_turn(db, sid)
+    assert info.status == TURN_FAILED
+    assert "장부 저장소가 사라졌습니다" in info.error
+
+
+# =============================================================== 4. 마무리
+
+
+@pytest.mark.asyncio
+async def test_finishing_an_interrupted_turn_synthesizes_only_what_was_said():
+    sid = await _session()
+    turn_id = await _crash(sid)
+    # 끊긴 사이에 로스터를 바꿨습니다. 그 턴은 시작할 때의 구성으로 마칩니다.
+    async with get_session_factory(DB_URL)() as db:
+        session = await db.get(SessionModel, sid)
+        session.active_agents = ["orchestrator", "architect", "coder", "critic"]
+        session.max_rounds = 5
+        await db.commit()
+
+    llm = CrashingLLM()
+    state = await _engine(llm).resume_turn(session_id=sid, turn_id=turn_id, mode="finish")
+
+    assert state.status == "completed"
+    assert state.stopped_early and state.interrupted
+    assert not state.is_consensus_reached, "서버 중단으로 덜 논의된 턴은 합의가 아닙니다"
+    assert [k for k, _m in llm.sent if k != "orchestrator"] == [], "전문가는 다시 부르지 않습니다"
+    synthesis_prompt = next(m for k, m in llm.sent if "최종 합의 보고서" in m[-1]["content"])
+    assert "서버가 다시 시작되어" in synthesis_prompt[-1]["content"]
+
+    messages, tools, (turn,), artifacts = await _rows(sid)
+    assert (turn.status, turn.resumed_count) == (TURN_COMPLETED, 1)
+    assert turn.paused_seconds >= 0
+
+    note = next(m for m in messages if turns.kind_of(m) == turns.KIND_INTERRUPTED)
+    assert (note.sender_key, note.msg_type, note.turn_id) == ("coder", "error", turn_id)
+    assert "filesystem__write_file" in note.content
+    (orphan,) = tools
+    assert orphan.message_id == note.id, "끝나지 못한 발언의 도구 기록은 끊김 안내에 이어집니다"
+
+    synthesis = messages[-1]
+    assert turns.kind_of(synthesis) == turns.KIND_SYNTHESIS
+    assert synthesis.turn_started_at == messages[0].started_at, "총 경과는 요청 시각부터"
+
+    report = next(a for a in artifacts if a.title.endswith("최종 결론"))
+    assert "서버 중단" in report.content and "1회 재개" in report.content
+    summary = json.loads(next(a for a in artifacts if a.artifact_type == "json").content)
+    assert summary["consensus_reached"] is False
+    assert summary["resumed_count"] == 1 and summary["interrupted"] is True
+    assert summary["participating_agents"] == ["orchestrator", "architect", "coder"]
+    assert summary["total_rounds"] == 1
+
+
+@pytest.mark.asyncio
+async def test_only_unfinished_turns_can_be_resumed():
+    sid = await _session(max_rounds=1)
+    state = await _engine(FakeLLMCaller()).run_turn(session_id=sid, user_prompt=REQUEST)
+    with pytest.raises(ValueError):
+        await _engine(FakeLLMCaller()).resume_turn(session_id=sid, turn_id=state.turn_id, mode="finish")
+
+
+# =============================================================== 5. 버리기·새 요청
+
+
+@pytest.mark.asyncio
+async def test_a_new_request_marks_the_interrupted_turn_abandoned():
+    sid = await _session(max_rounds=1)
+    turn_id = await _crash(sid, crash_at=("architect", 1))
+
+    await _engine(FakeLLMCaller()).run_turn(session_id=sid, user_prompt="다른 요청")
+
+    _messages, _tools, turn_rows, _arts = await _rows(sid)
+    assert {t.id: t.status for t in turn_rows}[turn_id] == TURN_ABANDONED
+    async with get_session_factory(DB_URL)() as db:
+        assert await turns.unfinished_turn(db, sid) is None
+
+
+@pytest.mark.asyncio
+async def test_discarding_an_interrupted_turn_removes_everything_it_left():
+    sid = await _session(max_rounds=1)
+    await _engine(FakeLLMCaller()).run_turn(session_id=sid, user_prompt="앞선 요청")
+    turn_id = await _crash(sid)
+
+    async with get_session_factory(DB_URL)() as db:
+        started_over = await discard_turn(db, sid, [], [], turn_id=turn_id)
+    assert started_over is False
+
+    messages, tools, turn_rows, _arts = await _rows(sid)
+    assert [t.id for t in turn_rows if t.id == turn_id] == []
+    assert all(m.turn_id != turn_id for m in messages)
+    assert all(t.turn_id != turn_id for t in tools), "끝나지 못한 발언의 도구 기록도 함께 지웁니다"
+    assert messages[0].content == "앞선 요청", "앞선 턴은 그대로"
+
+
+# =============================================================== 러너
+
+
+@pytest.mark.asyncio
+async def test_the_runner_knows_its_turn_and_can_finish_an_interrupted_one():
+    sid = await _session(max_rounds=1)
+    runner = DebateRunner(engine=_engine(FakeLLMCaller()))
+    run = runner.start(sid, REQUEST)
+    await run.task
+    async with get_session_factory(DB_URL)() as db:
+        first = (await db.execute(select(TurnModel).where(TurnModel.session_id == sid))).scalar_one()
+    assert run.turn_id == first.id and run.snapshot()["turn_id"] == first.id
+
+    turn_id = await _crash(sid)
+    runner = DebateRunner(engine=_engine(FakeLLMCaller()))
+    run = runner.resume(sid, turn_id, "finish", user_prompt=REQUEST)
+    assert run.turn_id == turn_id and run.resume_mode == "finish"
+    await run.task
+    assert run.status == "completed"
+    async with get_session_factory(DB_URL)() as db:
+        assert (await db.get(TurnModel, turn_id)).status == TURN_COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_aborting_a_run_reports_its_turn():
+    sid = await _session(max_rounds=1)
+    gate = asyncio.Event()
+
+    class SlowLLM(FakeLLMCaller):
+        async def call_agent(self, agent, messages, *args, **kwargs):
+            if agent.key == "architect":
+                await gate.wait()
+            return await super().call_agent(agent, messages, *args, **kwargs)
+
+    runner = DebateRunner(engine=_engine(SlowLLM()))
+    run = runner.start(sid, REQUEST)
+    while run.turn_id is None or len(run.messages) < 2:
+        await asyncio.sleep(0.01)
+    produced = await runner.abort(sid)
+    assert produced["turn_id"] == run.turn_id
+
+
+# =============================================================== 보고서 문구
+
+
+def test_the_report_line_names_the_pause_inside_the_total():
+    line = report_completed_line(
+        "2026-09-27T10:30:00+00:00", "2026-09-27T10:00:00+00:00",
+        paused_seconds=1200, resumed_count=1,
+    )
+    assert "총 경과 30분" in line and "서버 중단 20분 포함, 1회 재개" in line
+    plain = report_completed_line("2026-09-27T10:30:00+00:00", "2026-09-27T10:00:00+00:00")
+    assert "서버 중단" not in plain
