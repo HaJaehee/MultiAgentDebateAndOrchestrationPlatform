@@ -17,7 +17,7 @@ docs/user_manual/
 │   ├── 01-tech-stack.md ................. 기술 스택과 선택 이유
 │   └── 02-architecture.md ............... 레이어 구조와 데이터 흐름
 │
-├── 02-getting-started/ .................. 설치하고 띄우기
+├── 02-getting-started/ .................. 설치 및 실행
 │   ├── README.md ........................ 시작하기
 │   ├── 01-installation.md ............... 설치와 첫 실행
 │   └── 02-configuration.md .............. conf.json 설정
@@ -33,7 +33,7 @@ docs/user_manual/
 │   ├── 07-persistence.md ................ 데이터베이스와 세션 스냅샷
 │   └── 08-tool-security.md .............. 도구 보안 (허용 · 묻기 · 거부)
 │
-├── 04-workflows/ ........................ 실제로 어떻게 흘러가는가
+├── 04-workflows/ ........................ 핵심 워크플로우 (실제 동작 흐름)
 │   ├── README.md ........................ 워크플로우 개관
 │   ├── 01-debate-turn.md ................ 토론 한 턴의 생애주기
 │   ├── 02-session-lifecycle.md .......... 세션 생성 → 잠금 → 재개
@@ -41,7 +41,7 @@ docs/user_manual/
 │   ├── 04-artifact-and-export.md ........ 산출물 생성과 내보내기
 │   └── 05-airgap-deployment.md .......... 폐쇄망 배포
 │
-└── 05-reference/ ........................ 찾아보기
+└── 05-reference/ ........................ 레퍼런스 및 참조 자료
     ├── README.md ........................ 레퍼런스 개관
     ├── 01-http-api.md ................... HTTP API
     ├── 02-project-layout.md ............. 프로젝트 구조
@@ -60,7 +60,7 @@ docs/user_manual/
 | 사내 LLM 게이트웨이 및 원격 API 연동하기 | [conf.json 설정](02-getting-started/02-configuration.md) |
 | 신규 에이전트 추가 및 역할 수정하기 | [로스터 편집](04-workflows/03-roster-editing.md) |
 | 외부 MCP 도구 서버 연동하기 | [MCP 호스트](03-core/04-mcp-host.md) |
-| 에이전트의 도구 사용을 허락·제한하기 | [도구 보안](03-core/08-tool-security.md) |
+| 에이전트의 도구 실행 권한 제어하기 | [도구 보안](03-core/08-tool-security.md) |
 | 다자간 토론의 실행 순서와 생애주기 이해하기 | [토론 한 턴의 생애주기](04-workflows/01-debate-turn.md) |
 | 오프라인 폐쇄망 환경에 패키징 및 배포하기 | [폐쇄망 배포](04-workflows/05-airgap-deployment.md) |
 | 코드 수정 전 전체 아키텍처 및 디렉터리 파악하기 | [아키텍처](01-overview/02-architecture.md), [프로젝트 구조](05-reference/02-project-layout.md) |
@@ -75,7 +75,7 @@ python docs/render_user_manual.py
 
 `docs/user_manual_html/` 디렉터리에 사이드바 탐색 트리가 포함된 반응형 정적 웹사이트가 생성됩니다. 생성 후 `docs/user_manual_html/index.html` 파일을 웹 브라우저로 열어 확인하시면 됩니다.
 
-렌더러 스크립트는 **파이썬 표준 라이브러리만으로** 동작합니다. 생성되는 산출물 역시 외부 네트워크 요청이 전혀 발생하지 않는 완전한 자기완결적 HTML 문서이므로, 인터넷이 단절된 폐쇄망 환경으로 폴더째 복사하더라도 레이아웃 깨짐 없이 그대로 열람할 수 있습니다.
+렌더러 스크립트는 **파이썬 표준 라이브러리만으로** 동작합니다. 생성되는 산출물 역시 외부 네트워크 요청이 전혀 발생하지 않는 완전한 독립적(Self-contained) HTML 문서이므로, 인터넷이 단절된 폐쇄망 환경으로 디렉터리째 복사하더라도 레이아웃 깨짐 없이 그대로 열람할 수 있습니다.
 
 | 옵션 | 설명 |
 | :--- | :--- |

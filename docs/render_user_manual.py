@@ -1,19 +1,20 @@
-"""`docs/user_manual/` 의 마크다운 문서를 정적 HTML 사이트로 렌더링합니다.
+"""`docs/user_manual/`의 마크다운 문서를 정적 HTML 사이트로 렌더링합니다.
 
     python docs/render_user_manual.py
 
-    docs/user_manual/       (입력, 마크다운 + 폴더 트리)
-      └──> docs/user_manual_html/   (출력, 같은 트리 + 사이드바 + index.html)
+    docs/user_manual/       (입력, 마크다운 + 폴더 구조)
+      └──> docs/user_manual_html/   (출력, 동일한 디렉터리 구조 + 사이드바 + index.html)
 
-**표준 라이브러리만 씁니다.** 이 프로젝트는 폐쇄망 배포를 전제로 하므로, 문서를
-보려고 새 의존성을 들이거나 CDN 을 부르지 않습니다. 출력물도 자기완결적입니다 —
-CSS 는 인라인이고 외부 요청이 하나도 없어, 폴더째 복사해 파일로 열어도 그대로
-동작합니다.
+**표준 라이브러리만 사용합니다.** 이 프로젝트는 폐쇄망 배포를 전제로 하므로, 문서를
+열람하기 위해 새로운 외부 의존성을 추가하거나 CDN을 호출하지 않습니다. 출력 결과물 또한
+독립적(Self-contained)입니다 — CSS가 인라인으로 포함되어 외부 네트워크 요청이 전혀
+없으므로, 디렉터리째 복사하여 로컬 브라우저로 열어도 정상 동작합니다.
 
-지원하는 마크다운은 이 문서 모음이 실제로 쓰는 만큼입니다: ATX 제목, 울타리 코드
-블록, GFM 표, 목록(중첩 포함), 인용, 수평선, 그리고 인라인의 `코드`/**굵게**/
-*기울임*/[링크](url). 문서를 쓰는 쪽과 읽는 쪽이 같은 저장소에 있으므로 범용
-파서가 필요하지 않습니다.
+지원하는 마크다운 문법은 이 사용자 매뉴얼에서 실제로 사용하는 핵심 기능 위주입니다:
+ATX 제목, 코드 블록(Fenced code block), GFM 표, 목록(중첩 목록 포함), 인용문,
+구분선, 그리고 인라인의 `코드`/**굵게**/*기울임*/[링크](url). 문서를 작성하고 열람하는
+환경이 단일 저장소 내에 완결되어 있으므로 무거운 범용 마크다운 파서 라이브러리가
+필요하지 않습니다.
 
 옵션:
     --src DIR     입력 폴더 (기본: docs/user_manual)
@@ -32,8 +33,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-# 콘솔/파이프 인코딩이 UTF-8 이 아니어도(윈도우 기본 cp949) 로그 때문에 죽지
-# 않도록 합니다 (패키징 스크립트와 같은 이유).
+# 콘솔/파이프 인코딩이 UTF-8이 아닌 환경(Windows 기본 cp949 등)에서도 로그 출력 중
+# 예외가 발생하여 프로세스가 비정상 종료되지 않도록 안전하게 설정합니다.
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
@@ -60,17 +61,17 @@ _ITALIC = re.compile(r"(?<![\w*])\*([^*\n]+)\*(?![\w*])")
 _PLACEHOLDER = "\x00{}\x00"
 
 
-# 지금 렌더링 중인 문서. `rewrite_link()` 가 링크 대상이 이 문서 모음 안인지
-# 밖인지 가리는 데 씁니다. 빌드는 한 번에 한 문서씩 단일 스레드로 돕니다.
+# 현재 렌더링 중인 문서 정보. `rewrite_link()`에서 대상 경로가 이 매뉴얼 내부인지
+# 외부인지 판별할 때 참조합니다. 빌드는 단일 스레드로 순차 실행됩니다.
 _CURRENT: Dict[str, Optional[Path]] = {"src_page": None, "src_root": None}
 
 
 def rewrite_link(href: str) -> str:
-    """이 문서 모음 안의 `.md` 링크만 `.html` 로 옮깁니다.
+    """매뉴얼 내부 문서의 `.md` 링크만 대응하는 `.html` 링크로 변환합니다.
 
     저장소의 다른 파일(`../../README.md`, `../../wiki/...`)을 가리키는 링크는
-    렌더링되지 않으므로 그대로 둡니다. 확장자만 바꾸면 없는 파일을 가리킵니다.
-    앵커(`#절-제목`)와 외부 URL 도 건드리지 않습니다.
+    HTML로 변환되지 않으므로 그대로 둡니다. 확장자만 바꾸면 존재하지 않는 파일을 가리키게 됩니다.
+    앵커(`#섹션-제목`)와 외부 URL도 변경하지 않습니다.
     """
     if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", href) or href.startswith("//"):
         return href  # http:, mailto:, file: ...
@@ -84,7 +85,7 @@ def rewrite_link(href: str) -> str:
         try:
             target.relative_to(src_root.resolve())
         except ValueError:
-            return href      # 문서 모음 밖 — 원본 파일을 그대로 가리킵니다
+            return href      # 매뉴얼 외부 문서 — 원본 경로를 그대로 가리킵니다
     return path[: -len(".md")] + ".html" + sep + anchor
 
 
@@ -224,7 +225,7 @@ def render_markdown(text: str) -> Tuple[str, List[Heading], str]:
             i += 1
             continue
 
-        # --- 울타리 코드 블록 ---
+        # --- 코드 블록 (Fenced Code Block) ---
         if stripped.startswith("```"):
             language = stripped[3:].strip()
             body: List[str] = []
@@ -232,7 +233,7 @@ def render_markdown(text: str) -> Tuple[str, List[Heading], str]:
             while i < len(lines) and not lines[i].strip().startswith("```"):
                 body.append(lines[i])
                 i += 1
-            i += 1  # 닫는 울타리
+            i += 1  # 닫는 백틱 코드 블록
             code = html.escape("\n".join(body), quote=False)
             label = f'<span class="code-lang">{html.escape(language)}</span>' if language else ""
             css = f' class="language-{html.escape(language, quote=True)}"' if language else ""
@@ -317,19 +318,19 @@ def render_markdown(text: str) -> Tuple[str, List[Heading], str]:
 
 @dataclass
 class Node:
-    """사이드바에 그릴 트리의 한 칸. 폴더이거나 문서입니다."""
+    """사이드바 탐색 트리의 노드입니다. 디렉터리이거나 개별 문서입니다."""
 
-    name: str                       # 화면에 뜨는 이름
-    href: Optional[str] = None      # 출력 기준 상대 경로 (폴더 자체는 None 일 수 있음)
+    name: str                       # 화면에 표시되는 제목
+    href: Optional[str] = None      # 출력 디렉터리 기준 상대 경로 (디렉터리 자체는 None일 수 있음)
     children: List["Node"] = field(default_factory=list)
     is_dir: bool = False
-    # 정렬은 **파일 이름**으로 합니다. 화면에 뜨는 이름(문서의 첫 제목)으로
-    # 정렬하면 `01-`, `02-` 접두사가 정한 읽는 순서가 가나다순에 뒤집힙니다.
+    # 정렬은 파일명 기준으로 수행합니다. 문서 제목 기준으로 정렬하면
+    # `01-`, `02-` 등의 접두사가 지정한 읽기 순서가 가나다순에 의해 왜곡될 수 있습니다.
     sort_key: str = ""
 
 
 def _display_name(md_path: Path, fallback: str) -> str:
-    """문서의 첫 `# 제목` 을 이름으로 씁니다. 없으면 파일 이름."""
+    """문서의 첫 번째 `# 제목`을 표시 이름으로 사용합니다. 없을 경우 파일명 기본값."""
     try:
         for line in md_path.read_text(encoding="utf-8").splitlines():
             match = re.match(r"^#\s+(.*)$", line.strip())
@@ -551,7 +552,7 @@ def _toc_html(headings: List[Heading]) -> str:
         f'<li class="lv{h.level}"><a href="#{h.anchor}">{render_inline(h.text)}</a></li>'
         for h in items
     )
-    return f'<nav class="toc"><div class="toc-title">이 문서의 내용</div><ul>{rows}</ul></nav>'
+    return f'<nav class="toc"><div class="toc-title">목차</div><ul>{rows}</ul></nav>'
 
 
 def _crumb_html(rel_html: str, home: str) -> str:
@@ -628,7 +629,7 @@ def build(src: Path, out: Path, clean: bool = False) -> int:
         target.write_text(page, encoding="utf-8")
         print(f"  {md_path.relative_to(src).as_posix()}  ->  {rel_html}")
 
-    # 루트 README 를 index.html 로도 둡니다 (폴더를 그냥 열었을 때 뜨도록).
+    # 루트 README를 index.html로 복사합니다 (루트 URL 접속 시 표시되도록 지원).
     root_readme = out / "README.html"
     if root_readme.is_file():
         (out / "index.html").write_text(
@@ -641,7 +642,7 @@ def build(src: Path, out: Path, clean: bool = False) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="docs/user_manual 의 마크다운을 정적 HTML 로 렌더링합니다."
+        description="docs/user_manual 디렉터리의 마크다운 문서를 정적 HTML 사이트로 렌더링합니다."
     )
     parser.add_argument("--src", default=str(DEFAULT_SRC), help=f"입력 폴더 (기본: {DEFAULT_SRC})")
     parser.add_argument("--out", default=str(DEFAULT_OUT), help=f"출력 폴더 (기본: {DEFAULT_OUT})")

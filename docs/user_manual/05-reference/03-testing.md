@@ -28,15 +28,15 @@ pytest -k "snapshot"
 | `test_session_snapshot.py` | **시작된 대화 세션의 완전한 자기완결성 및 외부 설정 격리 보장** |
 | `test_roster_lock.py` | 토론 백그라운드 진행 중 전역 로스터 및 MCP 설정 변경 차단 잠금 |
 | `test_roster_selection.py` | 신규 에이전트 추가 시 기존 대화 세션의 활성/비활성 목록 정합성 |
-| `test_interaction.py` | 유저 정지(Stop) 요청 및 중간 개입 메모(Interjection) 정상 반영 |
+| `test_interaction.py` | 사용자 정지(Stop) 요청 및 중간 개입 메모(Interjection) 정상 반영 |
 | `test_session_handoff.py` | 세션 이어받기: 대화 맥락만 초기화하고 작업 공간 파일 및 지식 그래프 인계 |
 | `test_order_preview.py` | 로스터 UI의 발언 순서 미리보기와 엔진의 실제 발언 실행 순서 일치 여부 |
-| `test_tool_budget.py` | 도구 호출 상한 도달 시 유저 중재 및 결론 도출 처리 |
+| `test_tool_budget.py` | 도구 호출 상한 도달 시 사용자 중재 및 결론 도출 처리 |
 | `test_context_window.py` | 모델 컨텍스트 창 포화 시 중간 발언 축소 및 목표/지침 보존 원칙 |
 | `test_tool_failure_safety.py` | 도구 실행 실패 시 예외로 중단되지 않고 피드백 문자열로 정상 전파 |
 | `test_tool_loop_content.py` | 다중 도구 호출 루프 완료 후 생성된 발언 본문의 완전한 보존 |
 | `test_reasoning_isolation.py` | 단계적 사고 과정은 기록에만 남고 다음 에이전트 프롬프트에는 미전파 |
-| `test_mermaid_repair.py` | 다이어그램 문법 오류 발생 시 오케스트레이터의 실시간 수선 재작성 |
+| `test_mermaid_repair.py` | 다이어그램 문법 오류 발생 시 오케스트레이터의 실시간 구문 보정 및 재작성 |
 | `test_export_mermaid.py` | 외부 렌더러 없이 자체 구현된 Mermaid → SVG/PNG 변환기 정합성 |
 | `test_abort_turn.py` | 긴급 종료(Emergency Stop): 해당 턴 데이터 롤백 및 시작 전 상태 복원 |
 | `test_resilience.py` | 브라우저 새로고침, 네트워크 순단, 컨텍스트 한도, 도구 루프 한도 복원력 |
@@ -91,7 +91,7 @@ def test_a_write_that_fails_validation_never_touches_the_file(conf):
 ```python
 set_mcp_server_enabled_in_conf_file("probe", False, conf)
 await manager.reload_from_config()
-assert "probe" not in manager.clients      # 프로세스가 실제로 내려감을 검증
+assert "probe" not in manager.clients      # 프로세스가 실제로 종료됨을 검증
 ```
 
 파일만 수정하고 프로세스가 그대로 남아 화면과 실제 서버 상태가 불일치하는 결함을 방지합니다.
@@ -106,7 +106,7 @@ for name in ("conf.json", "conf.example.json"):
     assert llm.get("max_tool_iterations") == 30
 ```
 
-소스 코드의 모델 기본값, 전역 Pydantic 모델, 그리고 실제 `conf.json` 및 `conf.example.json`의 기본값이 삼위일체로 정확히 일치하는지 자동 검증합니다. 셋 중 하나라도 어긋나면 유저가 기본값을 오인하는 문제가 발생하기 때문입니다.
+소스 코드의 모델 기본값, 전역 Pydantic 모델, 그리고 실제 `conf.json` 및 `conf.example.json`의 기본값이 모두 일관되게 일치하는지 자동 검증합니다. 어느 한 곳이라도 어긋나면 사용자가 기본값을 오인하는 문제가 발생하기 때문입니다.
 
 ### 시작된 대화 세션의 완전한 자기완결성 검증
 
@@ -121,7 +121,7 @@ async def test_changing_the_conf_file_does_not_reach_a_started_conversation(db_f
     assert agents["critic"].model == "openai/gpt-4o"   # 잠금 시점의 모델 구성 유지
 ```
 
-`conf.json` 파일을 통째로 수정하거나 삭제하더라도, 이미 시작된 대화 세션은 당시의 `config_snapshot` 구성을 그대로 유지하여 토론을 정상 수행함을 보장합니다.
+`conf.json` 파일의 내용을 대폭 수정하거나 파일을 삭제하더라도, 이미 시작된 대화 세션은 당시의 `config_snapshot` 구성을 그대로 유지하여 토론을 정상 수행함을 보장합니다.
 
 ### 카드 드래그 앤 드롭 삽입 위치 정확성 검증
 

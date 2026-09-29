@@ -2,7 +2,7 @@
 
 > 상위: [MADO 사용 설명서](../README.md) · 다음: [HTTP API](01-http-api.md)
 
-찾아보기용 문서입니다. 순서대로 읽는 것이 아니라 필요할 때 뒤지는 것입니다.
+참조용 문서 모음입니다. 처음부터 순차적으로 읽지 않고, 특정 기능이나 설정값을 확인할 때 찾아보는 빠른 참고서(Quick Reference)입니다.
 
 ---
 
@@ -10,9 +10,9 @@
 
 | 문서 | 언제 보는가 |
 | :--- | :--- |
-| [HTTP API](01-http-api.md) | 외부에서 상태를 조회하거나 연동할 때 |
-| [프로젝트 구조](02-project-layout.md) | 코드를 고치기 전에 위치를 찾을 때 |
-| [테스트](03-testing.md) | 변경이 무엇을 깨는지 알고 싶을 때 |
+| [HTTP API](01-http-api.md) | 외부 시스템에서 상태를 조회하거나 연동할 때 |
+| [프로젝트 구조](02-project-layout.md) | 소스 코드를 분석하거나 수정하기 전 파일 위치를 찾을 때 |
+| [테스트](03-testing.md) | 코드 변경 사항이 기존 기능에 미치는 영향을 검증할 때 |
 
 ---
 
@@ -46,7 +46,7 @@
 | 응답 토큰 | `4096` | `max_tokens` |
 | 컨텍스트 창 | `128000` | `max_context_window` |
 | 도구 루프 한도 | `30` | `max_tool_iterations` |
-| 타임아웃 | `600`초 (조각 사이 공백) | `timeout` |
+| 타임아웃 | `600`초 (스트리밍 청크 수신 간격) | `timeout` |
 | 재시도 | `2` | `num_retries` |
 | 발언 우선순위 | `100` (미지정 시) | `debate_priority` |
 | 우선순위 간격 | `10` | 드래그 시 재부여 |
@@ -73,8 +73,8 @@
 | 열거 | 값 |
 | :--- | :--- |
 | 토론 상태 | `idle` `planning` `debating` `synthesizing` `completed` `error` |
-| 발언 종류 | `user` `orchestrator` `agent` `system` `error` |
-| 산출물 종류 | `code` `markdown` `mermaid` `json` |
+| 메시지 유형 | `user` `orchestrator` `agent` `system` `error` |
+| 산출물 유형 | `code` `markdown` `mermaid` `json` |
 | 도구 상태 | `success` `error` |
 | 토론 진영 | `proponent` `critic` `neutral` |
 | 전략 | `sequential_debate` `adversarial_debate` `orchestrator_led` |
