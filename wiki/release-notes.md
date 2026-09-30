@@ -25,6 +25,11 @@ loaded text names the paths to run. The run itself is an ordinary sandbox call, 
 with `csv-profile`, which summarises the workspace's CSV files column by column (UTF-8 and CP949).
 → [Skills §5](agents/skills.md#5-scripts)
 
+**Fixed.** `run_mado.ps1` / `.bat` failed on a PC without the bundled `python_runtime` (`Start-Process : The
+system cannot find the file specified`); they now fall back to `python` / `node` on `PATH`. In `run_mado.bat`
+the title's `&` no longer runs as a command, and the address line reads `conf.json` again (it always showed
+the fallback text). → [Air-gap Packaging §3](operations/airgap-packaging.md)
+
 ---
 
 ## v1.0

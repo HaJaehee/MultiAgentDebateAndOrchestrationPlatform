@@ -129,6 +129,7 @@ Run it on the target after copying new sources when the launcher itself changed.
 
 ### Parameter Forwarding & Encoding
 - **CLI Parameter Forwarding**: Both `run_mado.ps1` (`$args`) and `run_mado.bat` (`%*`) pass all command-line arguments directly to `app.main`. Users can run `.\run_mado.ps1 --port 9000` to override the bound port dynamically.
+- **Runtime Fallback**: When `python_runtime\python.exe` is missing — a source checkout on a development PC — both launchers use the `python` on `PATH` and leave `PYTHONHOME` alone (pointing it at a missing folder stops any interpreter from starting); likewise `node` on `PATH` when `node_runtime\node.exe` is missing. A warning names the interpreter in use. Before this, the committed launchers failed on a dev PC with `Start-Process : The system cannot find the file specified`.
 - **UTF-8 BOM Protection**: `run_mado.ps1` is saved with UTF-8 BOM (`utf-8-sig`) and configures `[Console]::OutputEncoding = UTF8`, preventing PowerShell parser errors on Korean Windows systems.
 - **Zero Configuration Drift**: Because paths and settings are injected via environment variables, [conf.json](file:///d:/MultiAgentDebateOrchestration/conf.json) requires **zero manual adjustments** when moving between environments.
 

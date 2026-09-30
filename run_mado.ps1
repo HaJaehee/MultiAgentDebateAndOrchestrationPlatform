@@ -15,23 +15,52 @@ Write-Host "==========================================================" -Foregro
 Write-Host "  MADO: Multi-Agent Debate & Orchestration Platform (오프라인 / 폐쇄망 모드)" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 
-$env:PYTHONHOME = Join-Path $RootDir "python_runtime"
-$env:PYTHONPATH = "$RootDir;$(Join-Path $RootDir 'python_runtime\Lib');$(Join-Path $RootDir 'python_runtime\Lib\site-packages')"
-$env:PATH = "$(Join-Path $RootDir 'python_runtime');$(Join-Path $RootDir 'python_runtime\Scripts');$(Join-Path $RootDir 'node_runtime');" + $env:PATH
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUTF8 = "1"
 
-# --- MCP 서버 실행 경로 (conf.json 의 ${VAR:-기본값} 치환에 사용) ---
-$env:PYTHON_BIN = Join-Path $RootDir "python_runtime\python.exe"
-$env:NODE_BIN = Join-Path $RootDir "node_runtime\node.exe"
+# --- 실행기 (conf.json 의 ${PYTHON_BIN} / ${NODE_BIN} 치환에도 쓰입니다) ---
+# 폐쇄망 번들에는 포터블 런타임(python_runtime, node_runtime)이 함께 들어 있습니다. 개발 PC 처럼
+# 없으면 PATH 의 것으로 물러섭니다. 없는 폴더를 PYTHONHOME 으로 잡으면 시스템 파이썬도 기동하지
+# 못하므로, 내장 런타임이 있을 때만 PYTHONHOME 을 건드립니다.
+$PythonRuntime = Join-Path $RootDir "python_runtime"
+$NodeRuntime = Join-Path $RootDir "node_runtime"
+
+if (Test-Path (Join-Path $PythonRuntime "python.exe")) {
+    $env:PYTHONHOME = $PythonRuntime
+    $env:PYTHONPATH = "$RootDir;$(Join-Path $PythonRuntime 'Lib');$(Join-Path $PythonRuntime 'Lib\site-packages')"
+    $env:PATH = "$PythonRuntime;$(Join-Path $PythonRuntime 'Scripts');" + $env:PATH
+    $env:PYTHON_BIN = Join-Path $PythonRuntime "python.exe"
+    $RuntimeLabel = "내장 파이썬 런타임"
+} else {
+    $SystemPython = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $SystemPython) {
+        Write-Host "[X] python_runtime\python.exe 도 PATH 의 python 도 없습니다." -ForegroundColor Red
+        exit 1
+    }
+    $env:PYTHON_BIN = $SystemPython.Source
+    $env:PYTHONPATH = if ($env:PYTHONPATH) { "$RootDir;$env:PYTHONPATH" } else { $RootDir }
+    Write-Warning "python_runtime 이 없어 PATH 의 파이썬을 씁니다 ($($env:PYTHON_BIN)). requirements.txt 의 패키지가 설치되어 있어야 합니다."
+    $RuntimeLabel = "PATH 의 파이썬"
+}
+
+if (Test-Path (Join-Path $NodeRuntime "node.exe")) {
+    $env:PATH = "$NodeRuntime;" + $env:PATH
+    $env:NODE_BIN = Join-Path $NodeRuntime "node.exe"
+} else {
+    $SystemNode = Get-Command node -ErrorAction SilentlyContinue
+    if ($SystemNode) {
+        $env:NODE_BIN = $SystemNode.Source
+        Write-Warning "node_runtime 이 없어 PATH 의 node 를 씁니다 ($($env:NODE_BIN))."
+    } else {
+        Write-Warning "node_runtime\node.exe 도 PATH 의 node 도 없습니다. filesystem / memory MCP 가 비활성화됩니다."
+    }
+}
+
+# --- MCP 서버 위치 (conf.json 의 ${VAR:-기본값} 치환에 사용) ---
 $env:MCP_NODE_HOME = Join-Path $RootDir "mcp_node"
 $env:MCP_SANDBOX_HOME = Join-Path $RootDir "mcp_sandbox"
 $env:WORKSPACE_DIR = Join-Path $RootDir "workspace"
 if (-not $env:SANDBOX_KERNEL_PYTHON) { $env:SANDBOX_KERNEL_PYTHON = $env:PYTHON_BIN }
-
-if (-not (Test-Path $env:NODE_BIN)) {
-    Write-Warning "node_runtime\node.exe 가 없습니다. filesystem / memory MCP 가 비활성화됩니다."
-}
 
 # 접속 주소는 conf.json 의 app 값을 그대로 읽습니다 (하드코딩 금지)
 $AppUrl = try {
@@ -45,5 +74,5 @@ if (Test-Path (Join-Path $RootDir "open_browser.py")) {
     Start-Process -FilePath $env:PYTHON_BIN -ArgumentList (@("open_browser.py") + $args) -WorkingDirectory $RootDir -WindowStyle Hidden | Out-Null
 }
 
-Write-Host "[*] 내장 파이썬 런타임으로 서버를 시작합니다 ($AppUrl)..." -ForegroundColor Green
+Write-Host "[*] ${RuntimeLabel}으로 서버를 시작합니다 ($AppUrl)..." -ForegroundColor Green
 & $env:PYTHON_BIN -m app.main $args
