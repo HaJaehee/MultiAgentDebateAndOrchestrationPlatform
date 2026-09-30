@@ -6,7 +6,7 @@ changed*, not a second copy of the documentation.
 
 ---
 
-## Unreleased
+## v1.1
 
 **Skills: instructions an agent loads when the work calls for them.** A skill is a folder under `skills/`
 with a `SKILL.md` (front matter `name`, `description`, then the instructions) and optional supporting files.
@@ -24,6 +24,10 @@ folder is copied into the conversation's workspace at `.mado/skills/<name>/` (ch
 loaded text names the paths to run. The run itself is an ordinary sandbox call, judged by the tool gate. Ships
 with `csv-profile`, which summarises the workspace's CSV files column by column (UTF-8 and CP949).
 → [Skills §5](agents/skills.md#5-scripts)
+
+**Larger small text in the roster.** Agent cards, the tool and skill assignment dialogs, and the MCP
+server and skill chips set their small text one pixel larger. Badge sizes given as props (which never took
+effect) are now classes. → [UI Components](ui/components.md)
 
 **Fixed.** `run_mado.ps1` / `.bat` failed on a PC without the bundled `python_runtime` (`Start-Process : The
 system cannot find the file specified`); they now fall back to `python` / `node` on `PATH`. In `run_mado.bat`
