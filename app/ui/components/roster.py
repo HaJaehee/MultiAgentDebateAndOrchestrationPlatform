@@ -19,11 +19,14 @@ from app.config import (
     remove_mcp_server_from_conf_file,
     resolve_workspace_dir,
     set_agent_allowed_mcp_servers_in_conf_file,
+    set_agent_allowed_skills_in_conf_file,
     set_agent_debate_order_in_conf_file,
     set_agent_debate_stance_in_conf_file,
     set_agent_enabled_in_conf_file,
     set_mcp_server_enabled_in_conf_file,
+    set_skill_enabled_in_conf_file,
 )
+from app.agents.skills import Skill, scan_skills, skills_root
 from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
 from app.orchestration.runner import get_debate_runner
@@ -213,6 +216,11 @@ class AgentRosterControl:
         # 그 변화를 놓쳐, 도구가 다 붙은 뒤에도 "미기동" 이 토론이 끝날 때까지
         # 남습니다.
         self.mcp_status_seen: Optional[tuple] = None
+        # 스킬 칩. 스킬 폴더는 사람이 직접 고치므로 화면이 열려 있는 동안에도 바뀝니다 —
+        # 지문이 달라졌을 때만 다시 그립니다 (`refresh_skills`).
+        self.skills_row: Optional[ui.row] = None
+        self.skills_badge: Optional[ui.badge] = None
+        self.skills_seen: Optional[tuple] = None
         self.cards_row: Optional[ui.row] = None
         self.order_preview: Optional[ui.row] = None
         # 에이전트 구성 변경(추가·삭제·진영·발언 순서·도구)은 "이 대화가 아직
@@ -424,6 +432,27 @@ class AgentRosterControl:
                     "text-[10px] text-slate-500 truncate w-full"
                 )
                 self._refresh_workspace_hint()
+
+                ui.separator().classes("bg-slate-800 my-1")
+
+                # 스킬 — 켜기·끄기. MCP 서버와 달리 다시 띄울 프로세스가 없어 토론 중에도 바꿀 수
+                # 있고, 진행 중인 대화에도 다음 발언부터 걸립니다 (`app/agents/skills.py`).
+                with ui.row().classes("w-full items-center justify-between"):
+                    with ui.row().classes("items-center gap-2"):
+                        ui.label("스킬").classes("text-xs font-bold text-slate-300")
+                        self.skills_badge = ui.badge("-", color="slate-7").props("dense text-xs")
+                    skills_refresh = (
+                        ui.button(icon="refresh", on_click=lambda: self.refresh_skills(force=True))
+                        .props("flat dense round size=sm color=slate-4")
+                    )
+                    skills_refresh.tooltip("스킬 폴더를 다시 읽습니다")
+                ui.label(
+                    "⚡ 스킬의 켜기·끄기(conf.json)와 스킬 폴더의 수정은 진행 중인 대화에도 다음 "
+                    "발언부터 바로 적용됩니다. 어느 에이전트가 쓸지는 에이전트 카드의 '스킬' 에서 정합니다."
+                ).classes("text-[10px] text-sky-300/90 w-full leading-snug -mt-1")
+                self.skills_row = ui.row().classes("w-full gap-2 flex-wrap items-center")
+                self.refresh_skills(force=True)
+                ui.timer(5.0, self.refresh_skills)
 
                 ui.separator().classes("bg-slate-800 my-1")
 
@@ -915,13 +944,34 @@ class AgentRosterControl:
                 else:
                     tools_button.tooltip("해당 에이전트가 호출할 수 있는 MCP 서버를 선택합니다.")
 
+            # 이 에이전트가 불러 쓸 수 있는 스킬. 할당은 도구와 같은 규칙(구성 잠금)을 따르고,
+            # 스킬의 켜기·끄기는 설정 패널의 스킬 칩에서 합니다.
+            skills = agent.allowed_skills or []
+            with ui.row().classes("w-full items-center gap-1 no-wrap"):
+                skills_button = ui.button(
+                    f"스킬 {len(skills)}",
+                    icon="auto_stories",
+                    on_click=lambda _, k=agent.key: self._open_agent_skills_dialog(k),
+                ).props("flat dense no-caps stack size=sm color=sky-4").classes(
+                    "text-[10px] flex-shrink-0"
+                )
+                ui.label(", ".join(skills) or "없음").classes(
+                    "text-[9px] text-slate-500 truncate"
+                )
+                if tools_reason:
+                    skills_button.disable()
+                    skills_button.tooltip(tools_reason)
+                else:
+                    skills_button.tooltip("해당 에이전트가 불러 쓸 수 있는 스킬을 선택합니다.")
+
             ui.tooltip(
                 f"model: {agent.model}\r\n"
                 f"endpoint: {agent.endpoint_label}\r\n"
                 f"temperature: {agent.temperature} / max_tokens: {agent.max_tokens}\r\n"
                 f"sequential thinking: "
                 f"{f'{agent.sequential_thinking.mode} (max {agent.sequential_thinking.max_steps} steps)' if agent.sequential_thinking.enabled else 'disabled'}\r\n"
-                f"mcp: {', '.join(agent.allowed_mcp_servers) or '-'}"
+                f"mcp: {', '.join(agent.allowed_mcp_servers) or '-'}\r\n"
+                f"skills: {', '.join(agent.allowed_skills) or '-'}"
             ).classes("whitespace-pre-line text-[10px]")
         return True
 
@@ -1232,7 +1282,7 @@ class AgentRosterControl:
                 )
             else:
                 self.agent_admin_hint.set_text(
-                    "⚠️ 에이전트 추가·삭제와 진영·발언 순서·도구 변경은 conf.json 에 저장되어 "
+                    "⚠️ 에이전트 추가·삭제와 진영·발언 순서·도구·스킬 할당 변경은 conf.json 에 저장되어 "
                     "앞으로 만드는 모든 대화에 적용됩니다. 이미 토론이 시작된 대화는 그때 "
                     "고정된 구성을 그대로 씁니다."
                 )
@@ -1471,10 +1521,12 @@ class AgentRosterControl:
         st_default = cfg.llm.sequential_thinking
         existing_keys = set(cfg.agents.keys())
         servers = cfg.mcp_servers
+        skills = scan_skills()
 
         text_fields: Dict[str, ui.input] = {}
         number_fields: Dict[str, ui.number] = {}
         boxes: Dict[str, ui.checkbox] = {}
+        skill_boxes: Dict[str, ui.checkbox] = {}
 
         def _text(field: str, label: str, hint: str = "", password: bool = False) -> None:
             default = defaults.get(field)
@@ -1620,6 +1672,24 @@ class AgentRosterControl:
                             if not server_cfg.enabled:
                                 ui.badge("꺼짐", color="grey-8").props("dense text-[9px]")
 
+                ui.label("사용할 스킬").classes(
+                    "text-[11px] font-semibold text-slate-400 mt-1"
+                )
+                if not skills:
+                    ui.label(f"스킬 폴더({skills_root()})에 스킬이 없습니다.").classes(
+                        "text-xs text-slate-500"
+                    )
+                with ui.row().classes("w-full gap-x-4 gap-y-1 flex-wrap"):
+                    for skill in skills:
+                        with ui.row().classes("items-center gap-1 no-wrap"):
+                            skill_boxes[skill.name] = ui.checkbox(value=False).props(
+                                "dense dark color=sky-4"
+                            )
+                            ui.label(skill.name).classes("text-xs text-slate-200")
+                            self._skill_state_badge(skill)
+                            if skill.description:
+                                ui.tooltip(skill.description).classes("text-[10px] max-w-[320px]")
+
             async def do_add() -> None:
                 key = (key_in.value or "").strip()
                 name = (name_in.value or "").strip()
@@ -1670,6 +1740,7 @@ class AgentRosterControl:
                     thinking.setdefault("max_steps", steps)
 
                 chosen = [n for n, box in boxes.items() if box.value]
+                chosen_skills = [n for n, box in skill_boxes.items() if box.value]
                 prompt = prompt_in.value or ""
 
                 dialog.close()
@@ -1686,9 +1757,11 @@ class AgentRosterControl:
                         card_color=appearance.card_color,
                         icon=appearance.icon,
                         config_path=self._conf_path(),
+                        allowed_skills=chosen_skills,
                     ),
                     f"'{name}' 에이전트를 추가하였습니다."
-                    + (f" (도구 {len(chosen)}개)" if chosen else " (도구 없음)"),
+                    + (f" (도구 {len(chosen)}개" if chosen else " (도구 없음")
+                    + (f", 스킬 {len(chosen_skills)}개)" if chosen_skills else ")"),
                 )
 
             with ui.row().classes("w-full justify-end gap-2 mt-3"):
@@ -2137,6 +2210,179 @@ class AgentRosterControl:
                 ui.button("저장", on_click=do_save).props("unelevated color=indigo-6")
 
         dialog.open()
+
+    def _open_agent_skills_dialog(self, agent_key: str) -> None:
+        """이 에이전트가 불러 쓸 수 있는 스킬을 고릅니다.
+
+        도구 할당과 같습니다 — conf.json 에 저장되어 **아직 시작하지 않은 대화**에 걸리고,
+        이미 시작한 대화는 첫 발언 때 굳은 할당을 그대로 씁니다. 그래서 같은 잠금을 씁니다.
+        스킬의 내용과 켜기·끄기는 이와 달리 어느 대화에나 바로 걸립니다.
+        """
+        if self._blocked_for_agent_admin():
+            return
+
+        agent = next((a for a in self._roster_agents() if a.key == agent_key), None)
+        if agent is None:
+            ui.notify(f"'{agent_key}' 에이전트를 찾을 수 없습니다.", type="warning", position="bottom-right")
+            return
+
+        try:
+            skills = scan_skills()
+            root = skills_root()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Could not read skills: {e}")
+            skills, root = [], None
+
+        allowed = list(agent.allowed_skills or [])
+        # 폴더에서 이미 사라진 스킬이 아직 적혀 있을 수 있습니다. 조용히 지우지 않고
+        # 보여주고, 사용자가 체크를 풀어 정리하게 합니다.
+        known = {s.name for s in skills}
+        orphans = [name for name in allowed if name not in known]
+        boxes: Dict[str, ui.checkbox] = {}
+
+        with ui.dialog() as dialog, ui.card().classes(
+            "p-4 w-[560px] max-w-full bg-slate-900 text-white border border-slate-700"
+        ):
+            ui.label(f"{agent.name} · 스킬 할당").classes("text-lg font-bold")
+            ui.label(
+                "이 에이전트가 발언 중 불러 쓸 수 있는 스킬입니다. conf.json 에 저장되어 아직 "
+                "시작하지 않은 대화와 앞으로 만드는 대화에 적용됩니다. 이미 시작한 대화는 그때 "
+                "굳은 할당을 그대로 씁니다. 스킬의 내용과 켜기·끄기는 어느 대화에나 바로 적용됩니다."
+            ).classes("text-[11px] text-amber-400 mb-2 leading-snug")
+
+            if not skills and not orphans:
+                ui.label(
+                    f"스킬 폴더({root})에 스킬이 없습니다. `<이름>/SKILL.md` 폴더를 넣으면 나타납니다."
+                ).classes("text-xs text-slate-400")
+
+            with ui.column().classes("w-full gap-1 max-h-[46vh] overflow-y-auto"):
+                for skill in skills:
+                    with ui.row().classes("w-full items-start gap-2 no-wrap"):
+                        boxes[skill.name] = ui.checkbox(value=skill.name in allowed).props(
+                            "dense dark color=sky-4"
+                        )
+                        with ui.column().classes("gap-0 min-w-0"):
+                            with ui.row().classes("items-center gap-1 no-wrap"):
+                                ui.label(skill.name).classes("text-xs font-semibold text-slate-200")
+                                self._skill_state_badge(skill)
+                            ui.label(skill.problem or skill.description).classes(
+                                "text-[10px] leading-snug "
+                                + ("text-rose-300" if skill.problem else "text-slate-400")
+                            )
+
+                for name in orphans:
+                    with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                        boxes[name] = ui.checkbox(value=True).props("dense dark color=amber-6")
+                        ui.label(name).classes("text-xs font-semibold text-amber-300")
+                        ui.badge("폴더에 없음", color="amber-9").props("dense text-[9px]")
+
+            async def do_save() -> None:
+                chosen = [name for name, box in boxes.items() if box.value]
+                dialog.close()
+                await self._apply_conf_change(
+                    lambda: set_agent_allowed_skills_in_conf_file(
+                        agent_key, chosen, self._conf_path()
+                    ),
+                    f"'{agent.name}' 에이전트의 스킬을 {len(chosen)}개로 저장하였습니다."
+                    if chosen else f"'{agent.name}' 에이전트에 스킬을 할당하지 않았습니다.",
+                    # 서버 구성은 그대로입니다. 다시 띄울 이유가 없습니다.
+                    restart_servers=False,
+                )
+
+            with ui.row().classes("w-full justify-end gap-2 mt-3"):
+                ui.button("취소", on_click=dialog.close).props("flat color=grey")
+                ui.button("저장", on_click=do_save).props("unelevated color=indigo-6")
+
+        dialog.open()
+
+    # ------------------------------------------------------------------ 스킬 켜기·끄기
+
+    @staticmethod
+    def _skill_state_badge(skill: Skill) -> None:
+        """스킬 이름 옆의 상태 표시 (오류 · 꺼짐). 쓸 수 있는 스킬에는 붙이지 않습니다."""
+        if skill.problem:
+            ui.badge("오류", color="red-9").props("dense text-[9px]")
+        elif not skill.enabled:
+            ui.badge("꺼짐", color="grey-8").props("dense text-[9px]")
+
+    def refresh_skills(self, force: bool = False) -> None:
+        """스킬 칩을 다시 그립니다. 타이머가 부를 때는 바뀐 것이 있을 때만 그립니다."""
+        if self.skills_row is None or self.skills_row.is_deleted:
+            return
+        try:
+            skills = scan_skills()
+            root = skills_root()
+        except Exception as e:  # noqa: BLE001 - UI 는 설정 오류로 죽지 않아야 합니다
+            logger.warning(f"Could not read skills: {e}")
+            skills, root = [], None
+
+        seen = (str(root), tuple(
+            (s.name, s.enabled, s.problem, s.title, s.description, len(s.files)) for s in skills
+        ))
+        if not force and seen == self.skills_seen:
+            return
+        self.skills_seen = seen
+
+        self.skills_row.clear()
+        with self.skills_row:
+            if not skills:
+                ui.label(
+                    f"스킬 폴더({root})에 스킬이 없습니다. `<이름>/SKILL.md` 폴더를 넣으면 바로 나타납니다."
+                ).classes("text-[10px] text-slate-500")
+            for skill in skills:
+                if skill.problem:
+                    icon, icon_cls = "error", "text-rose-400"
+                elif skill.enabled:
+                    icon, icon_cls = "auto_stories", "text-sky-400"
+                else:
+                    icon, icon_cls = "toggle_off", "text-slate-500"
+                tip_lines = [skill.name if not skill.title or skill.title == skill.name
+                             else f"{skill.name} ({skill.title})"]
+                if skill.problem:
+                    tip_lines.append(f"오류: {skill.problem}")
+                if skill.description:
+                    tip_lines.append(skill.description)
+                tip_lines.append(f"부속 파일 {len(skill.files)}개 · {skill.path}")
+
+                with ui.element("div").classes(
+                    "flex items-center gap-1 pl-2 pr-1 py-1 rounded-md bg-slate-800/70 border border-slate-700"
+                ):
+                    # 툴팁은 상태 부분에만 답니다. 스위치 위에서까지 뜨면 조작을 가립니다.
+                    with ui.element("div").classes("flex items-center gap-1"):
+                        ui.icon(icon, size="12px").classes(icon_cls)
+                        ui.label(skill.name).classes("text-[10px] font-semibold text-slate-200")
+                        self._skill_state_badge(skill)
+                        ui.tooltip("\r\n".join(tip_lines)).classes(
+                            "whitespace-pre-line text-[10px] max-w-[360px]"
+                        )
+                    ui.switch(
+                        value=skill.enabled,
+                        on_change=lambda e, n=skill.name: self._on_skill_toggle(n, bool(e.value)),
+                    ).props("dense dark size=xs color=sky-4").classes("ml-1")
+
+        if self.skills_badge and not self.skills_badge.is_deleted:
+            usable = len([s for s in skills if s.usable])
+            broken = len([s for s in skills if s.problem])
+            self.skills_badge.set_text(f"{usable}/{len(skills)} 켜짐")
+            self.skills_badge.props(
+                f"dense color={'red-8' if broken else 'sky-8' if usable else 'slate-7'}"
+            )
+
+    async def _on_skill_toggle(self, skill_name: str, enabled: bool) -> None:
+        """스킬 켜기·끄기. 다시 띄울 서버가 없으므로 토론 중에도 막지 않습니다."""
+        try:
+            set_skill_enabled_in_conf_file(skill_name, enabled, self._conf_path())
+        except Exception as e:  # noqa: BLE001 - 설정 오류는 화면에 그대로 알립니다
+            logger.error(f"Could not update skills in conf.json: {e}", exc_info=True)
+            ui.notify(f"conf.json 을 고치지 못했습니다: {e}", type="negative", position="bottom-right")
+            self.refresh_skills(force=True)
+            return
+        ui.notify(
+            f"'{skill_name}' 스킬을 {'켰습니다' if enabled else '껐습니다'}. "
+            f"진행 중인 대화에도 다음 발언부터 적용됩니다.",
+            type="positive", position="bottom-right",
+        )
+        self.refresh_skills(force=True)
 
     def _progress_toast(self, message: str):
         """스스로 사라질 줄 아는 진행 토스트.

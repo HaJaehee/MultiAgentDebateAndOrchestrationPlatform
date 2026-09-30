@@ -77,7 +77,7 @@ bring it back, because the snapshot held no model, endpoint, or credentials to r
 ### 6.1. What is frozen
 
 `session_agents.config_snapshot` (JSON, nullable) now holds the **entire `AgentConfig`** at lock
-time: model, endpoint, API key, sampling values, tool permissions, sequential-thinking settings, card
+time: model, endpoint, API key, sampling values, tool and skill permissions, sequential-thinking settings, card
 colour and icon, and the persona merged in. From that moment the conversation does not consult
 `conf.json` at all. The two appearance values are additionally written to the `card_color` and
 `icon_path` columns, so a card can be drawn without unpacking the snapshot.
@@ -88,12 +88,16 @@ colour and icon, and the persona merged in. From that moment the conversation do
 | Delete or disable an agent | **unaffected** — it keeps speaking with its frozen configuration | drops out of the pool |
 | Change model / endpoint / key | unaffected | applies immediately |
 | Change card colour / icon | unaffected — past turns keep the colours they were recorded with | applies immediately |
-| Change `allowed_mcp_servers` | unaffected | applies immediately |
+| Change `allowed_mcp_servers` / `allowed_skills` | unaffected | applies immediately |
 | Enable/disable an MCP **server** | **affected** | affected |
+| Edit, add, remove or enable/disable a **skill** | **affected** from the next speech | affected |
 
-The last row is the one exception. The snapshot records *which servers an agent may call*, but
+The last two rows are the exceptions. The snapshot records *which servers an agent may call*, but
 whether that server process is running is a property of the whole application
-([MCPManager](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py)).
+([MCPManager](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py)). Likewise it records *which
+skills an agent may load*, but the skills themselves are read from their folder at every speech — kept
+live on purpose, so a corrected instruction reaches conversations already running
+([Skills §3](skills.md#3-live-not-frozen)).
 
 The roster and the persona editor read the same frozen set through
 [`session_roster_agents()`](file:///d:/MultiAgentDebateOrchestration/app/agents/personas.py); an agent that

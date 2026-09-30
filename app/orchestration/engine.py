@@ -23,6 +23,7 @@ from app.agents.llm import (
 )
 from app.agents.llm_gate import LLM_HOLDER
 from app.agents.personas import prepare_agents_for_turn
+from app.agents.skills import skill_tools_for, visible_skill_names
 from app.agents.pool import AgentPool, get_agent_pool
 from app.timestamps import report_completed_line, to_local
 from app.config import DATA_DIR, TOOL_ITERATION_CEILING, resolve_workspace_dir
@@ -446,10 +447,11 @@ MAX_DEBATE_CODE_ARTIFACTS = 12
 def format_roster(agents: List[Agent], *, with_keys: bool = False) -> str:
     """오케스트레이터에게 보여 줄 전문가 목록. 계획·발언자 지명·과업 분배가 함께 씁니다.
 
-    이름과 역할, 쓸 수 있는 도구 서버 이름만 적습니다. 시스템 프롬프트는 넣지 않습니다 —
-    누구에게 무엇을 맡길지 정하는 데는 이것으로 충분하고, 프롬프트 전문은 호출마다 수천
-    토큰입니다. 도구 서버는 "파일 쓰기는 누구에게" 를 가르는 데 필요해 이름만 붙입니다
-    (스키마는 넣지 않습니다). 단계적 사고 서버는 일을 하는 도구가 아니라 뺍니다.
+    이름과 역할, 쓸 수 있는 도구 서버와 스킬의 이름만 적습니다. 시스템 프롬프트는 넣지
+    않습니다 — 누구에게 무엇을 맡길지 정하는 데는 이것으로 충분하고, 프롬프트 전문은 호출마다
+    수천 토큰입니다. 도구 서버는 "파일 쓰기는 누구에게" 를, 스킬은 "보고서 양식은 누구에게" 를
+    가르는 데 필요해 이름만 붙입니다 (스키마·설명은 넣지 않습니다). 스킬은 지금 켜져 있는 것만
+    적습니다. 단계적 사고 서버는 일을 하는 도구가 아니라 뺍니다.
 
     `with_keys` 는 JSON 으로 에이전트 키를 돌려받는 호출(지명·분배)용입니다. 계획 발언은
     전문가들이 전사에서 자기 이름을 찾아 읽으므로 이름으로 부르게 합니다.
@@ -460,6 +462,9 @@ def format_roster(agents: List[Agent], *, with_keys: bool = False) -> str:
         servers = [s for s in agent.allowed_mcp_servers if s != thinking_server]
         head = f"{agent.key}: {agent.name}" if with_keys else agent.name
         tools = f" · 도구: {', '.join(servers)}" if servers else " · 도구: 없음"
+        skills = visible_skill_names(agent)
+        if skills:
+            tools += f" · 스킬: {', '.join(skills)}"
         lines.append(f"- {head} ({agent.role}){tools}")
     return "\n".join(lines)
 
@@ -3717,6 +3722,7 @@ class OrchestratorEngine:
         """
         return agent.model_copy(update={
             "allowed_mcp_servers": [],
+            "allowed_skills": [],
             "sequential_thinking": agent.sequential_thinking.model_copy(update={"enabled": False}),
         })
 
@@ -4254,9 +4260,11 @@ class OrchestratorEngine:
             tools = mcp.get_openai_tools_for_servers(
                 self.llm_caller.resolve_tool_servers(agent)
             ) or []
-            # 발언이 실제로 들고 나가는 목록과 같아야 합니다 (보안상 빠지는 도구 제외).
+            # 발언이 실제로 들고 나가는 목록과 같아야 합니다 (보안상 빠지는 도구 제외, 스킬 도구 포함).
             gate = self._gate_for(state) if state else None
-            return gate.filter_tools(agent.key, tools, mcp) if gate is not None else tools
+            if gate is not None:
+                tools = gate.filter_tools(agent.key, tools, mcp)
+            return tools + skill_tools_for(agent)
         except Exception:  # noqa: BLE001 - 도구 목록을 못 구해도 합성은 진행합니다
             return []
 
@@ -4447,6 +4455,7 @@ class OrchestratorEngine:
 
         fixer = agent.model_copy(update={
             "allowed_mcp_servers": [],
+            "allowed_skills": [],
             "sequential_thinking": agent.sequential_thinking.model_copy(update={"enabled": False}),
         })
 

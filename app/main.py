@@ -220,6 +220,7 @@ async def list_agents():
             "max_tokens": a.max_tokens,
             "sequential_thinking": a.sequential_thinking.model_dump(exclude={"prompt_template"}),
             "allowed_mcp_servers": a.allowed_mcp_servers,
+            "allowed_skills": a.allowed_skills,
             "card_color": a.card_color,
             "icon": a.icon,
         }
@@ -279,6 +280,31 @@ async def mcp_status():
         "runtimes": pool.status(),
         "max_runtimes": pool.max_runtimes,
         "idle_ttl_seconds": pool.idle_ttl,
+    }
+
+
+@server.get("/api/skills")
+async def list_skills():
+    """스킬 폴더의 지금 모습. 꺼진 스킬과 깨진 스킬(`problem`)도 함께 보고합니다."""
+    import asyncio
+
+    from app.agents.skills import scan_skills, skills_root
+
+    skills = await asyncio.to_thread(scan_skills)
+    return {
+        "dir": str(skills_root()),
+        "skills": [
+            {
+                "name": s.name,
+                "title": s.title,
+                "description": s.description,
+                "enabled": s.enabled,
+                "usable": s.usable,
+                "problem": s.problem or None,
+                "files": list(s.files),
+            }
+            for s in skills
+        ],
     }
 
 

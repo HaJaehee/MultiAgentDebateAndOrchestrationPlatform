@@ -1,6 +1,6 @@
 # 도구 보안
 
-> 상위: [핵심 기술 개관](README.md) · 이전: [데이터베이스와 세션 스냅샷](07-persistence.md)
+> 상위: [핵심 기술 개관](README.md) · 이전: [데이터베이스와 세션 스냅샷](07-persistence.md) · 다음: [스킬](09-skills.md)
 >
 > 관련 소스: `app/mcp/policy.py` · `app/mcp/exec_scan.py` · `app/orchestration/tool_gate.py` · `app/orchestration/control.py`
 

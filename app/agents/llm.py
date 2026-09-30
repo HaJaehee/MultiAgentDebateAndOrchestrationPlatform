@@ -8,6 +8,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 import litellm
 from app.agents.base import Agent
 from app.agents.llm_gate import get_llm_gate
+from app.agents.skills import is_skill_tool, run_skill_tool, skill_guidance, skill_tools_for
 from app.mcp.manager import MCPManager, get_mcp_manager
 
 logger = logging.getLogger(__name__)
@@ -1424,9 +1425,9 @@ class LLMCaller:
         custom_instructions: str = "",
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
-        """System prompt = persona + sequential thinking + file rules + session instructions.
+        """System prompt = persona + sequential thinking + file/skill rules + session instructions.
 
-        세션 지침이 맨 뒤인 것은 그것이 가장 구체적인 지시이기 때문입니다. 파일 쓰기
+        세션 지침이 맨 뒤인 것은 그것이 가장 구체적인 지시이기 때문입니다. 파일 쓰기·스킬
         지침은 그 앞에 두어, 사람이 세션 지침으로 다르게 시키면 그쪽이 뒤에 옵니다.
 
         결정 장부는 여기 넣지 않습니다. 라운드마다 바뀌는 글이 시스템 프롬프트에 있으면
@@ -1449,6 +1450,10 @@ class LLMCaller:
         binary = binary_file_guidance(tools)
         if binary:
             parts.append(binary)
+
+        skills = skill_guidance(tools)
+        if skills:
+            parts.append(skills)
 
         if custom_instructions:
             parts.append(f"[Session Custom Instructions]:\n{custom_instructions}")
@@ -1524,6 +1529,8 @@ class LLMCaller:
         tools = mcp.get_openai_tools_for_servers(self.resolve_tool_servers(agent))
         if tool_gate is not None:
             tools = tool_gate.filter_tools(agent.key, tools, mcp)
+        # 스킬 도구는 발언마다 스킬 폴더와 켜기·끄기를 다시 읽어 만듭니다 (`app/agents/skills.py`).
+        tools = tools + skill_tools_for(agent)
 
         if resume_state is not None:
             # 끊긴 발언을 이어 갑니다. 모델이 보던 메시지를 그대로 씁니다 — 프롬프트를 다시 만들면
@@ -2236,18 +2243,30 @@ class LLMCaller:
         fn_args: Dict[str, Any],
         session_id: Optional[str],
         mcp: Optional[MCPManager] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[str, str]:
-        """MCP 도구를 부르고, 결과를 항상 (문자열, 상태) 로 돌려줍니다.
+        """MCP 도구(또는 스킬 도구)를 부르고, 결과를 항상 (문자열, 상태) 로 돌려줍니다.
 
         `MCPManager.execute_tool` 이 이미 대부분을 흡수하지만, 매니저 자체가
         교체되거나(테스트 더블) 도구 이름 조회 중에 터질 수도 있습니다. 도구
         실패는 발언을 끝낼 이유가 아니라는 규칙을 이 자리에서 한 번 더 지킵니다.
         취소만은 그대로 올려 보냅니다.
+
+        스킬 도구는 서버가 아니라 이 프로세스가 실행합니다 (`app/agents/skills.py`). 스크립트를
+        복사해 둘 작업 공간은 이 발언이 쓰는 런타임의 것이고, 실행 도구를 가졌는지는 이 발언이
+        실제로 든 도구(`tools`)로 봅니다.
         """
+        runtime = mcp or self.mcp_manager
         try:
-            output, status = await (mcp or self.mcp_manager).execute_tool(
-                fn_name, fn_args, scope=session_id, actor=agent.key
-            )
+            if is_skill_tool(fn_name):
+                output, status = await run_skill_tool(
+                    agent, fn_name, fn_args,
+                    workspace=getattr(runtime, "workspace", None), tools=tools,
+                )
+            else:
+                output, status = await runtime.execute_tool(
+                    fn_name, fn_args, scope=session_id, actor=agent.key
+                )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:  # noqa: BLE001 - 도구 실패로 발언을 죽이지 않습니다
@@ -2591,14 +2610,19 @@ class LLMCaller:
                     else:
                         # 도구 보안: 허용·묻기·거부. 거부되면 실행하지 않고, 그 이유가 곧
                         # 도구 결과가 됩니다 — 모델이 읽고 다른 길을 찾습니다.
-                        gate = await self._check_tool_gate(
+                        #
+                        # 스킬 도구는 판정하지 않습니다. 호스트가 스킬 폴더 안의 글을 읽을 뿐
+                        # 작업 공간·네트워크에 닿지 않고, 누가 쓸지는 `allowed_skills` 와
+                        # 켜기·끄기로 이미 정했습니다. (스킬의 스크립트를 **실행**하는 것은
+                        # 샌드박스 도구라 그쪽에서 판정을 받습니다.)
+                        gate = None if is_skill_tool(fn_name) else await self._check_tool_gate(
                             tool_gate, agent, fn_name, fn_args, mcp or self.mcp_manager,
                         )
                         if gate is not None and not gate.allowed:
                             output, status = gate.output, gate.status or "denied"
                         else:
                             output, status = await self._execute_tool_safely(
-                                agent, fn_name, fn_args, session_id, mcp,
+                                agent, fn_name, fn_args, session_id, mcp, tools=tools,
                             )
                         security = gate.audit if gate is not None else {}
 

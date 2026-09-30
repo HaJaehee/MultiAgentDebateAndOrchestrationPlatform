@@ -49,6 +49,7 @@ FastAPI 메타데이터, 화면 헤더 배지, 정보 모달(우측 상단 **ⓘ
     "max_tokens": 4096,
     "sequential_thinking": { "enabled": true, "mode": "prompt", "max_steps": 5, "show_steps": true },
     "allowed_mcp_servers": ["filesystem", "memory", "fetch"],
+    "allowed_skills": ["mermaid-diagrams"],
     "card_color": "#009688",
     "icon": "account_tree"
   }
@@ -129,6 +130,40 @@ MCP 서버별 연결 상태. `"enabled": false` 로 꺼 둔 서버도 함께 보
 
 `error` 필드에는 연결 실패 시 자식 프로세스의 표준 에러(stderr) 로그가 캡처되어 포함됩니다. `holders`는 해당 런타임을 대여 중인 세션 ID 목록이며, 대여자가 없으면 유휴 상태로 전환되어 `idle_ttl_seconds` 경과 후 자동으로 프로세스가 정리됩니다.
 → [MCP 호스트](../03-core/04-mcp-host.md#연결-상태)
+
+---
+
+## `GET /api/skills`
+
+스킬 폴더의 지금 모습. 꺼진 스킬과 깨진 스킬도 함께 보고합니다. 부를 때마다 폴더를 다시 읽습니다.
+
+```json
+{
+  "dir": "D:\\MultiAgentDebateOrchestration\\skills",
+  "skills": [
+    {
+      "name": "mermaid-diagrams",
+      "title": "mermaid-diagrams",
+      "description": "Mermaid 다이어그램(순서도·시퀀스·클래스·상태·ER)을 그릴 때 씁니다. ...",
+      "enabled": true,
+      "usable": true,
+      "problem": null,
+      "files": ["reference.md"]
+    }
+  ]
+}
+```
+
+| 필드 | 설명 |
+| :--- | :--- |
+| `name` | 폴더 이름 = `allowed_skills` 에 적는 이름 |
+| `title` | 머리말의 `name` (화면 표시용) |
+| `enabled` | `skills.disabled` 에 없으면 `true` |
+| `usable` | 켜져 있고 깨지지 않았는지. 에이전트에게는 이것이 `true` 인 스킬만 갑니다 |
+| `problem` | 깨진 이유 (머리말 없음, 설명 없음 등). 정상이면 `null` |
+| `files` | SKILL.md 를 뺀 부속 파일 (스킬 폴더 기준 경로) |
+
+→ [스킬](../03-core/09-skills.md)
 
 ---
 

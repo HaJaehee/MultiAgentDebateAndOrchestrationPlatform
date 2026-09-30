@@ -45,10 +45,12 @@ def _pool() -> AgentPool:
         "orchestrator": AgentConfig(
             name="Master Orchestrator", role="Moderator", model="openai/gpt-4o", api_key="sk-test",
             temperature=0.2, allowed_mcp_servers=["filesystem", "sandbox"], system_prompt="중재하세요.",
+            allowed_skills=["mermaid-diagrams"],
         ),
         "critic": AgentConfig(
             name="Critic", role="Reviewer", model="openai/gpt-4o-mini", api_key="sk-test",
             allowed_mcp_servers=["sandbox", "git"], system_prompt="비판하세요.",
+            allowed_skills=["mermaid-diagrams"],
         ),
     })
 
@@ -195,11 +197,13 @@ def test_a_participant_borrows_the_base_model_but_loses_every_tool():
     assert snap["name"] == "바쁜 독자" and snap["role"] == "첫 쪽만"
     assert snap["system_prompt"] == "짧게\n봅니다"
     assert snap["allowed_mcp_servers"] == []
+    assert snap["allowed_skills"] == [], "스킬도 도구처럼 뗍니다"
     assert snap["debate_priority"] == 20
 
     snap = participant_snapshot(critic, pool, priority=30)
     assert snap["model"] == "openai/gpt-4o-mini", "같은 키가 conf.json 에 있으면 그 에이전트를 빌립니다"
     assert snap["allowed_mcp_servers"] == []
+    assert snap["allowed_skills"] == []
     assert snap["debate_stance"] == "critic"
     # 인격을 비워 두면 기반 에이전트의 것을 씁니다.
     assert snap["system_prompt"] == "비판하세요."

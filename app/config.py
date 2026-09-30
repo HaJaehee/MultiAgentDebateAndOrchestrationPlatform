@@ -640,6 +640,11 @@ class AgentConfig(BaseModel):
     allowed_mcp_servers: List[str] = Field(
         default_factory=list, description="List of MCP server keys this agent can access"
     )
+    # 이 에이전트가 불러 쓸 수 있는 스킬 (`app/agents/skills.py`). 도구 서버 할당과 같은
+    # 에이전트 설정이라 대화 스냅샷에 함께 굳습니다. 스킬의 내용과 켜기·끄기는 굳지 않습니다.
+    allowed_skills: List[str] = Field(
+        default_factory=list, description="Skill names (folders under skills.dir) this agent can load"
+    )
     # 토론에서의 자리. 예전에는 전략 코드가 'architect' 다음 'coder' 하는 식으로
     # 키를 문자열로 박아 두었는데, 화면에서 에이전트를 만들 수 있게 되면서 그
     # 방식으로는 새 에이전트가 언제나 맨 뒤로 밀렸습니다. 이제 순서와 진영은
@@ -725,6 +730,25 @@ class TrialConfig(BaseModel):
     max_rounds: int = Field(default=4, ge=1, le=10)
 
 
+class SkillsConfig(BaseModel):
+    """스킬 (`skills`). 스킬 하나는 폴더 하나입니다 — `<dir>/<이름>/SKILL.md` (`app/agents/skills.py`).
+
+    스킬 자체는 이 파일에 적지 않습니다. 폴더를 넣고 빼는 것이 곧 설치와 삭제이고, 여기에는
+    어디서 찾을지와 무엇을 꺼 두었는지만 둡니다. 둘 다 **진행 중인 대화에도 다음 발언부터**
+    걸립니다 — MCP 서버 켜기·끄기처럼 대화 스냅샷에 굳히지 않습니다.
+    """
+
+    # 스킬 폴더. 상대 경로면 프로젝트 루트 기준입니다.
+    dir: str = Field(default="skills")
+    # 꺼 둔 스킬의 이름. 목록에 없는 스킬은 켜져 있습니다 — 폴더를 넣기만 하면 쓸 수 있습니다.
+    disabled: List[str] = Field(default_factory=list)
+
+
+# 스킬 도구의 이름 앞자리 (`skills__load_skill`). MCP 도구와 같은 `서버__도구` 모양이라,
+# 같은 이름의 MCP 서버를 두면 도구 이름이 겹칩니다.
+SKILL_TOOL_PREFIX = "skills"
+
+
 class RootConfig(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
@@ -732,6 +756,7 @@ class RootConfig(BaseModel):
     agents: Dict[str, AgentConfig] = Field(default_factory=dict)
     tool_security: ToolSecurityConfig = Field(default_factory=ToolSecurityConfig)
     trial: TrialConfig = Field(default_factory=TrialConfig)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
 
     # 치환 **전** 의 "mcp_servers" 원문. 작업 공간을 런타임마다 다르게 풀 때
     # 이걸 그 작업 공간으로 다시 풉니다. 이미 치환된 경로 문자열을 찾아 바꾸는
@@ -819,6 +844,15 @@ class RootConfig(BaseModel):
             raise ValueError("Configuration must contain an \"agents.orchestrator\" definition.")
         if not self.agents["orchestrator"].enabled:
             raise ValueError("The \"agents.orchestrator\" agent cannot be disabled (enabled: false).")
+        return self
+
+    @model_validator(mode="after")
+    def validate_reserved_server_names(self) -> "RootConfig":
+        if SKILL_TOOL_PREFIX in self.mcp_servers:
+            raise ValueError(
+                f"\"mcp_servers.{SKILL_TOOL_PREFIX}\" cannot be used: '{SKILL_TOOL_PREFIX}__' is "
+                f"the prefix of the built-in skill tools. Rename the MCP server."
+            )
         return self
 
     @property
@@ -1148,6 +1182,11 @@ def add_mcp_server_to_conf_file(
     화면에서 들어오든 파일을 직접 고치든 같은 말을 들어야 합니다.
     """
     name = _require_key(server_name, "MCP 서버 이름")
+    if name == SKILL_TOOL_PREFIX:
+        raise ValueError(
+            f"'{SKILL_TOOL_PREFIX}' 는 스킬 도구 이름({SKILL_TOOL_PREFIX}__load_skill)에 쓰이므로 "
+            f"MCP 서버 이름으로 쓸 수 없습니다."
+        )
     path = Path(config_path)
 
     command = (command or "").strip()
@@ -1277,6 +1316,78 @@ def set_agent_allowed_mcp_servers_in_conf_file(
 
 
 # ---------------------------------------------------------------------------
+# 스킬 켜기·끄기 / 에이전트의 스킬 할당
+# ---------------------------------------------------------------------------
+
+# 스킬 이름 = 스킬 폴더 이름. 에이전트 설정과 도구 인자에 그대로 적히므로 단순해야 합니다.
+SKILL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+def require_skill_name(value: str) -> str:
+    name = (value or "").strip()
+    if not SKILL_NAME_PATTERN.fullmatch(name):
+        raise ValueError(
+            f"스킬 이름 '{value}' 을 쓸 수 없습니다. 영문/숫자/밑줄/하이픈으로 64자까지 쓰고 "
+            f"영문이나 숫자로 시작하세요."
+        )
+    return name
+
+
+def set_skill_enabled_in_conf_file(
+    skill_name: str,
+    enabled: bool,
+    config_path: str | Path = DEFAULT_CONFIG_PATH,
+) -> None:
+    """`skills.disabled` 에서 이 스킬을 빼거나(켜기) 넣습니다(끄기).
+
+    진행 중인 대화에도 다음 발언부터 걸립니다. 스킬 목록은 발언마다 이 설정과 스킬 폴더를
+    다시 읽어 만들기 때문입니다 (`app/agents/skills.py`).
+    """
+    name = require_skill_name(skill_name)
+    path = Path(config_path)
+
+    data = read_conf_file(path)
+    section = _section(data, "skills")
+    current = section.get("disabled")
+    if current is None:
+        current = []
+    elif not isinstance(current, list):
+        raise ValueError(f"{path.name} 의 skills.disabled 가 목록이 아닙니다.")
+    names = [n for n in current if n != name]
+    if not enabled:
+        names.append(name)
+    section["disabled"] = names
+
+    write_conf_file(path, data)
+    reload_config_if_active(path)
+
+
+def set_agent_allowed_skills_in_conf_file(
+    agent_key: str,
+    skills: List[str],
+    config_path: str | Path = DEFAULT_CONFIG_PATH,
+) -> None:
+    """`agents.<key>.allowed_skills` 를 통째로 갈아 끼웁니다.
+
+    `allowed_mcp_servers` 와 같이 **아직 시작하지 않은 대화**에만 걸립니다 (시작한 대화는
+    첫 발언 때 에이전트 설정째로 굳습니다). 빈 목록이면 항목을 지웁니다.
+    """
+    key = _require_key(agent_key, "에이전트 키")
+    names = list(dict.fromkeys(require_skill_name(s) for s in skills))
+    path = Path(config_path)
+
+    data = read_conf_file(path)
+    agent = _entry(data, "agents", key, path)
+    if names:
+        agent["allowed_skills"] = names
+    else:
+        agent.pop("allowed_skills", None)
+
+    write_conf_file(path, data)
+    reload_config_if_active(path)
+
+
+# ---------------------------------------------------------------------------
 # agents.* 추가 / 끄기 / 삭제
 #
 # 화면은 새 에이전트를 만들 때 llm 기본값을 미리 채워 보여주지만, **사용자가
@@ -1373,11 +1484,12 @@ def add_agent_to_conf_file(
     icon: Optional[str] = None,
     enabled: bool = True,
     config_path: str | Path = DEFAULT_CONFIG_PATH,
+    allowed_skills: Optional[List[str]] = None,
 ) -> None:
     """`agents` 에 새 에이전트를 추가합니다.
 
     `overrides` 에는 `prune_agent_overrides()` 를 지난 값만 넘기세요. 여기 없는
-    항목은 파일에 적히지 않고 llm 에서 상속됩니다.
+    항목은 파일에 적히지 않고 llm 에서 상속됩니다. 스킬은 고른 것이 있을 때만 적습니다.
     """
     key = _require_key(agent_key, "에이전트 키")
     path = Path(config_path)
@@ -1394,6 +1506,9 @@ def add_agent_to_conf_file(
         for s in (allowed_mcp_servers or [])
         if s and s.strip()
     ]
+    skills = list(dict.fromkeys(
+        require_skill_name(s) for s in (allowed_skills or []) if s and s.strip()
+    ))
 
     overrides = dict(overrides or {})
     unknown = [k for k in overrides if k not in AGENT_OVERRIDE_FIELDS]
@@ -1429,6 +1544,8 @@ def add_agent_to_conf_file(
     if debate_stance != "neutral":
         block["debate_stance"] = debate_stance
     block["allowed_mcp_servers"] = servers
+    if skills:
+        block["allowed_skills"] = skills
     if (system_prompt or "").strip():
         block["system_prompt"] = _text_value(system_prompt)
     if thinking:

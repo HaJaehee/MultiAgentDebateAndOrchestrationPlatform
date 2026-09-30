@@ -424,13 +424,31 @@
     "agents": {}
   },
 
+  "// skills": [
+    "스킬 — 에이전트가 필요할 때 불러 읽는 작업 지침 묶음. 스킬 하나는 폴더 하나입니다.",
+    "  <dir>/<이름>/SKILL.md   머리말(name, description) + 본문 지침",
+    "  <dir>/<이름>/그 밖의 파일  부속 문서 (에이전트가 skills__read_skill_file 로 읽음)",
+    "에이전트는 평소에 이름과 설명만 보고, 일이 맞으면 skills__load_skill 로 본문을 불러 따릅니다.",
+    "어느 에이전트가 쓸지는 agents.<키>.allowed_skills 에 적습니다 (로스터 카드의 '스킬').",
+    "",
+    "dir: 스킬 폴더 (프로젝트 루트 기준). 소스 갱신 패키지는 기본 skills/ 를 통째로 바꾸므로,",
+    "     직접 만든 스킬을 지키려면 다른 폴더를 가리키세요.",
+    "disabled: 꺼 둔 스킬. 여기 없는 스킬은 켜져 있습니다 (폴더를 넣기만 하면 쓸 수 있음).",
+    "스킬의 내용·폴더·켜기/끄기는 진행 중인 대화에도 다음 발언부터 바로 적용됩니다.",
+    "allowed_skills 는 도구 할당처럼 대화가 시작될 때 굳습니다."
+  ],
+  "skills": {
+    "dir": "${SKILLS_DIR:-skills}",
+    "disabled": []
+  },
+
   "// agents": [
     "에이전트 정의.",
     "각 에이전트는 llm 값을 상속하며, 필요한 항목만 덮어쓰면 됩니다.",
     "  model / api_base(api_url) / api_key / api_version / provider",
     "  temperature / top_p / max_tokens / max_context_window",
     "  timeout / num_retries / drop_params / max_tool_iterations",
-    "  allowed_mcp_servers / system_prompt / enabled",
+    "  allowed_mcp_servers / allowed_skills / system_prompt / enabled",
     "  debate_priority (발언 순서, 낮을수록 먼저) / debate_stance (proponent|critic|neutral)",
     "  sequential_thinking (하위 객체)"
   ],
@@ -452,6 +470,7 @@
       ],
       "debate_priority": 10,
       "allowed_mcp_servers": ["filesystem", "memory"],
+      "allowed_skills": ["mermaid-diagrams"],
       "system_prompt": [
         "당신은 멀티 에이전트 토론을 이끄는 수석 오케스트레이터입니다.",
         "유저의 요구사항을 체계적으로 분해하고, 전문 에이전트에게 적절한 시점에 발언권을 부여하세요.",
@@ -476,6 +495,7 @@
       "// debate_stance": "디베이트 전략에서의 진영 (proponent | critic | neutral)",
       "debate_stance": "proponent",
       "allowed_mcp_servers": ["filesystem", "memory", "fetch"],
+      "allowed_skills": ["mermaid-diagrams"],
       "system_prompt": [
         "당신은 수석 소프트웨어 아키텍트입니다.",
         "시스템 아키텍처 설계, 모듈 분리, 기술 스택 선정, 데이터 흐름 정의 및 Mermaid 다이어그램 작성을 전담합니다.",

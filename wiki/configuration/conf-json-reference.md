@@ -21,7 +21,9 @@ The configuration file is loaded, validated, and normalized by [app/config.py](f
     "<key>": {
       "sequential_thinking": { }
     }
-  }
+  },
+  "tool_security": { },
+  "skills": { }
 }
 ```
 
@@ -33,6 +35,8 @@ The configuration file is loaded, validated, and normalized by [app/config.py](f
 | `mcp_servers.<name>` | External/local MCP server processes (stdio) |
 | `agents.<key>` | Specialist agent definitions (override `llm`) |
 | `agents.<key>.sequential_thinking` | Optional per-agent reasoning overrides |
+| `tool_security` | Allow / ask / deny for MCP tool calls |
+| `skills` | Where skill folders live and which are turned off |
 
 ### 1.1. Comments
 
@@ -157,6 +161,7 @@ Configures specialist agents in the agent pool.
 | `temperature` | `float` | Inherited | Custom sampling temperature override. |
 | `max_tokens` | `int` | Inherited | Token budget override. |
 | `allowed_mcp_servers` | `list[str]` | `[]` | List of MCP server keys this agent is authorized to call. |
+| `allowed_skills` | `list[str]` | `[]` | Skill names (folders under `skills.dir`) this agent may load. Frozen into a started conversation like `allowed_mcp_servers`; the skills themselves stay live. See [Skills](../agents/skills.md). |
 | `debate_priority` | `int` | `100` | Speaking order within a round; lower speaks first. Ties keep `conf.json` order, so leaving every agent at the default speaks in file order. Rewritten as `10, 20, 30…` when cards are dragged in the roster. |
 | `debate_stance` | `str` | `"neutral"` | `"proponent"` / `"critic"` / `"neutral"`. Read only by the adversarial strategy, which alternates the two sides. If no agent declares a side, that strategy degrades to a single priority-ordered pass. |
 | `system_prompt` | `str \| list[str]` | `""` | Base persona instruction and behavioral guidelines. An array is joined with newlines. |
@@ -223,6 +228,18 @@ error lists all of them.
 > Per-agent security is **not** under `agents.<key>`: agent settings freeze into each conversation's
 > snapshot, and security must stay live. MCP servers no longer inherit MADO's secret environment
 > variables; declare a secret a server needs in its `env` block.
+
+### 2.7. `skills` Object
+
+Skill folders are the skills (`<dir>/<name>/SKILL.md`); this object only says where they are and which
+are off. Both apply to started conversations from their next speech. Full design: [Skills](../agents/skills.md).
+
+| Key | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `dir` | `str` | `"skills"` | Skills folder. Relative paths resolve against the project root. The source update package replaces the default `skills/` wholesale — point elsewhere to keep your own. |
+| `disabled` | `list[str]` | `[]` | Skills turned off. Anything not listed is on. Written by the roster's skill switches. |
+
+`mcp_servers.skills` is rejected: `skills__` is the prefix of the built-in skill tools.
 
 ---
 

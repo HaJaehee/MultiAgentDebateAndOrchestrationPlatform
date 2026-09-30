@@ -5,7 +5,7 @@ it a different place in the round, or removing it meant opening the file in an e
 the app. The roster panel now performs all of it in place, writing through to `conf.json` so the
 change survives the next boot.
 
-Five operations share one surface and **one lock**:
+Six operations share one surface and **one lock**:
 
 | Operation | Control | Value written |
 | :--- | :--- | :--- |
@@ -14,6 +14,7 @@ Five operations share one surface and **one lock**:
 | Debate stance | the card's **⋮ menu** | `debate_stance` |
 | Disable / delete | the card's **⋮ menu** | `enabled` / section removal |
 | Tool assignment | the card's **도구 N** button | `allowed_mcp_servers` |
+| Skill assignment | the card's **스킬 N** button | `allowed_skills` |
 
 A sixth `conf.json` edit — the card's colour and icon — rides along but is not part of that lock. It
 is set in the **에이전트 추가** dialog (where it is simply part of adding an agent) and in the persona
@@ -32,14 +33,14 @@ conversation is unaffected, because it froze its own copy of both values at lock
 
 ## 1. The lock: who may edit, and when
 
-All five are gated by
+All six are gated by
 [`_agent_admin_lock_reason()`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster.py). Opening
 only some of them would produce the worst outcome — a user changes something and cannot tell why the
 conversation ignored it.
 
 | State | Editing |
 | :--- | :--- |
-| This conversation has not started, and no debate is running anywhere | 🟢 all five allowed |
+| This conversation has not started, and no debate is running anywhere | 🟢 all six allowed |
 | This conversation already has a first message | 🔒 locked — its agent configuration is frozen |
 | Any conversation is mid-debate | 🔒 locked — the agent pool is process-wide |
 
@@ -214,8 +215,12 @@ graph LR
     C --> S[save active_agents / known_agents to this session]
 ```
 
-MCP servers are **not** restarted — none of these five operations changes a server's command line,
+MCP servers are **not** restarted — none of these six operations changes a server's command line,
 and restarting them costs seconds for nothing. A broken `conf.json` leaves the running configuration
 untouched: `get_config()` swaps the global only after a successful parse.
 
 The **conf.json 다시 읽기** button reaches the same end state for edits made in an external editor.
+
+Turning a **skill** on or off is not one of the six: it lives in the roster panel's 스킬 section, is not
+locked during a debate, and reloads nothing but the config — the next speech reads the skills folder
+anyway ([Skills §6](skills.md#6-ui)).

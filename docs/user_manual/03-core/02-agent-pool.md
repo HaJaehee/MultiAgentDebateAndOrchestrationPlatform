@@ -20,7 +20,7 @@ Agent.from_config(key, cfg)   # AgentConfig + 외형 스타일 → Agent 인스�
 | LLM 연결 | `model`, `api_key`, `api_base`, `api_version`, `provider` |
 | 샘플링 파라미터 | `temperature`, `top_p`, `max_tokens`, `max_context_window` |
 | 네트워크 제어 | `timeout`, `num_retries`, `drop_params`, `extra_headers`, `extra_body` |
-| 도구 권한 | `allowed_mcp_servers`, `max_tool_iterations` |
+| 도구 권한 | `allowed_mcp_servers`, `allowed_skills`, `max_tool_iterations` |
 | 토론 제어 | `debate_priority`, `debate_stance` |
 | 추론 확장 | `sequential_thinking` |
 | 외형 (설정 원본) | `card_color`, `icon` |

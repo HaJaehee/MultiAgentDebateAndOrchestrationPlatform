@@ -13,6 +13,7 @@
     ├── mcp_servers/         포크한 MCP 서버 원본 (memory: 대화별 지식 그래프)
     ├── mcp_sandbox/         AirgappedPySandbox (Python 코드 실행 MCP 서버)
     ├── trial_templates/     체험 서버의 공식 템플릿 (trial.templates_dir)
+    ├── skills/              기본 스킬 (skills.dir)
     ├── docs/                사용 설명서 (마크다운 원본 + 렌더링된 HTML)
     ├── workspace/           에이전트 공용 작업 공간
     └── run_mado.bat|ps1  실행 스크립트 (MCP 경로 환경변수 자동 주입)
@@ -157,6 +158,14 @@ def stage_sources() -> None:
         if staging_templates.exists():
             shutil.rmtree(staging_templates)
         shutil.copytree(ROOT_DIR / "trial_templates", staging_templates)
+
+    # 기본 스킬. conf.json 의 skills.dir 가 기본으로 가리키는 폴더입니다.
+    staging_skills = STAGING_DIR / "skills"
+    if (ROOT_DIR / "skills").is_dir():
+        if staging_skills.exists():
+            shutil.rmtree(staging_skills)
+        shutil.copytree(ROOT_DIR / "skills", staging_skills,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
     # open_browser.py 는 실행 스크립트가 백그라운드로 띄웁니다 (서버가 응답하면 브라우저 열기).
     # LICENSE.md 는 배포물과 반드시 함께 다녀야 합니다 (LGPL-3.0 제4조 고지 의무).

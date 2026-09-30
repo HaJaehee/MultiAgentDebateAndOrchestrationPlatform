@@ -6,6 +6,21 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## Unreleased
+
+**Skills: instructions an agent loads when the work calls for them.** A skill is a folder under `skills/`
+with a `SKILL.md` (front matter `name`, `description`, then the instructions) and optional supporting files.
+Agents see only each skill's one-line description, inside the new `skills__load_skill` tool; when a task
+matches they load the body, and read supporting files with `skills__read_skill_file`. Which agent may use
+which skill is `agents.<key>.allowed_skills` (card button **스킬 N**, frozen with the agent like tool
+assignment). The skills themselves are **live**: edits, new folders and the on/off switch (`skills.disabled`,
+roster panel **스킬** section) reach running conversations from their next speech. Skill tools are host
+tools, not MCP, and skip the tool gate; `mcp_servers.skills` is reserved. Ships with a `mermaid-diagrams`
+skill matching MADO's Mermaid checker. `GET /api/skills` lists them.
+→ [Skills](agents/skills.md) · [conf.json Reference §2.7](configuration/conf-json-reference.md) · ADR-026
+
+---
+
 ## v1.0
 
 **Interrupted turns can be continued, finished or discarded.** Every turn is recorded (`turns`) in the same

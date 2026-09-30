@@ -82,6 +82,11 @@ If the gate itself raises, the call is **denied** (`gate-error`). If there is no
 
 ## 4. From Calls to Actions
 
+Skill tools (`skills__load_skill`, `skills__read_skill_file`) never reach this pipeline: they are host tools
+that read the operator's skill files inside the install folder, and who may use them is decided by
+`allowed_skills` and the skill's on/off switch. Their records carry no verdict. See
+[Skills §2](../agents/skills.md#2-host-tools-not-an-mcp-server).
+
 `profile_call` turns a call into actions: `read(path)`, `write(path)`, `delete(path)`, `exec(code)`,
 `net(host)`, plus the tool itself (`mcp(server/tool)`).
 
