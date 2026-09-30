@@ -806,11 +806,11 @@ class AgentRosterControl:
                     ui.avatar(agent.avatar, color=agent.color, text_color="white", size="xs").classes(
                         "flex-shrink-0"
                     )
-                    ui.label(display_name).classes("text-xs font-bold truncate min-w-0")
+                    ui.label(display_name).classes("text-[13px] font-bold truncate min-w-0")
                 ui.tooltip(
                     f"{display_name} — {display_role}\r\nmodel: {agent.model}"
                     + ("\r\n끌어서 발언 순서를 바꿉니다" if reorderable else "")
-                ).classes("whitespace-pre-line text-[10px]")
+                ).classes("whitespace-pre-line text-[11px]")
             return True
 
         with card:
@@ -833,11 +833,11 @@ class AgentRosterControl:
                             # 좁아지면 줄어드는 것은 이름입니다. 뱃지는 짧고,
                             # 잘리면 무슨 뱃지인지 알 수 없게 됩니다.
                             ui.label(display_name).classes(
-                                "text-xs font-bold truncate min-w-0"
+                                "text-[13px] font-bold truncate min-w-0"
                             )
                             if is_customized:
-                                ui.badge("수정됨", color="indigo-7").props("dense text-[8px]").classes(
-                                    "flex-shrink-0"
+                                ui.badge("수정됨", color="indigo-7").props("dense").classes(
+                                    "flex-shrink-0 text-[13px]"
                                 )
                             # conf.json 에서는 사라졌지만 이 대화의 스냅샷에는 남아
                             # 있는 에이전트. 계속 발언하므로 카드에도 나와야 합니다.
@@ -845,20 +845,20 @@ class AgentRosterControl:
                                 ui.badge(
                                     STANCE_LABELS[agent.debate_stance],
                                     color=STANCE_COLORS[agent.debate_stance],
-                                    ).props("dense text-[8px]").classes("flex-shrink-0").tooltip(
+                                    ).props("dense").classes("flex-shrink-0 text-[13px]").tooltip(
                                     "디베이트 전략에서의 진영"
                                 )
                             if self.personas_locked and self.agent_pool.get(agent.key) is None:
                                 ui.badge("이 대화 전용", color="amber-8").props(
-                                    "dense text-[8px]"
-                                ).classes("flex-shrink-0").tooltip(
+                                    "dense"
+                                ).classes("flex-shrink-0 text-[13px]").tooltip(
                                     "conf.json에서는 삭제되었으나, 본 세션은 시작 시점의 "
                                     "구성을 계속 유지합니다."
                                 )
-                        ui.label(display_role).classes("text-[9px] text-slate-400 truncate w-full")
+                        ui.label(display_role).classes("text-[10px] text-slate-400 truncate w-full")
 
                 if is_orchestrator:
-                    ui.badge("필수", color="indigo-9").props("dense text-[9px]")
+                    ui.badge("필수", color="indigo-9").props("dense").classes("text-[13px]")
                 else:
                     with ui.row().classes("items-center gap-0 no-wrap flex-shrink-0"):
                         cb = ui.checkbox(
@@ -891,7 +891,7 @@ class AgentRosterControl:
                             )
                             with admin_btn, ui.menu().props("dark").classes("bg-slate-800"):
                                 ui.label("디베이트 진영").classes(
-                                    "px-4 pt-2 pb-1 text-[10px] font-bold text-slate-500"
+                                    "px-4 pt-2 pb-1 text-[11px] font-bold text-slate-500"
                                 )
                                 for stance in DEBATE_STANCES:
                                     chosen = agent.debate_stance == stance
@@ -900,27 +900,27 @@ class AgentRosterControl:
                                         on_click=lambda k=agent.key, s=stance:
                                             self._on_stance_change(k, s),
                                     ).classes(
-                                        "text-xs " + ("text-indigo-300" if chosen else "")
+                                        "text-[13px] " + ("text-indigo-300" if chosen else "")
                                     )
                                 ui.separator().classes("bg-slate-700")
                                 ui.menu_item(
                                     "비활성화 (설정 유지)",
                                     on_click=lambda k=agent.key: self._on_agent_disable(k),
-                                ).classes("text-xs")
+                                ).classes("text-[13px]")
                                 ui.menu_item(
                                     "삭제",
                                     on_click=lambda k=agent.key: self._open_agent_delete_dialog(k),
-                                ).classes("text-xs text-rose-300")
+                                ).classes("text-[13px] text-rose-300")
 
             # Model / endpoint / sequential-thinking summary (from conf.json)
             with ui.row().classes("w-full items-center gap-1 mt-1 no-wrap"):
-                ui.icon("smart_toy", size="10px").classes("text-slate-500")
-                ui.label(agent.model).classes("text-[9px] text-slate-400 truncate max-w-[120px]")
+                ui.icon("smart_toy", size="11px").classes("text-slate-500")
+                ui.label(agent.model).classes("text-[10px] text-slate-400 truncate max-w-[120px]")
                 if agent.sequential_thinking.enabled:
-                    ui.badge(f"ST·{agent.sequential_thinking.mode}", color="teal-9").props("dense text-[8px]")
+                    ui.badge(f"ST·{agent.sequential_thinking.mode}", color="teal-9").props("dense").classes("text-[13px]")
                 if not agent.is_live:
                     # 엔드포인트가 없으면 발언 차례에 "연결 끊김" 으로 기록됩니다.
-                    ui.badge("미설정", color="red-9").props("dense text-[8px]")
+                    ui.badge("미설정", color="red-9").props("dense").classes("text-[13px]")
 
             # 이 에이전트가 쓸 수 있는 MCP 서버. 어느 도구를 주느냐가 발언의 질을
             # 좌우하는데, 지금까지는 conf.json 을 직접 고치는 수밖에 없었습니다.
@@ -932,10 +932,10 @@ class AgentRosterControl:
                     icon="handyman",
                     on_click=lambda _, k=agent.key: self._open_agent_tools_dialog(k),
                 ).props("flat dense no-caps stack size=sm color=teal-4").classes(
-                    "text-[10px] flex-shrink-0"
-                )
+                    "flex-shrink-0"
+                ).style("font-size: 11px")  # size=sm 이 글자 크기를 인라인(10px)으로 박아 클래스로는 못 바꿉니다
                 ui.label(", ".join(allowed) or "없음").classes(
-                    "text-[9px] text-slate-500 truncate"
+                    "text-[10px] text-slate-500 truncate"
                 )
                 tools_reason = self._agent_admin_lock_reason()
                 if tools_reason:
@@ -953,10 +953,10 @@ class AgentRosterControl:
                     icon="auto_stories",
                     on_click=lambda _, k=agent.key: self._open_agent_skills_dialog(k),
                 ).props("flat dense no-caps stack size=sm color=sky-4").classes(
-                    "text-[10px] flex-shrink-0"
-                )
+                    "flex-shrink-0"
+                ).style("font-size: 11px")  # size=sm 이 글자 크기를 인라인(10px)으로 박아 클래스로는 못 바꿉니다
                 ui.label(", ".join(skills) or "없음").classes(
-                    "text-[9px] text-slate-500 truncate"
+                    "text-[10px] text-slate-500 truncate"
                 )
                 if tools_reason:
                     skills_button.disable()
@@ -972,7 +972,7 @@ class AgentRosterControl:
                 f"{f'{agent.sequential_thinking.mode} (max {agent.sequential_thinking.max_steps} steps)' if agent.sequential_thinking.enabled else 'disabled'}\r\n"
                 f"mcp: {', '.join(agent.allowed_mcp_servers) or '-'}\r\n"
                 f"skills: {', '.join(agent.allowed_skills) or '-'}"
-            ).classes("whitespace-pre-line text-[10px]")
+            ).classes("whitespace-pre-line text-[11px]")
         return True
 
     def _open_persona_editor(self) -> None:
@@ -1053,7 +1053,7 @@ class AgentRosterControl:
 
         with self.mcp_row:
             if not configured:
-                ui.label("conf.json 에 등록된 MCP 서버가 없습니다.").classes("text-[10px] text-slate-500")
+                ui.label("conf.json 에 등록된 MCP 서버가 없습니다.").classes("text-[11px] text-slate-500")
             for name, server_cfg in configured.items():
                 info = status.get(name)
 
@@ -1088,10 +1088,10 @@ class AgentRosterControl:
                 ):
                     # 툴팁은 상태 부분에만 답니다. 스위치 위에서까지 뜨면 조작을 가립니다.
                     with ui.element("div").classes("flex items-center gap-1"):
-                        ui.icon(icon, size="12px").classes(icon_cls)
-                        ui.label(name).classes("text-[10px] font-semibold text-slate-200")
-                        ui.badge(detail, color=color).props("dense")
-                        ui.tooltip(tip).classes("whitespace-pre-line text-[10px]")
+                        ui.icon(icon, size="13px").classes(icon_cls)
+                        ui.label(name).classes("text-[11px] font-semibold text-slate-200")
+                        ui.badge(detail, color=color).props("dense").classes("text-[13px]")
+                        ui.tooltip(tip).classes("whitespace-pre-line text-[11px]")
 
                     toggle = ui.switch(
                         value=server_cfg.enabled,
@@ -2158,39 +2158,39 @@ class AgentRosterControl:
                 "이 에이전트가 발언 중 호출할 수 있는 MCP 서버입니다. conf.json 에 저장되어 "
                 "아직 시작하지 않은 대화와 앞으로 만드는 대화에 적용됩니다. 이미 시작한 "
                 "대화는 그때 굳은 도구 권한을 그대로 씁니다."
-            ).classes("text-[11px] text-amber-400 mb-2 leading-snug")
+            ).classes("text-[12px] text-amber-400 mb-2 leading-snug")
 
             if not configured and not orphans:
-                ui.label("conf.json 에 등록된 MCP 서버가 없습니다.").classes("text-xs text-slate-400")
+                ui.label("conf.json 에 등록된 MCP 서버가 없습니다.").classes("text-[13px] text-slate-400")
 
             with ui.column().classes("w-full gap-1 max-h-[46vh] overflow-y-auto"):
                 for name, server_cfg in configured.items():
                     info = status.get(name)
                     with ui.row().classes("w-full items-center gap-2 no-wrap"):
                         boxes[name] = ui.checkbox(value=name in allowed).props("dense dark color=indigo-4")
-                        ui.label(name).classes("text-xs font-semibold text-slate-200")
+                        ui.label(name).classes("text-[13px] font-semibold text-slate-200")
                         if not server_cfg.enabled:
-                            ui.badge("꺼짐", color="grey-8").props("dense text-[9px]")
+                            ui.badge("꺼짐", color="grey-8").props("dense").classes("text-[13px]")
                             ui.label("서버가 꺼져 있어 지금은 도구가 제공되지 않습니다").classes(
-                                "text-[10px] text-slate-500 truncate"
+                                "text-[11px] text-slate-500 truncate"
                             )
                         elif info and info["connected"]:
-                            ui.badge(f"도구 {info['tool_count']}", color="green-8").props("dense text-[9px]")
+                            ui.badge(f"도구 {info['tool_count']}", color="green-8").props("dense").classes("text-[13px]")
                         else:
-                            ui.badge("연결 안 됨", color="red-9").props("dense text-[9px]")
+                            ui.badge("연결 안 됨", color="red-9").props("dense").classes("text-[13px]")
 
                 for name in orphans:
                     with ui.row().classes("w-full items-center gap-2 no-wrap"):
                         boxes[name] = ui.checkbox(value=True).props("dense dark color=amber-6")
-                        ui.label(name).classes("text-xs font-semibold text-amber-300")
-                        ui.badge("설정에 없음", color="amber-9").props("dense text-[9px]")
+                        ui.label(name).classes("text-[13px] font-semibold text-amber-300")
+                        ui.badge("설정에 없음", color="amber-9").props("dense").classes("text-[13px]")
 
             st = agent.sequential_thinking
             if st.enabled and st.mode == "mcp":
                 ui.label(
                     f"참고: 이 에이전트는 sequential_thinking 을 mcp 모드로 쓰므로 "
                     f"'{st.mcp_server}' 서버가 여기 선택과 무관하게 자동으로 포함됩니다."
-                ).classes("text-[10px] text-slate-500 mt-2 leading-snug")
+                ).classes("text-[11px] text-slate-500 mt-2 leading-snug")
 
             async def do_save() -> None:
                 servers = [name for name, box in boxes.items() if box.value]
@@ -2248,12 +2248,12 @@ class AgentRosterControl:
                 "이 에이전트가 발언 중 불러 사용할 수 있는 스킬입니다. conf.json에 저장되어 아직 "
                 "시작되지 않은 세션과 향후 생성할 세션에 적용됩니다. 이미 시작된 세션은 시작 시점의 "
                 "할당 구성을 그대로 유지합니다. 스킬의 본문 내용과 활성화/비활성화 상태는 모든 세션에 즉시 적용됩니다."
-            ).classes("text-[11px] text-amber-400 mb-2 leading-snug")
+            ).classes("text-[12px] text-amber-400 mb-2 leading-snug")
 
             if not skills and not orphans:
                 ui.label(
                     f"스킬 폴더({root})에 등록된 스킬이 없습니다. `<이름>/SKILL.md` 폴더를 추가하면 목록에 표시됩니다."
-                ).classes("text-xs text-slate-400")
+                ).classes("text-[13px] text-slate-400")
 
             with ui.column().classes("w-full gap-1 max-h-[46vh] overflow-y-auto"):
                 for skill in skills:
@@ -2263,18 +2263,18 @@ class AgentRosterControl:
                         )
                         with ui.column().classes("gap-0 min-w-0"):
                             with ui.row().classes("items-center gap-1 no-wrap"):
-                                ui.label(skill.name).classes("text-xs font-semibold text-slate-200")
-                                self._skill_state_badge(skill)
+                                ui.label(skill.name).classes("text-[13px] font-semibold text-slate-200")
+                                self._skill_state_badge(skill, size="text-[13px]")
                             ui.label(skill.problem or skill.description).classes(
-                                "text-[10px] leading-snug "
+                                "text-[11px] leading-snug "
                                 + ("text-rose-300" if skill.problem else "text-slate-400")
                             )
 
                 for name in orphans:
                     with ui.row().classes("w-full items-center gap-2 no-wrap"):
                         boxes[name] = ui.checkbox(value=True).props("dense dark color=amber-6")
-                        ui.label(name).classes("text-xs font-semibold text-amber-300")
-                        ui.badge("폴더에 없음", color="amber-9").props("dense text-[9px]")
+                        ui.label(name).classes("text-[13px] font-semibold text-amber-300")
+                        ui.badge("폴더에 없음", color="amber-9").props("dense").classes("text-[13px]")
 
             async def do_save() -> None:
                 chosen = [name for name, box in boxes.items() if box.value]
@@ -2298,15 +2298,24 @@ class AgentRosterControl:
     # ------------------------------------------------------------------ 스킬 켜기·끄기
 
     @staticmethod
-    def _skill_state_badge(skill: Skill) -> None:
-        """스킬 이름 옆의 상태 표시입니다 — 오류 · 꺼짐, 스크립트 포함 여부."""
+    def _skill_state_badge(skill: Skill, size: str = "") -> None:
+        """스킬 이름 옆의 상태 표시입니다 — 오류 · 꺼짐, 스크립트 포함 여부.
+
+        `size` 는 글자 크기 클래스(`text-[13px]` 등)입니다. 비우면 Quasar 배지의 기본 크기(12px)를
+        씁니다. 크기는 props 가 아니라 classes 로 주어야 먹습니다.
+        """
+        def badge(text: str, color: str) -> None:
+            element = ui.badge(text, color=color).props("dense")
+            if size:
+                element.classes(size)
+
         if skill.problem:
-            ui.badge("오류", color="red-9").props("dense text-[9px]")
+            badge("오류", "red-9")
         elif not skill.enabled:
-            ui.badge("꺼짐", color="grey-8").props("dense text-[9px]")
+            badge("꺼짐", "grey-8")
         if skill.scripts:
             # 실행 도구(sandbox의 run_python_file)를 보유한 에이전트만 스크립트를 실행할 수 있습니다.
-            ui.badge("스크립트", color="teal-9").props("dense text-[9px]")
+            badge("스크립트", "teal-9")
 
     def refresh_skills(self, force: bool = False) -> None:
         """스킬 칩을 다시 렌더링합니다. 주기적 타이머 호출 시에는 변경 사항이 있을 때만 렌더링합니다."""
@@ -2331,7 +2340,7 @@ class AgentRosterControl:
             if not skills:
                 ui.label(
                     f"스킬 폴더({root})에 등록된 스킬이 없습니다. `<이름>/SKILL.md` 폴더를 추가하면 즉시 표시됩니다."
-                ).classes("text-[10px] text-slate-500")
+                ).classes("text-[11px] text-slate-500")
             for skill in skills:
                 if skill.problem:
                     icon, icon_cls = "error", "text-rose-400"
@@ -2357,11 +2366,11 @@ class AgentRosterControl:
                 ):
                     # 툴팁은 상태 부분에만 답니다. 스위치 위에서까지 뜨면 조작을 가립니다.
                     with ui.element("div").classes("flex items-center gap-1"):
-                        ui.icon(icon, size="12px").classes(icon_cls)
-                        ui.label(skill.name).classes("text-[10px] font-semibold text-slate-200")
-                        self._skill_state_badge(skill)
+                        ui.icon(icon, size="13px").classes(icon_cls)
+                        ui.label(skill.name).classes("text-[11px] font-semibold text-slate-200")
+                        self._skill_state_badge(skill, size="text-[13px]")
                         ui.tooltip("\r\n".join(tip_lines)).classes(
-                            "whitespace-pre-line text-[10px] max-w-[360px]"
+                            "whitespace-pre-line text-[11px] max-w-[360px]"
                         )
                     ui.switch(
                         value=skill.enabled,
