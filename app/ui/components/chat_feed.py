@@ -763,6 +763,9 @@ class ChatFeed:
             self.unfinished_label.set_text(unfinished_turn_text(info))
         if self.unfinished_continue_button is not None:
             self.unfinished_continue_button.set_visibility(bool(info.get("can_continue")))
+        if self.unfinished_discard_button is not None:
+            # 정지·긴급 종료처럼, 받을 곳이 없는 버튼은 보이지 않습니다 (체험 화면은 버리기를 주지 않습니다).
+            self.unfinished_discard_button.set_visibility(self.on_discard_turn is not None)
         if self.unfinished_finish_button is not None:
             if info.get("can_finish"):
                 self.unfinished_finish_button.enable()

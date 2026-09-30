@@ -22,7 +22,36 @@
     "host": "${APP_HOST:-${HOST:-127.0.0.1}}",
     "port": "${APP_PORT:-${PORT:-8000}}",
     "db_url": "${APP_DB_URL:-sqlite+aiosqlite:///./multiagent.db}",
-    "debug": true
+    "debug": true,
+    "// llm_concurrency": [
+      "서버 전체에서 LLM 에 동시에 보내는 요청의 상한. 0 이면 제한하지 않습니다.",
+      "넘는 요청은 버리지 않고 온 순서대로 기다리며, 체험 화면은 '앞에 몇 건' 을 보여 줍니다.",
+      "단일 GPU 런타임이나 여러 사람이 함께 쓰는 체험 서버라면 LLM 서버가 버티는 수로 맞추세요."
+    ],
+    "llm_concurrency": "${APP_LLM_CONCURRENCY:-0}"
+  },
+
+  "// trial": [
+    "체험 서버. 켜면 토큰이 없는 원격 방문자가 /trial 에서 이름과 PIN 으로 들어와",
+    "템플릿(trial_templates/*.json)으로 토론을 돌려 봅니다. 방문자는 자기 대화만 보고,",
+    "참여자에게는 도구가 붙지 않습니다. 주인(루프백·접속 토큰)은 지금처럼 모든 화면을 씁니다.",
+    "운영 화면: /trial/admin (주인만). 방문자를 받으려면 app.host 를 0.0.0.0 으로 여세요.",
+    "  templates_dir   : 공식 템플릿 폴더 (프로젝트 루트 기준)",
+    "  notice          : 모든 체험 화면 아래의 안내",
+    "  pin_min_length  : PIN 최소 길이 (4 이상)",
+    "  max_input_chars : 시작 양식 한 칸의 글자 수 상한",
+    "  max_upload_kb   : 올릴 수 있는 텍스트 파일 크기 상한",
+    "  max_rounds      : 방문자가 고친 템플릿의 토론 횟수 상한"
+  ],
+  "trial": {
+    "enabled": false,
+    "title": "MADO 체험",
+    "templates_dir": "trial_templates",
+    "notice": "운영자가 대화 내용을 볼 수 있습니다. 대외비 문서는 올리지 마세요.",
+    "pin_min_length": 4,
+    "max_input_chars": 30000,
+    "max_upload_kb": 200,
+    "max_rounds": 4
   },
 
   "// llm": [

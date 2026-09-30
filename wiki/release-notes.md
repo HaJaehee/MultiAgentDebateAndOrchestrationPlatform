@@ -14,8 +14,8 @@ commit as its request, and every message and tool call points to it with its rol
 exception is marked failed. Opening such a conversation shows a bar with *이어서 진행* (continue from the
 records), *지금까지로 결론* (synthesize what was said; never consensus) and *버리기* (discard). Rounds,
 nominations, parallel assignments and graph steps are rebuilt from the records; the turn finishes with the
-configuration it started with. The report names the pause inside the total elapsed time.
-→ [Interrupted Turns](orchestration/turn-recovery.md) · ADR-024
+configuration it started with. The report names the pause inside the total elapsed time. Trial visitors get
+continue and finish. → [Interrupted Turns](orchestration/turn-recovery.md) · ADR-024
 
 **A cut speech continues after its last finished tool.** A speech that uses tools saves the tool loop's state
 after it asks for tools and after each result (`speech_drafts`). On continue it resumes from those exact

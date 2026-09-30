@@ -7,6 +7,7 @@ from functools import lru_cache
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 import litellm
 from app.agents.base import Agent
+from app.agents.llm_gate import get_llm_gate
 from app.mcp.manager import MCPManager, get_mcp_manager
 
 logger = logging.getLogger(__name__)
@@ -1696,7 +1697,21 @@ class LLMCaller:
         모델은 같은 호출을 그대로 다시 시도하다 예산만 태웁니다.
 
         스트리밍이 안 되는 엔드포인트면 한 번만 비스트리밍으로 되묻습니다.
+
+        서버 전체의 동시 요청 상한(`app.llm_concurrency`)이 있으면 자리가 날 때까지
+        여기서 기다립니다. 스트리밍이 끝날 때까지 자리를 쥡니다 (`app/agents/llm_gate.py`).
         """
+        async with get_llm_gate().slot():
+            return await self._complete_unthrottled(agent, messages, tools, on_chunk, tool_choice)
+
+    async def _complete_unthrottled(
+        self,
+        agent: Agent,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]],
+        on_chunk: Optional[Callable[[str], Any]],
+        tool_choice: str,
+    ) -> Tuple[Any, str]:
         kwargs = self.build_completion_kwargs(agent, messages, tools, tool_choice)
         streamed_any = False
         try:

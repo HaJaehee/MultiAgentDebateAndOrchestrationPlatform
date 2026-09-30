@@ -21,6 +21,7 @@ from app.agents.llm import (
     memory_search_tool,
     strip_reasoning_trace,
 )
+from app.agents.llm_gate import LLM_HOLDER
 from app.agents.personas import prepare_agents_for_turn
 from app.agents.pool import AgentPool, get_agent_pool
 from app.timestamps import report_completed_line, to_local
@@ -609,13 +610,13 @@ class OrchestratorEngine:
             f"> - 엔드포인트: `{exc.endpoint}`\n"
             f"> - 원인: `{exc.reason}`\n"
             f">\n"
-            f"> 이 자리에 들어갈 내용을 대신 지어내지 않았습니다. "
-            f"엔드포인트를 복구한 뒤 같은 요청을 다시 보내주세요."
+            f"> 이 자리에 들어갈 내용을 임의로 생성하지 않았습니다. "
+            f"엔드포인트를 복구하신 후 같은 요청을 다시 전달해 주십시오."
         )
         if streamed.strip():
             return (
                 f"{streamed.rstrip()}\n\n---\n\n{notice}\n>\n"
-                f"> (위 본문은 연결이 끊기기 전까지 도착한 부분입니다.)"
+                f"> (위 본문은 연결이 끊기기 전까지 수신된 내용입니다.)"
             )
         return notice
 
@@ -635,13 +636,13 @@ class OrchestratorEngine:
             f"> - 모델: `{agent.model}`\n"
             f"> - 오류: `{type(exc).__name__}: {exc}`\n"
             f">\n"
-            f"> 이 자리에 들어갈 내용을 대신 지어내지 않았습니다. "
-            f"토론은 나머지 에이전트로 계속됩니다 (자세한 원인은 서버 로그를 보세요)."
+            f"> 이 자리에 들어갈 내용을 임의로 생성하지 않았습니다. "
+            f"토론은 나머지 에이전트로 계속 진행됩니다 (자세한 원인은 서버 로그를 확인해 주십시오)."
         )
         if streamed.strip():
             return (
                 f"{streamed.rstrip()}\n\n---\n\n{notice}\n>\n"
-                f"> (위 본문은 오류가 나기 전까지 도착한 부분입니다.)"
+                f"> (위 본문은 오류가 발생하기 전까지 수신된 내용입니다.)"
             )
         return notice
 
@@ -1390,19 +1391,25 @@ class OrchestratorEngine:
         긴급 종료였다면 부른 쪽이 턴째로 지웁니다.
         """
         turn_id = str(uuid.uuid4())
+        # 이 턴의 LLM 호출이 어느 대화의 것인지 (서버 전체 동시 요청 상한의 대기열 표시).
+        # 병렬 발언 태스크는 만들어질 때 이 값을 물려받습니다.
+        holder_token = LLM_HOLDER.set(session_id)
         pool = get_runtime_pool()
-        workspace = await self._session_workspace(session_id)
-        await pool.acquire(workspace, holder=session_id)
         try:
-            return await self._run_turn(session_id, user_prompt, workspace, turn_id, on_event, control)
-        except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
-            raise
-        except BaseException as exc:  # noqa: BLE001 - 적고 그대로 올립니다
-            await self._mark_turn_failed(turn_id, exc)
-            raise
+            workspace = await self._session_workspace(session_id)
+            await pool.acquire(workspace, holder=session_id)
+            try:
+                return await self._run_turn(session_id, user_prompt, workspace, turn_id, on_event, control)
+            except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+                raise
+            except BaseException as exc:  # noqa: BLE001 - 적고 그대로 올립니다
+                await self._mark_turn_failed(turn_id, exc)
+                raise
+            finally:
+                self._tool_gates.pop(session_id, None)
+                await pool.release(session_id, workspace)
         finally:
-            self._tool_gates.pop(session_id, None)
-            await pool.release(session_id, workspace)
+            LLM_HOLDER.reset(holder_token)
 
     async def resume_turn(
         self,
@@ -1431,18 +1438,23 @@ class OrchestratorEngine:
                 raise ValueError(f"끊긴 턴이 아닙니다 (상태: {turn.status}).")
             workspace = resolve_workspace_dir((turn.config or {}).get("workspace_dir") or None)
 
+        # 새 턴과 같이, 이어 가는 턴의 LLM 호출도 이 대화의 것으로 대기열에 보입니다.
+        holder_token = LLM_HOLDER.set(session_id)
         pool = get_runtime_pool()
-        await pool.acquire(workspace, holder=session_id)
         try:
-            return await self._resume_turn(session_id, turn_id, mode, workspace, on_event, control)
-        except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
-            raise
-        except BaseException as exc:  # noqa: BLE001 - 적고 그대로 올립니다
-            await self._mark_turn_failed(turn_id, exc)
-            raise
+            await pool.acquire(workspace, holder=session_id)
+            try:
+                return await self._resume_turn(session_id, turn_id, mode, workspace, on_event, control)
+            except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+                raise
+            except BaseException as exc:  # noqa: BLE001 - 적고 그대로 올립니다
+                await self._mark_turn_failed(turn_id, exc)
+                raise
+            finally:
+                self._tool_gates.pop(session_id, None)
+                await pool.release(session_id, workspace)
         finally:
-            self._tool_gates.pop(session_id, None)
-            await pool.release(session_id, workspace)
+            LLM_HOLDER.reset(holder_token)
 
     async def _run_turn(
         self,
@@ -3102,8 +3114,8 @@ class OrchestratorEngine:
         graph_id = (session_model.graph_id or "").strip()
         if not graph_id:
             raise GraphTurnError(
-                "그래프 토론에 쓸 그래프가 없습니다. 로스터의 그래프 선택에서 고르거나 "
-                "'카드 순서로 만들기' 로 만드세요."
+                "그래프 토론에 쓸 그래프가 없습니다. 에이전트 패널의 그래프 선택 메뉴에서 선택하거나 "
+                "'카드 순서로 만들기'로 생성해 주십시오."
             )
         try:
             spec = load_graph(graph_id)

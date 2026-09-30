@@ -264,7 +264,7 @@
                             try {
                                 await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
                                 if (window.Quasar) {
-                                    window.Quasar.Notify.create({ type: 'positive', message: '클립보드에 다이어그램 이미지가 복사되었습니다! (Ctrl+V 로 붙여넣기)', position: 'top' });
+                                    window.Quasar.Notify.create({ type: 'positive', message: '다이어그램 이미지를 클립보드에 복사했습니다. (Ctrl+V로 붙여넣기)', position: 'top' });
                                 }
                                 resolve(true);
                                 return;
@@ -273,7 +273,7 @@
                             }
                         }
                         if (window.Quasar) {
-                            window.Quasar.Notify.create({ type: 'info', message: '이 환경(HTTP/보안제한)에서는 클립보드 이미지 직접 쓰기가 지원되지 않습니다. PNG 다운로드를 사용해주세요.', position: 'top' });
+                            window.Quasar.Notify.create({ type: 'info', message: '이 환경(HTTP 또는 보안 제한)에서는 클립보드 이미지 직접 쓰기가 지원되지 않습니다. PNG 다운로드를 사용해 주십시오.', position: 'top' });
                         }
                         resolve(false);
                     }, 'image/png');
@@ -281,7 +281,7 @@
             } catch (err) {
                 console.error('[MadoMermaid] Copy image error:', err);
                 if (window.Quasar) {
-                    window.Quasar.Notify.create({ type: 'negative', message: '이미지 복사 실패: ' + err.message, position: 'top' });
+                    window.Quasar.Notify.create({ type: 'negative', message: '이미지 복사에 실패했습니다: ' + err.message, position: 'top' });
                 }
                 return false;
             }
@@ -296,7 +296,7 @@
                 if (navigator.clipboard && window.isSecureContext) {
                     navigator.clipboard.writeText(text);
                     if (window.Quasar) {
-                        window.Quasar.Notify.create({ type: 'positive', message: 'SVG 코드가 클립보드에 복사되었습니다!', position: 'top' });
+                        window.Quasar.Notify.create({ type: 'positive', message: 'SVG 코드를 클립보드에 복사했습니다.', position: 'top' });
                     }
                     return true;
                 }
@@ -312,7 +312,7 @@
             try {
                 document.execCommand('copy');
                 if (window.Quasar) {
-                    window.Quasar.Notify.create({ type: 'positive', message: 'SVG 코드가 클립보드에 복사되었습니다!', position: 'top' });
+                    window.Quasar.Notify.create({ type: 'positive', message: 'SVG 코드를 클립보드에 복사했습니다.', position: 'top' });
                 }
                 return true;
             } finally {

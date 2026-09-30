@@ -298,24 +298,24 @@ class TurnRun:
 
         elif etype == "stop_requested":
             self.busy = True
-            self.status_text = "정지 요청됨 — 진행 중인 발언을 마친 뒤 지금까지의 토론으로 합성합니다."
+            self.status_text = "정지가 요청되었습니다 — 진행 중인 발언을 마친 후 지금까지의 토론 내용을 바탕으로 합성합니다."
             self.round_info = "Stopping"
 
         elif etype == "interjection_queued":
             pending = event.get("pending", 0)
             if event.get("deferred"):
                 self.status_text = self._pending_prefix(
-                    f"유저 개입 {pending}건 — 최종 합성 중이라 다음 요청부터 반영됩니다."
+                    f"사용자 개입 {pending}건 — 최종 합성 중이므로 다음 요청부터 반영됩니다."
                 )
             else:
                 self.status_text = self._pending_prefix(
-                    f"유저 개입 {pending}건 대기 — 다음 발언 차례에 반영됩니다."
+                    f"사용자 개입 {pending}건 대기 — 다음 발언 순서에 반영됩니다."
                 )
 
         elif etype == "interjections_deferred":
             count = event.get("count", 0)
             self.status_text = (
-                f"개입 {count}건은 합성 이후에 도착해 기록에만 남았습니다 (다음 요청에 반영)."
+                f"개입 {count}건은 합성 이후에 도착하여 기록에만 반영되었습니다 (다음 요청에 반영됩니다)."
             )
 
         elif etype == "tool_budget_exhausted":
@@ -323,7 +323,7 @@ class TurnRun:
             self.busy = True
             self.status_text = (
                 f"[{event.get('agent_name', '')}] 도구 호출 상한 {event.get('limit', 0)}회를 "
-                f"모두 썼습니다 — 상한을 늘릴지, 지금까지의 관측으로 마무리할지 골라 주세요."
+                f"모두 소진했습니다 — 상한을 늘리실지, 지금까지의 관측 결과로 마무리하실지 선택해 주십시오."
             )
             self.round_info = "Tool limit"
 
@@ -342,11 +342,11 @@ class TurnRun:
                 )
             elif outcome == "timeout":
                 self.status_text = self._pending_prefix(
-                    "도구 상한 확장 요청에 답이 없어, 지금까지의 관측으로 마무리하도록 했습니다."
+                    "도구 상한 확장 요청에 응답이 없어, 지금까지의 관측 결과로 마무리하도록 처리했습니다."
                 )
             else:
                 self.status_text = self._pending_prefix(
-                    "도구를 더 쓰지 않고 지금까지의 관측으로 마무리하도록 했습니다."
+                    "도구를 추가로 사용하지 않고 지금까지의 관측 결과로 마무리하도록 처리했습니다."
                 )
             self.round_info = "Debating"
 
@@ -365,9 +365,9 @@ class TurnRun:
             decision = event.get("decision")
             who, tool = event.get("agent_name", ""), event.get("tool_name", "")
             if str(decision).startswith("allow"):
-                text = f"[{who}] `{tool}` 실행을 허락했습니다."
+                text = f"[{who}] `{tool}` 실행을 승인했습니다."
             elif decision == "timeout":
-                text = f"[{who}] `{tool}` 승인에 답이 없어 실행하지 않았습니다."
+                text = f"[{who}] `{tool}` 승인 응답이 없어 실행하지 않았습니다."
             else:
                 text = f"[{who}] `{tool}` 실행을 거부했습니다."
             self.status_text = self._pending_prefix(text)
@@ -379,7 +379,7 @@ class TurnRun:
             self.busy = True
             self.status_text = (
                 f"[{event.get('agent_name', '')}] 컨텍스트 창이 가득 찼습니다 — "
-                f"한도를 넓힐지, 오래된 기록을 생략하고 진행할지 골라 주세요."
+                f"한도를 확장하실지, 이전 기록을 생략하고 진행하실지 선택해 주십시오."
             )
             self.round_info = "Context full"
 
@@ -390,16 +390,16 @@ class TurnRun:
             granted = event.get("granted", 0)
             if granted:
                 self.status_text = self._pending_prefix(
-                    f"컨텍스트 한도를 {granted:,} 토큰 넓혔습니다 "
-                    f"(총 {event.get('window', 0):,}). 앞선 기록이 그대로 남습니다."
+                    f"컨텍스트 한도를 {granted:,} 토큰 확장했습니다 "
+                    f"(총 {event.get('window', 0):,}). 이전 기록이 그대로 유지됩니다."
                 )
             elif event.get("outcome") == "timeout":
                 self.status_text = self._pending_prefix(
-                    "컨텍스트 확장 요청에 답이 없어, 오래된 기록부터 생략하며 진행합니다."
+                    "컨텍스트 확장 요청에 응답이 없어, 이전 기록부터 생략하며 진행합니다."
                 )
             else:
                 self.status_text = self._pending_prefix(
-                    "컨텍스트를 넓히지 않고 지금까지의 기록으로 마무리하도록 했습니다."
+                    "컨텍스트를 확장하지 않고 지금까지의 기록으로 마무리하도록 처리했습니다."
                 )
             self.round_info = "Debating"
 
@@ -407,7 +407,7 @@ class TurnRun:
             self.busy = True
             self.status_text = (
                 f"[{event.get('agent_name', '')}] 다이어그램 {event.get('broken', 0)}개의 "
-                f"문법 오류를 발견해 다시 그리는 중입니다 "
+                f"문법 오류를 발견하여 재생성하는 중입니다 "
                 f"({event.get('attempt', 1)}/{event.get('max_attempts', 1)}회차)."
             )
             self.round_info = "Fixing diagram"
@@ -415,13 +415,13 @@ class TurnRun:
         elif etype == "mermaid_repair_finished":
             if event.get("resolved"):
                 self.status_text = (
-                    f"다이어그램 문법 오류를 {event.get('attempts', 1)}회 만에 고쳤습니다."
+                    f"다이어그램 문법 오류를 {event.get('attempts', 1)}회 만에 수정했습니다."
                 )
             else:
                 self.status_text = (
-                    f"다이어그램 {event.get('remaining', 0)}개는 {event.get('attempts', 0)}번 "
-                    f"고쳐 봐도 문법 오류가 남았습니다. 원본을 그대로 두었으니 "
-                    f"아티팩트 탭에서 직접 확인하세요."
+                    f"다이어그램 {event.get('remaining', 0)}개는 {event.get('attempts', 0)}회 "
+                    f"수정을 시도했으나 문법 오류가 남아 있습니다. 원본을 보존하였으니 "
+                    f"산출물 탭에서 직접 확인해 주십시오."
                 )
             self.round_info = "Synthesizing"
 
@@ -430,7 +430,7 @@ class TurnRun:
             where = "최종 합성 전사" if event.get("where") == "synthesis" else "발언 맥락"
             self.status_text = self._pending_prefix(
                 f"{where}에서 기록 {event.get('dropped', 0)}건이 컨텍스트 한도로 "
-                f"생략됐습니다 (누적 {self.context_dropped}건)."
+                f"생략되었습니다 (누적 {self.context_dropped}건)."
             )
 
         elif etype == "graph_step_started":
@@ -445,7 +445,7 @@ class TurnRun:
             verdict = "예" if event.get("decision") == "yes" else "아니오"
             self.status_text = self._pending_prefix(
                 f"판정 “{event.get('label', '')}”: {verdict}"
-                + (" (응답을 읽지 못해 기본 갈래)" if event.get("fallback") else "")
+                + (" (응답을 수신하지 못하여 기본 갈래로 진행)" if event.get("fallback") else "")
             )
 
         elif etype == "ledger_update_started":
@@ -462,25 +462,25 @@ class TurnRun:
 
         elif etype == "ledger_update_failed":
             self.status_text = self._pending_prefix(
-                f"결정 장부를 갱신하지 못해 이전 장부를 유지합니다 ({event.get('reason', '')})."
+                f"결정 장부를 갱신하지 못하여 이전 장부를 유지합니다 ({event.get('reason', '')})."
             )
 
         elif etype == "context_summarizing":
             self.busy = True
             self.status_text = self._pending_prefix(
-                f"[{event.get('agent_name', '')}] 컨텍스트가 차서 앞선 기록 "
-                f"{event.get('messages', 0)}건을 요약으로 접는 중..."
+                f"[{event.get('agent_name', '')}] 컨텍스트 용량이 초과되어 이전 기록 "
+                f"{event.get('messages', 0)}건을 요약하는 중..."
             )
 
         elif etype == "context_summarized":
             self.status_text = self._pending_prefix(
-                f"앞선 기록 {event.get('folded', 0)}건을 요약으로 접었습니다 "
-                f"(요약이 덮는 기록 누적 {event.get('total', 0)}건)."
+                f"이전 기록 {event.get('folded', 0)}건을 요약으로 정리했습니다 "
+                f"(요약 대상 누적 {event.get('total', 0)}건)."
             )
 
         elif etype == "context_summary_failed":
             self.status_text = self._pending_prefix(
-                "앞선 기록을 요약하지 못해, 컨텍스트 한도를 넘는 오래된 기록은 생략합니다."
+                "이전 기록을 요약하지 못하여, 컨텍스트 한도를 초과하는 이전 기록은 생략합니다."
             )
 
         elif etype == "artifacts_synthesized":
@@ -499,12 +499,12 @@ class TurnRun:
                 rounds = event.get("rounds_completed", 0)
                 max_rounds = event.get("max_rounds", 0)
                 self.status_text = (
-                    f"유저 요청으로 정지 — {rounds}/{max_rounds} 라운드까지의 토론으로 "
-                    f"합성을 마쳤습니다."
+                    f"사용자 요청으로 정지 — {rounds}/{max_rounds} 라운드까지의 토론으로 "
+                    f"최종 보고서 합성을 완료했습니다."
                 )
                 self.round_info = "Stopped"
             else:
-                self.status_text = "토론 완료 및 최종 아티팩트 합성 완료"
+                self.status_text = "토론 및 최종 산출물 합성을 완료했습니다."
                 self.round_info = "Done"
 
     def _upsert(self, msg: Dict[str, Any]) -> None:

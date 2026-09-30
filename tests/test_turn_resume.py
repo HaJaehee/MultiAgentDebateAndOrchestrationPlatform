@@ -334,6 +334,27 @@ async def test_discarding_an_interrupted_turn_removes_everything_it_left():
     assert messages[0].content == "앞선 요청", "앞선 턴은 그대로"
 
 
+
+@pytest.mark.asyncio
+async def test_deleting_a_session_through_the_orm_takes_its_turns_along():
+    """체험 서버는 세션을 `db.delete(session)` 으로 지웁니다. 턴 행이 남으면 안 됩니다."""
+    from app.database.models import SpeechDraftModel
+
+    sid = await _session(max_rounds=1)
+    state = await _engine(FakeLLMCaller()).run_turn(session_id=sid, user_prompt=REQUEST)
+    async with get_session_factory(DB_URL)() as db:
+        # 끝나지 못한 발언의 초안(ADR-025)도 턴을 따라 지워져야 합니다.
+        db.add(SpeechDraftModel(id=str(uuid.uuid4()), session_id=sid, turn_id=state.turn_id,
+                                agent_key="coder", state={}))
+        await db.commit()
+        await db.delete(await db.get(SessionModel, sid))
+        await db.commit()
+        drafts = (await db.execute(
+            select(SpeechDraftModel).where(SpeechDraftModel.session_id == sid)
+        )).scalars().all()
+    _messages, _tools, turn_rows, _arts = await _rows(sid)
+    assert turn_rows == [] and drafts == []
+
 # =============================================================== 러너
 
 

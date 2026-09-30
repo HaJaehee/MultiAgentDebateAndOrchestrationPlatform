@@ -1,0 +1,78 @@
+{
+  "//": "아이디어 넓히기 — 서로 다른 관점이 동시에 아이디어를 내고 사회자가 추려 줍니다.",
+  "id": "idea-expand",
+  "title": "아이디어 넓히기",
+  "summary": "세 관점이 한꺼번에 아이디어를 내고 사회자가 추립니다",
+  "order": 40,
+  "category": "아이디어",
+  "estimated_minutes": 3,
+  "strategy": "parallel_dispatch",
+  "max_rounds": 1,
+  "result_hint": "아이디어 목록과 추천 세 가지, 각각의 첫 실행 단계",
+  "custom_instructions": [
+    "모든 답은 한국어로 씁니다.",
+    "아이디어는 한 줄 제목과 두세 줄 설명으로 씁니다. 평가는 사회자가 합니다."
+  ],
+  "participants": [
+    {
+      "key": "orchestrator",
+      "name": "사회자",
+      "role": "일을 나누고 추리기",
+      "system_prompt": [
+        "당신은 아이디어 회의의 사회자입니다. 참여자마다 서로 겹치지 않는 방향을 맡깁니다.",
+        "마지막 정리: 1) 나온 아이디어 전체 목록 2) 추천 세 가지와 이유 3) 추천마다 이번 주에 할 수 있는 첫 단계"
+      ]
+    },
+    {
+      "key": "user_view",
+      "name": "사용자 편",
+      "role": "쓰는 사람의 불편에서 출발",
+      "system_prompt": "당신은 이 일을 실제로 겪는 사람의 불편과 바람에서 아이디어를 냅니다."
+    },
+    {
+      "key": "practical",
+      "name": "현실주의자",
+      "role": "적은 비용으로 당장 되는 것",
+      "system_prompt": "당신은 예산과 인력이 거의 없어도 이번 달 안에 해 볼 수 있는 아이디어만 냅니다."
+    },
+    {
+      "key": "wild",
+      "name": "엉뚱한 발상",
+      "role": "다른 업계에서 빌려 오기",
+      "system_prompt": "당신은 전혀 다른 업계나 분야의 사례를 빌려 와 뜻밖의 아이디어를 냅니다."
+    }
+  ],
+  "inputs": [
+    {
+      "id": "topic",
+      "label": "무엇에 대한 아이디어인가요?",
+      "kind": "text",
+      "required": true,
+      "placeholder": "예: 신입 사원 첫 주 적응 프로그램"
+    },
+    {
+      "id": "constraints",
+      "label": "알아 둘 조건",
+      "kind": "long_text",
+      "required": false,
+      "placeholder": "예: 예산 100만 원, 대상 20명, 재택 인원 포함"
+    }
+  ],
+  "prompt": [
+    "다음 주제로 아이디어를 넓혀 주세요.",
+    "",
+    "[주제]",
+    "{topic}",
+    "",
+    "[조건]",
+    "{constraints}"
+  ],
+  "example": {
+    "topic": "부서 간 협업을 늘리는 사내 행사",
+    "constraints": "분기 1회, 참여 인원 약 80명, 업무 시간 안에 2시간 이내"
+  },
+  "followups": [
+    "추천 1번을 한 쪽짜리 기획안으로 만들어 주세요",
+    "더 엉뚱한 아이디어를 다섯 개만 더"
+  ]
+}
