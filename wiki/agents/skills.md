@@ -9,6 +9,9 @@ skills/
   mermaid-diagrams/
     SKILL.md        ← front matter (name, description) + the instructions
     reference.md    ← a supporting file, read only when SKILL.md points to it
+  csv-profile/
+    SKILL.md
+    scripts/profile_csv.py   ← a script, copied into the workspace and run in the sandbox
 ```
 
 The code is [app/agents/skills.py](file:///d:/MultiAgentDebateOrchestration/app/agents/skills.py). The design
@@ -114,7 +117,43 @@ and is given to no agent.
 
 ---
 
-## 5. Configuration
+## 5. Scripts
+
+A skill may carry Python scripts — any `*.py` among its supporting files counts
+([`Skill.scripts`](file:///d:/MultiAgentDebateOrchestration/app/agents/skills.py)). The skills folder is inside
+the install folder, out of reach of every agent tool, so a script cannot be run where it lies. Instead:
+
+1. An agent that holds a run tool — found by name tail `run_python_file`, like the file-writing rules — loads
+   the skill.
+2. The host copies the skill folder into **that speech's workspace** at `.mado/skills/<name>/`
+   ([`stage_skill()`](file:///d:/MultiAgentDebateOrchestration/app/agents/skills.py)) and appends to the loaded
+   body the workspace paths of the scripts and the call to make: `sandbox__run_python_file` with
+   `file_path=".mado/skills/<name>/scripts/…"`.
+3. The agent runs it. That call is an ordinary sandbox call: the tool gate profiles it, scans the code, and
+   allows, asks or denies by mode ([Tool Security §4](../mcp/tool-security.md)). In the `default` mode a clean
+   script inside the workspace runs without asking; `review` asks; `read_only` refuses.
+
+| Rule | Why |
+| :--- | :--- |
+| No run tool, no copy. The body says the agent cannot run the scripts and should hand the run to an agent that can. | Copying exists to run; files nobody can run only clutter the workspace. |
+| Only changed files are copied again (size and mtime differ). A copy an agent edited is restored on the next load. Files not in the source are **not** deleted. | A skill edit reaches the next load; a script's own output next to it survives. |
+| One lock per target folder; the copy runs in a worker thread. | Two speeches in one workspace may load the same skill at once. |
+| At most 500 files / 20 MB per skill. Over that, the body is still returned with a note that the copy failed. | A skill is instructions plus small tools, not a data store. |
+| `.mado/` is hidden from @-mentions and the workspace download. | It is MADO's own area in the workspace (the runtime's temp files live there too). |
+
+**Scripts run without arguments.** `run_python_file` sets `sys.argv` to the file path only and uses the
+workspace as the working directory. A skill script therefore reads its inputs from workspace files and
+writes its outputs there, and SKILL.md says which. The bundled `csv-profile` reads an optional
+`csv-profile.targets.txt` and writes `csv-profile.md`.
+
+**Mind the literal strings.** The code scan turns path-looking string literals into read actions before the
+script runs. A script that merely *names* `.memory-graphs` (say, in a list of folders to skip) is read as
+"reads the conversation knowledge graphs" and is hard-refused. Skip hidden folders by the leading dot
+instead of by name. `csv-profile` has a test that stages it and runs the real gate over it.
+
+---
+
+## 6. Configuration
 
 ```json
 "skills": {
@@ -141,11 +180,11 @@ nomination, task dispatch, ledger, summaries, Mermaid repair) and trial-server p
 
 ---
 
-## 6. UI
+## 7. UI
 
 | Where | What |
 | :--- | :--- |
-| Roster panel, **스킬** section | one chip per skill with an on/off switch; badge `N/M 켜짐`; red chip with the reason for a broken skill; tooltip with the description and folder. Not locked during a debate — nothing restarts. Redrawn when the folder changes (checked every 5 s). |
+| Roster panel, **스킬** section | one chip per skill with an on/off switch; badge `N/M 켜짐`; red chip with the reason for a broken skill; a *스크립트* badge on skills that carry scripts; tooltip with the description and folder. Not locked during a debate — nothing restarts. Redrawn when the folder changes (checked every 5 s). |
 | Agent card, **스킬 N** button | pick the agent's `allowed_skills`. Same lock and same meaning as **도구 N**. Skills that vanished from the folder stay checked with a *폴더에 없음* badge until unchecked. |
 | **에이전트 추가** dialog | a *사용할 스킬* row next to the MCP servers. |
 
@@ -154,10 +193,10 @@ can hand "draw the diagram" to the agent that has the diagram skill.
 
 ---
 
-## 7. HTTP API
+## 8. HTTP API
 
 `GET /api/skills` returns the folder and every skill with `name`, `title`, `description`, `enabled`,
-`usable`, `problem` and `files`. `GET /api/agents` includes each agent's `allowed_skills`.
+`usable`, `problem`, `files` and `scripts`. `GET /api/agents` includes each agent's `allowed_skills`.
 
 ---
 
@@ -165,4 +204,4 @@ can hand "draw the diagram" to the agent that has the diagram skill.
 
 - [Agent Pool & Roles](agent-pool-and-roles.md) · [Roster Editing](roster-editing.md)
 - [Session Personas §6](session-personas.md) — what a started conversation freezes
-- [Tool Security](../mcp/tool-security.md) — why skill reads skip the gate
+- [Tool Security](../mcp/tool-security.md) — why skill reads skip the gate, and how a skill script's run is judged

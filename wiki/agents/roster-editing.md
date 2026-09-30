@@ -223,4 +223,4 @@ The **conf.json 다시 읽기** button reaches the same end state for edits made
 
 Turning a **skill** on or off is not one of the six: it lives in the roster panel's 스킬 section, is not
 locked during a debate, and reloads nothing but the config — the next speech reads the skills folder
-anyway ([Skills §6](skills.md#6-ui)).
+anyway ([Skills §7](skills.md#7-ui)).

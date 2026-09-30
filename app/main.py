@@ -302,6 +302,7 @@ async def list_skills():
                 "usable": s.usable,
                 "problem": s.problem or None,
                 "files": list(s.files),
+                "scripts": list(s.scripts),
             }
             for s in skills
         ],

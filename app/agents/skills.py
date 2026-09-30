@@ -22,6 +22,11 @@
 **실시간입니다.** 스킬의 내용, 폴더의 추가·삭제, 켜기·끄기(`skills.disabled`)는 대화 스냅샷에
 굳히지 않고 발언마다 다시 읽습니다. 굳는 것은 에이전트 설정의 일부인 `allowed_skills` 뿐입니다
 (`allowed_mcp_servers` 와 같습니다).
+
+**스크립트.** 스킬 폴더에 든 Python 스크립트는 에이전트의 도구로 닿지 않는 곳에 있습니다. 그래서
+실행 도구(`run_python_file`)를 가진 에이전트가 스크립트가 든 스킬을 불러오면, 폴더를 그 대화의
+작업 공간 `.mado/skills/<이름>/` 으로 복사하고 실행할 경로를 알려 줍니다 (`stage_skill`). 실행은
+샌드박스 도구라 도구 보안의 코드 검사와 승인을 그대로 거칩니다.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 import threading
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -64,6 +70,15 @@ MAX_READ_BYTES = 256 * 1024
 # 스킬 폴더 안에서 훑지 않는 폴더. 점으로 시작하는 폴더와 파일도 건너뜁니다.
 SKIPPED_DIRS = frozenset({"__pycache__", "node_modules", ".venv", "venv"})
 
+# 스크립트가 든 스킬을 복사해 둘 자리 (작업 공간 기준). `.mado` 는 런타임 전용 폴더라 @언급
+# 목록과 작업 공간 다운로드에 보이지 않습니다 (`app/workspace_files.py` 의 `EXCLUDED_DIRS`).
+STAGING_DIR = PurePosixPath(".mado") / "skills"
+# 스크립트를 실행하는 샌드박스 도구. 서버 키가 무엇이든 이름 꼬리로 찾습니다.
+RUN_TOOL_TAIL = "run_python_file"
+# 한 스킬을 복사할 때의 상한. 스킬은 지침과 작은 도구 묶음이지 데이터 저장소가 아닙니다.
+MAX_STAGE_FILES = 500
+MAX_STAGE_BYTES = 20 * 1024 * 1024
+
 
 class SkillError(ValueError):
     """스킬을 읽을 수 없는 이유. 화면과 모델에게 그대로 보여 줄 한국어 문장입니다."""
@@ -86,6 +101,11 @@ class Skill:
     @property
     def usable(self) -> bool:
         return self.enabled and not self.problem
+
+    @property
+    def scripts(self) -> Tuple[str, ...]:
+        """실행할 수 있는 스크립트 — 부속 파일 중 Python 파일 (샌드박스가 Python 만 돌립니다)."""
+        return tuple(f for f in self.files if f.lower().endswith(".py"))
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +493,9 @@ async def run_skill_tool(
 
     쓸 수 있는지는 **부르는 순간** 다시 봅니다. 목록을 받은 뒤에 스킬이 꺼졌거나 지워졌으면
     그 사실을 결과로 알립니다 — 켜기·끄기가 진행 중인 발언에도 곧바로 걸리게 하기 위해서입니다.
+
+    `workspace` 는 이 발언의 작업 공간, `tools` 는 이 발언이 실제로 든 도구입니다. 스크립트가 든
+    스킬을 불러올 때 복사할 곳과, 실행 도구를 가졌는지를 여기서 봅니다.
     """
     args = arguments if isinstance(arguments, dict) else {}
     requested = str(args.get("skill") or args.get("name") or "").strip()
@@ -485,7 +508,10 @@ async def run_skill_tool(
         return _unavailable_text(requested, skills), "error"
 
     if tool_name.rsplit("__", 1)[-1] == "load_skill":
-        return clip_tool_output(render_skill(skill)), "success"
+        text = render_skill(skill)
+        if skill.scripts:
+            text += "\n\n" + await _scripts_section(skill, workspace, tools)
+        return clip_tool_output(text), "success"
     return await asyncio.to_thread(read_skill_file, skill, str(args.get("path") or ""))
 
 
@@ -557,3 +583,115 @@ def read_skill_file(skill: Skill, raw_path: str) -> Tuple[str, str]:
     if size > MAX_READ_BYTES:
         content += f"\n\n... [파일이 커서 앞 {MAX_READ_BYTES:,}바이트만 읽었습니다 (전체 {size:,}바이트)]"
     return clip_tool_output(content), "success"
+
+
+# ---------------------------------------------------------------------------
+# 스크립트 — 작업 공간에 복사해 샌드박스로 실행
+# ---------------------------------------------------------------------------
+
+
+def _tool_by_tail(tools: Optional[List[Dict[str, Any]]], tail: str) -> Optional[str]:
+    """이 발언이 든 도구 중 이름이 `tail` 로 끝나는 것 (`sandbox__run_python_file` 등)."""
+    for tool in tools or ():
+        name = str((tool.get("function") or {}).get("name") or "")
+        if name == tail or name.endswith(f"__{tail}"):
+            return name
+    return None
+
+
+async def _scripts_section(
+    skill: Skill, workspace: Optional[Path], tools: Optional[List[Dict[str, Any]]],
+) -> str:
+    """스크립트가 든 스킬을 불러올 때 본문 뒤에 붙는 안내. 필요하면 먼저 작업 공간에 복사합니다.
+
+    실행 도구가 없는 에이전트에게는 복사하지 않습니다. 복사하는 까닭이 실행이고, 쓰지도 않을
+    파일로 작업 공간을 어지럽히지 않기 위해서입니다. 복사에 실패해도 본문은 그대로 돌려줍니다 —
+    지침만으로도 쓸모가 있습니다.
+    """
+    run_tool = _tool_by_tail(tools, RUN_TOOL_TAIL)
+    if run_tool is None:
+        return (
+            f"---\n이 스킬에는 스크립트가 있지만, 이 에이전트에게는 스크립트를 실행할 도구"
+            f"(`{RUN_TOOL_TAIL}`)가 없어 작업 공간에 복사하지 않았습니다. 지침과 부속 문서만 쓰거나, "
+            f"실행 도구를 가진 에이전트에게 실행을 맡기세요."
+        )
+    if workspace is None:
+        return "---\n이 발언의 작업 공간을 알 수 없어 스크립트를 복사하지 못했습니다. 지침과 부속 문서만 쓰세요."
+    try:
+        staged = await asyncio.to_thread(stage_skill, skill, Path(workspace))
+    except (SkillError, OSError) as exc:
+        logger.warning(f"Could not stage skill '{skill.name}' into {workspace}: {exc}")
+        return f"---\n스크립트를 작업 공간에 복사하지 못했습니다 ({exc}). 지침과 부속 문서만 쓰세요."
+
+    paths = [(staged / script).as_posix() for script in skill.scripts]
+    lines = [
+        "---",
+        f"스크립트 — 작업 공간의 `{staged.as_posix()}/` 에 복사했습니다. SKILL.md 가 정한 것을 실행하세요:",
+    ]
+    lines += [f"- `{path}`" for path in paths]
+    lines += [
+        "",
+        f"실행: `{run_tool}` 에 `file_path` 로 위 경로를 넘깁니다 (예: `{paths[0]}`). 스크립트는 작업 "
+        f"공간을 작업 폴더(cwd)로 삼아 **인자 없이** 돕니다 — 입력과 출력은 SKILL.md 가 정한 대로 작업 "
+        f"공간의 파일로 주고받습니다. 복사본은 고치지 마세요. 스킬을 부를 때마다 원본으로 되돌아갑니다.",
+    ]
+    return "\n".join(lines)
+
+
+# 복사 대상 폴더 → 잠금. 같은 작업 공간을 쓰는 발언이 동시에 같은 스킬을 불러도 복사가 섞이지
+# 않게 합니다. 복사는 스레드에서 돌므로 threading 잠금입니다.
+_stage_locks: Dict[str, threading.Lock] = {}
+_stage_locks_guard = threading.Lock()
+
+
+def _stage_lock(target: Path) -> threading.Lock:
+    key = os.path.normcase(str(target))
+    with _stage_locks_guard:
+        return _stage_locks.setdefault(key, threading.Lock())
+
+
+def _stage_sources(folder: Path) -> List[Tuple[str, Path, os.stat_result]]:
+    """복사할 파일 (SKILL.md 포함). 부속 파일 목록과 같은 것을 뺍니다. 상한을 넘으면 `SkillError`."""
+    found: List[Tuple[str, Path, os.stat_result]] = []
+    total = 0
+    for dirpath, dirnames, filenames in os.walk(folder):
+        dirnames[:] = sorted(
+            d for d in dirnames if not d.startswith(".") and d not in SKIPPED_DIRS
+        )
+        for filename in sorted(filenames):
+            full = Path(dirpath) / filename
+            if filename.startswith(".") or full.is_symlink():
+                continue
+            stat = full.stat()
+            total += stat.st_size
+            found.append((full.relative_to(folder).as_posix(), full, stat))
+            if len(found) > MAX_STAGE_FILES:
+                raise SkillError(f"스킬의 파일이 너무 많습니다 (상한 {MAX_STAGE_FILES}개)")
+            if total > MAX_STAGE_BYTES:
+                raise SkillError(f"스킬이 너무 큽니다 (상한 {MAX_STAGE_BYTES // (1024 * 1024)}MB)")
+    return found
+
+
+def stage_skill(skill: Skill, workspace: Path) -> PurePosixPath:
+    """스킬 폴더를 작업 공간의 `.mado/skills/<이름>/` 으로 복사하고, 그 자리를 작업 공간 기준
+    상대 경로로 돌려줍니다.
+
+    **바뀐 파일만** 다시 복사합니다 (크기와 수정 시각이 원본과 다를 때). 그래서 스킬을 고치면 다음에
+    불러올 때 새 스크립트가 놓이고, 에이전트가 복사본을 고쳤더라도 원본으로 되돌아갑니다. 원본에
+    없는 파일은 지우지 않습니다 — 스크립트가 자기 폴더에 남긴 결과물일 수 있기 때문입니다.
+    """
+    relative = STAGING_DIR / skill.name
+    target = Path(workspace).joinpath(*relative.parts)
+    sources = _stage_sources(skill.path)
+    with _stage_lock(target):
+        for rel, source, stat in sources:
+            dest = target.joinpath(*rel.split("/"))
+            try:
+                current = dest.stat()
+                if current.st_size == stat.st_size and current.st_mtime_ns == stat.st_mtime_ns:
+                    continue
+            except FileNotFoundError:
+                pass
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, dest)
+    return relative

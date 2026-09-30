@@ -141,6 +141,7 @@ REQUIRED_PACKAGE_PATHS: list[str] = [
     "mcp_servers/memory_scoped/index.mjs",
     "trial_templates/report-review.json",
     "skills/mermaid-diagrams/SKILL.md",
+    "skills/csv-profile/scripts/profile_csv.py",
 ]
 
 # 디렉터리를 복사할 때 건너뛸 것들. 소스 트리 안에 런타임 부스러기가 섞이는 것을 막습니다.

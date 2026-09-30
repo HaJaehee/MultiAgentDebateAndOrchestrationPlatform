@@ -512,3 +512,183 @@ def test_the_orchestrator_sees_live_skill_names_and_tool_less_calls_drop_them(sk
 
     bare = OrchestratorEngine._tool_less(agent)
     assert bare.allowed_skills == [] and agent.allowed_skills == ["a", "b"]
+
+
+# ================================================================ 2단계: 스크립트
+
+
+RUN_TOOL = {"type": "function", "function": {"name": "sandbox__run_python_file", "parameters": {}}}
+
+
+@pytest.mark.asyncio
+async def test_loading_a_script_skill_stages_it_into_the_workspace(skill_root: _SkillFolder, tmp_path: Path):
+    _write_skill(skill_root.root, "csv", files={"scripts/run.py": "print('hi')", "ref.md": "참고"})
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    output, status = await run_skill_tool(
+        _agent("csv"), LOAD_SKILL_TOOL, {"skill": "csv"}, workspace=workspace, tools=[RUN_TOOL],
+    )
+    assert status == "success"
+    staged = workspace / ".mado" / "skills" / "csv"
+    assert (staged / "scripts" / "run.py").read_text(encoding="utf-8") == "print('hi')"
+    assert (staged / "SKILL.md").is_file() and (staged / "ref.md").is_file()
+    assert "`.mado/skills/csv/scripts/run.py`" in output
+    assert "sandbox__run_python_file" in output and "인자 없이" in output
+
+
+def test_staging_recopies_changed_files_and_keeps_outputs(tmp_path: Path):
+    root = tmp_path / "skills"
+    folder = _write_skill(root, "csv", files={"scripts/run.py": "v1"})
+    workspace = tmp_path / "ws"
+    skill = scan_skills(root, [])[0]
+
+    relative = skills_module.stage_skill(skill, workspace)
+    staged = workspace / Path(*relative.parts)
+    copy = staged / "scripts" / "run.py"
+    assert relative.as_posix() == ".mado/skills/csv" and copy.read_text() == "v1"
+
+    # 원본을 고치면 다음 불러오기에 새 내용이 놓입니다.
+    source = folder / "scripts" / "run.py"
+    source.write_text("v2 — 원본이 바뀜", encoding="utf-8")
+    os.utime(source, ns=(source.stat().st_atime_ns, source.stat().st_mtime_ns + 5_000_000_000))
+    skills_module.stage_skill(skill, workspace)
+    assert copy.read_text(encoding="utf-8") == "v2 — 원본이 바뀜"
+
+    # 에이전트가 복사본을 고쳐도 원본으로 되돌아가고, 스크립트가 남긴 결과물은 지우지 않습니다.
+    copy.write_text("조작됨", encoding="utf-8")
+    (staged / "scripts" / "result.txt").write_text("결과", encoding="utf-8")
+    skills_module.stage_skill(skill, workspace)
+    assert copy.read_text(encoding="utf-8") == "v2 — 원본이 바뀜"
+    assert (staged / "scripts" / "result.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_no_copy_without_a_run_tool_or_a_workspace(skill_root: _SkillFolder, tmp_path: Path):
+    _write_skill(skill_root.root, "csv", files={"run.py": "print(1)"})
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    output, status = await run_skill_tool(
+        _agent("csv"), LOAD_SKILL_TOOL, {"skill": "csv"}, workspace=workspace,
+        tools=[{"type": "function", "function": {"name": "filesystem__read_file"}}],
+    )
+    assert status == "success" and "run_python_file" in output and "복사하지 않았습니다" in output
+    assert not (workspace / ".mado").exists(), "쓰지 못할 파일로 작업 공간을 어지럽히지 않습니다"
+
+    output, status = await run_skill_tool(
+        _agent("csv"), LOAD_SKILL_TOOL, {"skill": "csv"}, workspace=None, tools=[RUN_TOOL],
+    )
+    assert status == "success" and "작업 공간을 알 수 없어" in output
+
+
+@pytest.mark.asyncio
+async def test_a_skill_too_big_to_stage_still_gives_its_instructions(
+    skill_root: _SkillFolder, tmp_path: Path, monkeypatch,
+):
+    _write_skill(skill_root.root, "csv", body="지침 본문", files={"run.py": "x" * 200})
+    monkeypatch.setattr(skills_module, "MAX_STAGE_BYTES", 100)
+    output, status = await run_skill_tool(
+        _agent("csv"), LOAD_SKILL_TOOL, {"skill": "csv"}, workspace=tmp_path, tools=[RUN_TOOL],
+    )
+    assert status == "success" and "지침 본문" in output and "복사하지 못했습니다" in output
+
+
+def test_only_python_files_count_as_scripts(tmp_path: Path):
+    root = tmp_path / "skills"
+    _write_skill(root, "a", files={"run.py": "", "tool.sh": "", "Lib/Helper.PY": "", "ref.md": ""})
+    assert scan_skills(root, [])[0].scripts == ("run.py", "Lib/Helper.PY"), "최상위 파일이 먼저 옵니다"
+
+
+@pytest.mark.asyncio
+async def test_the_tool_loop_stages_into_the_speech_workspace(skill_root: _SkillFolder, tmp_path: Path):
+    """발언이 쓰는 런타임의 작업 공간에 복사하고, 그 런타임의 실행 도구 이름을 알려 줍니다."""
+    _write_skill(skill_root.root, "csv", files={"scripts/run.py": "print(1)"})
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    class _Sandbox:
+        def __init__(self):
+            self.workspace = workspace
+
+        def get_openai_tools_for_servers(self, servers):
+            return [RUN_TOOL]
+
+        async def execute_tool(self, *args, **kwargs):
+            raise AssertionError("이 테스트는 스크립트를 실행하지 않습니다")
+
+    call = SimpleNamespace(id="c1", function=SimpleNamespace(
+        name=LOAD_SKILL_TOOL, arguments=json.dumps({"skill": "csv"})))
+    turns = [(_msg("", [call]), "tool_calls"), (_msg("복사된 스크립트를 확인했습니다."), "stop")]
+    sent = []
+
+    async def fake_acompletion(**kwargs):
+        if kwargs.get("stream"):
+            raise RuntimeError("streaming unsupported")
+        sent.append(kwargs)
+        message, finish = turns[len(sent) - 1]
+        return SimpleNamespace(choices=[SimpleNamespace(message=message, finish_reason=finish)])
+
+    with patch("litellm.acompletion", side_effect=fake_acompletion):
+        _text, tool_logs = await LLMCaller(mcp_manager=_Sandbox()).call_agent(
+            _agent("csv"), [{"role": "user", "content": "요약해 주세요"}],
+        )
+    assert (workspace / ".mado" / "skills" / "csv" / "scripts" / "run.py").is_file()
+    assert "sandbox__run_python_file" in tool_logs[0]["output"]
+
+
+# ================================================================ 기본 스킬
+
+
+PROJECT_SKILLS = Path(__file__).resolve().parent.parent / "skills"
+
+
+def test_the_bundled_skills_are_all_usable():
+    found = {s.name: s for s in scan_skills(PROJECT_SKILLS, [])}
+    assert {"mermaid-diagrams", "csv-profile"} <= set(found)
+    assert all(s.usable for s in found.values()), {n: s.problem for n, s in found.items() if s.problem}
+    assert found["csv-profile"].scripts == ("scripts/profile_csv.py",)
+
+
+def test_the_bundled_script_passes_the_tool_gate_once_staged():
+    """복사된 번들 스크립트가 고정 보호에 걸리지 않고, 기본 모드에서는 묻지 않고 돕니다.
+
+    스크립트에 적힌 글자도 검사 대상입니다. 건너뛸 폴더 이름으로 `.memory-graphs` 를 적어 두기만
+    해도 "대화별 지식 그래프를 읽는다" 로 보고 실행이 막힙니다.
+    """
+    from app.config import PROJECT_ROOT
+    from app.mcp.policy import ALLOW, Policy, ToolMeta, evaluate, hard_block, profile_call
+
+    workspace = PROJECT_ROOT / "workspace"
+    source = (PROJECT_SKILLS / "csv-profile" / "scripts" / "profile_csv.py").read_text(encoding="utf-8")
+    meta = ToolMeta(server="sandbox", tool="run_python_file", trusted=True)
+    profile = profile_call(
+        meta, {"file_path": ".mado/skills/csv-profile/scripts/profile_csv.py"}, workspace,
+        read_file=lambda _path: source,
+    )
+    assert hard_block(profile, workspace, PROJECT_ROOT, []) is None
+    assert evaluate(profile, Policy(mode="default")).effect == ALLOW
+
+
+def test_the_bundled_csv_script_runs_like_the_sandbox_runs_it(tmp_path: Path, monkeypatch):
+    workspace = tmp_path / "ws"
+    (workspace / "data").mkdir(parents=True)
+    (workspace / "data" / "sales.csv").write_text(
+        "지역,금액\n서울,\"1,200\"\n부산,300\n대구,\n", encoding="utf-8"
+    )
+    (workspace / "data" / "legacy.csv").write_bytes("이름;나이\n홍길동;31\n김철수;abc\n".encode("cp949"))
+    (workspace / ".mado").mkdir()
+    (workspace / ".mado" / "hidden.csv").write_text("a\n1\n", encoding="utf-8")
+
+    script = PROJECT_SKILLS / "csv-profile" / "scripts" / "profile_csv.py"
+    monkeypatch.chdir(workspace)
+    # 샌드박스의 run_python_file 과 같이: 작업 공간이 cwd, 인자 없음, 스크립트를 exec.
+    exec(compile(script.read_text(encoding="utf-8"), str(script), "exec"),
+         {"__name__": "__main__", "__file__": str(script)})
+
+    report = (workspace / "csv-profile.md").read_text(encoding="utf-8")
+    assert "## data/sales.csv" in report and "## data/legacy.csv" in report
+    assert "hidden.csv" not in report, "점으로 시작하는 폴더는 건너뜁니다"
+    assert "| 금액 | 숫자 | 1 | 최소 300 · 최대 1,200" in report
+    assert "인코딩 `cp949` · 구분자 `;`" in report
+    assert "숫자로 읽히는 값 1개 섞임" in report

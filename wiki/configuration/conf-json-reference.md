@@ -232,7 +232,8 @@ error lists all of them.
 ### 2.7. `skills` Object
 
 Skill folders are the skills (`<dir>/<name>/SKILL.md`); this object only says where they are and which
-are off. Both apply to started conversations from their next speech. Full design: [Skills](../agents/skills.md).
+are off. Both apply to started conversations from their next speech. Full design, including skills that carry
+scripts: [Skills](../agents/skills.md).
 
 | Key | Type | Default | Description |
 | :--- | :--- | :--- | :--- |

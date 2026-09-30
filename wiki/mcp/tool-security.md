@@ -85,7 +85,9 @@ If the gate itself raises, the call is **denied** (`gate-error`). If there is no
 Skill tools (`skills__load_skill`, `skills__read_skill_file`) never reach this pipeline: they are host tools
 that read the operator's skill files inside the install folder, and who may use them is decided by
 `allowed_skills` and the skill's on/off switch. Their records carry no verdict. See
-[Skills §2](../agents/skills.md#2-host-tools-not-an-mcp-server).
+[Skills §2](../agents/skills.md#2-host-tools-not-an-mcp-server). **Running** a skill's script is different:
+the host copies it into the workspace (`.mado/skills/<name>/`) and the agent runs it with
+`run_python_file`, which is judged like any other code ([Skills §5](../agents/skills.md#5-scripts)).
 
 `profile_call` turns a call into actions: `read(path)`, `write(path)`, `delete(path)`, `exec(code)`,
 `net(host)`, plus the tool itself (`mcp(server/tool)`).

@@ -148,7 +148,8 @@ MCP 서버별 연결 상태. `"enabled": false` 로 꺼 둔 서버도 함께 보
       "enabled": true,
       "usable": true,
       "problem": null,
-      "files": ["reference.md"]
+      "files": ["reference.md"],
+      "scripts": []
     }
   ]
 }
@@ -162,6 +163,7 @@ MCP 서버별 연결 상태. `"enabled": false` 로 꺼 둔 서버도 함께 보
 | `usable` | 켜져 있고 깨지지 않았는지. 에이전트에게는 이것이 `true` 인 스킬만 갑니다 |
 | `problem` | 깨진 이유 (머리말 없음, 설명 없음 등). 정상이면 `null` |
 | `files` | SKILL.md 를 뺀 부속 파일 (스킬 폴더 기준 경로) |
+| `scripts` | 그중 스크립트(`*.py`). 실행 도구를 가진 에이전트가 불러오면 작업 공간 `.mado/skills/<이름>/` 에 복사됩니다 |
 
 → [스킬](../03-core/09-skills.md)
 

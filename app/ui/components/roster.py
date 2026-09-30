@@ -2299,11 +2299,14 @@ class AgentRosterControl:
 
     @staticmethod
     def _skill_state_badge(skill: Skill) -> None:
-        """스킬 이름 옆의 상태 표시 (오류 · 꺼짐). 쓸 수 있는 스킬에는 붙이지 않습니다."""
+        """스킬 이름 옆의 표시 — 오류 · 꺼짐, 그리고 스크립트가 들었는지."""
         if skill.problem:
             ui.badge("오류", color="red-9").props("dense text-[9px]")
         elif not skill.enabled:
             ui.badge("꺼짐", color="grey-8").props("dense text-[9px]")
+        if skill.scripts:
+            # 실행 도구(sandbox 의 run_python_file)를 가진 에이전트만 스크립트를 돌릴 수 있습니다.
+            ui.badge("스크립트", color="teal-9").props("dense text-[9px]")
 
     def refresh_skills(self, force: bool = False) -> None:
         """스킬 칩을 다시 그립니다. 타이머가 부를 때는 바뀐 것이 있을 때만 그립니다."""
@@ -2317,7 +2320,7 @@ class AgentRosterControl:
             skills, root = [], None
 
         seen = (str(root), tuple(
-            (s.name, s.enabled, s.problem, s.title, s.description, len(s.files)) for s in skills
+            (s.name, s.enabled, s.problem, s.title, s.description, s.files) for s in skills
         ))
         if not force and seen == self.skills_seen:
             return
@@ -2343,6 +2346,11 @@ class AgentRosterControl:
                 if skill.description:
                     tip_lines.append(skill.description)
                 tip_lines.append(f"부속 파일 {len(skill.files)}개 · {skill.path}")
+                if skill.scripts:
+                    tip_lines.append(
+                        f"스크립트 {len(skill.scripts)}개 — 실행 도구(run_python_file)를 가진 에이전트가 "
+                        f"불러오면 작업 공간 .mado/skills/{skill.name}/ 에 복사되어 실행됩니다."
+                    )
 
                 with ui.element("div").classes(
                     "flex items-center gap-1 pl-2 pr-1 py-1 rounded-md bg-slate-800/70 border border-slate-700"

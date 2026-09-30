@@ -19,6 +19,12 @@ tools, not MCP, and skip the tool gate; `mcp_servers.skills` is reserved. Ships 
 skill matching MADO's Mermaid checker. `GET /api/skills` lists them.
 → [Skills](agents/skills.md) · [conf.json Reference §2.7](configuration/conf-json-reference.md) · ADR-026
 
+**Skills with scripts.** When an agent that holds `run_python_file` loads a skill carrying Python scripts, the
+folder is copied into the conversation's workspace at `.mado/skills/<name>/` (changed files only) and the
+loaded text names the paths to run. The run itself is an ordinary sandbox call, judged by the tool gate. Ships
+with `csv-profile`, which summarises the workspace's CSV files column by column (UTF-8 and CP949).
+→ [Skills §5](agents/skills.md#5-scripts)
+
 ---
 
 ## v1.0
