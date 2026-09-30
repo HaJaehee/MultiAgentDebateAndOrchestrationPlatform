@@ -18,7 +18,7 @@
 | [토론 전략](06-debate-strategies.md) | 발언 순서 제어 및 단계별 프롬프트 주입 메커니즘 | `app/orchestration/strategies.py` |
 | [데이터베이스와 세션 스냅샷](07-persistence.md) | ORM 스키마, 자기완결적 대화 영속화 구조 | `app/database/models.py` |
 | [도구 보안](08-tool-security.md) | 행위 단위 허용·묻기·거부, 승인 카드, 고정 보호 | `app/mcp/policy.py`, `app/orchestration/tool_gate.py` |
-| [스킬](09-skills.md) | 필요할 때 불러 읽는 작업 지침, 에이전트별 할당, 실시간 켜기·끄기 | `app/agents/skills.py` |
+| [스킬](09-skills.md) | 필요 시 동적으로 참조하는 작업 지침 및 스크립트, 에이전트별 할당, 실시간 활성화/비활성화 | `app/agents/skills.py` |
 
 ---
 

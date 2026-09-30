@@ -216,8 +216,8 @@ class AgentRosterControl:
         # 그 변화를 놓쳐, 도구가 다 붙은 뒤에도 "미기동" 이 토론이 끝날 때까지
         # 남습니다.
         self.mcp_status_seen: Optional[tuple] = None
-        # 스킬 칩. 스킬 폴더는 사람이 직접 고치므로 화면이 열려 있는 동안에도 바뀝니다 —
-        # 지문이 달라졌을 때만 다시 그립니다 (`refresh_skills`).
+        # 스킬 칩입니다. 스킬 폴더는 사용자가 직접 수정하므로 화면이 열려 있는 동안에도 변경될 수 있습니다 —
+        # 지문이 달라졌을 때만 다시 렌더링합니다 (`refresh_skills`).
         self.skills_row: Optional[ui.row] = None
         self.skills_badge: Optional[ui.badge] = None
         self.skills_seen: Optional[tuple] = None
@@ -944,8 +944,8 @@ class AgentRosterControl:
                 else:
                     tools_button.tooltip("해당 에이전트가 호출할 수 있는 MCP 서버를 선택합니다.")
 
-            # 이 에이전트가 불러 쓸 수 있는 스킬. 할당은 도구와 같은 규칙(구성 잠금)을 따르고,
-            # 스킬의 켜기·끄기는 설정 패널의 스킬 칩에서 합니다.
+            # 이 에이전트가 불러 사용할 수 있는 스킬입니다. 할당은 도구와 동일한 규칙(구성 잠금)을 따르며,
+            # 스킬의 활성화/비활성화는 설정 패널의 스킬 칩에서 수행합니다.
             skills = agent.allowed_skills or []
             with ui.row().classes("w-full items-center gap-1 no-wrap"):
                 skills_button = ui.button(
@@ -962,7 +962,7 @@ class AgentRosterControl:
                     skills_button.disable()
                     skills_button.tooltip(tools_reason)
                 else:
-                    skills_button.tooltip("해당 에이전트가 불러 쓸 수 있는 스킬을 선택합니다.")
+                    skills_button.tooltip("해당 에이전트가 불러 사용할 수 있는 스킬을 선택합니다.")
 
             ui.tooltip(
                 f"model: {agent.model}\r\n"
@@ -1676,7 +1676,7 @@ class AgentRosterControl:
                     "text-[11px] font-semibold text-slate-400 mt-1"
                 )
                 if not skills:
-                    ui.label(f"스킬 폴더({skills_root()})에 스킬이 없습니다.").classes(
+                    ui.label(f"스킬 폴더({skills_root()})에 등록된 스킬이 없습니다.").classes(
                         "text-xs text-slate-500"
                     )
                 with ui.row().classes("w-full gap-x-4 gap-y-1 flex-wrap"):
@@ -2245,14 +2245,14 @@ class AgentRosterControl:
         ):
             ui.label(f"{agent.name} · 스킬 할당").classes("text-lg font-bold")
             ui.label(
-                "이 에이전트가 발언 중 불러 쓸 수 있는 스킬입니다. conf.json 에 저장되어 아직 "
-                "시작하지 않은 대화와 앞으로 만드는 대화에 적용됩니다. 이미 시작한 대화는 그때 "
-                "굳은 할당을 그대로 씁니다. 스킬의 내용과 켜기·끄기는 어느 대화에나 바로 적용됩니다."
+                "이 에이전트가 발언 중 불러 사용할 수 있는 스킬입니다. conf.json에 저장되어 아직 "
+                "시작되지 않은 세션과 향후 생성할 세션에 적용됩니다. 이미 시작된 세션은 시작 시점의 "
+                "할당 구성을 그대로 유지합니다. 스킬의 본문 내용과 활성화/비활성화 상태는 모든 세션에 즉시 적용됩니다."
             ).classes("text-[11px] text-amber-400 mb-2 leading-snug")
 
             if not skills and not orphans:
                 ui.label(
-                    f"스킬 폴더({root})에 스킬이 없습니다. `<이름>/SKILL.md` 폴더를 넣으면 나타납니다."
+                    f"스킬 폴더({root})에 등록된 스킬이 없습니다. `<이름>/SKILL.md` 폴더를 추가하면 목록에 표시됩니다."
                 ).classes("text-xs text-slate-400")
 
             with ui.column().classes("w-full gap-1 max-h-[46vh] overflow-y-auto"):
@@ -2299,17 +2299,17 @@ class AgentRosterControl:
 
     @staticmethod
     def _skill_state_badge(skill: Skill) -> None:
-        """스킬 이름 옆의 표시 — 오류 · 꺼짐, 그리고 스크립트가 들었는지."""
+        """스킬 이름 옆의 상태 표시입니다 — 오류 · 꺼짐, 스크립트 포함 여부."""
         if skill.problem:
             ui.badge("오류", color="red-9").props("dense text-[9px]")
         elif not skill.enabled:
             ui.badge("꺼짐", color="grey-8").props("dense text-[9px]")
         if skill.scripts:
-            # 실행 도구(sandbox 의 run_python_file)를 가진 에이전트만 스크립트를 돌릴 수 있습니다.
+            # 실행 도구(sandbox의 run_python_file)를 보유한 에이전트만 스크립트를 실행할 수 있습니다.
             ui.badge("스크립트", color="teal-9").props("dense text-[9px]")
 
     def refresh_skills(self, force: bool = False) -> None:
-        """스킬 칩을 다시 그립니다. 타이머가 부를 때는 바뀐 것이 있을 때만 그립니다."""
+        """스킬 칩을 다시 렌더링합니다. 주기적 타이머 호출 시에는 변경 사항이 있을 때만 렌더링합니다."""
         if self.skills_row is None or self.skills_row.is_deleted:
             return
         try:
@@ -2330,7 +2330,7 @@ class AgentRosterControl:
         with self.skills_row:
             if not skills:
                 ui.label(
-                    f"스킬 폴더({root})에 스킬이 없습니다. `<이름>/SKILL.md` 폴더를 넣으면 바로 나타납니다."
+                    f"스킬 폴더({root})에 등록된 스킬이 없습니다. `<이름>/SKILL.md` 폴더를 추가하면 즉시 표시됩니다."
                 ).classes("text-[10px] text-slate-500")
             for skill in skills:
                 if skill.problem:
@@ -2348,8 +2348,8 @@ class AgentRosterControl:
                 tip_lines.append(f"부속 파일 {len(skill.files)}개 · {skill.path}")
                 if skill.scripts:
                     tip_lines.append(
-                        f"스크립트 {len(skill.scripts)}개 — 실행 도구(run_python_file)를 가진 에이전트가 "
-                        f"불러오면 작업 공간 .mado/skills/{skill.name}/ 에 복사되어 실행됩니다."
+                        f"스크립트 {len(skill.scripts)}개 — 실행 도구(run_python_file)를 보유한 에이전트가 "
+                        f"호출하면 작업 공간 .mado/skills/{skill.name}/ 디렉터리에 복사되어 실행됩니다."
                     )
 
                 with ui.element("div").classes(
@@ -2377,17 +2377,17 @@ class AgentRosterControl:
             )
 
     async def _on_skill_toggle(self, skill_name: str, enabled: bool) -> None:
-        """스킬 켜기·끄기. 다시 띄울 서버가 없으므로 토론 중에도 막지 않습니다."""
+        """스킬 활성화/비활성화 처리입니다. 재기동할 서버 프로세스가 없으므로 토론 중에도 차단하지 않습니다."""
         try:
             set_skill_enabled_in_conf_file(skill_name, enabled, self._conf_path())
         except Exception as e:  # noqa: BLE001 - 설정 오류는 화면에 그대로 알립니다
             logger.error(f"Could not update skills in conf.json: {e}", exc_info=True)
-            ui.notify(f"conf.json 을 고치지 못했습니다: {e}", type="negative", position="bottom-right")
+            ui.notify(f"conf.json 파일을 수정하지 못했습니다: {e}", type="negative", position="bottom-right")
             self.refresh_skills(force=True)
             return
         ui.notify(
-            f"'{skill_name}' 스킬을 {'켰습니다' if enabled else '껐습니다'}. "
-            f"진행 중인 대화에도 다음 발언부터 적용됩니다.",
+            f"'{skill_name}' 스킬을 {'활성화했습니다' if enabled else '비활성화했습니다'}. "
+            f"진행 중인 대화 세션에도 다음 발언부터 적용됩니다.",
             type="positive", position="bottom-right",
         )
         self.refresh_skills(force=True)

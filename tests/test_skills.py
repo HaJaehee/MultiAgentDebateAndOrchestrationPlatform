@@ -1,13 +1,13 @@
-"""스킬 — 폴더로 설치하고, 에이전트가 필요할 때 불러 읽는 지침 (`app/agents/skills.py`).
+"""스킬 테스트 스위트 — 폴더 기반 설치 및 에이전트 동적 로드 지침 검증 (`app/agents/skills.py`).
 
-확인하는 것:
+주요 검증 항목:
 
-* SKILL.md 머리말을 새 의존성 없이 읽는다 (따옴표, `|`·`>` 블록, 이어짐 줄, 무시할 키).
-* 깨진 스킬은 이유와 함께 목록에 남고, 어느 에이전트에게도 가지 않는다.
-* 에이전트가 보는 스킬 = `allowed_skills` ∩ 켜진 것 ∩ 깨지지 않은 것. 켜기·끄기와 내용 수정은
-  **다음 발언부터 바로** 걸린다 (굳히지 않음).
-* 부속 파일은 스킬 폴더 **안에서만** 읽는다.
-* 도구 루프가 스킬 도구를 보안 판정 없이 호스트에서 실행하고, 기록은 여느 도구처럼 남긴다.
+* SKILL.md 머리말을 신규 의존성 없이 정상 파싱합니다 (따옴표, `|`·`>` 블록 스칼라, 연속 줄, 불필요한 키 무시).
+* 유효하지 않은 스킬은 원인과 함께 목록에 유지되며, 어떤 에이전트에게도 할당되지 않습니다.
+* 에이전트 가시 스킬 = `allowed_skills` ∩ 활성화된 스킬 ∩ 오류 없는 스킬의 교집합입니다. 활성화/비활성화 및 내용 수정은
+  **다음 발언부터 즉시** 반영됩니다 (스냅샷 고정 제외).
+* 부속 파일은 스킬 디렉터리 **내부 경로에서만** 조회할 수 있습니다.
+* 도구 루프가 스킬 도구를 보안 판정 없이 호스트 레벨에서 직접 실행하며, 실행 기록은 일반 도구와 동일하게 보존합니다.
 """
 
 import json
@@ -72,7 +72,7 @@ def _config(root: Path, disabled=()) -> RootConfig:
 
 
 class _SkillFolder:
-    """스킬 폴더 하나와, 그것을 가리키는 지금 설정. `disable()` 로 켜기·끄기를 바꿉니다."""
+    """스킬 폴더 하나와, 그것을 가리키는 현재 설정입니다. `disable()` 메서드로 활성화/비활성화를 전환합니다."""
 
     def __init__(self, root: Path):
         self.root = root
@@ -183,7 +183,7 @@ def test_scan_lists_skills_with_their_files_and_problems(tmp_path: Path):
 
     good = found["csv-profile"]
     assert good.usable and good.description == "표를 요약할 때 씁니다."
-    assert good.files == ("reference.md", "scripts/profile.py"), "SKILL.md·캐시·숨김 파일은 빠집니다"
+    assert good.files == ("reference.md", "scripts/profile.py"), "SKILL.md·캐시·숨김 파일은 제외됩니다"
     assert "description" in found["no-desc"].problem
     assert "SKILL.md" in found["empty-folder"].problem
     assert "폴더 이름" in found["bad name"].problem
@@ -256,7 +256,7 @@ def test_tool_definitions_carry_the_catalog(tmp_path: Path):
     assert load["function"]["parameters"]["properties"]["skill"]["enum"] == ["a", "b"]
     assert read["function"]["name"] == READ_SKILL_FILE_TOOL
     assert read["function"]["parameters"]["properties"]["skill"]["enum"] == ["b"], \
-        "부속 파일이 있는 스킬만 읽기 도구에 올립니다"
+        "부속 파일이 존재하는 스킬만 읽기 도구에 등록합니다"
 
     only_md = skill_tools(scan_skills(root, [])[:1])
     assert [t["function"]["name"] for t in only_md] == [LOAD_SKILL_TOOL]
@@ -269,7 +269,7 @@ def test_turning_a_skill_off_removes_it_from_the_next_request(skill_root: _Skill
     assert [t["function"]["name"] for t in skill_tools_for(agent)] == [LOAD_SKILL_TOOL]
 
     skill_root.disable("a")
-    assert skill_tools_for(agent) == [], "끄면 다음 발언의 도구 목록에서 바로 빠집니다"
+    assert skill_tools_for(agent) == [], "비활성화 시 다음 발언의 도구 목록에서 즉시 제외됩니다"
 
 
 def test_an_unreadable_config_does_not_break_the_speech(monkeypatch):
@@ -281,7 +281,7 @@ def test_an_unreadable_config_does_not_break_the_speech(monkeypatch):
 
 def test_skill_tool_names():
     assert is_skill_tool(LOAD_SKILL_TOOL) and is_skill_tool(READ_SKILL_FILE_TOOL)
-    assert is_skill_tool("load_skill"), "모델이 앞자리를 떼고 불러도 받습니다"
+    assert is_skill_tool("load_skill"), "모델이 접두사를 생략하고 호출해도 정상 처리합니다"
     assert not is_skill_tool("filesystem__read_file")
     assert not is_skill_tool("other__load_skill")
     assert not is_skill_tool("skills__delete_everything")
@@ -434,7 +434,7 @@ async def test_the_tool_loop_runs_a_skill_and_logs_it(skill_root: _SkillFolder):
     assert "subgraph 제목은 대괄호로 씁니다." in tool_message["content"]
     assert tool_logs[0]["tool_name"] == LOAD_SKILL_TOOL
     assert tool_logs[0]["status"] == "success" and tool_logs[0]["security"] == {}
-    assert logs == tool_logs, "화면·기록 콜백도 여느 도구처럼 받습니다"
+    assert logs == tool_logs, "UI 알림 및 실행 로그 콜백도 일반 도구와 동일하게 수신합니다"
 
 
 # ================================================================ 설정
@@ -489,7 +489,7 @@ def test_a_new_agent_can_start_with_skills(tmp_path: Path):
     add_agent_to_conf_file("plain", "Plain", "Docs", config_path=path)
     agents = read_conf_file(path)["agents"]
     assert agents["writer"]["allowed_skills"] == ["report"]
-    assert "allowed_skills" not in agents["plain"], "고른 스킬이 없으면 적지 않습니다"
+    assert "allowed_skills" not in agents["plain"], "선택한 스킬이 없으면 항목을 기록하지 않습니다"
 
 
 def test_allowed_skills_ride_along_in_the_session_snapshot():
@@ -548,14 +548,14 @@ def test_staging_recopies_changed_files_and_keeps_outputs(tmp_path: Path):
     copy = staged / "scripts" / "run.py"
     assert relative.as_posix() == ".mado/skills/csv" and copy.read_text() == "v1"
 
-    # 원본을 고치면 다음 불러오기에 새 내용이 놓입니다.
+    # 원본을 수정하면 다음 호출 시 새로운 내용이 배치됩니다.
     source = folder / "scripts" / "run.py"
     source.write_text("v2 — 원본이 바뀜", encoding="utf-8")
     os.utime(source, ns=(source.stat().st_atime_ns, source.stat().st_mtime_ns + 5_000_000_000))
     skills_module.stage_skill(skill, workspace)
     assert copy.read_text(encoding="utf-8") == "v2 — 원본이 바뀜"
 
-    # 에이전트가 복사본을 고쳐도 원본으로 되돌아가고, 스크립트가 남긴 결과물은 지우지 않습니다.
+    # 에이전트가 복사본을 수정하더라도 원본으로 복원되며, 스크립트 실행 결과물은 삭제하지 않습니다.
     copy.write_text("조작됨", encoding="utf-8")
     (staged / "scripts" / "result.txt").write_text("결과", encoding="utf-8")
     skills_module.stage_skill(skill, workspace)
@@ -574,7 +574,7 @@ async def test_no_copy_without_a_run_tool_or_a_workspace(skill_root: _SkillFolde
         tools=[{"type": "function", "function": {"name": "filesystem__read_file"}}],
     )
     assert status == "success" and "run_python_file" in output and "복사하지 않았습니다" in output
-    assert not (workspace / ".mado").exists(), "쓰지 못할 파일로 작업 공간을 어지럽히지 않습니다"
+    assert not (workspace / ".mado").exists(), "사용하지 않을 파일로 작업 공간을 어지럽히지 않습니다"
 
     output, status = await run_skill_tool(
         _agent("csv"), LOAD_SKILL_TOOL, {"skill": "csv"}, workspace=None, tools=[RUN_TOOL],
@@ -597,12 +597,12 @@ async def test_a_skill_too_big_to_stage_still_gives_its_instructions(
 def test_only_python_files_count_as_scripts(tmp_path: Path):
     root = tmp_path / "skills"
     _write_skill(root, "a", files={"run.py": "", "tool.sh": "", "Lib/Helper.PY": "", "ref.md": ""})
-    assert scan_skills(root, [])[0].scripts == ("run.py", "Lib/Helper.PY"), "최상위 파일이 먼저 옵니다"
+    assert scan_skills(root, [])[0].scripts == ("run.py", "Lib/Helper.PY"), "최상위 파일이 먼저 정렬됩니다"
 
 
 @pytest.mark.asyncio
 async def test_the_tool_loop_stages_into_the_speech_workspace(skill_root: _SkillFolder, tmp_path: Path):
-    """발언이 쓰는 런타임의 작업 공간에 복사하고, 그 런타임의 실행 도구 이름을 알려 줍니다."""
+    """발언이 사용하는 런타임의 작업 공간에 복사하고, 해당 런타임의 실행 도구 이름을 안내합니다."""
     _write_skill(skill_root.root, "csv", files={"scripts/run.py": "print(1)"})
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -651,10 +651,10 @@ def test_the_bundled_skills_are_all_usable():
 
 
 def test_the_bundled_script_passes_the_tool_gate_once_staged():
-    """복사된 번들 스크립트가 고정 보호에 걸리지 않고, 기본 모드에서는 묻지 않고 돕니다.
+    """복사된 번들 스크립트가 고정 보호에 걸리지 않고, 기본 모드에서는 확인 없이 실행됩니다.
 
-    스크립트에 적힌 글자도 검사 대상입니다. 건너뛸 폴더 이름으로 `.memory-graphs` 를 적어 두기만
-    해도 "대화별 지식 그래프를 읽는다" 로 보고 실행이 막힙니다.
+    스크립트 소스 코드에 포함된 문자열도 정적 검사 대상입니다. 건너뛸 디렉터리명으로 `.memory-graphs`를
+    명시하기만 해도 '대화별 지식 그래프 조회 시도'로 판정되어 실행이 차단됩니다.
     """
     from app.config import PROJECT_ROOT
     from app.mcp.policy import ALLOW, Policy, ToolMeta, evaluate, hard_block, profile_call

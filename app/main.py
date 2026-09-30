@@ -285,7 +285,7 @@ async def mcp_status():
 
 @server.get("/api/skills")
 async def list_skills():
-    """스킬 폴더의 지금 모습. 꺼진 스킬과 깨진 스킬(`problem`)도 함께 보고합니다."""
+    """스킬 디렉터리의 현재 상태 목록을 반환합니다. 비활성화된 스킬 및 오류가 발생한 스킬(`problem`) 정보도 함께 반환합니다."""
     import asyncio
 
     from app.agents.skills import scan_skills, skills_root

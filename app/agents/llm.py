@@ -1427,8 +1427,8 @@ class LLMCaller:
     ) -> str:
         """System prompt = persona + sequential thinking + file/skill rules + session instructions.
 
-        세션 지침이 맨 뒤인 것은 그것이 가장 구체적인 지시이기 때문입니다. 파일 쓰기·스킬
-        지침은 그 앞에 두어, 사람이 세션 지침으로 다르게 시키면 그쪽이 뒤에 옵니다.
+        세션 지침을 가장 마지막에 배치하는 이유는 해당 지시가 가장 구체적이기 때문입니다. 파일 작성 및 스킬 관련
+        지침을 그 앞쪽에 배치하여, 사용자가 세션 지침으로 다른 방식을 지정하면 해당 지시가 우선하도록 구성합니다.
 
         결정 장부는 여기 넣지 않습니다. 라운드마다 바뀌는 글이 시스템 프롬프트에 있으면
         그 뒤 전체가 프롬프트 캐시에서 빠집니다 (`place_ledger_last`).
@@ -1529,7 +1529,7 @@ class LLMCaller:
         tools = mcp.get_openai_tools_for_servers(self.resolve_tool_servers(agent))
         if tool_gate is not None:
             tools = tool_gate.filter_tools(agent.key, tools, mcp)
-        # 스킬 도구는 발언마다 스킬 폴더와 켜기·끄기를 다시 읽어 만듭니다 (`app/agents/skills.py`).
+        # 스킬 도구는 발언이 진행될 때마다 스킬 디렉터리와 활성화 여부를 새로 조회하여 동적으로 생성합니다 (`app/agents/skills.py`).
         tools = tools + skill_tools_for(agent)
 
         if resume_state is not None:
@@ -2245,16 +2245,16 @@ class LLMCaller:
         mcp: Optional[MCPManager] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[str, str]:
-        """MCP 도구(또는 스킬 도구)를 부르고, 결과를 항상 (문자열, 상태) 로 돌려줍니다.
+        """MCP 도구(또는 스킬 도구)를 호출하고, 실행 결과를 항상 (문자열, 상태) 튜플 형태로 반환합니다.
 
-        `MCPManager.execute_tool` 이 이미 대부분을 흡수하지만, 매니저 자체가
-        교체되거나(테스트 더블) 도구 이름 조회 중에 터질 수도 있습니다. 도구
-        실패는 발언을 끝낼 이유가 아니라는 규칙을 이 자리에서 한 번 더 지킵니다.
-        취소만은 그대로 올려 보냅니다.
+        `MCPManager.execute_tool`에서 예외를 대부분 처리하지만, 매니저 객체가 교체되거나
+        도구 명칭 조회 과정에서 예외가 발생할 가능성이 있습니다. 개별 도구 호출 실패가
+        전체 발언의 중단으로 이어져서는 안 된다는 원칙을 본 단계에서 재차 보장합니다.
+        단, 작업 취소 예외는 상위로 그대로 전달합니다.
 
-        스킬 도구는 서버가 아니라 이 프로세스가 실행합니다 (`app/agents/skills.py`). 스크립트를
-        복사해 둘 작업 공간은 이 발언이 쓰는 런타임의 것이고, 실행 도구를 가졌는지는 이 발언이
-        실제로 든 도구(`tools`)로 봅니다.
+        스킬 도구는 외부 MCP 서버가 아닌 애플리케이션 프로세스 내부에서 직접 실행합니다 (`app/agents/skills.py`).
+        스크립트가 복사될 작업 공간은 해당 발언이 사용하는 런타임의 작업 공간이며, 실행 가능 여부는 해당 발언에
+        실제로 부여된 도구 목록(`tools`)을 기준으로 판정합니다.
         """
         runtime = mcp or self.mcp_manager
         try:
@@ -2611,10 +2611,11 @@ class LLMCaller:
                         # 도구 보안: 허용·묻기·거부. 거부되면 실행하지 않고, 그 이유가 곧
                         # 도구 결과가 됩니다 — 모델이 읽고 다른 길을 찾습니다.
                         #
-                        # 스킬 도구는 판정하지 않습니다. 호스트가 스킬 폴더 안의 글을 읽을 뿐
-                        # 작업 공간·네트워크에 닿지 않고, 누가 쓸지는 `allowed_skills` 와
-                        # 켜기·끄기로 이미 정했습니다. (스킬의 스크립트를 **실행**하는 것은
-                        # 샌드박스 도구라 그쪽에서 판정을 받습니다.)
+                        # 스킬 도구는 별도의 게이트 보안 검사를 거치지 않습니다. 호스트 프로세스가
+                        # 스킬 디렉터리 내의 지침 파일만을 참조하며 작업 공간이나 외부 네트워크에 접근하지 않고,
+                        # 사용 권한은 `allowed_skills` 및 활성화 설정을 통해 사전에 통제되기 때문입니다.
+                        # (스킬 내부의 스크립트를 실제로 **실행**하는 단계는 샌드박스 도구를 통해 수행되므로,
+                        # 해당 도구 호출 시 정상적으로 보안 판정을 받게 됩니다.)
                         gate = None if is_skill_tool(fn_name) else await self._check_tool_gate(
                             tool_gate, agent, fn_name, fn_args, mcp or self.mcp_manager,
                         )

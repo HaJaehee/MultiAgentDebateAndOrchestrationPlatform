@@ -135,7 +135,7 @@ MCP 서버별 연결 상태. `"enabled": false` 로 꺼 둔 서버도 함께 보
 
 ## `GET /api/skills`
 
-스킬 폴더의 지금 모습. 꺼진 스킬과 깨진 스킬도 함께 보고합니다. 부를 때마다 폴더를 다시 읽습니다.
+스킬 디렉터리의 현재 상태를 조회합니다. 비활성화된 스킬과 유효하지 않은 스킬도 원인과 함께 반환합니다. 호출할 때마다 디렉터리 상태를 최신으로 스캔합니다.
 
 ```json
 {
@@ -144,7 +144,7 @@ MCP 서버별 연결 상태. `"enabled": false` 로 꺼 둔 서버도 함께 보
     {
       "name": "mermaid-diagrams",
       "title": "mermaid-diagrams",
-      "description": "Mermaid 다이어그램(순서도·시퀀스·클래스·상태·ER)을 그릴 때 씁니다. ...",
+      "description": "Mermaid 다이어그램(순서도·시퀀스·클래스·상태·ER)을 작성할 때 사용합니다. ...",
       "enabled": true,
       "usable": true,
       "problem": null,
@@ -157,13 +157,13 @@ MCP 서버별 연결 상태. `"enabled": false` 로 꺼 둔 서버도 함께 보
 
 | 필드 | 설명 |
 | :--- | :--- |
-| `name` | 폴더 이름 = `allowed_skills` 에 적는 이름 |
-| `title` | 머리말의 `name` (화면 표시용) |
-| `enabled` | `skills.disabled` 에 없으면 `true` |
-| `usable` | 켜져 있고 깨지지 않았는지. 에이전트에게는 이것이 `true` 인 스킬만 갑니다 |
-| `problem` | 깨진 이유 (머리말 없음, 설명 없음 등). 정상이면 `null` |
-| `files` | SKILL.md 를 뺀 부속 파일 (스킬 폴더 기준 경로) |
-| `scripts` | 그중 스크립트(`*.py`). 실행 도구를 가진 에이전트가 불러오면 작업 공간 `.mado/skills/<이름>/` 에 복사됩니다 |
+| `name` | 스킬 폴더명이며 `allowed_skills`에 지정하는 고유 식별자입니다. |
+| `title` | YAML 머리말의 `name` 값이며 웹 UI 화면 표시용 타이틀입니다. |
+| `enabled` | `skills.disabled` 목록에 포함되어 있지 않으면 `true`입니다. |
+| `usable` | 활성화되어 있고 오류가 없는지 여부입니다. 에이전트에게는 이 값이 `true`인 스킬만 제공됩니다. |
+| `problem` | 오류 원인(머리말 누락, 설명 누락 등)입니다. 정상적인 경우 `null`입니다. |
+| `files` | SKILL.md를 제외한 부속 파일 목록입니다 (스킬 폴더 기준 상대 경로). |
+| `scripts` | 부속 파일 중 파이썬 스크립트(`*.py`) 목록입니다. 실행 도구를 보유한 에이전트가 호출하면 작업 공간의 `.mado/skills/<이름>/` 디렉터리로 복사됩니다. |
 
 → [스킬](../03-core/09-skills.md)
 

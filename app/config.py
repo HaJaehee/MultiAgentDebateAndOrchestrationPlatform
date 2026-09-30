@@ -640,8 +640,8 @@ class AgentConfig(BaseModel):
     allowed_mcp_servers: List[str] = Field(
         default_factory=list, description="List of MCP server keys this agent can access"
     )
-    # 이 에이전트가 불러 쓸 수 있는 스킬 (`app/agents/skills.py`). 도구 서버 할당과 같은
-    # 에이전트 설정이라 대화 스냅샷에 함께 굳습니다. 스킬의 내용과 켜기·끄기는 굳지 않습니다.
+    # 이 에이전트가 불러 사용할 수 있는 스킬 목록입니다 (`app/agents/skills.py`). 도구 서버 할당과 동일한
+    # 에이전트 설정이므로 대화 스냅샷에 함께 보존됩니다. 스킬 내용과 활성화/비활성화 상태는 스냅샷에 고정되지 않습니다.
     allowed_skills: List[str] = Field(
         default_factory=list, description="Skill names (folders under skills.dir) this agent can load"
     )
@@ -731,21 +731,21 @@ class TrialConfig(BaseModel):
 
 
 class SkillsConfig(BaseModel):
-    """스킬 (`skills`). 스킬 하나는 폴더 하나입니다 — `<dir>/<이름>/SKILL.md` (`app/agents/skills.py`).
+    """스킬 설정(`skills`)입니다. 스킬 하나는 폴더 하나에 대응합니다 — `<dir>/<이름>/SKILL.md` (`app/agents/skills.py`).
 
-    스킬 자체는 이 파일에 적지 않습니다. 폴더를 넣고 빼는 것이 곧 설치와 삭제이고, 여기에는
-    어디서 찾을지와 무엇을 꺼 두었는지만 둡니다. 둘 다 **진행 중인 대화에도 다음 발언부터**
-    걸립니다 — MCP 서버 켜기·끄기처럼 대화 스냅샷에 굳히지 않습니다.
+    스킬 목록 자체는 설정 파일에 기록하지 않습니다. 폴더를 추가하거나 삭제하는 것이 곧 설치 및 삭제이며, 설정 파일에는
+    스킬 폴더 경로와 비활성화할 스킬 목록만 관리합니다. 두 설정 모두 **진행 중인 대화 세션에도 다음 발언부터**
+    즉시 적용됩니다 — MCP 서버 활성화/비활성화처럼 대화 스냅샷에 고정하지 않습니다.
     """
 
-    # 스킬 폴더. 상대 경로면 프로젝트 루트 기준입니다.
+    # 스킬 폴더 경로입니다. 상대 경로인 경우 프로젝트 루트 기준입니다.
     dir: str = Field(default="skills")
-    # 꺼 둔 스킬의 이름. 목록에 없는 스킬은 켜져 있습니다 — 폴더를 넣기만 하면 쓸 수 있습니다.
+    # 비활성화할 스킬의 이름 목록입니다. 목록에 없는 스킬은 활성화 상태로 유지되며, 폴더를 추가하면 즉시 사용할 수 있습니다.
     disabled: List[str] = Field(default_factory=list)
 
 
-# 스킬 도구의 이름 앞자리 (`skills__load_skill`). MCP 도구와 같은 `서버__도구` 모양이라,
-# 같은 이름의 MCP 서버를 두면 도구 이름이 겹칩니다.
+# 스킬 도구의 접두사입니다 (`skills__load_skill`). MCP 도구와 동일한 `서버__도구` 형태이므로,
+# 동일한 이름의 MCP 서버가 등록되면 도구 이름 충돌이 발생합니다.
 SKILL_TOOL_PREFIX = "skills"
 
 
@@ -1184,8 +1184,8 @@ def add_mcp_server_to_conf_file(
     name = _require_key(server_name, "MCP 서버 이름")
     if name == SKILL_TOOL_PREFIX:
         raise ValueError(
-            f"'{SKILL_TOOL_PREFIX}' 는 스킬 도구 이름({SKILL_TOOL_PREFIX}__load_skill)에 쓰이므로 "
-            f"MCP 서버 이름으로 쓸 수 없습니다."
+            f"'{SKILL_TOOL_PREFIX}'는 스킬 도구 이름({SKILL_TOOL_PREFIX}__load_skill)으로 예약되어 있으므로 "
+            f"MCP 서버 이름으로 사용할 수 없습니다."
         )
     path = Path(config_path)
 
@@ -1316,10 +1316,10 @@ def set_agent_allowed_mcp_servers_in_conf_file(
 
 
 # ---------------------------------------------------------------------------
-# 스킬 켜기·끄기 / 에이전트의 스킬 할당
+# 스킬 활성화·비활성화 / 에이전트 스킬 할당
 # ---------------------------------------------------------------------------
 
-# 스킬 이름 = 스킬 폴더 이름. 에이전트 설정과 도구 인자에 그대로 적히므로 단순해야 합니다.
+# 스킬 이름 규칙입니다 (스킬 폴더 이름과 일치). 에이전트 설정과 도구 인자에 그대로 전달되므로 간결해야 합니다.
 SKILL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 
@@ -1327,8 +1327,8 @@ def require_skill_name(value: str) -> str:
     name = (value or "").strip()
     if not SKILL_NAME_PATTERN.fullmatch(name):
         raise ValueError(
-            f"스킬 이름 '{value}' 을 쓸 수 없습니다. 영문/숫자/밑줄/하이픈으로 64자까지 쓰고 "
-            f"영문이나 숫자로 시작하세요."
+            f"스킬 이름 '{value}'은 사용할 수 없습니다. 영문, 숫자, 밑줄(_), 하이픈(-)으로 64자 이내로 구성해야 하며 "
+            f"영문이나 숫자로 시작해야 합니다."
         )
     return name
 
@@ -1338,10 +1338,10 @@ def set_skill_enabled_in_conf_file(
     enabled: bool,
     config_path: str | Path = DEFAULT_CONFIG_PATH,
 ) -> None:
-    """`skills.disabled` 에서 이 스킬을 빼거나(켜기) 넣습니다(끄기).
+    """`skills.disabled` 목록에서 해당 스킬을 제거(활성화)하거나 추가(비활성화)합니다.
 
-    진행 중인 대화에도 다음 발언부터 걸립니다. 스킬 목록은 발언마다 이 설정과 스킬 폴더를
-    다시 읽어 만들기 때문입니다 (`app/agents/skills.py`).
+    진행 중인 대화 세션에도 다음 발언부터 즉시 적용됩니다. 스킬 목록은 매 발언마다 이 설정과 스킬 폴더를
+    다시 읽어서 구성하기 때문입니다 (`app/agents/skills.py`).
     """
     name = require_skill_name(skill_name)
     path = Path(config_path)
@@ -1352,7 +1352,7 @@ def set_skill_enabled_in_conf_file(
     if current is None:
         current = []
     elif not isinstance(current, list):
-        raise ValueError(f"{path.name} 의 skills.disabled 가 목록이 아닙니다.")
+        raise ValueError(f"{path.name} 파일의 skills.disabled 항목이 목록 형태가 아닙니다.")
     names = [n for n in current if n != name]
     if not enabled:
         names.append(name)
@@ -1367,10 +1367,10 @@ def set_agent_allowed_skills_in_conf_file(
     skills: List[str],
     config_path: str | Path = DEFAULT_CONFIG_PATH,
 ) -> None:
-    """`agents.<key>.allowed_skills` 를 통째로 갈아 끼웁니다.
+    """`agents.<key>.allowed_skills` 목록을 새로운 스킬 목록으로 교체합니다.
 
-    `allowed_mcp_servers` 와 같이 **아직 시작하지 않은 대화**에만 걸립니다 (시작한 대화는
-    첫 발언 때 에이전트 설정째로 굳습니다). 빈 목록이면 항목을 지웁니다.
+    `allowed_mcp_servers`와 마찬가지로 **아직 시작되지 않은 새 대화 세션**에만 적용됩니다 (이미 시작된 대화는
+    첫 발언 시점에 에이전트 설정 스냅샷으로 고정됩니다). 빈 목록을 전달하면 해당 필드를 삭제합니다.
     """
     key = _require_key(agent_key, "에이전트 키")
     names = list(dict.fromkeys(require_skill_name(s) for s in skills))
@@ -1486,10 +1486,10 @@ def add_agent_to_conf_file(
     config_path: str | Path = DEFAULT_CONFIG_PATH,
     allowed_skills: Optional[List[str]] = None,
 ) -> None:
-    """`agents` 에 새 에이전트를 추가합니다.
+    """`agents`에 새 에이전트를 추가합니다.
 
-    `overrides` 에는 `prune_agent_overrides()` 를 지난 값만 넘기세요. 여기 없는
-    항목은 파일에 적히지 않고 llm 에서 상속됩니다. 스킬은 고른 것이 있을 때만 적습니다.
+    `overrides`에는 `prune_agent_overrides()`를 거친 값만 전달하십시오. 여기에 포함되지 않은
+    항목은 파일에 기록되지 않고 llm 기본 설정에서 상속됩니다. 스킬은 선택한 항목이 있을 때만 기록합니다.
     """
     key = _require_key(agent_key, "에이전트 키")
     path = Path(config_path)

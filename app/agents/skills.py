@@ -1,32 +1,32 @@
-"""스킬 — 에이전트가 필요할 때 불러 읽는 작업 지침 묶음.
+"""스킬 — 에이전트가 필요할 때 동적으로 참조하는 작업 지침 패키지입니다.
 
-스킬 하나는 폴더 하나입니다::
+스킬 하나는 개별 디렉터리로 구성됩니다::
 
     skills/
       mermaid-diagrams/
-        SKILL.md          ← 머리말(name, description) + 본문 지침
-        reference.md      ← 부속 문서 (`skills__read_skill_file` 로 읽음)
+        SKILL.md          ← 헤더(name, description) 및 본문 지침
+        reference.md      ← 부속 문서 (`skills__read_skill_file` 도구로 조회)
 
-**점진적 공개.** 에이전트는 평소에 스킬의 이름과 한 줄 설명만 봅니다 (`skills__load_skill` 도구의
-설명). 맡은 일이 그 설명에 맞으면 도구로 본문을 불러 읽고, 본문이 가리키는 부속 문서는 필요할
-때만 `skills__read_skill_file` 로 읽습니다. 본문을 처음부터 시스템 프롬프트에 넣지 않는 것은,
-스킬이 늘어도 발언마다 드는 토큰이 설명 몇 줄씩만 늘게 하기 위해서입니다.
+**점진적 공개.** 에이전트는 평상시 스킬의 명칭과 한 줄 요약 설명만 인지합니다 (`skills__load_skill` 도구의
+설명). 수행할 작업이 해당 설명과 부합할 때 도구를 호출하여 본문 지침을 불러오며, 본문이 안내하는 부속 문서는
+필요한 경우에만 `skills__read_skill_file` 도구로 조회합니다. 본문 전체를 시스템 프롬프트에 상시 적재하지 않는 이유는,
+스킬 개수가 늘어나더라도 발언마다 소비되는 기본 토큰이 요약 설명 몇 줄 수준으로 최소화되기 때문입니다.
 
-**MCP 서버가 아니라 호스트 도구입니다.** 에이전트마다 볼 수 있는 스킬이 다르고
-(`allowed_skills`), 목록은 스킬 폴더와 켜기·끄기를 따라 발언마다 새로 만들어집니다. 서버
-프로세스의 도구 목록은 기동할 때 한 번 받는 것이라 둘 다 담을 수 없습니다. 모델 쪽에서는 MCP
-도구와 구분되지 않습니다 — 같은 `서버__도구` 이름 모양이고, 같은 도구 루프·기록·접이식 카드를
-탑니다. 스킬 폴더는 MADO 설치 폴더 안에 있어 filesystem 도구로는 닿지 않으므로(고정 보호),
-읽기는 이 모듈이 스킬 폴더 안으로만 대신 합니다.
+**MCP 서버가 아닌 호스트 도구로 동작합니다.** 에이전트마다 접근 가능한 스킬 목록이 상이하며
+(`allowed_skills`), 이 목록은 스킬 디렉터리의 실제 상태와 활성화 설정을 반영하여 발언 시점마다 동적으로 구성됩니다.
+외부 서버 프로세스의 도구 스키마는 기동 시 1회만 전달받으므로 이러한 동적 제어를 처리할 수 없습니다. 모델 입장에서는
+일반 MCP 도구와 구분되지 않으며, 동일한 `서버__도구` 형태의 명칭 체계와 호출 루프·기록·접이식 카드를
+그대로 사용합니다. 스킬 디렉터리는 MADO 설치 폴더 내에 위치하여 일반 파일시스템 도구로는 접근할 수 없으므로(고정 보호),
+지침 파일 읽기는 본 모듈이 스킬 디렉터리 내부로 한정하여 안전하게 대행합니다.
 
-**실시간입니다.** 스킬의 내용, 폴더의 추가·삭제, 켜기·끄기(`skills.disabled`)는 대화 스냅샷에
-굳히지 않고 발언마다 다시 읽습니다. 굳는 것은 에이전트 설정의 일부인 `allowed_skills` 뿐입니다
-(`allowed_mcp_servers` 와 같습니다).
+**실시간으로 반영됩니다.** 스킬의 본문 내용, 디렉터리 추가·삭제, 활성화/비활성화(`skills.disabled`) 설정은 대화 스냅샷에
+고정되지 않고 발언 시점마다 새로 조회됩니다. 대화 시작 시점에 고정되는 것은 에이전트별 접근 권한인 `allowed_skills` 설정뿐입니다
+(`allowed_mcp_servers` 도구 권한과 동일합니다).
 
-**스크립트.** 스킬 폴더에 든 Python 스크립트는 에이전트의 도구로 닿지 않는 곳에 있습니다. 그래서
-실행 도구(`run_python_file`)를 가진 에이전트가 스크립트가 든 스킬을 불러오면, 폴더를 그 대화의
-작업 공간 `.mado/skills/<이름>/` 으로 복사하고 실행할 경로를 알려 줍니다 (`stage_skill`). 실행은
-샌드박스 도구라 도구 보안의 코드 검사와 승인을 그대로 거칩니다.
+**실행 스크립트를 지원합니다.** 스킬 디렉터리에 포함된 Python 스크립트는 설치 디렉터리 보호 규칙에 의해 에이전트가 직접 실행할 수 없습니다.
+이에 따라 실행 도구(`run_python_file`)를 보유한 에이전트가 스크립트가 포함된 스킬을 호출하면, 해당 스킬 디렉터리를 대화 세션의
+작업 공간(`.mado/skills/<이름>/`)으로 자동 복사하고 실행 가능한 경로를 함께 안내합니다 (`stage_skill`). 실제 실행은
+샌드박스 도구를 거치므로 도구 보안의 코드 정적 분석과 승인 절차를 동일하게 준수합니다.
 """
 
 from __future__ import annotations
@@ -81,22 +81,22 @@ MAX_STAGE_BYTES = 20 * 1024 * 1024
 
 
 class SkillError(ValueError):
-    """스킬을 읽을 수 없는 이유. 화면과 모델에게 그대로 보여 줄 한국어 문장입니다."""
+    """스킬을 정상적으로 로드할 수 없는 원인을 나타냅니다. 사용자 화면 및 에이전트 모델에 직접 전달되는 한국어 메시지입니다."""
 
 
 @dataclass(frozen=True)
 class Skill:
-    """스킬 폴더 하나를 지금 모습대로 읽은 것."""
+    """스킬 디렉터리의 현재 상태를 반영하는 데이터 모델입니다."""
 
-    name: str                       # 폴더 이름 = 에이전트 설정·도구 인자에 적는 이름
+    name: str                       # 폴더 이름 = 에이전트 설정·도구 인자에 사용하는 식별자
     path: Path                      # 스킬 폴더 (절대 경로)
-    title: str = ""                 # 머리말의 name (폴더 이름과 다를 수 있음)
+    title: str = ""                 # 머리말의 name (폴더 이름과 다를 수 있습니다)
     description: str = ""
-    body: str = ""                  # 머리말을 뗀 SKILL.md 본문
-    files: Tuple[str, ...] = ()     # SKILL.md 를 뺀 부속 파일 (스킬 폴더 기준 posix 경로)
-    truncated: bool = False         # 부속 파일이 `MAX_LISTED_FILES` 를 넘었는가
+    body: str = ""                  # 머리말을 제외한 SKILL.md 본문 지침
+    files: Tuple[str, ...] = ()     # SKILL.md 를 제외한 부속 파일 목록 (스킬 폴더 기준 posix 경로)
+    truncated: bool = False         # 부속 파일 목록이 `MAX_LISTED_FILES` 한도를 초과했는지 여부
     enabled: bool = True
-    problem: str = ""               # 비어 있지 않으면 깨진 스킬 — 어느 에이전트에게도 주지 않음
+    problem: str = ""               # 비어 있지 않으면 오류가 발생한 스킬 — 어떤 에이전트에도 할당하지 않습니다
 
     @property
     def usable(self) -> bool:
@@ -104,16 +104,16 @@ class Skill:
 
     @property
     def scripts(self) -> Tuple[str, ...]:
-        """실행할 수 있는 스크립트 — 부속 파일 중 Python 파일 (샌드박스가 Python 만 돌립니다)."""
+        """실행 가능한 스크립트 목록입니다 (부속 파일 중 Python 파일 대상)."""
         return tuple(f for f in self.files if f.lower().endswith(".py"))
 
 
 # ---------------------------------------------------------------------------
 # SKILL.md 머리말
 #
-# YAML 전부가 아니라 스킬 머리말에 실제로 쓰이는 모양만 읽습니다 — `key: value`, 따옴표,
-# `|`·`>` 블록, 들여 쓴 이어짐 줄. 쓰는 값은 name 과 description 둘뿐이고, 그 밖의 키
-# (license, metadata 등)는 읽고 버립니다. 새 의존성을 들이지 않기 위해서입니다 (폐쇄망 반입).
+# YAML 전체가 아닌 스킬 머리말에 실제로 사용되는 구문만 파싱합니다 — `key: value`, 따옴표,
+# `|`·`>` 블록, 들여쓴 연속 행. 실제 사용하는 필드는 name과 description 2종이며, 그 외의 키
+# (license, metadata 등)는 읽고 무시합니다. 외부 라이브러리 의존성을 배제하기 위함입니다 (폐쇄망 환경 지원).
 # ---------------------------------------------------------------------------
 
 _KEY_LINE = re.compile(r"^([A-Za-z_][\w-]*)\s*:(.*)$")
@@ -122,7 +122,7 @@ _NESTED_START = re.compile(r"^(?:[\w-]+\s*:(?:\s|$)|- )")
 
 
 def parse_skill_md(text: str) -> Tuple[Dict[str, str], str]:
-    """SKILL.md 를 (머리말, 본문) 으로 나눕니다. 머리말이 없거나 읽을 수 없으면 `SkillError`."""
+    """SKILL.md 파일을 (머리말, 본문) 튜플로 분리합니다. 머리말이 누락되었거나 파싱할 수 없으면 `SkillError`를 발생시킵니다."""
     lines = text.lstrip("﻿").replace("\r\n", "\n").split("\n")
     if not lines or lines[0].strip() != "---":
         raise SkillError(
@@ -148,7 +148,7 @@ def _parse_front_matter(lines: Sequence[str]) -> Dict[str, str]:
             continue
         match = _KEY_LINE.match(raw)
         if not match:
-            raise SkillError(f"머리말의 이 줄을 읽지 못했습니다: {raw.strip()[:80]}")
+            raise SkillError(f"머리말의 해당 행을 읽지 못했습니다: {raw.strip()[:80]}")
         current = match.group(1)
         fields[current] = (match.group(2).strip(), [])
     return {key: _scalar(value, rest) for key, (value, rest) in fields.items()}
@@ -178,7 +178,7 @@ def _scalar(value: str, rest: List[str]) -> str:
 
 
 def _fold(rows: List[str]) -> str:
-    """`>` 블록: 이어진 줄은 한 칸 띄워 붙이고, 빈 줄은 줄바꿈으로 남깁니다."""
+    """`>` 블록을 처리합니다: 연결된 행은 공백으로 병합하고, 빈 행은 단락 구분(개행)으로 유지합니다."""
     paragraphs: List[str] = []
     current: List[str] = []
     for row in rows:
@@ -207,7 +207,7 @@ def _unquote(text: str) -> str:
             break
         i += 1
     if closing < 0:
-        raise SkillError("머리말 값의 따옴표가 닫히지 않았습니다.")
+        raise SkillError("머리말 값의 따옴표가 올바르게 닫히지 않았습니다.")
     inner = text[1:closing]
     if quote == "'":
         return inner.replace("''", "'")
@@ -216,7 +216,7 @@ def _unquote(text: str) -> str:
 
 
 def _strip_comment(value: str) -> str:
-    """따옴표 없는 값 끝의 ` # 주석` 을 뗍니다 (`C#` 처럼 붙은 # 은 값입니다)."""
+    """따옴표가 없는 값 끝에 위치한 ` # 주석`을 제거합니다 (`C#`과 같이 문자열에 포함된 #은 유지합니다)."""
     cut = value.find(" #")
     return (value[:cut] if cut >= 0 else value).strip()
 
@@ -225,14 +225,14 @@ def _strip_comment(value: str) -> str:
 # 스킬 폴더 읽기
 # ---------------------------------------------------------------------------
 
-# SKILL.md 경로 → ((mtime_ns, 크기), (title, description, body, problem)). 폴더는 발언마다 훑지만
-# 바뀌지 않은 본문은 다시 읽지 않습니다.
+# SKILL.md 경로 → ((mtime_ns, 크기), (title, description, body, problem)). 폴더는 발언마다 스캔하지만
+# 변경되지 않은 본문은 캐시를 활용하여 다시 파싱하지 않습니다.
 _parse_cache: Dict[str, Tuple[Tuple[int, int], Tuple[str, str, str, str]]] = {}
 _cache_lock = threading.Lock()
 
 
 def skills_root(config: Optional[RootConfig] = None) -> Path:
-    """스킬 폴더 (`skills.dir`). 상대 경로면 프로젝트 루트 기준입니다."""
+    """스킬 폴더 경로(`skills.dir`)를 반환합니다. 상대 경로인 경우 프로젝트 루트 기준입니다."""
     cfg = config or get_config()
     raw = (cfg.skills.dir or "").strip() or "skills"
     path = Path(raw)
@@ -242,10 +242,10 @@ def skills_root(config: Optional[RootConfig] = None) -> Path:
 def scan_skills(
     root: Optional[Path] = None, disabled: Optional[Iterable[str]] = None,
 ) -> List[Skill]:
-    """스킬 폴더를 지금 모습대로 읽습니다. 이름순이고, 깨진 스킬도 이유와 함께 들어 있습니다.
+    """스킬 폴더의 현재 상태를 스캔합니다. 이름순으로 정렬되며, 유효하지 않은 스킬도 원인과 함께 포함됩니다.
 
-    발언마다 불러도 될 만큼 가볍습니다 — 폴더 목록과 파일 정보만 보고, 본문은 바뀐 것만
-    다시 읽습니다. 설정을 주지 않으면 지금 설정(`skills.dir`, `skills.disabled`)을 씁니다.
+    매 발언마다 호출해도 될 정도로 가볍습니다. 폴더 목록과 파일 정보만 확인하며, 본문은 변경된 경우에만
+    다시 읽습니다. 설정을 지정하지 않으면 현재 설정(`skills.dir`, `skills.disabled`)을 사용합니다.
     """
     if root is None or disabled is None:
         cfg = get_config()
@@ -270,7 +270,7 @@ def _read_skill(folder: Path, enabled: bool) -> Skill:
     problem = ""
     if not SKILL_NAME_PATTERN.fullmatch(name):
         problem = (
-            "폴더 이름은 영문·숫자·밑줄·하이픈으로 64자까지 쓰고 영문이나 숫자로 시작해야 합니다."
+            "폴더 이름은 영문, 숫자, 밑줄(_), 하이픈(-)으로 64자 이내로 구성해야 하며 영문이나 숫자로 시작해야 합니다."
         )
     title = description = body = ""
     md = folder / SKILL_FILE
@@ -278,7 +278,7 @@ def _read_skill(folder: Path, enabled: bool) -> Skill:
         title, description, body, parse_problem = _parse_cached(md)
         problem = problem or parse_problem
     else:
-        problem = problem or f"{SKILL_FILE} 이 없습니다."
+        problem = problem or f"{SKILL_FILE} 파일이 없습니다."
     files, truncated = _list_files(folder)
     return Skill(
         name=name, path=folder.resolve(), title=title, description=description, body=body,
@@ -290,7 +290,7 @@ def _parse_cached(md: Path) -> Tuple[str, str, str, str]:
     try:
         stat = md.stat()
     except OSError as exc:
-        return "", "", "", f"{SKILL_FILE} 을 읽지 못했습니다: {exc}"
+        return "", "", "", f"{SKILL_FILE} 파일을 읽지 못했습니다: {exc}"
     key, stamp = str(md), (stat.st_mtime_ns, stat.st_size)
     with _cache_lock:
         hit = _parse_cache.get(key)
@@ -305,15 +305,15 @@ def _parse_cached(md: Path) -> Tuple[str, str, str, str]:
 def _parse_skill_file(md: Path, size: int) -> Tuple[str, str, str, str]:
     if size > MAX_SKILL_MD_BYTES:
         return "", "", "", (
-            f"{SKILL_FILE} 이 너무 큽니다 ({size:,}바이트, 상한 {MAX_SKILL_MD_BYTES:,}). "
-            f"긴 참고 내용은 부속 문서로 나누세요."
+            f"{SKILL_FILE} 이 너무 큽니다 ({size:,}바이트, 상한 {MAX_SKILL_MD_BYTES:,}바이트). "
+            f"긴 참고 내용은 부속 문서로 분리하십시오."
         )
     try:
         text = md.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError:
-        return "", "", "", f"{SKILL_FILE} 이 UTF-8 로 저장되어 있지 않습니다."
+        return "", "", "", f"{SKILL_FILE} 파일이 UTF-8로 저장되어 있지 않습니다."
     except OSError as exc:
-        return "", "", "", f"{SKILL_FILE} 을 읽지 못했습니다: {exc}"
+        return "", "", "", f"{SKILL_FILE} 파일을 읽지 못했습니다: {exc}"
     try:
         meta, body = parse_skill_md(text)
     except SkillError as exc:
@@ -325,8 +325,8 @@ def _parse_skill_file(md: Path, size: int) -> Tuple[str, str, str, str]:
         description = description[:MAX_DESCRIPTION_CHARS - 1] + "…"
     if not description:
         return title, "", body, (
-            "머리말에 description 이 없습니다. 언제 이 스킬을 쓰는지 한두 문장으로 적으세요 — "
-            "에이전트는 이 설명만 보고 스킬을 부를지 정합니다."
+            "머리말에 description이 없습니다. 언제 이 스킬을 사용하는지 한두 문장으로 작성해 주십시오. "
+            "에이전트는 이 설명만 보고 스킬을 호출할지 결정합니다."
         )
     if not body.strip():
         return title, description, "", "본문(지침)이 비어 있습니다."
@@ -334,7 +334,7 @@ def _parse_skill_file(md: Path, size: int) -> Tuple[str, str, str, str]:
 
 
 def _list_files(folder: Path) -> Tuple[Tuple[str, ...], bool]:
-    """SKILL.md 를 뺀 부속 파일. 숨김·캐시 폴더와 심볼릭 링크(폴더 밖을 가리킬 수 있음)는 뺍니다."""
+    """SKILL.md를 제외한 부속 파일 목록입니다. 숨김·캐시 폴더와 심볼릭 링크(폴더 외부를 가리킬 수 있음)는 제외합니다."""
     found: List[str] = []
     for dirpath, dirnames, filenames in os.walk(folder):
         dirnames[:] = sorted(
@@ -356,21 +356,21 @@ def _list_files(folder: Path) -> Tuple[Tuple[str, ...], bool]:
 
 
 # ---------------------------------------------------------------------------
-# 에이전트에게 줄 도구
+# 에이전트에 제공할 도구
 # ---------------------------------------------------------------------------
 
 
 def visible_skills(agent: Any, skills: Optional[Sequence[Skill]] = None) -> List[Skill]:
-    """이 에이전트가 지금 쓸 수 있는 스킬 — 할당되었고(`allowed_skills`), 켜져 있고, 깨지지 않은 것."""
+    """이 에이전트가 현재 사용할 수 있는 스킬 목록입니다 — 할당되었고(`allowed_skills`), 활성화되어 있으며, 오류가 없는 스킬입니다."""
     allowed = set(getattr(agent, "allowed_skills", None) or ())
     if not allowed:
-        return []   # 스킬을 받지 않은 에이전트는 폴더도 훑지 않습니다
+        return []   # 스킬을 할당받지 않은 에이전트는 폴더도 조회하지 않습니다.
     pool = scan_skills() if skills is None else skills
     return [s for s in pool if s.name in allowed and s.usable]
 
 
 def skill_tools(skills: Sequence[Skill]) -> List[Dict[str, Any]]:
-    """스킬 도구의 정의. 목록(이름과 설명)은 `load_skill` 의 설명에 싣습니다. 스킬이 없으면 빈 목록."""
+    """스킬 도구의 정의입니다. 목록(이름과 설명)은 `load_skill`의 설명에 포함됩니다. 스킬이 없으면 빈 목록을 반환합니다."""
     if not skills:
         return []
     catalog = "\n".join(f"- {s.name}: {s.description}" for s in skills)
@@ -379,9 +379,9 @@ def skill_tools(skills: Sequence[Skill]) -> List[Dict[str, Any]]:
         "function": {
             "name": LOAD_SKILL_TOOL,
             "description": (
-                f"[{SKILL_TOOL_PREFIX}] 스킬의 지침(SKILL.md)을 불러옵니다. 맡은 일이 아래 스킬의 "
-                f"설명에 맞으면, 답을 쓰기 전에 먼저 불러 그 지침을 따르세요. 이번 발언에서 이미 "
-                f"불렀다면 다시 부르지 않아도 됩니다.\n\n쓸 수 있는 스킬:\n{catalog}"
+                f"[{SKILL_TOOL_PREFIX}] 스킬의 지침(SKILL.md)을 불러옵니다. 수행할 작업이 아래 스킬의 "
+                f"설명에 부합하면, 답변을 작성하기 전에 먼저 호출하여 해당 지침을 따르십시오. 이번 발언에서 이미 "
+                f"호출했다면 다시 호출하지 않아도 됩니다.\n\n사용 가능한 스킬:\n{catalog}"
             ),
             "parameters": {
                 "type": "object",
@@ -404,8 +404,8 @@ def skill_tools(skills: Sequence[Skill]) -> List[Dict[str, Any]]:
                 "name": READ_SKILL_FILE_TOOL,
                 "description": (
                     f"[{SKILL_TOOL_PREFIX}] 불러온 스킬의 부속 파일(참고 문서·예시·템플릿)을 "
-                    f"읽습니다. path 는 `{LOAD_SKILL_TOOL}` 결과의 '부속 파일' 목록에 적힌, "
-                    f"스킬 폴더 기준 경로입니다. 글 파일만 읽습니다."
+                    f"읽습니다. path는 `{LOAD_SKILL_TOOL}` 결과의 '부속 파일' 목록에 기재된, "
+                    f"스킬 폴더 기준 상대 경로입니다. 텍스트 파일만 읽습니다."
                 ),
                 "parameters": {
                     "type": "object",
@@ -421,12 +421,12 @@ def skill_tools(skills: Sequence[Skill]) -> List[Dict[str, Any]]:
 
 
 def skill_tools_for(agent: Any) -> List[Dict[str, Any]]:
-    """이 에이전트의 요청에 실을 스킬 도구. 스킬을 못 읽어도 발언은 스킬 없이 진행합니다."""
+    """이 에이전트의 요청에 전달할 스킬 도구 목록입니다. 스킬을 읽지 못해도 발언은 스킬 없이 계속 진행합니다."""
     if not getattr(agent, "allowed_skills", None):
         return []
     try:
         return skill_tools(visible_skills(agent))
-    except Exception as exc:  # noqa: BLE001 - 스킬 때문에 발언을 막지 않습니다
+    except Exception as exc:  # noqa: BLE001 - 스킬 오류로 인해 발언이 차단되지 않도록 합니다.
         logger.warning(
             f"Could not read skills for {getattr(agent, 'key', '?')}: {type(exc).__name__}: {exc}"
         )
@@ -434,7 +434,7 @@ def skill_tools_for(agent: Any) -> List[Dict[str, Any]]:
 
 
 def visible_skill_names(agent: Any) -> List[str]:
-    """오케스트레이터에게 보여 줄 이 에이전트의 스킬 이름. 못 읽으면 빈 목록."""
+    """오케스트레이터에게 표시할 이 에이전트의 스킬 이름 목록입니다. 읽지 못하면 빈 목록을 반환합니다."""
     if not getattr(agent, "allowed_skills", None):
         return []
     try:
@@ -444,7 +444,7 @@ def visible_skill_names(agent: Any) -> List[str]:
 
 
 def is_skill_tool(tool_name: str) -> bool:
-    """스킬 도구인가. 모델이 앞자리를 떼고 부르는 경우(`load_skill`)도 받습니다."""
+    """스킬 도구인지 여부를 확인합니다. 모델이 접두사를 생략하고 호출한 경우(`load_skill`)도 지원합니다."""
     name = (tool_name or "").strip()
     if "__" in name:
         prefix, tail = name.split("__", 1)
@@ -456,22 +456,22 @@ SKILL_GUIDANCE_HEAD = "[스킬]"
 
 
 def skill_guidance(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
-    """스킬 도구를 **가진** 에이전트에게만 붙는 상시 지침. 없으면 None.
+    """스킬 도구를 **보유한** 에이전트에게만 추가되는 상시 지침입니다. 도구가 없으면 None을 반환합니다.
 
-    목록 자체는 도구 설명에 있습니다. 여기서는 "먼저 불러라" 는 순서만 말합니다 — 도구 설명만
-    두면 모델이 스킬을 참고 자료쯤으로 여겨 부르지 않고 자기 방식대로 답하곤 합니다.
+    스킬 목록 자체는 도구 설명에 기재되어 있습니다. 여기서는 '먼저 호출하라'는 실행 순서만 안내합니다.
+    도구 설명에만 두면 모델이 스킬을 단순 참고 자료로 여겨 호출하지 않고 임의의 방식으로 답변하는 경향이 있습니다.
     """
     names = {str((t.get("function") or {}).get("name") or "") for t in tools or ()}
     if LOAD_SKILL_TOOL not in names:
         return None
     lines = [
         SKILL_GUIDANCE_HEAD,
-        f"- 맡은 일에 맞는 스킬이 `{LOAD_SKILL_TOOL}` 설명의 목록에 있으면, 답을 쓰기 전에 먼저 "
-        f"불러 그 지침을 따르세요. 스킬의 지침은 일반적인 방법보다 우선합니다.",
+        f"- 수행할 작업에 적합한 스킬이 `{LOAD_SKILL_TOOL}` 설명의 목록에 포함되어 있다면, 답변을 작성하기 전에 먼저 "
+        f"호출하여 해당 지침을 따르십시오. 스킬의 지침은 일반적인 처리 방식보다 우선합니다.",
     ]
     if READ_SKILL_FILE_TOOL in names:
         lines.append(
-            f"- 스킬 본문이 가리키는 부속 문서는 필요할 때만 `{READ_SKILL_FILE_TOOL}` 로 읽으세요."
+            f"- 스킬 본문에서 참조하는 부속 문서는 필요한 경우에만 `{READ_SKILL_FILE_TOOL}`로 읽으십시오."
         )
     return "\n".join(lines)
 
@@ -489,18 +489,18 @@ async def run_skill_tool(
     workspace: Optional[Path] = None,
     tools: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[str, str]:
-    """스킬 도구 하나를 실행하고 (결과, 상태) 를 돌려줍니다. 실패도 결과로 돌려줍니다.
+    """스킬 도구 하나를 실행하고 (결과, 상태) 튜플을 반환합니다. 실행 실패 시에도 오류 결과를 반환합니다.
 
-    쓸 수 있는지는 **부르는 순간** 다시 봅니다. 목록을 받은 뒤에 스킬이 꺼졌거나 지워졌으면
-    그 사실을 결과로 알립니다 — 켜기·끄기가 진행 중인 발언에도 곧바로 걸리게 하기 위해서입니다.
+    사용 가능 여부는 **호출 시점**에 다시 검증합니다. 스킬 목록을 전달받은 이후 스킬이 비활성화되었거나 삭제된 경우
+    해당 사실을 결과로 알립니다. 이는 활성화/비활성화 변경 사항이 진행 중인 발언에도 즉시 반영되도록 하기 위함입니다.
 
-    `workspace` 는 이 발언의 작업 공간, `tools` 는 이 발언이 실제로 든 도구입니다. 스크립트가 든
-    스킬을 불러올 때 복사할 곳과, 실행 도구를 가졌는지를 여기서 봅니다.
+    `workspace`는 이번 발언의 작업 공간이며, `tools`는 이번 발언에 실제로 전달된 도구 목록입니다. 스크립트가 포함된
+    스킬을 불러올 때 복사할 대상 경로와, 실행 도구의 보유 여부를 여기서 확인합니다.
     """
     args = arguments if isinstance(arguments, dict) else {}
     requested = str(args.get("skill") or args.get("name") or "").strip()
     if not requested:
-        return "불러올 스킬 이름(skill)을 지정하세요.", "error"
+        return "불러올 스킬 이름(skill)을 지정해 주십시오.", "error"
 
     skills = await asyncio.to_thread(visible_skills, agent)
     skill = next((s for s in skills if s.name == requested), None)
@@ -517,46 +517,46 @@ async def run_skill_tool(
 
 def _unavailable_text(requested: str, skills: Sequence[Skill]) -> str:
     head = (
-        f"'{requested}' 스킬은 지금 이 에이전트가 쓸 수 없습니다 (없는 이름이거나, 꺼졌거나, "
+        f"'{requested}' 스킬은 지금 이 에이전트가 쓸 수 없습니다 (존재하지 않는 이름이거나, 비활성화되었거나, "
         f"이 에이전트에게 할당되지 않았습니다)."
     )
     if skills:
         return f"{head} 쓸 수 있는 스킬: {', '.join(s.name for s in skills)}"
-    return f"{head} 지금 쓸 수 있는 스킬이 없습니다. 스킬 없이 진행하세요."
+    return f"{head} 지금 쓸 수 있는 스킬이 없습니다. 스킬 없이 진행하십시오."
 
 
 def render_skill(skill: Skill) -> str:
-    """`load_skill` 의 결과 — 본문과, 필요하면 읽을 부속 파일 목록."""
+    """`load_skill`의 실행 결과입니다 — 본문과, 필요한 경우 참조할 부속 파일 목록을 반환합니다."""
     lines = [f"# 스킬: {skill.name}", "", skill.body.strip()]
     if skill.files:
         lines += [
             "",
             "---",
-            f"부속 파일 (필요할 때 `{READ_SKILL_FILE_TOOL}` 로 읽습니다. 스킬 폴더 기준 경로):",
+            f"부속 파일 (필요 시 `{READ_SKILL_FILE_TOOL}` 도구로 조회하십시오. 스킬 폴더 기준 상대 경로):",
         ]
         lines += [f"- {f}" for f in skill.files]
         if skill.truncated:
-            lines.append(f"- … (목록은 {MAX_LISTED_FILES}개까지만 보여 줍니다)")
+            lines.append(f"- … (목록은 최대 {MAX_LISTED_FILES}개까지만 표시됩니다)")
     return "\n".join(lines)
 
 
 def read_skill_file(skill: Skill, raw_path: str) -> Tuple[str, str]:
-    """스킬 폴더 **안의** 글 파일 하나를 읽습니다. 밖을 가리키는 경로는 받지 않습니다."""
+    """스킬 폴더 **내부의** 텍스트 파일 하나를 읽습니다. 폴더 외부를 가리키는 경로는 허용되지 않습니다."""
     text = (raw_path or "").strip().replace("\\", "/")
     if not text:
-        return "읽을 파일 경로(path)를 지정하세요.", "error"
+        return "조회할 파일 경로(path)를 지정해 주십시오.", "error"
     if text.startswith("/") or re.match(r"^[A-Za-z]:", text):
-        return f"'{raw_path}' — 스킬 폴더 기준 상대 경로로 지정하세요 (예: reference.md).", "error"
+        return f"'{raw_path}' — 스킬 폴더 기준 상대 경로로 지정해 주십시오 (예: reference.md).", "error"
     parts = [p for p in PurePosixPath(text).parts if p not in ("", ".")]
     if not parts or ".." in parts:
-        return f"'{raw_path}' — 스킬 폴더 밖은 읽을 수 없습니다.", "error"
+        return f"'{raw_path}' — 스킬 폴더 외부는 조회할 수 없습니다.", "error"
     if any(p.startswith(".") or p in SKIPPED_DIRS for p in parts):
         return f"'{raw_path}' — 숨김 파일과 캐시 폴더는 읽지 않습니다.", "error"
 
     root = skill.path.resolve()
     target = root.joinpath(*parts).resolve()
     if not target.is_relative_to(root):
-        return f"'{raw_path}' — 스킬 폴더 밖을 가리키는 경로입니다.", "error"
+        return f"'{raw_path}' — 스킬 폴더 외부를 가리키는 경로입니다.", "error"
     if not target.is_file():
         listed = ", ".join(skill.files[:20]) or "없음"
         return f"'{text}' 파일이 '{skill.name}' 스킬에 없습니다. 부속 파일: {listed}", "error"
@@ -566,12 +566,12 @@ def read_skill_file(skill: Skill, raw_path: str) -> Tuple[str, str]:
         with target.open("rb") as handle:
             data = handle.read(MAX_READ_BYTES)
     except OSError as exc:
-        return f"'{text}' 을 읽지 못했습니다: {exc}", "error"
+        return f"'{text}' 파일을 읽지 못했습니다: {exc}", "error"
     try:
         content = data.decode("utf-8-sig")
     except UnicodeDecodeError:
         if size > MAX_READ_BYTES:
-            # 상한에서 자른 자리가 글자 가운데일 수 있습니다.
+            # 상한에서 잘린 지점이 멀티바이트 문자 중간일 수 있습니다.
             content = data.decode("utf-8-sig", errors="ignore")
         else:
             return (
@@ -581,7 +581,7 @@ def read_skill_file(skill: Skill, raw_path: str) -> Tuple[str, str]:
     if "\x00" in content:
         return f"'{text}' 은 글 파일이 아니어서 읽을 수 없습니다.", "error"
     if size > MAX_READ_BYTES:
-        content += f"\n\n... [파일이 커서 앞 {MAX_READ_BYTES:,}바이트만 읽었습니다 (전체 {size:,}바이트)]"
+        content += f"\n\n... [파일 용량이 초과되어 앞 {MAX_READ_BYTES:,}바이트만 읽었습니다 (전체 {size:,}바이트)]"
     return clip_tool_output(content), "success"
 
 
@@ -591,7 +591,7 @@ def read_skill_file(skill: Skill, raw_path: str) -> Tuple[str, str]:
 
 
 def _tool_by_tail(tools: Optional[List[Dict[str, Any]]], tail: str) -> Optional[str]:
-    """이 발언이 든 도구 중 이름이 `tail` 로 끝나는 것 (`sandbox__run_python_file` 등)."""
+    """이번 발언에 제공된 도구 중 이름이 `tail`로 끝나는 도구(`sandbox__run_python_file` 등)를 찾습니다."""
     for tool in tools or ():
         name = str((tool.get("function") or {}).get("name") or "")
         if name == tail or name.endswith(f"__{tail}"):
@@ -602,18 +602,18 @@ def _tool_by_tail(tools: Optional[List[Dict[str, Any]]], tail: str) -> Optional[
 async def _scripts_section(
     skill: Skill, workspace: Optional[Path], tools: Optional[List[Dict[str, Any]]],
 ) -> str:
-    """스크립트가 든 스킬을 불러올 때 본문 뒤에 붙는 안내. 필요하면 먼저 작업 공간에 복사합니다.
+    """스크립트가 포함된 스킬을 불러올 때 본문 뒤에 추가되는 안내문입니다. 필요한 경우 작업 공간에 먼저 복사합니다.
 
-    실행 도구가 없는 에이전트에게는 복사하지 않습니다. 복사하는 까닭이 실행이고, 쓰지도 않을
-    파일로 작업 공간을 어지럽히지 않기 위해서입니다. 복사에 실패해도 본문은 그대로 돌려줍니다 —
-    지침만으로도 쓸모가 있습니다.
+    실행 도구가 없는 에이전트에게는 복사하지 않습니다. 복사하는 주된 목적이 실행이며, 사용하지도 않을
+    파일로 작업 공간을 어지럽히지 않기 위함입니다. 복사에 실패하더라도 본문 지침은 그대로 반환합니다 —
+    지침 내용만으로도 충분히 유용하기 때문입니다.
     """
     run_tool = _tool_by_tail(tools, RUN_TOOL_TAIL)
     if run_tool is None:
         return (
-            f"---\n이 스킬에는 스크립트가 있지만, 이 에이전트에게는 스크립트를 실행할 도구"
-            f"(`{RUN_TOOL_TAIL}`)가 없어 작업 공간에 복사하지 않았습니다. 지침과 부속 문서만 쓰거나, "
-            f"실행 도구를 가진 에이전트에게 실행을 맡기세요."
+            f"---\n이 스킬에는 스크립트가 포함되어 있으나, 이 에이전트에게는 스크립트를 실행할 도구"
+            f"(`{RUN_TOOL_TAIL}`)가 없어 작업 공간에 복사하지 않았습니다. 지침과 부속 문서만 참조하시거나, "
+            f"실행 도구를 보유한 에이전트에게 실행을 위임하십시오."
         )
     if workspace is None:
         return "---\n이 발언의 작업 공간을 알 수 없어 스크립트를 복사하지 못했습니다. 지침과 부속 문서만 쓰세요."
@@ -633,13 +633,13 @@ async def _scripts_section(
         "",
         f"실행: `{run_tool}` 에 `file_path` 로 위 경로를 넘깁니다 (예: `{paths[0]}`). 스크립트는 작업 "
         f"공간을 작업 폴더(cwd)로 삼아 **인자 없이** 돕니다 — 입력과 출력은 SKILL.md 가 정한 대로 작업 "
-        f"공간의 파일로 주고받습니다. 복사본은 고치지 마세요. 스킬을 부를 때마다 원본으로 되돌아갑니다.",
+        f"공간의 파일로 주고받습니다. 복사본은 고치지 마십시오. 스킬을 불러올 때마다 원본으로 되돌아갑니다.",
     ]
     return "\n".join(lines)
 
 
-# 복사 대상 폴더 → 잠금. 같은 작업 공간을 쓰는 발언이 동시에 같은 스킬을 불러도 복사가 섞이지
-# 않게 합니다. 복사는 스레드에서 돌므로 threading 잠금입니다.
+# 복사 대상 폴더 → 잠금 매핑입니다. 동일한 작업 공간을 사용하는 여러 발언이 동시에 같은 스킬을 불러와도
+# 파일 복사가 충돌하지 않도록 방지합니다. 복사는 별도 스레드에서 실행되므로 threading.Lock을 사용합니다.
 _stage_locks: Dict[str, threading.Lock] = {}
 _stage_locks_guard = threading.Lock()
 
@@ -651,7 +651,7 @@ def _stage_lock(target: Path) -> threading.Lock:
 
 
 def _stage_sources(folder: Path) -> List[Tuple[str, Path, os.stat_result]]:
-    """복사할 파일 (SKILL.md 포함). 부속 파일 목록과 같은 것을 뺍니다. 상한을 넘으면 `SkillError`."""
+    """복사할 파일 목록(SKILL.md 포함)을 반환합니다. 부속 파일 목록과 동일한 규칙으로 제외하며, 상한 초과 시 `SkillError`를 발생시킵니다."""
     found: List[Tuple[str, Path, os.stat_result]] = []
     total = 0
     for dirpath, dirnames, filenames in os.walk(folder):
@@ -673,12 +673,12 @@ def _stage_sources(folder: Path) -> List[Tuple[str, Path, os.stat_result]]:
 
 
 def stage_skill(skill: Skill, workspace: Path) -> PurePosixPath:
-    """스킬 폴더를 작업 공간의 `.mado/skills/<이름>/` 으로 복사하고, 그 자리를 작업 공간 기준
-    상대 경로로 돌려줍니다.
+    """스킬 폴더를 작업 공간의 `.mado/skills/<이름>/` 디렉터리로 복사하고, 해당 위치를 작업 공간 기준
+    상대 경로로 반환합니다.
 
-    **바뀐 파일만** 다시 복사합니다 (크기와 수정 시각이 원본과 다를 때). 그래서 스킬을 고치면 다음에
-    불러올 때 새 스크립트가 놓이고, 에이전트가 복사본을 고쳤더라도 원본으로 되돌아갑니다. 원본에
-    없는 파일은 지우지 않습니다 — 스크립트가 자기 폴더에 남긴 결과물일 수 있기 때문입니다.
+    **변경된 파일만** 다시 복사합니다 (크기와 수정 시각이 원본과 다른 경우). 따라서 스킬 원본을 수정하면 다음
+    호출 시 새 스크립트가 배치되며, 에이전트가 복사본을 임의로 수정하더라도 원본 내용으로 복원됩니다. 원본에
+    없는 파일은 삭제하지 않습니다 — 스크립트 실행 과정에서 자체 생성된 결과물 파일일 수 있기 때문입니다.
     """
     relative = STAGING_DIR / skill.name
     target = Path(workspace).joinpath(*relative.parts)

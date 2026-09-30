@@ -14,7 +14,7 @@ MCP 서버 설치본까지 들고 있어 수백 MB 입니다. 그 런타임은 �
         │   └── memory_scoped/        공식 memory 서버 포크 (대화별 지식 그래프)
         ├── mcp_node/memory-scoped.mjs  그 실행 사본 (설치본의 것을 바로 갈아끼움)
         ├── trial_templates/          체험 서버의 공식 템플릿 (trial.templates_dir)
-        ├── skills/                   기본 스킬 (skills.dir)
+        ├── skills/                   기본 스킬 디렉터리 (skills.dir)
         ├── wheels/                   --with-wheels 로 지정했을 때만 (아래 참고)
         ├── docs/
         │   ├── user_manual/          사용 설명서 마크다운 원본
@@ -96,8 +96,8 @@ PACKAGE_NAME = "MultiAgentDebateOrchestration_source"
 # trial_templates/ 는 체험 서버의 공식 템플릿입니다. 앱 코드처럼 통째로 갈아끼우므로, 운영자가
 # 고친 템플릿을 갱신에서 지키려면 conf.json 의 `trial.templates_dir` 를 다른 폴더로 두면 됩니다.
 #
-# skills/ 는 기본 스킬입니다. 템플릿과 같이 통째로 갈아끼우므로, 직접 만든 스킬을 갱신에서
-# 지키려면 conf.json 의 `skills.dir` 를 다른 폴더로 두면 됩니다.
+# skills/ 디렉터리는 기본 제공 스킬을 포함합니다. 소스 업데이트 패키지 적용 시 템플릿과 마찬가지로
+# 전체가 교체되므로, 직접 작성하신 스킬을 보존하시려면 conf.json 의 `skills.dir` 를 다른 폴더로 지정하시기 바랍니다.
 SOURCE_DIRS = ["app", "mcp_servers", "docs", "trial_templates", "skills"]
 
 # (원본 경로, 패키지 안에서의 경로). 대부분 루트 파일이지만, 설치본의 같은

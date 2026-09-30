@@ -65,7 +65,7 @@ app/
 │   ├── base.py               207   Agent 모델, 카드 색·아이콘 해석과 폴백
 │   ├── pool.py                78   AgentPool 레지스트리
 │   ├── llm.py              1,140   LiteLLM 호출, 도구 루프, 컨텍스트 관리
-│   ├── skills.py             697   스킬 폴더 읽기(머리말 파서)·에이전트별 스킬 도구·불러오기·스크립트 복사
+│   ├── skills.py             697   스킬 디렉터리 스캔(머리말 파서)·에이전트별 스킬 도구·지침 로드·스크립트 복사
 │   └── personas.py           415   세션별 페르소나·외형 설정, 구성 스냅샷
 │
 ├── mcp/
@@ -115,7 +115,7 @@ app/
 | 발언 카드 모양 | `ui/components/chat_feed.py` |
 | 에이전트 카드 색·아이콘 | `agents/base.py` (해석·폴백) · `ui/components/agent_appearance.py` (편집기) |
 | 로스터 컨트롤 | `ui/components/roster.py` |
-| 스킬 (읽기·도구·스크립트 복사) | `agents/skills.py` · 기본 스킬은 루트의 `skills/` |
+| 스킬 (스캔·도구·스크립트 복사) | `agents/skills.py` · 기본 스킬 디렉터리는 루트의 `skills/` |
 | 산출물 렌더링 | `ui/components/artifact_viewer.py` |
 | 내보내기 형식 | `export.py` |
 | 발언·보고서 시각 표기 | `timestamps.py` (화면·저장 문서·보고서가 모두 여기를 거칩니다) |

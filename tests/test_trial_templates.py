@@ -197,7 +197,7 @@ def test_a_participant_borrows_the_base_model_but_loses_every_tool():
     assert snap["name"] == "바쁜 독자" and snap["role"] == "첫 쪽만"
     assert snap["system_prompt"] == "짧게\n봅니다"
     assert snap["allowed_mcp_servers"] == []
-    assert snap["allowed_skills"] == [], "스킬도 도구처럼 뗍니다"
+    assert snap["allowed_skills"] == [], "체험 참여자는 도구와 마찬가지로 스킬 권한도 제거됩니다"
     assert snap["debate_priority"] == 20
 
     snap = participant_snapshot(critic, pool, priority=30)

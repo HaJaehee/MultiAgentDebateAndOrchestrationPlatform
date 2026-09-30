@@ -32,7 +32,7 @@ docs/user_manual/
 │   ├── 06-debate-strategies.md .......... 토론 전략 3종
 │   ├── 07-persistence.md ................ 데이터베이스와 세션 스냅샷
 │   ├── 08-tool-security.md .............. 도구 보안 (허용 · 묻기 · 거부)
-│   └── 09-skills.md ..................... 스킬 (필요할 때 불러 읽는 작업 지침)
+│   └── 09-skills.md ..................... 스킬 (필요 시 참조하는 작업 지침 및 스크립트)
 │
 ├── 04-workflows/ ........................ 핵심 워크플로우 (실제 동작 흐름)
 │   ├── README.md ........................ 워크플로우 개관
@@ -62,7 +62,7 @@ docs/user_manual/
 | 신규 에이전트 추가 및 역할 수정하기 | [로스터 편집](04-workflows/03-roster-editing.md) |
 | 외부 MCP 도구 서버 연동하기 | [MCP 호스트](03-core/04-mcp-host.md) |
 | 에이전트의 도구 실행 권한 제어하기 | [도구 보안](03-core/08-tool-security.md) |
-| 조직의 작업 방식(보고서 양식·다이어그램 규칙)을 에이전트에게 주기 | [스킬](03-core/09-skills.md) |
+| 표준 작업 방식(보고서 양식·다이어그램 규칙 등)을 에이전트에 부여하기 | [스킬](03-core/09-skills.md) |
 | 다자간 토론의 실행 순서와 생애주기 이해하기 | [토론 한 턴의 생애주기](04-workflows/01-debate-turn.md) |
 | 오프라인 폐쇄망 환경에 패키징 및 배포하기 | [폐쇄망 배포](04-workflows/05-airgap-deployment.md) |
 | 코드 수정 전 전체 아키텍처 및 디렉터리 파악하기 | [아키텍처](01-overview/02-architecture.md), [프로젝트 구조](05-reference/02-project-layout.md) |

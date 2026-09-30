@@ -1,77 +1,75 @@
-# Mermaid 체크리스트와 고친 예
+# Mermaid 점검 체크리스트 및 수정 예시
 
-MADO 의 검사기(`app/mermaid_lint.py`)가 거부하는 모양입니다. 하나라도 걸리면 합성 뒤에 다시 그리게
-됩니다.
+MADO의 문법 검사기(`app/mermaid_lint.py`)가 반려하는 주요 구문 오류 유형입니다. 오류 항목이 하나라도 포함되면 최종 합성 완료 후 재작성 절차를 거치게 됩니다.
 
-## 체크리스트
+## 점검 체크리스트
 
-1. 첫 줄이 종류 선언인가 (`flowchart TD`, `sequenceDiagram` …). 본문에 `mermaid` 라는 머리글을 따로
-   쓰지 않았는가.
-2. 순서도에 시퀀스 문법(`Note …`, `participant`, `loop`, `alt`, `opt`, `->>`)이 섞이지 않았는가.
-3. 괄호가 든 라벨을 큰따옴표로 감쌌는가.
-4. 라벨 안에 큰따옴표가 겹치지 않았는가.
-5. `subgraph` 와 `end` 의 짝이 맞는가. 제목은 `subgraph 아이디["제목"]` 모양인가.
-6. 소문자 `end` 를 노드 이름으로 쓰지 않았는가.
-7. `style`·`classDef` 의 색이 16진수인가.
-8. 시퀀스 다이어그램에 `==>` 를 쓰지 않았는가.
-9. `classDiagram`·`stateDiagram` 의 `{` 와 `}` 짝이 맞는가.
+1. 첫 줄에 다이어그램 종류가 선언되어 있습니까 (`flowchart TD`, `sequenceDiagram` 등). 본문에 `mermaid`라는 불필요한 제목 키워드가 포함되어 있지 않습니까.
+2. 순서도(`flowchart`)에 시퀀스 문법(`Note ...`, `participant`, `loop`, `alt`, `opt`, `->>`)이 혼용되지 않았습니까.
+3. 괄호가 포함된 라벨을 큰따옴표로 올바르게 감쌌습니까.
+4. 라벨 내부에 큰따옴표가 중복 사용되지 않았습니까.
+5. `subgraph`와 `end`의 짝이 정확히 일치합니까. 서브그래프 제목이 `subgraph 아이디["제목"]` 형식입니까.
+6. 소문자 `end`를 노드 식별자로 사용하지 않았습니까.
+7. `style` 및 `classDef`의 색상 값이 16진수(HEX) 형식입니까.
+8. 시퀀스 다이어그램에 지원되지 않는 `==>` 화살표를 사용하지 않았습니까.
+9. `classDiagram` 및 `stateDiagram`의 중괄호(`{`, `}`) 짝이 정확합니까.
 
-## 틀린 예 → 고친 예
+## 오류 예시 및 올바른 수정 예시
 
-### 괄호가 든 라벨
+### 괄호가 포함된 라벨
 
 ```text
-틀림:  pg[결제 대행사 (PG)] --> bank
-고침:  pg["결제 대행사 (PG)"] --> bank
+오류:  pg[결제 대행사 (PG)] --> bank
+수정:  pg["결제 대행사 (PG)"] --> bank
 ```
 
-### 순서도에 섞인 노트
+### 순서도에 혼용된 노트
 
 ```text
-틀림:  Note right of api: 재시도 3회
-고침:  api -.- note1["재시도 3회"]
+오류:  Note right of api: 재시도 3회
+수정:  api -.- note1["재시도 3회"]
 ```
 
-### 순서도에 섞인 반복
+### 순서도에 혼용된 반복문
 
 ```text
-틀림:  loop 재시도
+오류:  loop 재시도
            api --> db
        end
-고침:  subgraph retry["재시도 (최대 3회)"]
+수정:  subgraph retry["재시도 (최대 3회)"]
            api --> db
        end
 ```
 
-### subgraph 제목
+### subgraph 제목 표기
 
 ```text
-틀림:  subgraph backend "백엔드"
-고침:  subgraph backend["백엔드"]
+오류:  subgraph backend "백엔드"
+수정:  subgraph backend["백엔드"]
 ```
 
-### 예약어 end
+### 예약어 end 사용
 
 ```text
-틀림:  start --> end
-고침:  start --> done["완료"]
+오류:  start --> end
+수정:  start --> done["완료"]
 ```
 
-### 스타일 색
+### 스타일 색상 코드
 
 ```text
-틀림:  style api fill:rgb(31,119,180)
-고침:  style api fill:#1f77b4
+오류:  style api fill:rgb(31,119,180)
+수정:  style api fill:#1f77b4
 ```
 
-### 시퀀스 화살표
+### 시퀀스 다이어그램 화살표
 
 ```text
-틀림:  Client ==> Server: 요청
-고침:  Client ->> Server: 요청
+오류:  Client ==> Server: 요청
+수정:  Client ->> Server: 요청
 ```
 
-## 잘 되는 기본 틀
+## 정상 동작하는 표준 템플릿
 
 ```mermaid
 flowchart LR

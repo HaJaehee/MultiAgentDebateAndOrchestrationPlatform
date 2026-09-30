@@ -60,7 +60,7 @@ ADR은 **기존 내용을 수정하지 않고 불변의 문서로 누적 보존�
 | [023](ADR-023-keep-litellm-and-own-engine.md) | LangChain·LangGraph로 옮기지 않고 LiteLLM과 자체 엔진을 유지한다 | 09-27 | 채택됨 | - |
 | [024](ADR-024-resume-interrupted-turns.md) | 서버가 턴 도중에 내려가도 그 턴을 이어 가거나 마무리할 수 있게 한다 | 09-27 | 채택됨 | v1.0 |
 | [025](ADR-025-resume-speeches-by-tool-step.md) | 끊긴 발언은 마지막으로 끝난 도구 다음부터 이어 간다 | 09-28 | 채택됨 | v1.0 |
-| [026](ADR-026-skills-as-host-tools.md) | 스킬은 MCP 서버가 아니라 호스트 도구로, 실시간으로 준다 | 09-30 | 채택됨 | 다음 버전 |
+| [026](ADR-026-skills-as-host-tools.md) | 스킬은 MCP 서버가 아닌 호스트 도구로 실시간 제공 | 09-30 | 채택됨 | 다음 버전 |
 
 날짜는 모두 2026년 기준입니다.
 
