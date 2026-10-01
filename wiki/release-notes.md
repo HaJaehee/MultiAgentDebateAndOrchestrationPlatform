@@ -6,14 +6,7 @@ changed*, not a second copy of the documentation.
 
 ---
 
-## v1.1.1
-
-**Designate a skill from the input bar.** `@specialist @skill` makes that specialist use that skill in this
-turn: the `@` list now offers the usable skills, a skill pairs with the specialist mentioned just before it on
-the same line, and each of that specialist's speeches starts with the skill already loaded by the host (a
-normal `skills__load_skill` tool card). It works outside the specialist's `allowed_skills` for that turn only,
-never for a skill that is switched off, and survives resuming an interrupted turn.
-→ [Skills §9](agents/skills.md#9-designating-a-skill-from-the-input-bar) · [UI Components §1.3.4](ui/components.md) · ADR-027
+## v1.1.2
 
 **Long files are appended, not edited into place.** The bundled sandbox is now AirgappedPySandbox v0.8.0,
 which adds `append_workspace_file`: it adds a chunk verbatim to the end of a workspace file and answers with
@@ -38,6 +31,17 @@ requirement) in speech cards, the final conclusion, the decision ledger and the 
 out before Markdown so `\(` and `x_i` survive; prices (`$5 에서 $10`) and code are left alone; bare `\rightarrow`,
 `\times` become `→`, `×`. Without the package, formulas fall back to Unicode text. Copy and export keep the LaTeX.
 → [UI Components §1.3.7](ui/components.md)
+
+---
+
+## v1.1.1
+
+**Designate a skill from the input bar.** `@specialist @skill` makes that specialist use that skill in this
+turn: the `@` list now offers the usable skills, a skill pairs with the specialist mentioned just before it on
+the same line, and each of that specialist's speeches starts with the skill already loaded by the host (a
+normal `skills__load_skill` tool card). It works outside the specialist's `allowed_skills` for that turn only,
+never for a skill that is switched off, and survives resuming an interrupted turn.
+→ [Skills §9](agents/skills.md#9-designating-a-skill-from-the-input-bar) · [UI Components §1.3.4](ui/components.md) · ADR-027
 
 ---
 

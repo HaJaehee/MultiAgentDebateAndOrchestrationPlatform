@@ -637,7 +637,7 @@ CRLF into LF, and the "screens sent back" count included clients without a conne
 encryption). One token is one owner; there are no per-user accounts or per-session ownership. An already open
 websocket is not re-checked when a cookie reaches its 7-day expiry; the next reconnect or page load is.
 
-### 1.3.7. Math (v1.1.1)
+### 1.3.7. Math (v1.1.2)
 
 Models write LaTeX — `$O(n \times m)$`, `$A \leftarrow B$`, `$$\frac{1}{n}\sum t_i$$`, `\(p \cdot q\)`. NiceGUI's
 `ui.markdown` does not know it, so it showed the source, and Markdown made it worse: `\(` became `(`, and the
