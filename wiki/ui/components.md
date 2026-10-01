@@ -637,6 +637,39 @@ CRLF into LF, and the "screens sent back" count included clients without a conne
 encryption). One token is one owner; there are no per-user accounts or per-session ownership. An already open
 websocket is not re-checked when a cookie reaches its 7-day expiry; the next reconnect or page load is.
 
+### 1.3.7. Math (v1.1.1)
+
+Models write LaTeX — `$O(n \times m)$`, `$A \leftarrow B$`, `$$\frac{1}{n}\sum t_i$$`, `\(p \cdot q\)`. NiceGUI's
+`ui.markdown` does not know it, so it showed the source, and Markdown made it worse: `\(` became `(`, and the
+`_` of `x_i … y_j` turned into italics. [`MathMarkdown`](file:///d:/MultiAgentDebateOrchestration/app/ui/math_markdown.py)
+replaces `ui.markdown` in speech cards (streaming and final), the artifact viewer (final conclusion), the decision
+ledger and the trial result boxes.
+
+**How.** Before Markdown runs, each formula is cut out and replaced by a placeholder; after NiceGUI's own
+conversion (`prepare_content`) the placeholder becomes MathML from `latex2mathml` (pure Python, one wheel in the
+air-gapped bundle). Browsers draw MathML without scripts (Chrome/Edge 109+, Firefox), and NiceGUI's DOMPurify keeps
+it. The element's `content` stays the raw text, so copy buttons and exports keep the LaTeX.
+
+| Written | Treated as |
+| :--- | :--- |
+| `$$…$$`, `\[…\]` | block formula |
+| `\(…\)`, `$…$` | inline formula |
+| `$…$` that is not math-like (`$5 에서 $10`, `$100/$200`, `$HOME/$PATH`), `\[1\]` | text — pandoc rules: no space after the opening `$` or before the closing one, no digit right after it, and the content has a command, `^`, `_`, an operator or a bracket, or is one variable (`$n$`) |
+| fenced code, inline code | untouched |
+| `A \rightarrow B`, `2 \times 3` without `$` | Unicode (`→`, `×`; about 140 commands); `C:\to\file`, `work\times` are left alone |
+
+**Rendering details.** Wide block formulas scroll inside the card. The font is Cambria Math first (sharper rules
+and symbols on Windows). Two browser gaps are closed: `\lVert … \rVert` came out as bare `<mo>‖</mo>`, which
+browsers stretch to the tallest thing on the line (a `√`), so it gets `stretchy="false"` like LaTeX; and browsers
+ignore MathML's `columnalign`/`columnspacing`, so `cases` read as `1x ≥ 0` — CSS adds cell padding and maps
+`columnalign` to `text-align`.
+
+**When it cannot convert.** An unsupported formula, or a PC without `latex2mathml`, shows the formula as Unicode
+text instead (`\frac{n(n+1)}{2} \le x^2` → `(n(n+1))/(2) ≤ x²`). `latex2mathml` copies `\text{…}` verbatim, so
+`<`, `>` outside MathML tags are escaped and link/event attributes are stripped on the server, in addition to the
+browser's DOMPurify. Formulas are cached by source, so a streaming card does not convert the same formula again
+on every redraw.
+
 ### 1.4. Artifact Viewer ([app/ui/components/artifact_viewer.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/artifact_viewer.py))
 - **Tabs accumulate across turns.** `add_artifacts()` appends a finished turn's artifacts (skipping ids
   already shown) and opens that turn's report; `render_artifacts()` is only for rebuilding from a full

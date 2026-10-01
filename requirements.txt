@@ -9,6 +9,9 @@ pydantic-settings>=2.4.0
 sqlalchemy>=2.0.30
 aiosqlite>=0.20.0
 litellm>=1.40.0
+# 발언·결론의 LaTeX 수식을 MathML 로 그립니다 (app/ui/math_markdown.py). 순수 파이썬이라
+# 폐쇄망 휠 묶음에 그대로 들어갑니다. 없어도 화면은 뜨고, 그때는 기호만 유니코드로 바꿉니다.
+latex2mathml>=3.77
 # mcp 2.x 는 mcp.server.fastmcp 를 제거했고(MCPServer 로 개명), mcp-server-git 도
 # mcp<2 를 요구합니다. 샌드박스 서버가 FastMCP 를 쓰므로 1.x 계열로 고정합니다.
 mcp>=1.29.0,<2

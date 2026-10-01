@@ -143,6 +143,7 @@ MultiAgentDebateOrchestration/
 │       ├── theme.py          # Quasar CSS 스타일 & 컬러 팔레트
 │       ├── mention_input.py  # 입력창 @멘션 자동완성 (브라우저 스크립트)
 │       ├── diagnostics_script.py # 긴 작업·연결 끊김을 서버로 보고 (브라우저 스크립트)
+│       ├── math_markdown.py  # 발언·결론의 LaTeX 수식을 MathML 로 렌더링 (ui.markdown 대체)
 │       └── components/       # UI 컴포넌트
 │           ├── sidebar.py    # 세션 히스토리 사이드바
 │           ├── roster.py     # 에이전트 로스터 및 토론 제어판
@@ -163,6 +164,7 @@ MultiAgentDebateOrchestration/
     ├── test_workspace_mentions.py # @멘션 (경로 전달·경로 안전·코드 블록 제외) & 업로드
     ├── test_skill_mentions.py     # @전문가 @스킬 지정 (짝짓기·이번 턴 한정·발언 첫머리 불러오기·재개)
     ├── test_diagnostics.py        # 루프 정체 스택 기록·브라우저 보고 (Connection lost 원인 진단)
+    ├── test_math_markdown.py      # 수식 렌더링 (MathML 변환·가격/코드 제외·맨몸 명령·대체 표시·이스케이프)
     ├── test_remote_mcp.py       # 원격(HTTP) MCP 서버 (설정 규칙·전송 방식·토큰 보관)
     ├── test_tool_security_policy.py # 도구 보안 판정 (코드 검사·규칙·모드·고정 보호·비밀 환경변수)
     ├── test_tool_security_gate.py   # 승인 카드·게이트·도구 루프·매니저·러너·설정 기록

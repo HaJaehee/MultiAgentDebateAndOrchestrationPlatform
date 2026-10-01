@@ -51,6 +51,7 @@ from app.trial.store import (
 from app.trial.web import TRIAL_LOGIN_PATH, Visitor, current_visitor, is_owner
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.components.chat_feed import ChatFeed
+from app.ui.math_markdown import MathMarkdown
 
 logger = logging.getLogger(__name__)
 
@@ -277,17 +278,17 @@ class TrialSessionScreen:
                     if boxes["agreed"]:
                         with ui.column().classes("trial-box-ok p-3 gap-1"):
                             ui.label("합의된 사항").classes("text-xs font-semibold text-emerald-300")
-                            ui.markdown(boxes["agreed"]).classes("text-sm text-emerald-100")
+                            MathMarkdown(boxes["agreed"]).classes("text-sm text-emerald-100")
                     if boxes["open"]:
                         with ui.column().classes("trial-box-warn p-3 gap-1"):
                             ui.label("미합의 쟁점").classes("text-xs font-semibold text-amber-300")
-                            ui.markdown(boxes["open"]).classes("text-sm text-amber-100")
+                            MathMarkdown(boxes["open"]).classes("text-sm text-amber-100")
 
             # 산출물 뷰어는 싣지 않습니다. 엔진이 턴마다 남기는 산출물은 이 합성 발언 그 자체
             # ("최종 결론")와 기계용 요약(JSON)이라, 초심자에게는 같은 글이 두 번 보일 뿐입니다.
             # 표·코드·다이어그램은 아래 마크다운이 그대로 그립니다.
             with ui.card().classes("trial-card w-full p-5"):
-                ui.markdown(result.final, extras=MARKDOWN_EXTRAS).classes("w-full")
+                MathMarkdown(result.final, extras=MARKDOWN_EXTRAS).classes("w-full")
 
             self._followups(running)
             self._feedback(feedback.rating if feedback else 0, feedback.comment if feedback else "")

@@ -32,6 +32,13 @@ the socket is down. `/api/health` gains an `event_loop` summary. Nothing is writ
 `MADO_DIAGNOSTICS=0` turns the watchdog off.
 → [Diagnostics](operations/diagnostics.md)
 
+**Math in speeches and conclusions.** LaTeX written by the models — `$O(n \times m)$`, `$A \leftarrow B$`,
+`$$\frac{1}{n}\sum t_i$$`, `\(…\)`, `\[…\]` — is drawn as MathML (via the pure-Python `latex2mathml`, a new
+requirement) in speech cards, the final conclusion, the decision ledger and the trial result. Formulas are cut
+out before Markdown so `\(` and `x_i` survive; prices (`$5 에서 $10`) and code are left alone; bare `\rightarrow`,
+`\times` become `→`, `×`. Without the package, formulas fall back to Unicode text. Copy and export keep the LaTeX.
+→ [UI Components §1.3.7](ui/components.md)
+
 ---
 
 ## v1.1

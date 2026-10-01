@@ -93,6 +93,7 @@ app/
     ├── clipboard.py           43   클립보드 복사
     ├── mention_input.py      221   입력창 @언급 창 (브라우저 스크립트)
     ├── diagnostics_script.py 120   긴 작업·연결 끊김 보고 (브라우저 스크립트)
+    ├── math_markdown.py      266   LaTeX 수식 → MathML 렌더링 (ui.markdown 대체)
     └── components/
         ├── roster.py       2,128   에이전트 카드, MCP 칩, 전역 설정 편집
         ├── chat_feed.py    1,157   토론 피드, 발언 카드, 도구 아코디언

@@ -6,6 +6,7 @@ from nicegui import ui
 
 from app.export_mermaid import convert_mermaid_to_staruml_mdj, generate_mermaid_standalone_html
 from app.ui.clipboard import copy_to_clipboard
+from app.ui.math_markdown import MathMarkdown
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +232,7 @@ class ArtifactViewer:
                 else:
                     # `artifact-report`: 문단·섹션 단위로 화면 밖 것을 건너뜁니다 (theme.py).
                     with ui.column().classes("prose prose-invert max-w-none text-xs text-slate-200 artifact-report"):
-                        ui.markdown(content)
+                        MathMarkdown(content)
                     if self.on_open_workspace_files is not None:
                         # 긴 보고서를 끝까지 읽은 자리에서도 바로 받게 합니다.
                         ui.button(

@@ -8,6 +8,7 @@ from app.mcp.policy import OUTCOME_LABELS, describe_verdict, tool_outcome
 from app.orchestration.graph_run import NodeBadges
 from app.timestamps import format_duration, speech_time_text, speech_timing, to_local
 from app.ui.clipboard import copy_to_clipboard
+from app.ui.math_markdown import MathMarkdown
 from app.ui.mention_input import MENTION_INPUT_CLASS, MENTION_QUERY_EVENT
 from app.workspace_files import (
     MAX_UPLOAD_BYTES,
@@ -1609,7 +1610,8 @@ class ChatFeed:
                 "w-full prose prose-invert max-w-none text-sm text-slate-200"
             )
             with body:
-                md = ui.markdown(content)
+                # 수식(`$…$`, `\(…\)` 등)은 MathML 로 그립니다 (`app/ui/math_markdown.py`).
+                md = MathMarkdown(content)
 
             tool_container = ui.column().classes("w-full mt-2 gap-1")
             if tool_calls:

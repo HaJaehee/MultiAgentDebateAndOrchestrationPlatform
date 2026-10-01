@@ -40,6 +40,7 @@ from app.orchestration.strategies import (
     specialists_of,
 )
 from app.ui.components.agent_appearance import AgentAppearanceEditor
+from app.ui.math_markdown import MathMarkdown
 
 logger = logging.getLogger(__name__)
 
@@ -582,7 +583,7 @@ class AgentRosterControl:
                         "이전 기록이 생략되더라도 유지됩니다. 읽기 전용이며, "
                         "수정이 필요한 항목은 채팅으로 전달하시면 다음 갱신 시 반영됩니다."
                     ).classes("text-[10px] text-slate-500 leading-snug px-2")
-                    self.ledger_view = ui.markdown("").classes(
+                    self.ledger_view = MathMarkdown("").classes(
                         "w-full px-2 pb-2 text-[11px] text-slate-300 break-words"
                     )
                 self.set_decision_ledger(self.decision_ledger)

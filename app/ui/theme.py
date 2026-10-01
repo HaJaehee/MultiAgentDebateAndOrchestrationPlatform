@@ -163,6 +163,44 @@ body {
     color: #64748b;
 }
 
+/* --- 수식 (math_markdown.py: LaTeX → MathML) ---------------------------------
+   글꼴은 윈도우의 Cambria Math 를 먼저 씁니다. 브라우저 기본 수학 글꼴보다 기호·분수 선이
+   또렷합니다. 본문보다 조금 키워 첨자가 묻히지 않게 하고, 넓은 블록 수식은 카드 안에서 가로로
+   스크롤합니다 (카드 밖으로 넘치면 옆 패널을 가립니다). */
+.nicegui-markdown math {
+    font-family: "Cambria Math", "STIX Two Math", "Latin Modern Math", "Noto Sans Math", math;
+    font-size: 1.1em;
+    color: inherit;
+}
+.nicegui-markdown math[display="block"] {
+    display: block math;
+    margin: 0.5em 0;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+/* 표(cases·행렬): 브라우저는 MathML 의 columnalign·columnspacing 속성을 따르지 않습니다. 칸 사이를 띄우고
+   (`1  x ≥ 0` 이 `1x ≥ 0` 으로 붙지 않게) 변환기가 적어 둔 정렬을 CSS 로 옮깁니다. */
+.nicegui-markdown math mtd {
+    padding: 0.1em 0.45em;
+}
+.nicegui-markdown math mtd:first-child {
+    padding-left: 0;
+}
+.nicegui-markdown math mtd[columnalign="left"] {
+    text-align: left;
+}
+.nicegui-markdown math mtd[columnalign="right"] {
+    text-align: right;
+}
+.mado-math-fallback {
+    font-family: "Cambria Math", "STIX Two Math", serif;
+}
+div.mado-math-fallback {
+    margin: 0.5em 0;
+    text-align: center;
+}
+
 /* 이미지로 바꾼 다이어그램 (mermaid_export.py 의 MERMAID_IMAGE_JS).
    원본 SVG 는 복사·다운로드를 위해 남기되 숨깁니다 — 숨긴 요소는 배치도 칠하기도 하지 않습니다. */
 .mado-mermaid > svg.mado-mermaid-source {
