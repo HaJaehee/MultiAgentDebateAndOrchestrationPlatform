@@ -1,4 +1,4 @@
-# ADR-011. 시작한 대화는 에이전트 설정 전체를 굳힌다
+# ADR-011. 시작한 대화는 에이전트 설정 전체를 고정한다
 
 > [ADR 목록](README.md) · 이전: [ADR-010](ADR-010-host-defined-tool-scope.md) · 다음: [ADR-012](ADR-012-agent-owned-debate-order.md)
 

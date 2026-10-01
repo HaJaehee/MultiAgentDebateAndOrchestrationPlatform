@@ -93,7 +93,7 @@ prepare_agents_for_turn(db, session_model, pool, active_keys)
 이 순간부터 **해당 대화 세션은 외부의 `conf.json` 파일을 더 이상 읽지 않습니다.**
 
 > [!NOTE]
-> 잠금이 예외적으로 해제되는 단 한 가지 경우가 있습니다. 첫 번째 턴에서 **긴급 종료(Emergency Stop)**를 실행하여 세션 내에 발언이 하나도 남지 않게 된 경우, 해당 세션은 토론 시작 전 상태로 완벽히 복원되어 잠금이 다시 풀립니다(`discard_turn`). 기존에 생성되었던 `session_agents` 레코드는 정리되며, 차후 새로운 첫 메시지가 전송될 때 당시의 `conf.json` 설정으로 다시 굳어집니다. 자세한 내용은 [토론 한 턴의 생애주기](01-debate-turn.md#정지stop와-긴급-종료emergency-stop의-차이점) 문서를 참고하십시오.
+> 잠금이 예외적으로 해제되는 단 한 가지 경우가 있습니다. 첫 번째 턴에서 **긴급 종료(Emergency Stop)**를 실행하여 세션 내에 발언이 하나도 남지 않게 된 경우, 해당 세션은 토론 시작 전 상태로 완벽히 복원되어 잠금이 다시 풀립니다(`discard_turn`). 기존에 생성되었던 `session_agents` 레코드는 정리되며, 차후 새로운 첫 메시지가 전송될 때 당시의 `conf.json` 설정으로 다시 고정됩니다. 자세한 내용은 [토론 한 턴의 생애주기](01-debate-turn.md#정지stop와-긴급-종료emergency-stop의-차이점) 문서를 참고하십시오.
 
 ### 잠금 이후 전역 `conf.json`이 변경되었을 때의 영향
 
