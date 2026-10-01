@@ -37,6 +37,7 @@ from app.ui.components.roster import AgentRosterControl
 from app.ui.components.sidebar import SessionSidebar, event_changes_session_list
 from app.ui.components.workspace_download import WorkspaceDownloadDialog
 from app.ui.clipboard import copy_to_clipboard
+from app.ui.diagnostics_script import CLIENT_DIAGNOSTICS_JS
 from app.ui.mention_input import MENTION_JS
 from app.ui.mermaid_export import MERMAID_EXPORT_JS, MERMAID_IMAGE_JS
 from app.ui.theme import CUSTOM_CSS, FAVICON_SVG
@@ -65,6 +66,7 @@ def create_ui() -> None:
             f"<script>{MERMAID_IMAGE_JS}</script>"
             f"<script>{SPLITTER_FREEZE_JS}</script>"
             f"<script>{MENTION_JS}</script>"
+            f"<script>{CLIENT_DIAGNOSTICS_JS}</script>"
         )
 
         session_factory = get_session_factory()

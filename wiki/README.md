@@ -40,7 +40,8 @@ wiki/
 │   └── components.md                      # Sidebar, Roster Control, Appearance Editor, Chat Feed, Artifact Viewer & Personas UI
 └── operations/
     ├── getting-started.md                 # Local installation, setup scripts, execution & testing
-    └── airgap-packaging.md                # Offline packaging bundle, portable runtimes & wheel installation
+    ├── airgap-packaging.md                # Offline packaging bundle, portable runtimes & wheel installation
+    └── diagnostics.md                     # Event-loop stall stacks & browser disconnect reports ("Connection lost")
 ```
 
 ---
@@ -55,7 +56,7 @@ wiki/
 | **MCP Tool Protocol** | [Overview & Protocol](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/overview-and-protocol.md)<br>[Bundled Servers](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/bundled-servers.md)<br>[Runtime Isolation](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/runtime-isolation.md)<br>[Tool Security](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/tool-security.md)<br>[Resilience & Errors](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/error-handling-resilience.md) | Stdio client lifecycle, long-lived server processes, tool dispatch, `isError: true` feedback, stderr tee, per-workspace runtime pool and concurrent sessions, allow/ask/deny rules, approval cards, hard protections |
 | **Orchestration** | [Engine Lifecycle](file:///d:/MultiAgentDebateOrchestration/wiki/orchestration/engine-lifecycle.md)<br>[Debate Strategies](file:///d:/MultiAgentDebateOrchestration/wiki/orchestration/debate-strategies.md)<br>[Session Handoff](file:///d:/MultiAgentDebateOrchestration/wiki/orchestration/session-handoff.md)<br>[Interrupted Turns](file:///d:/MultiAgentDebateOrchestration/wiki/orchestration/turn-recovery.md)<br>[Conversation Memory](file:///d:/MultiAgentDebateOrchestration/wiki/orchestration/context-memory.md)<br>[Artifact Synthesis](file:///d:/MultiAgentDebateOrchestration/wiki/orchestration/artifact-generation.md) | Round-based debate, speaker order from agent fields, speaking-order preview, orchestrator-led turn assignment, consensus criteria, continuing a session with its knowledge graph, resuming a turn cut by a restart (down to the last finished tool), pinned user record / decision ledger / summaries, multi-artifact parsing and Mermaid self-repair |
 | **User Interface** | [NiceGUI & FastAPI](file:///d:/MultiAgentDebateOrchestration/wiki/ui/nicegui-fastapi.md)<br>[UI Components](file:///d:/MultiAgentDebateOrchestration/wiki/ui/components.md) | Single Uvicorn process, Quasar dark mode, real-time WebSocket updates, folding tool call logs, per-agent card colour and icon |
-| **Operations** | [Getting Started](file:///d:/MultiAgentDebateOrchestration/wiki/operations/getting-started.md)<br>[Air-gap Packaging](file:///d:/MultiAgentDebateOrchestration/wiki/operations/airgap-packaging.md) | `setup_mcp.py`, `package_offline.py`, `package_source.py` incremental updates, zero-dependency air-gapped bundles, version pinning |
+| **Operations** | [Getting Started](file:///d:/MultiAgentDebateOrchestration/wiki/operations/getting-started.md)<br>[Air-gap Packaging](file:///d:/MultiAgentDebateOrchestration/wiki/operations/airgap-packaging.md)<br>[Diagnostics](file:///d:/MultiAgentDebateOrchestration/wiki/operations/diagnostics.md) | `setup_mcp.py`, `package_offline.py`, `package_source.py` incremental updates, zero-dependency air-gapped bundles, version pinning |
 | **Release History** | [Release Notes](file:///d:/MultiAgentDebateOrchestration/wiki/release-notes.md) | What changed in each version, why, and which topic page covers it |
 
 ---

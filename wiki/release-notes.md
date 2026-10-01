@@ -24,6 +24,14 @@ files broke this way). Agents with the filesystem server only still get `edit_fi
 the new tool as a write, and appending text to `.pptx`/`.xlsx`/… is refused like any text write.
 → [LLM Integration §2.2, §2.5](agents/llm-integration.md) · [Bundled Servers](mcp/bundled-servers.md)
 
+**Diagnostics for "Connection lost".** When the server's event loop is held for more than a second, a
+watchdog thread writes the stack of what held it to `data/diagnostics/stalls.log` (and notes when the loop
+was idle but not given a turn). The main page reports long main-thread tasks, socket disconnects with their
+reason, reconnections and failed reconnects over HTTP to `client.log` — HTTP so the report gets out while
+the socket is down. `/api/health` gains an `event_loop` summary. Nothing is written while healthy;
+`MADO_DIAGNOSTICS=0` turns the watchdog off.
+→ [Diagnostics](operations/diagnostics.md)
+
 ---
 
 ## v1.1

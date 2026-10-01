@@ -172,6 +172,7 @@ pytest -q
 | `can't open file '.../mcp_sandbox/server.py'` 오류 | 파이썬 샌드박스 서버가 설치되지 않았습니다. `setup_mcp.py`를 실행하거나 `conf.json`에서 `"enabled": false`로 비활성화하십시오. |
 | Git MCP 도구 서버 기동 실패 | `workspace` 디렉터리가 Git 저장소가 아닙니다. `git init workspace` 명령을 수행하십시오. |
 | 설정 파일 문법 파싱 오류 | 콘솔 오류 메시지에 **행 번호와 열 번호**가 명확히 보고됩니다. 해당 위치의 JSON 문법(쉼표, 따옴표 등)을 점검하십시오. |
+| 화면이 멈추거나 "Connection lost" 가 표시됨 | 다른 탭에서 `/api/health` 를 열어 보십시오. 응답이 없으면 서버 쪽입니다. `data/diagnostics/stalls.log` 에 서버를 붙잡은 함수의 스택이 남습니다. 응답이 바로 오면 브라우저나 네트워크 쪽이며, `data/diagnostics/client.log` 에 끊긴 사유와 직전의 긴 작업이 남습니다. 두 파일을 함께 보내 주시면 원인을 가릴 수 있습니다. |
 | 다른 세션이 진행 중이라며 세션 시작이 거부됨 | 서로 다른 작업 공간을 사용하는 다중 토론 세션의 동시 실행 슬롯이 한도에 도달했습니다. [아키텍처](../01-overview/02-architecture.md#동시성-모델)를 참조하십시오. |
 
 ---

@@ -318,6 +318,9 @@ Three changes, each closing a different link:
 Database writes were not touched: they were already one row per speech, written after the stream ends.
 Nothing writes per chunk.
 
+If the page still drops, [Diagnostics](../operations/diagnostics.md) records which side froze: the stack
+of whatever held the server's event loop, and the browser's long tasks and disconnect reason.
+
 Measured in a browser, same 8,000-character report fed at 200 chunks/s on a wall clock:
 
 | | Before | After |

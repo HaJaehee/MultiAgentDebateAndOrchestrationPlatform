@@ -3,7 +3,7 @@ import contextlib
 import logging
 import threading
 from typing import Any, AsyncGenerator
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from nicegui import app as nicegui_app, ui
 import uvicorn
@@ -17,6 +17,14 @@ from app.about import (
 )
 from app.config import DEFAULT_CONFIG_PATH, PROJECT_ROOT, get_config, resolve_agent_icon
 from app.database.session import get_session_factory, init_db
+from app.diagnostics import (
+    MAX_CLIENT_REPORT_BYTES,
+    loop_health,
+    parse_client_body,
+    record_client_report,
+    start_loop_watchdog,
+    stop_loop_watchdog,
+)
 from app.mcp.manager import get_mcp_manager
 from app.mcp.pool import get_runtime_pool
 from app.orchestration.runner import get_debate_runner
@@ -73,6 +81,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """FastAPI & NiceGUI application lifecycle manager."""
     logger.info("Starting MADO: Multi-Agent Debate & Orchestration Platform...")
     _install_process_guards()
+    # 이벤트 루프가 붙잡히면 그 순간의 스택을 남깁니다 (data/diagnostics/stalls.log).
+    start_loop_watchdog()
 
     # 1. Load configuration
     cfg = get_config()
@@ -141,6 +151,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except BaseException as exc:  # noqa: BLE001
         logger.warning("Could not close every MCP session: %s: %s", type(exc).__name__, exc)
 
+    await stop_loop_watchdog()
+
 
 # 1. Create FastAPI Application
 server = FastAPI(
@@ -161,7 +173,27 @@ async def health_check():
         "author": {"name": AUTHOR, "email": AUTHOR_EMAIL},
         "app": {"host": cfg.app.host, "port": cfg.app.port, "debug": cfg.app.debug},
         "registered_agents": [a.key for a in pool.list_all()],
+        # 이벤트 루프가 붙잡혔던 기록의 요약 (`app/diagnostics.py`). 감시가 꺼져 있으면 null.
+        "event_loop": loop_health(),
     }
+
+
+@server.post("/api/diagnostics/client")
+async def diagnostics_client(request: Request) -> Response:
+    """브라우저가 보내는 진단 보고 — 긴 작업, 연결 끊김과 그 사유 (`app/ui/diagnostics_script.py`).
+
+    웹소켓이 아니라 HTTP 로 받습니다. 소켓이 끊긴 그 순간의 보고가 가장 중요한데, 그때는 소켓으로
+    보낼 수 없기 때문입니다. 접근 제어는 다른 `/api/*` 와 같습니다 (주인만, 같은 출처만).
+    """
+    if int(request.headers.get("content-length") or 0) > MAX_CLIENT_REPORT_BYTES:
+        return Response(status_code=413)
+    report, problem = parse_client_body(await request.body())
+    if problem:
+        return Response(status_code=400)
+    if isinstance(report, dict):
+        report.setdefault("user_agent", request.headers.get("user-agent", ""))
+    record_client_report(report, request.client.host if request.client else "")
+    return Response(status_code=204)
 
 
 # 아이콘 파일을 못 찾았을 때 대신 내려주는 그림. 아바타가 깨진 이미지로 남는

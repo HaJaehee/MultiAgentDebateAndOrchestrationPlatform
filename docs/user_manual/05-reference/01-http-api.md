@@ -19,9 +19,13 @@ FastAPI 엔드포인트는 **조회 전용**입니다. 토론 진행과 설정 �
   "version": "v1.1.1",
   "author": { "name": "Ha, Jaehee", "email": "lovesm135@naver.com" },
   "app": { "host": "127.0.0.1", "port": 8000, "debug": true },
-  "registered_agents": ["orchestrator", "architect", "coder", "critic"]
+  "registered_agents": ["orchestrator", "architect", "coder", "critic"],
+  "event_loop": {"stall_threshold_seconds": 1.0, "stalls": 0, "longest_seconds": 0.0, "last": null}
 }
 ```
+
+`event_loop` 은 서버 이벤트 루프가 1초 넘게 붙잡혔던 기록의 요약입니다 (횟수, 가장 긴 시간, 마지막 위치).
+자세한 스택은 `data/diagnostics/stalls.log` 에 있습니다. `MADO_DIAGNOSTICS=0` 으로 감시를 끄면 `null` 입니다.
 
 `version` 과 `author` 는 [`app/about.py`](../../../app/about.py) 한 곳에서 옵니다.
 FastAPI 메타데이터, 화면 헤더 배지, 정보 모달(우측 상단 **ⓘ**)이 같은 값을
@@ -195,6 +199,15 @@ MCP 서버별 연결 상태. `"enabled": false` 로 꺼 둔 서버도 함께 보
 | `is_customized` | `conf.json` 기본값에서 사용자 정의 프롬프트로 커스터마이징됨 |
 
 세션이 없으면 `404`.
+
+---
+
+## `POST /api/diagnostics/client`
+
+메인 화면의 스크립트가 보내는 진단 보고입니다. 긴 작업, 연결 끊김과 그 사유, 재접속을 받아
+`data/diagnostics/client.log` 에 한 줄씩 적고 `204` 로 답합니다. 연결이 끊긴 순간에도 보낼 수 있도록
+웹소켓이 아니라 HTTP 를 씁니다. 8KB 를 넘는 본문은 `413`, JSON 이 아니면 `400` 이며, 한 주소에서 1분에
+60건까지 받습니다. 접근 제어는 다른 `/api/*` 와 같습니다.
 
 ---
 

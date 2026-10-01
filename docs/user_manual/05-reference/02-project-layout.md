@@ -57,6 +57,7 @@ app/
 ├── session_ops.py            335   세션 생성·삭제·이어받기
 ├── export.py                 204   대화 → 마크다운 문서
 ├── workspace_files.py        546   작업 공간 파일 목록·@언급 해석·업로드 저장 (경로 안전장치)
+├── diagnostics.py            394   이벤트 루프 정체 스택·브라우저 끊김 보고 기록 (data/diagnostics/)
 ├── timestamps.py             153   발언 시작·종료·경과, 턴 총 경과, 보고서 완료 시각 (UI·문서·보고서 공용, 상위 무의존)
 ├── export_mermaid.py       1,618   Mermaid → SVG/PNG 렌더러 (외부 의존 없음)
 ├── mermaid_lint.py           323   다이어그램 문법 검사·복구
@@ -91,6 +92,7 @@ app/
     ├── mermaid_export.py     333   다이어그램 내려받기
     ├── clipboard.py           43   클립보드 복사
     ├── mention_input.py      221   입력창 @언급 창 (브라우저 스크립트)
+    ├── diagnostics_script.py 120   긴 작업·연결 끊김 보고 (브라우저 스크립트)
     └── components/
         ├── roster.py       2,128   에이전트 카드, MCP 칩, 전역 설정 편집
         ├── chat_feed.py    1,157   토론 피드, 발언 카드, 도구 아코디언

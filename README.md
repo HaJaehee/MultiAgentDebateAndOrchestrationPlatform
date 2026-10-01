@@ -114,6 +114,7 @@ MultiAgentDebateOrchestration/
 │   ├── about.py              # 애플리케이션 메타데이터 (이름·버전·저작자 단일 출처)
 │   ├── config.py             # JSON 로더/저장기, 환경변수 치환 및 Pydantic 검증
 │   ├── workspace_files.py    # 작업 공간 파일 목록·@멘션 해석·업로드 처리 (경로 안전장치)
+│   ├── diagnostics.py        # 이벤트 루프 정체 스택·브라우저 끊김 보고 기록 (data/diagnostics/)
 │   ├── database/             # SQLite & SQLAlchemy 비동기 ORM
 │   │   ├── models.py         # Session, Message, ToolCallRecord, Artifact, SessionAgent 모델
 │   │   └── session.py        # Async Engine 및 세션 관리
@@ -141,6 +142,7 @@ MultiAgentDebateOrchestration/
 │       ├── personas_page.py  # /personas/{session_id} 페르소나 편집 페이지
 │       ├── theme.py          # Quasar CSS 스타일 & 컬러 팔레트
 │       ├── mention_input.py  # 입력창 @멘션 자동완성 (브라우저 스크립트)
+│       ├── diagnostics_script.py # 긴 작업·연결 끊김을 서버로 보고 (브라우저 스크립트)
 │       └── components/       # UI 컴포넌트
 │           ├── sidebar.py    # 세션 히스토리 사이드바
 │           ├── roster.py     # 에이전트 로스터 및 토론 제어판
@@ -160,6 +162,7 @@ MultiAgentDebateOrchestration/
     ├── test_abort_turn.py       # 긴급 중단 (해당 턴 정리, 시작 전 상태 롤백)
     ├── test_workspace_mentions.py # @멘션 (경로 전달·경로 안전·코드 블록 제외) & 업로드
     ├── test_skill_mentions.py     # @전문가 @스킬 지정 (짝짓기·이번 턴 한정·발언 첫머리 불러오기·재개)
+    ├── test_diagnostics.py        # 루프 정체 스택 기록·브라우저 보고 (Connection lost 원인 진단)
     ├── test_remote_mcp.py       # 원격(HTTP) MCP 서버 (설정 규칙·전송 방식·토큰 보관)
     ├── test_tool_security_policy.py # 도구 보안 판정 (코드 검사·규칙·모드·고정 보호·비밀 환경변수)
     ├── test_tool_security_gate.py   # 승인 카드·게이트·도구 루프·매니저·러너·설정 기록
