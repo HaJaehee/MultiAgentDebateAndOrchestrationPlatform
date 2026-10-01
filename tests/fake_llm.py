@@ -84,6 +84,9 @@ class FakeLLMCaller:
         self.tool_gates: List[Any] = []
         # 각 호출이 시스템 프롬프트에 실을 결정 장부 (`LLMCaller.build_system_prompt`)
         self.ledgers: List[str] = []
+        # 각 호출의 (에이전트 키, 미리 불러 둘 스킬, 그 발언의 allowed_skills). 입력창의 스킬 지정이
+        # 그 전문가의 발언에만, 그 턴에만 걸리는지 테스트가 읽습니다.
+        self.preloads: List[Tuple[str, List[str], List[str]]] = []
 
     def _reply_for(self, agent: Agent, messages: List[Dict[str, Any]]) -> str:
         if agent.key in self.replies:
@@ -115,8 +118,10 @@ class FakeLLMCaller:
         tool_gate: Any = None,
         checkpoint: Any = None,
         resume_state: Any = None,
+        preload_skills: Any = (),
     ) -> Tuple[str, List[Dict[str, Any]]]:
         self.calls.append(agent.key)
+        self.preloads.append((agent.key, list(preload_skills), list(agent.allowed_skills)))
         # 이 발언이 받은 도구 보안 문지기. 턴마다 하나가 모든 발언에 걸리는지 테스트가 읽습니다.
         self.tool_gates.append(tool_gate)
         self.ledgers.append(ledger)

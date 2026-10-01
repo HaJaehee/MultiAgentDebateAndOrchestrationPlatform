@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import uuid
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 from nicegui import run as ng_run, ui
 from sqlalchemy import desc, select
 from app.about import (
@@ -19,6 +19,7 @@ from app.agents.personas import (
     resync_agent_configs,
     session_roster_agents,
 )
+from app.agents.skills import scan_skills
 from app.config import resolve_workspace_dir
 from app.database.models import ArtifactModel, MessageModel, SessionModel
 from app.database.session import get_session_factory
@@ -44,6 +45,7 @@ from app.workspace_files import (
     agents_for_mentions,
     expand_mentions,
     get_workspace_index,
+    skills_for_mentions,
     store_workspace_upload,
     suggest_mentions,
 )
@@ -566,10 +568,19 @@ def create_ui() -> None:
                 roster_control.roster_agents(), roster_control.get_active_agent_keys()
             )
 
+        def mention_skills():
+            # 스킬은 실시간입니다 (켜기·끄기, 폴더 추가). 지정은 이번 턴에 한해 allowed_skills 밖의
+            # 스킬도 줄 수 있으므로, 이 전문가의 것만이 아니라 쓸 수 있는 스킬 전부가 후보입니다.
+            return skills_for_mentions(scan_skills())
+
         async def mention_provider(query: str) -> List[Dict[str, str]]:
             # 폴더를 훑는 일은 디스크를 읽으므로 이벤트 루프 밖에서 합니다.
             scan = await ng_run.io_bound(get_workspace_index().get, workspace_root())
-            return [s.to_dict() for s in suggest_mentions(query, scan.entries, mention_agents())]
+            skills = await ng_run.io_bound(mention_skills)
+            return [
+                s.to_dict()
+                for s in suggest_mentions(query, scan.entries, mention_agents(), skills=skills)
+            ]
 
         async def on_upload_file(filename: str, content: bytes) -> str:
             return await ng_run.io_bound(store_workspace_upload, workspace_root(), filename, content)
@@ -577,17 +588,20 @@ def create_ui() -> None:
         def upload_destination() -> str:
             return str(workspace_root() / UPLOAD_SUBDIR)
 
-        async def with_references(text: str) -> str:
+        async def with_references(text: str) -> Tuple[str, Dict[str, List[str]]]:
             """보낼 글의 @언급을 풀어 참조 블록을 붙입니다. 뺀 언급은 알려 줍니다.
 
-            파일 내용은 붙이지 않습니다 — 경로만. 전문가 지목도 글로만 전달합니다.
+            파일 내용은 붙이지 않습니다 — 경로만. 전문가 지목도 글로만 전달합니다. 스킬 지정만은
+            글과 함께 (전문가 키 → 스킬) 로도 돌려줍니다. 엔진이 그 전문가의 발언마다 스킬을 미리
+            불러 두려면 글이 아니라 값으로 받아야 합니다.
             """
+            skills = await ng_run.io_bound(mention_skills)
             expanded, report = await ng_run.io_bound(
-                expand_mentions, text, workspace_root(), mention_agents()
+                expand_mentions, text, workspace_root(), mention_agents(), skills
             )
             for warning in report.warnings():
                 ui.notify(warning, type="warning", position="bottom-right", multi_line=True)
-            return expanded
+            return expanded, report.skill_designations
 
         async def on_send_message(prompt: str) -> None:
             """토론을 시작하고 이 화면을 붙입니다. 실제 실행은 러너가 맡습니다.
@@ -597,7 +611,7 @@ def create_ui() -> None:
             """
             nonlocal current_session_id
             try:
-                prompt = await with_references(prompt)
+                prompt, skill_designations = await with_references(prompt)
                 if not current_session_id:
                     current_session_id = await create_new_session_db(title=prompt[:30])
                     sidebar.current_session_id = current_session_id
@@ -620,7 +634,10 @@ def create_ui() -> None:
                 # MCP 서버 묶음이 따로 뜨기 때문입니다 (`app/mcp/pool.py`). 자리가
                 # 모자라면 턴이 시작된 뒤 `RuntimeCapacityError` 로 끝나고, 그
                 # 사유는 아래 실패 경로를 통해 화면에 그대로 나옵니다.
-                run = runner.start(current_session_id, prompt, roster_control.workspace_dir)
+                run = runner.start(
+                    current_session_id, prompt, roster_control.workspace_dir,
+                    skill_designations=skill_designations,
+                )
             except Exception as exc:  # noqa: BLE001 - 입력이 잠긴 채로 남으면 안 됩니다
                 logger.error(f"Could not start the debate: {exc}", exc_info=True)
                 chat_feed.set_busy(False, f"토론을 시작하지 못했습니다: {exc}", "Error")
@@ -709,8 +726,12 @@ def create_ui() -> None:
             새 턴을 열지 않고(러너는 세션당 하나만 돌립니다) 진행 중인 토론의
             다음 발언 차례에 유저 발언으로 끼워 넣습니다.
             """
-            outgoing = await with_references(text) if current_session_id else text
-            if not current_session_id or not runner.interject(current_session_id, outgoing):
+            outgoing, skill_designations = (
+                await with_references(text) if current_session_id else (text, {})
+            )
+            if not current_session_id or not runner.interject(
+                current_session_id, outgoing, skill_designations=skill_designations
+            ):
                 # 마지막 발언과 화면 갱신 사이에 눌린 경우. 글을 삼키지 않습니다.
                 chat_feed.restore_input(text)
                 chat_feed.set_busy(False, "진행 중인 토론이 없습니다", "Ready")

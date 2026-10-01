@@ -141,6 +141,7 @@ body {
 }
 .mado-mention-icon.mado-mention-agent { color: #a5b4fc; }
 .mado-mention-icon.mado-mention-dir { color: #fbbf24; }
+.mado-mention-icon.mado-mention-skill { color: #6ee7b7; }
 .mado-mention-label {
     flex: 1 1 auto;
     min-width: 0;

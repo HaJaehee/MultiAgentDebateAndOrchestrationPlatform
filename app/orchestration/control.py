@@ -11,7 +11,8 @@
 
 * **정지 요청** — 태스크를 죽이지 않습니다. 진행 중인 발언은 끝까지 받고,
   남은 라운드를 건너뛰어 곧장 최종 합성으로 넘어갑니다.
-* **개입 메모** — 다음 발언자의 맥락에 유저 발언으로 끼어듭니다.
+* **개입 메모** — 다음 발언자의 맥락에 유저 발언으로 끼어듭니다. 메모에 @전문가 @스킬 지정이
+  있었으면 그것도 함께 넘어가, 남은 발언부터 그 전문가에게 스킬이 미리 불립니다.
 * **도구 예산 확장 요청** — 여기서는 방향이 반대입니다. 도구 호출 상한을 다 쓴
   에이전트가 사람에게 쪽지를 내밀고, 답(상한 확장 / 즉시 마무리)이 올 때까지
   그 발언만 기다립니다. 답이 없으면 시간이 지나 스스로 마무리로 갑니다.
@@ -57,6 +58,8 @@ class TurnControl:
     def __init__(self) -> None:
         self._stop_requested = False
         self._notes: List[str] = []
+        # 개입 메모와 함께 온 스킬 지정 (전문가 키 → 스킬). 메모와 같은 때에 꺼내 갑니다.
+        self._skill_designations: Dict[str, List[str]] = {}
         # 사람의 답을 기다리는 쪽지들 (id -> 쪽지). 도구 상한과 컨텍스트 창이
         # 같은 우편함을 씁니다 — 기다리는 방식도, 답을 받는 방식도 같습니다.
         #
@@ -94,18 +97,26 @@ class TurnControl:
         """아직 토론에 반영되지 않고 대기 중인 개입 메모."""
         return list(self._notes)
 
-    def add_note(self, text: str) -> bool:
+    def add_note(self, text: str, skill_designations: Optional[Dict[str, List[str]]] = None) -> bool:
         """개입 메모를 대기열에 넣습니다. 빈 문자열은 무시하고 False 를 돌려줍니다."""
         cleaned = (text or "").strip()
         if not cleaned:
             return False
         self._notes.append(cleaned)
+        for key, skills in (skill_designations or {}).items():
+            bucket = self._skill_designations.setdefault(key, [])
+            bucket.extend(s for s in skills if s not in bucket)
         return True
 
     def drain_notes(self) -> List[str]:
         """대기 중인 메모를 전부 꺼내고 대기열을 비웁니다."""
         notes, self._notes = self._notes, []
         return notes
+
+    def drain_skill_designations(self) -> Dict[str, List[str]]:
+        """메모와 함께 온 스킬 지정을 전부 꺼내고 비웁니다."""
+        designations, self._skill_designations = self._skill_designations, {}
+        return designations
 
     # -------------------------------------------------- 결정 요청 (공통)
 

@@ -443,6 +443,42 @@ def visible_skill_names(agent: Any) -> List[str]:
         return []
 
 
+# ---------------------------------------------------------------------------
+# 유저 지정 — 입력창의 `@전문가 @스킬`
+#
+# 지정은 그 턴에만 겁니다. 대화에 굳은 `allowed_skills` 는 바꾸지 않고, 그 턴의 발언에 쓸
+# 에이전트 사본에 스킬을 더합니다 (`with_designated_skills`). 그리고 발언 첫머리에 호스트가
+# `load_skill` 을 대신 불러 결과를 넣어 둡니다 (`LLMCaller._preload_skills`). 모델이
+# 스킬 목록을 참고만 하고 넘어가는 일이 없도록, 지정한 스킬은 반드시 읽고 시작하게 합니다.
+#
+# 켜기·끄기는 지정보다 앞섭니다. 꺼진 스킬은 `visible_skills` 에서 빠지므로 지정해도 주지 않습니다.
+# ---------------------------------------------------------------------------
+
+DESIGNATED_SKILL_NOTE = (
+    "[유저 지정] 유저가 이번 턴에 당신에게 이 스킬을 쓰도록 지정해, 앱이 미리 불러 두었습니다. "
+    "아래 지침을 따라 답하십시오."
+)
+
+
+def with_designated_skills(agent: Any, names: Optional[Iterable[str]]) -> Any:
+    """`names` 를 `allowed_skills` 에 더한 에이전트 사본. 더할 것이 없으면 그대로 돌려줍니다."""
+    current = list(getattr(agent, "allowed_skills", None) or ())
+    extra = [n for n in dict.fromkeys(names or ()) if n and n not in current]
+    if not extra:
+        return agent
+    return agent.model_copy(update={"allowed_skills": current + extra})
+
+
+def offered_skills(tools: Optional[List[Dict[str, Any]]]) -> List[str]:
+    """이번 발언의 `load_skill` 도구가 받는 스킬 이름 (도구 정의의 enum). 도구가 없으면 빈 목록."""
+    for tool in tools or ():
+        function = tool.get("function") or {}
+        if function.get("name") == LOAD_SKILL_TOOL:
+            prop = ((function.get("parameters") or {}).get("properties") or {}).get("skill") or {}
+            return [str(name) for name in prop.get("enum") or ()]
+    return []
+
+
 def is_skill_tool(tool_name: str) -> bool:
     """스킬 도구인지 여부를 확인합니다. 모델이 접두사를 생략하고 호출한 경우(`load_skill`)도 지원합니다."""
     name = (tool_name or "").strip()

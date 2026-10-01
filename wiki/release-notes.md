@@ -6,6 +6,17 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## v1.1.1
+
+**Designate a skill from the input bar.** `@specialist @skill` makes that specialist use that skill in this
+turn: the `@` list now offers the usable skills, a skill pairs with the specialist mentioned just before it on
+the same line, and each of that specialist's speeches starts with the skill already loaded by the host (a
+normal `skills__load_skill` tool card). It works outside the specialist's `allowed_skills` for that turn only,
+never for a skill that is switched off, and survives resuming an interrupted turn.
+→ [Skills §9](agents/skills.md#9-designating-a-skill-from-the-input-bar) · [UI Components §1.3.4](ui/components.md) · ADR-027
+
+---
+
 ## v1.1
 
 **Skills: instructions an agent loads when the work calls for them.** A skill is a folder under `skills/`

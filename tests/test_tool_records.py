@@ -106,7 +106,7 @@ async def test_tools_that_ran_before_a_failure_are_kept():
                              on_tool_call=None, on_chunk=None, session_id=None,
                              budget_arbiter=None,
                              context_arbiter=None, on_context_trim=None, mcp=None, ledger="", tool_gate=None,
-                             checkpoint=None, resume_state=None):
+                             checkpoint=None, resume_state=None, preload_skills=()):
             if agent.key == "coder":
                 if on_tool_call:
                     await on_tool_call(dict(GIT_STATUS))

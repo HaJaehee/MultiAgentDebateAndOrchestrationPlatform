@@ -1,12 +1,12 @@
 # 🤖 MADO — Multi-Agent Debate & Orchestration Platform
 
-`v1.1` · `LGPL-3.0-or-later` · `Python 3.11+`
+`v1.1.1` · `LGPL-3.0-or-later` · `Python 3.11+`
 
 > **MCP 도구를 활용하는 반응형 멀티 에이전트 협업 & 토론 웹 애플리케이션**  
 > Dynamic Agent Profiling via `conf.json`, MCP Tool Integration, Multi-Model LLM Abstraction (LiteLLM), StateGraph Orchestration, and NiceGUI + FastAPI Reactive Web Interface.
 
 ```
-Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v1.1
+Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v1.1.1
 ```
 
 동일한 내용을 웹 UI 우측 상단의 **ⓘ** 버튼을 통해서도 확인하실 수 있습니다.
@@ -159,6 +159,7 @@ MultiAgentDebateOrchestration/
     ├── test_parallel_dispatch.py # 병렬 지시 전략 (동시 실행·과업 분배·취합·상한)
     ├── test_abort_turn.py       # 긴급 중단 (해당 턴 정리, 시작 전 상태 롤백)
     ├── test_workspace_mentions.py # @멘션 (경로 전달·경로 안전·코드 블록 제외) & 업로드
+    ├── test_skill_mentions.py     # @전문가 @스킬 지정 (짝짓기·이번 턴 한정·발언 첫머리 불러오기·재개)
     ├── test_remote_mcp.py       # 원격(HTTP) MCP 서버 (설정 규칙·전송 방식·토큰 보관)
     ├── test_tool_security_policy.py # 도구 보안 판정 (코드 검사·규칙·모드·고정 보호·비밀 환경변수)
     ├── test_tool_security_gate.py   # 승인 카드·게이트·도구 루프·매니저·러너·설정 기록
@@ -285,7 +286,7 @@ pytest -v tests/
 |------|-----|
 | Author | Ha, Jaehee |
 | Email | lovesm135@naver.com |
-| Version | **v1.1** |
+| Version | **v1.1.1** |
 | License | LGPL-3.0-or-later ([LICENSE.md](LICENSE.md)) |
 
 버전 문자열의 기준 위치(Single Source of Truth)는 [`app/about.py`](app/about.py) 파일 한 곳입니다. FastAPI 메타데이터, `GET /api/health` 응답, 웹 UI 헤더 뱃지, 정보 모달이 모두 이 값을 참조하므로, 버전을 올릴 때 한 곳만 수정하시면 됩니다.
@@ -297,7 +298,7 @@ curl -s localhost:8000/api/health | python -m json.tool
 ```json
 {
   "status": "healthy",
-  "version": "v1.1",
+  "version": "v1.1.1",
   "author": { "name": "Ha, Jaehee", "email": "lovesm135@naver.com" }
 }
 ```

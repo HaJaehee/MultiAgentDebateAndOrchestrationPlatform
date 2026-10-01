@@ -67,6 +67,9 @@ class DebateState(BaseModel):
     current_round: int = 0
     custom_instructions: str = ""
     active_agent_keys: List[str] = Field(default_factory=list)
+    # 입력창에서 `@전문가 @스킬` 로 지정한 스킬 (전문가 키 → 스킬). 이 턴에만 걸리고, 그 전문가의
+    # 발언마다 미리 불립니다 (`OrchestratorEngine._speak`). 개입 메모로 더해질 수 있습니다.
+    skill_designations: Dict[str, List[str]] = Field(default_factory=dict)
     messages: List[DebateMessage] = Field(default_factory=list)
     tool_records: List[Dict[str, Any]] = Field(default_factory=list)
     is_consensus_reached: bool = False

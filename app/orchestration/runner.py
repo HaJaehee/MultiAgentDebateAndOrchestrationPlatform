@@ -163,15 +163,16 @@ class TurnRun:
         self._emit({"type": "stop_requested"})
         return True
 
-    def interject(self, text: str) -> bool:
+    def interject(self, text: str, skill_designations: Optional[Dict[str, List[str]]] = None) -> bool:
         """토론 중인 에이전트들에게 사용자 메시지를 끼워 넣습니다.
 
         곧바로 반영되지는 않습니다. 지금 발언 중인 에이전트의 프롬프트는 이미
         만들어져 나갔으므로, 엔진이 다음 발언자로 넘어가는 지점에서 꺼내 갑니다.
+        `skill_designations` (전문가 키 → 스킬) 도 그때 함께 반영됩니다.
         """
         if self.status != "running":
             return False
-        if not self.control.add_note(text):
+        if not self.control.add_note(text, skill_designations):
             return False
         self._emit({
             "type": "interjection_queued",
@@ -576,8 +577,12 @@ class DebateRunner:
                 if sid != session_id and r.status == "running"]
 
     def start(self, session_id: str, user_prompt: str,
-              workspace: Optional[str] = None) -> TurnRun:
-        """토론을 백그라운드에서 시작합니다. 이미 돌고 있으면 그 실행을 돌려줍니다."""
+              workspace: Optional[str] = None,
+              skill_designations: Optional[Dict[str, List[str]]] = None) -> TurnRun:
+        """토론을 백그라운드에서 시작합니다. 이미 돌고 있으면 그 실행을 돌려줍니다.
+
+        `skill_designations` 는 입력창에서 @전문가 @스킬 로 지정한 것입니다 (전문가 키 → 스킬).
+        """
         existing = self._runs.get(session_id)
         if existing is not None and existing.status == "running":
             return existing
@@ -588,7 +593,7 @@ class DebateRunner:
         async def body(on_event) -> None:
             await self.engine.run_turn(
                 session_id=session_id, user_prompt=user_prompt, on_event=on_event,
-                control=run.control,
+                control=run.control, skill_designations=skill_designations,
             )
 
         return self._launch(run, body)
@@ -721,10 +726,11 @@ class DebateRunner:
         )
         return produced
 
-    def interject(self, session_id: str, text: str) -> bool:
+    def interject(self, session_id: str, text: str,
+                  skill_designations: Optional[Dict[str, List[str]]] = None) -> bool:
         """진행 중인 토론에 사용자 메시지를 끼워 넣습니다."""
         run = self._runs.get(session_id)
-        return run.interject(text) if run is not None else False
+        return run.interject(text, skill_designations) if run is not None else False
 
     def resolve_decision(self, session_id: str, extra: int,
                          request_id: Optional[str] = None) -> bool:

@@ -4,7 +4,7 @@ import logging
 import re
 import uuid
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Coroutine, Dict, List, Optional, Set, Tuple
@@ -23,10 +23,10 @@ from app.agents.llm import (
 )
 from app.agents.llm_gate import LLM_HOLDER
 from app.agents.personas import prepare_agents_for_turn
-from app.agents.skills import skill_tools_for, visible_skill_names
+from app.agents.skills import skill_tools_for, visible_skill_names, with_designated_skills
 from app.agents.pool import AgentPool, get_agent_pool
 from app.timestamps import report_completed_line, to_local
-from app.config import DATA_DIR, TOOL_ITERATION_CEILING, resolve_workspace_dir
+from app.config import DATA_DIR, SKILL_NAME_PATTERN, TOOL_ITERATION_CEILING, resolve_workspace_dir
 from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
 from app.mermaid_lint import diagram_kind, format_issues, lint_mermaid
@@ -84,6 +84,8 @@ class TurnSetup:
     orchestrator: Agent
     graph_spec: Optional[GraphSpec]
     memory_budget: int
+    # 입력창에서 @전문가 @스킬 로 지정한 것 (전문가 키 → 스킬). 이 턴에만 겁니다.
+    skill_designations: Dict[str, List[str]] = field(default_factory=dict)
 
     def config(self, workspace: Path) -> Dict[str, Any]:
         """턴 기록에 굳혀 둘 구성 (`TurnModel.config`). 끊긴 턴은 이 구성으로 마칩니다."""
@@ -94,7 +96,31 @@ class TurnSetup:
             "active_agents": list(self.active_keys),
             "custom_instructions": self.custom_instructions,
             "workspace_dir": str(workspace),
+            "skill_designations": {k: list(v) for k, v in self.skill_designations.items()},
         }
+
+
+def clean_skill_designations(
+    designations: Optional[Dict[str, Any]], active_keys: List[str],
+) -> Dict[str, List[str]]:
+    """스킬 지정에서 이 턴에 쓸 수 있는 것만 남깁니다.
+
+    참여하지 않는 전문가와 오케스트레이터(지목 대상이 아닙니다), 스킬 이름 규칙에 맞지 않는
+    이름은 뺍니다. 지정은 화면이 보낸 값이고, 이름은 그대로 `allowed_skills` 에 더해지므로
+    폴더 이름 규칙으로 거릅니다. 스킬이 실제로 있는지·켜져 있는지는 발언할 때 봅니다 (실시간).
+    """
+    active = set(active_keys) - {"orchestrator"}
+    out: Dict[str, List[str]] = {}
+    for key, names in (designations or {}).items():
+        if key not in active or not isinstance(names, (list, tuple)):
+            continue
+        kept = [
+            n for n in dict.fromkeys(str(x) for x in names)
+            if SKILL_NAME_PATTERN.fullmatch(n)
+        ]
+        if kept:
+            out[key] = kept
+    return out
 
 
 class GraphTurnError(RuntimeError):
@@ -808,6 +834,10 @@ class OrchestratorEngine:
         draft = state.resume_drafts.pop(
             turns.draft_key(agent.key, kind, round_number, graph_node_id), None
         )
+        # 유저가 이 전문가에게 지정한 스킬 (입력창의 `@전문가 @스킬`). 이 발언에서만 `allowed_skills`
+        # 에 더하고, 첫 판 전에 불러 둡니다. 대화에 굳은 에이전트 설정은 그대로입니다.
+        designated = list(state.skill_designations.get(agent.key) or [])
+        agent = with_designated_skills(agent, designated)
         draft_state: Optional[Dict[str, Any]] = draft["state"] if draft else None
         msg_id = draft["id"] if draft else str(uuid.uuid4())
         # 벽시계 시작 시각. `created_at` 과 따로 둡니다 — 그쪽은 발언이 끝난 뒤에
@@ -964,6 +994,7 @@ class OrchestratorEngine:
                 ledger=state.decision_ledger,
                 checkpoint=_checkpoint if state.turn_id else None,
                 resume_state=draft_state,
+                preload_skills=designated,
             )
             # 다이어그램 교정 같은 후처리는 시간이 걸립니다. 그동안 카드가 마지막 조각
             # 직전에서 멈춰 보이지 않게, 흘러온 글을 먼저 다 내보냅니다.
@@ -1341,6 +1372,7 @@ class OrchestratorEngine:
         if control is None:
             return 0
         notes = control.drain_notes()
+        await self._add_skill_designations(db, state, control.drain_skill_designations())
         for note in notes:
             await self._record_user_message(
                 db=db,
@@ -1358,6 +1390,31 @@ class OrchestratorEngine:
             )
         return len(notes)
 
+    async def _add_skill_designations(
+        self, db, state: DebateState, designations: Dict[str, List[str]],
+    ) -> None:
+        """개입 메모와 함께 온 스킬 지정을 남은 발언에 겁니다. 끊겼다 이어 가도 남도록 턴 기록에도 적습니다."""
+        added = False
+        for key, names in clean_skill_designations(designations, state.active_agent_keys).items():
+            bucket = state.skill_designations.setdefault(key, [])
+            for name in names:
+                if name not in bucket:
+                    bucket.append(name)
+                    added = True
+        if not added or not state.turn_id:
+            return
+        try:
+            turn = await db.get(TurnModel, state.turn_id)
+            config = dict(turn.config or {}) if turn is not None else None
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 적지 못해도 이번 턴에는 걸립니다
+            logger.warning(f"Could not read turn {state.turn_id} to save skill designations: {exc}")
+            return
+        if config is not None:
+            config["skill_designations"] = {k: list(v) for k, v in state.skill_designations.items()}
+            await self._set_turn(db, state, config=config)
+
     # ------------------------------------------------------------------ 턴
 
     async def _session_workspace(self, session_id: str) -> Path:
@@ -1374,8 +1431,12 @@ class OrchestratorEngine:
         user_prompt: str,
         on_event: Optional[EventCallback] = None,
         control: Optional[TurnControl] = None,
+        skill_designations: Optional[Dict[str, List[str]]] = None,
     ) -> DebateState:
         """Executes a full multi-agent collaborative debate and synthesis turn.
+
+        `skill_designations` 는 입력창에서 `@전문가 @스킬` 로 지정한 것입니다 (전문가 키 → 스킬).
+        이 턴에 한해 그 전문가의 `allowed_skills` 밖이어도 주고, 발언마다 미리 불러 둡니다.
 
         `control` 이 주어지면 발언과 발언 사이마다 사용자의 정지 요청과 개입
         메모를 확인합니다. 정지는 태스크를 죽이는 것이 아니라 남은 라운드를
@@ -1404,7 +1465,10 @@ class OrchestratorEngine:
             workspace = await self._session_workspace(session_id)
             await pool.acquire(workspace, holder=session_id)
             try:
-                return await self._run_turn(session_id, user_prompt, workspace, turn_id, on_event, control)
+                return await self._run_turn(
+                    session_id, user_prompt, workspace, turn_id, on_event, control,
+                    skill_designations=skill_designations,
+                )
             except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
                 raise
             except BaseException as exc:  # noqa: BLE001 - 적고 그대로 올립니다
@@ -1469,6 +1533,8 @@ class OrchestratorEngine:
         turn_id: str,
         on_event: Optional[EventCallback] = None,
         control: Optional[TurnControl] = None,
+        *,
+        skill_designations: Optional[Dict[str, List[str]]] = None,
     ) -> DebateState:
         """`run_turn` 의 본문. 런타임은 이미 빌린 상태로 들어옵니다."""
         async with self.session_factory() as db:
@@ -1481,7 +1547,10 @@ class OrchestratorEngine:
 
             # 그래프를 검사하고 참여자를 세웁니다. 돌 수 없는 턴이면 사용자 발언을 기록하기
             # **전에** 여기서 멈춥니다 — 답 없는 요청이 다음 턴의 맥락에 끼어들지 않게.
-            setup = await self._setup_turn(db, session_model, control=control, on_event=on_event)
+            setup = await self._setup_turn(
+                db, session_model, control=control, on_event=on_event,
+                skill_designations=skill_designations,
+            )
 
             # 2. Initialize Debate State
             state = self._new_state(session_id, user_prompt, workspace, setup)
@@ -1700,10 +1769,12 @@ class OrchestratorEngine:
         on_event: Optional[EventCallback],
         config: Optional[Dict[str, Any]] = None,
         graph_spec: Optional[GraphSpec] = None,
+        skill_designations: Optional[Dict[str, List[str]]] = None,
     ) -> "TurnSetup":
         """턴의 구성과 참여자를 세웁니다. 도구 보안 문지기도 여기서 섭니다.
 
         `config` 가 없으면 지금 대화 설정으로(새 턴), 있으면 그 구성으로(끊긴 턴) 세웁니다.
+        스킬 지정도 같습니다 — 새 턴은 `skill_designations` 를, 끊긴 턴은 굳혀 둔 것을 씁니다.
         도구 보안(모드·허용·거부)은 어느 쪽이든 **지금** 대화 설정을 따릅니다 — 사람이 끊긴
         사이에 조인 보안을 이어 가는 턴이 우회하면 안 됩니다.
         """
@@ -1717,12 +1788,14 @@ class OrchestratorEngine:
             parallel_limit = max(1, int(session_model.parallel_limit or 3))
             active_keys = session_model.active_agents or ["orchestrator", "architect", "coder", "critic"]
             custom_instructions = session_model.custom_instructions or ""
+            designations = skill_designations
         else:
             strategy_name = resolve_strategy_name(config.get("strategy"))
             max_rounds = int(config.get("max_rounds") or session_model.max_rounds or 3)
             parallel_limit = max(1, int(config.get("parallel_limit") or 3))
             active_keys = list(config.get("active_agents") or session_model.active_agents or [])
             custom_instructions = str(config.get("custom_instructions") or "")
+            designations = config.get("skill_designations")
 
         # 도구 보안: 이 대화의 모드와 "이 대화에서 허용·거부" 목록으로 문지기를 세웁니다.
         self._tool_gates[session_id] = ToolGate(
@@ -1776,6 +1849,7 @@ class OrchestratorEngine:
             orchestrator=orchestrator_agent,
             graph_spec=graph_spec,
             memory_budget=memory_budget,
+            skill_designations=clean_skill_designations(designations, active_keys),
         )
 
     @staticmethod
@@ -1791,6 +1865,7 @@ class OrchestratorEngine:
             active_agent_keys=setup.active_keys,
             status="planning",
             memory_budget=setup.memory_budget,
+            skill_designations={k: list(v) for k, v in setup.skill_designations.items()},
         )
 
     async def _load_history(
@@ -4255,6 +4330,8 @@ class OrchestratorEngine:
         """
         if agent is None:
             return []
+        if state is not None:
+            agent = with_designated_skills(agent, state.skill_designations.get(agent.key))
         try:
             mcp = (self._mcp_for(state) if state else None) or self.llm_caller.mcp_manager
             tools = mcp.get_openai_tools_for_servers(

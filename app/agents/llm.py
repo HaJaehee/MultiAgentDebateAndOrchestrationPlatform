@@ -3,12 +3,21 @@ import json
 import logging
 import math
 import re
+import uuid
 from functools import lru_cache
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 import litellm
 from app.agents.base import Agent
 from app.agents.llm_gate import get_llm_gate
-from app.agents.skills import is_skill_tool, run_skill_tool, skill_guidance, skill_tools_for
+from app.agents.skills import (
+    DESIGNATED_SKILL_NOTE,
+    LOAD_SKILL_TOOL,
+    is_skill_tool,
+    offered_skills,
+    run_skill_tool,
+    skill_guidance,
+    skill_tools_for,
+)
 from app.mcp.manager import MCPManager, get_mcp_manager
 
 logger = logging.getLogger(__name__)
@@ -1484,10 +1493,15 @@ class LLMCaller:
         tool_gate: Optional[Any] = None,
         checkpoint: Optional[SpeechCheckpoint] = None,
         resume_state: Optional[Dict[str, Any]] = None,
+        preload_skills: Sequence[str] = (),
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Executes a turn for the given agent.
         Returns (response_text, tool_call_logs).
+
+        `preload_skills` 는 유저가 이 에이전트에게 지정한 스킬입니다 (입력창의 `@전문가 @스킬`).
+        첫 LLM 호출 전에 호스트가 `load_skill` 을 대신 불러 결과를 넣어 둡니다 (`_preload_skills`).
+        이어 가는 발언에서는 이미 메시지에 들어 있으므로 다시 부르지 않습니다.
 
         `checkpoint` 는 도구 루프가 한 판을 마칠 때마다(도구를 부른 직후, 도구 결과를 받을 때마다)
         이어 갈 수 있는 상태를 넘겨받는 콜백입니다 (ADR-025). `resume_state` 는 그렇게 남긴 상태로,
@@ -1575,7 +1589,7 @@ class LLMCaller:
                 session_id=session_id, budget_arbiter=budget_arbiter,
                 context_arbiter=context_arbiter, on_context_trim=on_context_trim,
                 mcp=mcp, turn_anchor=turn_anchor, tool_gate=tool_gate,
-                checkpoint=checkpoint, resume_state=resume_state,
+                checkpoint=checkpoint, resume_state=resume_state, preload_skills=preload_skills,
             )
         except LLMUnavailableError:
             raise
@@ -2285,6 +2299,72 @@ class LLMCaller:
             output = str(output)
         return output, (status or "error")
 
+    async def _preload_skills(
+        self,
+        agent: Agent,
+        names: Sequence[str],
+        messages: List[Dict[str, Any]],
+        tool_logs: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        *,
+        on_tool_call: Optional[Callable[[Dict[str, Any]], Any]],
+        session_id: Optional[str],
+        mcp: Optional[MCPManager],
+    ) -> bool:
+        """지정한 스킬의 `load_skill` 을 모델 대신 불러, 부른 기록과 결과를 `messages` 끝에 붙입니다.
+
+        모델이 직접 부른 것과 같은 모양입니다 — 도구를 부른 assistant 발언 하나와 그 결과들. 그래서
+        화면에도 도구 카드로 남고, 이어 가기와 컨텍스트 자르기도 다른 호출과 똑같이 다룹니다. 이번
+        발언의 도구 목록에 없는 스킬(그사이 꺼졌거나 지워진 것)은 건너뜁니다 — 내놓지 않은 도구를
+        부른 기록을 만들면 요청이 거절될 수 있습니다. 하나라도 불렀으면 True.
+        """
+        offered = set(offered_skills(tools))
+        wanted = [name for name in dict.fromkeys(names) if name in offered]
+        skipped = [name for name in dict.fromkeys(names) if name not in offered]
+        if skipped:
+            logger.info(f"Designated skill(s) not available to {agent.name} now: {', '.join(skipped)}")
+        if not wanted:
+            return False
+
+        calls = [
+            (name, {"skill": name}, f"call_{uuid.uuid4().hex[:12]}")
+            for name in wanted
+        ]
+        messages.append({
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": LOAD_SKILL_TOOL, "arguments": json.dumps(args, ensure_ascii=False)},
+                }
+                for _name, args, call_id in calls
+            ],
+        })
+        for _name, args, call_id in calls:
+            output, status = await self._execute_tool_safely(
+                agent, LOAD_SKILL_TOOL, args, session_id, mcp, tools=tools,
+            )
+            if status == "success":
+                output = f"{DESIGNATED_SKILL_NOTE}\n\n{output}"
+            call_log = {
+                "tool_name": LOAD_SKILL_TOOL,
+                "arguments": args,
+                "output": output,
+                "status": status,
+                "security": {},
+            }
+            tool_logs.append(call_log)
+            await self._notify_tool_call(agent, on_tool_call, call_log)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "name": LOAD_SKILL_TOOL,
+                "content": output,
+            })
+        return True
+
     @staticmethod
     async def _notify_tool_call(
         agent: Agent,
@@ -2330,6 +2410,7 @@ class LLMCaller:
         tool_gate: Optional[Any] = None,
         checkpoint: Optional[SpeechCheckpoint] = None,
         resume_state: Optional[Dict[str, Any]] = None,
+        preload_skills: Sequence[str] = (),
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """도구 루프. 상한은 두 겹의 안전장치와 함께 돕니다.
 
@@ -2414,6 +2495,14 @@ class LLMCaller:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"Could not save the progress of {agent.name}'s speech: {exc}")
+
+        # 유저가 지정한 스킬을 첫 판 전에 불러 둡니다. 이어 가는 발언은 이미 들어 있습니다.
+        if resume_state is None and preload_skills:
+            if await self._preload_skills(
+                agent, preload_skills, current_messages, tool_logs, tools,
+                on_tool_call=on_tool_call, session_id=session_id, mcp=mcp,
+            ):
+                await save_progress()
 
         while True:
             while used < limit:

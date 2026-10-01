@@ -591,7 +591,7 @@ class ChatFeed:
                             f"입력창에 @경로가 들어갑니다. 파일 내용은 대화에 붙지 않습니다."
                         )
                     )
-                # `mado-mention-input`: @ 를 치면 작업 공간 파일·전문가 목록이 뜹니다
+                # `mado-mention-input`: @ 를 치면 전문가·스킬·작업 공간 파일 목록이 뜹니다
                 # (mention_input.py). 창이 열려 있을 때의 Enter 는 보내기가 아니라 고르기입니다.
                 self.input_field = ui.input(
                     placeholder=IDLE_PLACEHOLDER,

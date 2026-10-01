@@ -106,7 +106,7 @@ class _SelectingLLM(FakeLLMCaller):
                          on_tool_call=None, on_chunk=None, session_id=None,
                          budget_arbiter=None,
                          context_arbiter=None, on_context_trim=None, mcp=None, ledger="", tool_gate=None,
-                         checkpoint=None, resume_state=None):
+                         checkpoint=None, resume_state=None, preload_skills=()):
         if self._is_selection(messages):
             self.selector_agents.append(agent)
             self.calls.append(f"{agent.key}:select")

@@ -260,8 +260,8 @@ the persona editor — because two copies would drift on how a value is picked o
   before the modifier is checked, killing the line break it is supposed to allow.
 - **@mentions** (v0.8.0, [app/workspace_files.py](file:///d:/MultiAgentDebateOrchestration/app/workspace_files.py),
   [app/ui/mention_input.py](file:///d:/MultiAgentDebateOrchestration/app/ui/mention_input.py)): typing `@` in the
-  input opens a list of this conversation's workspace files and folders plus the turn's active
-  specialists. See §1.3.4.
+  input opens a list of the turn's active specialists, the usable skills, and this conversation's
+  workspace files and folders. `@specialist @skill` designates a skill. See §1.3.4.
 - **Workspace upload button** (`upload_file`, left of the input): saves files into
   `<workspace>/uploads/` and inserts `@path` into the input. See §1.3.4.
 - **Abort & edit** (`긴급 종료`): sits next to `정지` while a turn runs, and does the opposite —
@@ -428,14 +428,16 @@ mentioned; reading them is the job of whichever MCP server handles the format (e
 2. `ChatFeed._handle_mention_query` checks `id` against its own `data-mado-mention` value and asks
    the page's provider. The provider scans the workspace off the event loop
    (`run.io_bound(WorkspaceIndex.get)`), and `suggest_mentions()` returns at most 30 items — active
-   specialists first, then files and folders ranked by name prefix, name substring, path prefix, path
-   substring and subsequence. The full list never goes to the browser.
+   specialists first, then usable skills (matched on name or description), then files and folders ranked
+   by name prefix, name substring, path prefix, path substring and subsequence. The full list never goes
+   to the browser.
 3. `MadoMention.show(id, seq, items)` renders a fixed-position list above the input; answers with an
    old `seq` are dropped.
 4. On send — a new turn or an interjection — `with_references()` in `app.py` runs `expand_mentions()`
    and appends a `[@참조]` block with the workspace's absolute path, each file's relative path and size
-   (plus "read only the parts you need" at 1 MB or more), folders, and named specialists. Anything
-   dropped is reported with a warning toast.
+   (plus "read only the parts you need" at 1 MB or more), folders, named specialists and designated
+   skills. Anything dropped is reported with a warning toast. The skill designations are also returned
+   as data and passed to the runner with the message.
 
 **Keyboard.** The input's Enter is already bound to send (`keydown.enter.exact.prevent`), and Vue
 attaches that listener to the native element. While the list is open, Enter must pick instead, so the
@@ -457,6 +459,8 @@ the popup never opened because `host.id` was empty.
 | Path-like token that does not exist | Dropped, reported |
 | Specialist switched off for this conversation | Dropped, reported; not offered in the list |
 | `@` inside fenced or inline code, e-mail addresses | Not a mention (`@app.get` in pasted code stays text) |
+| Skill that is off or broken | Not offered; mentioned anyway, it is dropped and reported |
+| Skill with no specialist to pair with | Not designated; reported with an example (`@전문가 @스킬`) |
 | Text restored by abort-and-edit | `strip_reference_block()` removes the block; re-sending rebuilds it, never duplicates it |
 | Heavy folders | `.git`, `node_modules`, virtualenvs, `dist`, `build`, … and simple rules from the top-level `.gitignore` (negations ignored) are skipped |
 | Huge workspace | Scan stops at 20,000 entries (`truncated`) |
@@ -464,6 +468,11 @@ the popup never opened because `host.id` was empty.
 
 **Specialist mentions are text.** The block tells the orchestrator and speakers who was named; the
 strategy's speaking order is not overridden. The orchestrator is not a mention target.
+
+**Skill mentions are designations.** A skill goes to the specialist mentioned just before it on the same
+line (else the first one after it on that line, else the nearest one on an earlier line), and that
+specialist's speeches in this turn start with the skill already loaded — even if it is outside the
+specialist's `allowed_skills`. See [Skills §9](../agents/skills.md#9-designating-a-skill-from-the-input-bar).
 
 **Upload.** `store_workspace_upload()` writes to `<workspace>/uploads/`. The name is stripped of path
 components, characters Windows forbids and reserved device names; an existing name becomes

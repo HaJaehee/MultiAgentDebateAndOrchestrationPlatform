@@ -20,6 +20,11 @@
 * **올린 파일은 덮어쓰지 않습니다.** 같은 이름이 있으면 `이름 (2).확장자` 로 바꿉니다.
 * **코드 블록 안의 `@` 는 언급이 아닙니다.** 붙여 넣은 코드의 `@app.get`, `@Override` 가
   파일이나 에이전트로 해석되면 안 됩니다.
+
+스킬도 언급할 수 있습니다. 스킬 언급은 **같은 줄에서 바로 앞에 언급한 전문가**에게 지정됩니다
+(앞에 없으면 그 줄에서 뒤의 첫 전문가, 그 줄에 아무도 없으면 앞 줄들에서 가장 가까운 전문가).
+지정은 글로만 전하지 않습니다 — 보내는 쪽이 `MentionReport.skill_designations` 를 엔진에 넘기고,
+엔진이 그 전문가의 이번 턴 발언마다 스킬을 미리 불러 둡니다 (`app/agents/skills.py`).
 """
 
 from __future__ import annotations
@@ -299,9 +304,16 @@ class MentionAgent:
     active: bool = True
 
 
+@dataclass(frozen=True)
+class MentionSkill:
+    name: str            # 폴더 이름 = 스킬 식별자
+    description: str = ""
+    usable: bool = True  # 켜져 있고 문제가 없는가. 아니면 후보에 없고, 언급해도 지정되지 않습니다.
+
+
 @dataclass
 class MentionSuggestion:
-    kind: str          # "file" | "dir" | "agent"
+    kind: str          # "file" | "dir" | "agent" | "skill"
     label: str
     detail: str
     insert: str
@@ -315,8 +327,9 @@ def suggest_mentions(
     entries: Iterable[WorkspaceEntry],
     agents: Sequence[MentionAgent],
     limit: int = MAX_SUGGESTIONS,
+    skills: Sequence[MentionSkill] = (),
 ) -> List[MentionSuggestion]:
-    """언급 창의 후보. 이번 토론에 참여하는 전문가를 먼저, 그다음 파일·폴더."""
+    """언급 창의 후보. 이번 토론에 참여하는 전문가를 먼저, 그다음 쓸 수 있는 스킬, 그다음 파일·폴더."""
     q = (query or "").strip().lower()
     out: List[MentionSuggestion] = []
     for agent in agents:
@@ -325,6 +338,12 @@ def suggest_mentions(
         if q and q not in agent.name.lower() and q not in agent.key.lower() and q not in agent.role.lower():
             continue
         out.append(MentionSuggestion("agent", agent.name, agent.role, mention_token(agent.name)))
+    for skill in skills:
+        if not skill.usable:
+            continue
+        if q and q not in skill.name.lower() and q not in skill.description.lower():
+            continue
+        out.append(MentionSuggestion("skill", skill.name, skill.description, mention_token(skill.name)))
     for entry in search_entries(entries, query, limit=max(limit - len(out), 0)):
         if entry.is_dir:
             out.append(MentionSuggestion("dir", entry.path + "/", "폴더", mention_token(entry.path + "/")))
@@ -351,10 +370,22 @@ class MentionReport:
     inactive_agents: List[MentionAgent] = field(default_factory=list)
     missing: List[str] = field(default_factory=list)                  # 경로처럼 보이지만 없음
     rejected: List[str] = field(default_factory=list)                 # 작업 공간 밖
+    # (전문가, 스킬 이름). 이번 토론에 참여하는 전문가에게 지정된 것만.
+    skills: List[Tuple[MentionAgent, str]] = field(default_factory=list)
+    unbound_skills: List[str] = field(default_factory=list)           # 짝지을 전문가가 없음
+    unusable_skills: List[str] = field(default_factory=list)          # 꺼져 있거나 깨진 스킬
 
     @property
     def has_references(self) -> bool:
-        return bool(self.files or self.dirs or self.agents)
+        return bool(self.files or self.dirs or self.agents or self.skills)
+
+    @property
+    def skill_designations(self) -> Dict[str, List[str]]:
+        """엔진에 넘길 지정: 전문가 키 → 스킬 이름 (언급한 순서)."""
+        out: Dict[str, List[str]] = {}
+        for agent, skill in self.skills:
+            out.setdefault(agent.key, []).append(skill)
+        return out
 
     def warnings(self) -> List[str]:
         out = []
@@ -366,6 +397,16 @@ class MentionReport:
             out.append(
                 "이번 토론에 참여하지 않는 전문가라 지목에서 뺐습니다: "
                 + ", ".join(a.name for a in self.inactive_agents)
+            )
+        if self.unusable_skills:
+            out.append(
+                "꺼져 있거나 쓸 수 없는 스킬이라 지정에서 뺐습니다: " + ", ".join(self.unusable_skills)
+            )
+        if self.unbound_skills:
+            out.append(
+                "스킬을 맡길 전문가를 함께 언급하지 않아 지정하지 못했습니다: "
+                + ", ".join(self.unbound_skills)
+                + " (예: @전문가 @스킬)"
             )
         return out
 
@@ -394,14 +435,43 @@ def _match_agent(token: str, agents: Sequence[MentionAgent]) -> Optional[Mention
     return None
 
 
+def _match_skill(token: str, skills: Sequence[MentionSkill]) -> Optional[MentionSkill]:
+    t = token.strip().lower()
+    return next((s for s in skills if s.name.lower() == t), None)
+
+
+def _pair_skill(
+    position: int, line: int, agents: Sequence[Tuple[int, int, MentionAgent]],
+) -> Optional[MentionAgent]:
+    """스킬 언급을 맡을 전문가: 같은 줄의 바로 앞 → 같은 줄의 뒤 첫째 → 앞 줄들의 가장 가까운 것."""
+    same_line = [(pos, agent) for pos, ln, agent in agents if ln == line]
+    before = [(pos, agent) for pos, agent in same_line if pos < position]
+    if before:
+        return max(before, key=lambda pair: pair[0])[1]
+    after = [(pos, agent) for pos, agent in same_line if pos > position]
+    if after:
+        return min(after, key=lambda pair: pair[0])[1]
+    earlier = [(pos, agent) for pos, ln, agent in agents if ln < line]
+    if earlier:
+        return max(earlier, key=lambda pair: pair[0])[1]
+    return None
+
+
 def resolve_mentions(
-    text: str, root: Path, agents: Sequence[MentionAgent]
+    text: str, root: Path, agents: Sequence[MentionAgent], skills: Sequence[MentionSkill] = (),
 ) -> MentionReport:
-    """글 속 `@...` 를 전문가·파일·폴더로 해석합니다. 코드 블록 안은 보지 않습니다."""
+    """글 속 `@...` 를 전문가·스킬·파일·폴더로 해석합니다. 코드 블록 안은 보지 않습니다.
+
+    이름이 겹치면 전문가 → 스킬 → 경로 순서로 봅니다. 스킬 언급은 다 읽은 뒤 전문가와
+    짝짓습니다 (`_pair_skill`) — 스킬을 전문가보다 먼저 쓰는 어순("@스킬 로 @전문가 가")도 있어서입니다.
+    """
     report = MentionReport()
     spans = _code_spans(text)
     seen = set()
     root = Path(root)
+    # 짝짓기용 위치: (글 속 위치, 줄 번호, 대상). 같은 전문가를 두 번 언급하면 둘 다 기준이 됩니다.
+    agent_hits: List[Tuple[int, int, MentionAgent]] = []
+    skill_hits: List[Tuple[int, int, MentionSkill]] = []
 
     for m in _MENTION.finditer(text):
         if any(a <= m.start() < b for a, b in spans):
@@ -409,6 +479,7 @@ def resolve_mentions(
         quoted, bare = m.group(1), m.group(2)
         candidates = [quoted] if quoted is not None else [bare, bare.rstrip(_TRAILING_PUNCT)]
         candidates = [c for c in dict.fromkeys(candidates) if c]
+        line = text.count("\n", 0, m.start())
         resolved = False
 
         for token in candidates:
@@ -418,6 +489,13 @@ def resolve_mentions(
                 if ("agent", agent.key) not in seen:
                     seen.add(("agent", agent.key))
                     bucket.append(agent)
+                agent_hits.append((m.start(), line, agent))
+                resolved = True
+                break
+
+            skill = _match_skill(token, skills)
+            if skill is not None:
+                skill_hits.append((m.start(), line, skill))
                 resolved = True
                 break
 
@@ -452,6 +530,20 @@ def resolve_mentions(
             token = candidates[-1] if candidates else ""
             if token and _PATHLIKE.search(token) and token not in report.missing:
                 report.missing.append(token)
+
+    for position, line, skill in skill_hits:
+        if not skill.usable:
+            if skill.name not in report.unusable_skills:
+                report.unusable_skills.append(skill.name)
+            continue
+        agent = _pair_skill(position, line, agent_hits)
+        if agent is None:
+            if skill.name not in report.unbound_skills:
+                report.unbound_skills.append(skill.name)
+        elif agent.active and ("skill", agent.key, skill.name) not in seen:
+            # 참여하지 않는 전문가에게 간 지정은 그 전문가와 함께 빠집니다 (경고는 전문가 쪽에서).
+            seen.add(("skill", agent.key, skill.name))
+            report.skills.append((agent, skill.name))
     return report
 
 
@@ -481,15 +573,24 @@ def build_reference_block(report: MentionReport, root: Path) -> str:
             "유저가 이 전문가를 직접 불렀습니다. 요청 중 이 전문가에게 해당하는 부분은 "
             "이 전문가가 맡아 답하게 하세요."
         )
+    if report.skills:
+        parts.append("")
+        parts.append("지정한 스킬")
+        for agent, skill in report.skills:
+            parts.append(f"- {agent.name} → {skill}")
+        parts.append(
+            "유저가 이 전문가에게 이 스킬을 쓰도록 지정했습니다. 이 전문가가 발언할 때마다 앱이 "
+            "스킬 지침을 먼저 불러 두니, 해당 부분은 이 전문가에게 맡기고 그 지침대로 답하게 하세요."
+        )
     return "\n".join(parts)
 
 
 def expand_mentions(
-    text: str, root: Path, agents: Sequence[MentionAgent]
+    text: str, root: Path, agents: Sequence[MentionAgent], skills: Sequence[MentionSkill] = (),
 ) -> Tuple[str, MentionReport]:
     """보낼 글에 참조 블록을 붙입니다. 이미 붙어 있던 블록은 새로 만듭니다."""
     body = strip_reference_block(text)
-    report = resolve_mentions(body, root, agents)
+    report = resolve_mentions(body, root, agents, skills)
     block = build_reference_block(report, root)
     return (f"{body}\n\n{block}" if block else body), report
 
@@ -551,6 +652,12 @@ def agents_for_mentions(roster: Iterable[Any], active_keys: Iterable[str]) -> Li
         for a in roster
         if a.key != "orchestrator"
     ]
+
+
+def skills_for_mentions(skills: Iterable[Any]) -> List[MentionSkill]:
+    """스킬 폴더의 스킬(`app.agents.skills.Skill`)을 언급 후보로. 꺼졌거나 깨진 것도 담습니다 —
+    언급했을 때 "쓸 수 없다" 고 알리려면 이름은 알아야 합니다."""
+    return [MentionSkill(s.name, s.description, bool(s.usable)) for s in skills]
 
 
 # ---------------------------------------------------------------------------

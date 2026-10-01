@@ -27,7 +27,7 @@ MENTION_JS = """
 (function () {
     if (window.MadoMention) return;
 
-    var ICONS = { file: 'description', dir: 'folder', agent: 'smart_toy' };
+    var ICONS = { file: 'description', dir: 'folder', agent: 'smart_toy', skill: 'menu_book' };
     var TOKEN = /(^|[\\s(\\[{])@("[^"\\n]*|[^\\s"@]*)$/;
 
     var state = { id: null, input: null, seq: 0, start: -1, items: [], index: 0, open: false, dismissedAt: -1 };
@@ -89,7 +89,7 @@ MENTION_JS = """
     function render() {
         var box = ensurePopup();
         if (!state.items.length) {
-            box.innerHTML = '<div class="mado-mention-empty">일치하는 파일·전문가가 없습니다</div>';
+            box.innerHTML = '<div class="mado-mention-empty">일치하는 전문가·스킬·파일이 없습니다</div>';
         } else {
             box.innerHTML = state.items.map(function (item, i) {
                 return '<div class="mado-mention-item' + (i === state.index ? ' active' : '') +

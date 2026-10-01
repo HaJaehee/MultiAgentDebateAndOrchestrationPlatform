@@ -77,6 +77,7 @@ second exception after MCP server on/off:
 | Add or remove a skill folder | **next speech** | same |
 | Turn a skill on/off (`skills.disabled`) | **next speech**; a load already in flight is refused at call time | same |
 | Change an agent's `allowed_skills` | unaffected — frozen with the agent, like `allowed_mcp_servers` | applies immediately |
+| `@specialist @skill` in the input bar | that turn only, even outside the frozen `allowed_skills` ([§9](#9-designating-a-skill-from-the-input-bar)) | same |
 
 The catalog is rebuilt for every speech by scanning the folder
 ([`scan_skills()`](file:///d:/MultiAgentDebateOrchestration/app/agents/skills.py)): a directory listing plus
@@ -187,6 +188,7 @@ nomination, task dispatch, ledger, summaries, Mermaid repair) and trial-server p
 | Roster panel, **스킬** section | one chip per skill with an on/off switch; badge `N/M 켜짐`; red chip with the reason for a broken skill; a *스크립트* badge on skills that carry scripts; tooltip with the description and folder. Not locked during a debate — nothing restarts. Redrawn when the folder changes (checked every 5 s). |
 | Agent card, **스킬 N** button | pick the agent's `allowed_skills`. Same lock and same meaning as **도구 N**. Skills that vanished from the folder stay checked with a *폴더에 없음* badge until unchecked. |
 | **에이전트 추가** dialog | a *사용할 스킬* row next to the MCP servers. |
+| Input bar, `@` | usable skills are offered after the specialists (icon `menu_book`); `@specialist @skill` designates the skill for that specialist in this turn ([§9](#9-designating-a-skill-from-the-input-bar)). |
 
 The orchestrator's roster line shows each agent's currently usable skills (`· 스킬: mermaid-diagrams`), so it
 can hand "draw the diagram" to the agent that has the diagram skill.
@@ -197,6 +199,41 @@ can hand "draw the diagram" to the agent that has the diagram skill.
 
 `GET /api/skills` returns the folder and every skill with `name`, `title`, `description`, `enabled`,
 `usable`, `problem`, `files` and `scripts`. `GET /api/agents` includes each agent's `allowed_skills`.
+
+---
+
+## 9. Designating a skill from the input bar
+
+The decision is [ADR-027](../../lectures/05-adr/ADR-027-designate-skills-from-the-input-bar.md).
+
+Writing `@specialist @skill` in the input bar makes that specialist use that skill in this turn — it does not
+wait for the model to decide the skill fits.
+
+```text
+@"System Architect" 는 @mermaid-diagrams 로 구조도를 그리고, @"Senior Python Engineer" 는 @csv-profile 로 요약해 주세요
+```
+
+**Pairing** ([`resolve_mentions()`](file:///d:/MultiAgentDebateOrchestration/app/workspace_files.py)). A skill
+goes to the specialist mentioned just before it on the same line; with none before it, the first one after it on
+that line (`@스킬 로 @전문가 가 …`); with no specialist on that line, the nearest one on an earlier line. With no
+specialist at all it is not designated and a toast says so. A name shared by a specialist and a skill is the
+specialist.
+
+| Rule | Why |
+| :--- | :--- |
+| **This turn only.** The designation is not written into the agent's configuration. | A request-time choice, not a change of the agent. The next turn is back to `allowed_skills`. |
+| **Outside `allowed_skills` is allowed.** The speech uses an agent copy with the skill added ([`with_designated_skills()`](file:///d:/MultiAgentDebateOrchestration/app/agents/skills.py)). | The user named both explicitly, and a started conversation has no other way to give an agent a new skill. |
+| **On/off wins.** An off or broken skill is not offered, is refused with a toast when mentioned, and is skipped at speech time if it was turned off after sending. | The operator's switch decides what may be used at all. |
+| **Loaded by the host.** Before the first LLM call of each of that specialist's speeches in the turn, the host runs `skills__load_skill` itself and puts the call and its result into the messages ([`LLMCaller._preload_skills`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py)). The result starts with `[유저 지정]`. | Models treat a skill catalog as optional reading; a designated skill must actually be read. It looks like any other call — tool card, `tool_calls` record, draft for resuming — and costs no LLM round. |
+| **Every speech.** Each speech by that specialist in the turn loads it again. | A loaded body lives in one speech's tool loop only (§1). |
+| **Kept with the turn.** The pairs are stored in `TurnModel.config.skill_designations`. | An interrupted turn continues with them ([Turn Recovery](../orchestration/turn-recovery.md)). |
+| **Interjections too.** A designation in a message sent during the debate applies to the remaining speeches and is added to the turn record. | The input bar is the same box in both cases. |
+
+The designations travel as data, not only as text: `with_references()` returns them next to the expanded message
+and the main screen passes them to `runner.start(…, skill_designations=…)` or `runner.interject(…)`. The engine
+does not parse them out of the message, so a typed `[@참조]` block cannot grant a skill, and the trial server —
+which passes none — still gives its participants no skills. The reference block still carries a `지정한 스킬`
+section so the orchestrator hands that part of the request to that specialist.
 
 ---
 
