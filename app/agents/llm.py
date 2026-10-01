@@ -503,7 +503,16 @@ MEMORY_SEARCH_TOOLS = ("search_nodes", "open_nodes")
 # 그걸로 이어쓰려 하면 앞부분을 매번 통째로 다시 써야 합니다 — 나눌수록 호출이
 # 커지고 같은 자리에서 또 잘립니다. 나누기가 뜻을 가지려면 덧붙이는 도구가
 # 있어야 하고, 없으면 아예 다른 조언을 해야 합니다.
-APPEND_TOOLS = ("edit_file", "edit_text_file", "append_file", "patch_file", "str_replace")
+#
+# **순서가 우선순위입니다** (`append_tool`). 맨 앞의 `append_workspace_file`(샌드박스 v0.8.0)만
+# 진짜 덧붙이기입니다. `edit_file` 은 찾아 바꾸기라, 덧붙이기로 쓰면 반복되는 줄(`);`,
+# `</div>`)의 첫 일치 위치에 끼어들고 찾을 문자열이 비면 파일 맨 앞에 들어갑니다 — 실제로
+# TSX 가 그렇게 깨졌습니다. 그래서 다른 길이 없을 때만 짚습니다.
+APPEND_TOOLS = (
+    "append_workspace_file", "append_file", "edit_file", "edit_text_file", "patch_file", "str_replace",
+)
+# 결과에 파일 끝 줄을 돌려주는 샌드박스의 덧붙이기 도구 (`file_writing_guidance` 가 한 줄을 더합니다).
+TRUE_APPEND_TOOL = "append_workspace_file"
 # `write_workspace_file` 은 샌드박스 서버의 쓰기 도구입니다. 빠져 있던 동안 `sandbox` 만
 # 가진 에이전트는 분할 쓰기 지침(`file_writing_guidance`)을 한 줄도 받지 못했습니다.
 FILE_WRITE_TOOLS = ("write_file", "write_text_file", "create_file", "write_workspace_file")
@@ -557,13 +566,43 @@ def is_file_writing_call(name: str) -> bool:
 
 
 def append_tool(tools: Optional[List[Dict[str, Any]]]) -> Optional[str]:
-    """파일 뒤에 덧붙일 수 있는 도구의 이름. 없으면 None."""
-    return _find_tool(tools, APPEND_TOOLS)
+    """파일 뒤에 덧붙일 수 있는 도구의 이름. 없으면 None.
+
+    `_find_tool` 과 달리 도구 목록의 순서가 아니라 `APPEND_TOOLS` 의 순서로 고릅니다 —
+    진짜 덧붙이기 도구가 있으면 `edit_file` 보다 그것을 짚어야 합니다.
+    """
+    names = _tool_names(tools)
+    for suffix in APPEND_TOOLS:
+        for name in names:
+            if name.split("__", 1)[-1] == suffix:
+                return name
+    return None
 
 
 def file_write_tool(tools: Optional[List[Dict[str, Any]]]) -> Optional[str]:
     """파일을 통째로 쓰는(덮어쓰는) 도구의 이름. 없으면 None."""
     return _find_tool(tools, FILE_WRITE_TOOLS)
+
+
+def file_tools(tools: Optional[List[Dict[str, Any]]]) -> Tuple[Optional[str], Optional[str]]:
+    """나누어 쓰기 지침에 짚을 (덧붙이기 도구, 쓰기 도구).
+
+    덧붙이기 도구와 **같은 서버**에 쓰기 도구가 있으면 그것을 짝으로 고릅니다. 서버마다 경로를
+    읽는 방식이 달라(filesystem 은 허용 폴더 기준, 샌드박스는 작업 공간 기준 상대 경로) 첫 부분과
+    이어지는 부분을 다른 서버로 쓰면 같은 파일에 들어간다는 보장이 없습니다.
+    """
+    append, write = append_tool(tools), file_write_tool(tools)
+    if append and "__" in append:
+        server = append.split("__", 1)[0]
+        paired = next(
+            (
+                name for name in _tool_names(tools)
+                if name.split("__", 1)[0] == server and name.split("__", 1)[-1] in FILE_WRITE_TOOLS
+            ),
+            None,
+        )
+        write = paired or write
+    return append, write
 
 
 def context_headroom(agent: Agent) -> Optional[int]:
@@ -1075,15 +1114,20 @@ def file_writing_guidance(tools: Optional[List[Dict[str, Any]]] = None) -> Optio
     덧붙일 수 있으면 나누어 덧붙이라고, 덮어쓰기뿐이면 파일을 쪼개라고 합니다.
     도구가 없으면 None 이라, 파일을 만지지 않는 에이전트(비평가 등)의 프롬프트는
     한 글자도 늘지 않습니다.
+
+    덧붙이기 도구가 진짜 덧붙이기(`append_workspace_file`)면, 결과에 실리는 파일 끝 줄을 보고
+    이어 쓰라는 한 줄을 더합니다. 조각 경계에서 같은 내용을 다시 보내거나 닫는 괄호를 빠뜨리는
+    실수를 모델이 스스로 잡게 하려는 것입니다.
     """
-    append, write = append_tool(tools), file_write_tool(tools)
+    append, write = file_tools(tools)
     if not append and not write:
         return None
 
     if append and write:
         body = (
-            f"- 먼저 `{write}` 로 첫 부분(도입·목차·첫 절)만 만들고, 이어지는 부분은 "
-            f"`{append}` 로 **뒤에 덧붙이세요.** 절이나 챕터 단위로 나누면 됩니다.\n"
+            f"- 먼저 `{write}` 로 첫 부분(문서라면 도입·첫 절, 코드라면 import 와 앞쪽 정의)만 "
+            f"만들고, 이어지는 부분은 `{append}` 로 **뒤에 덧붙이세요.** 절이나 챕터 단위(코드라면 "
+            f"함수·컴포넌트 단위)로 나누면 됩니다.\n"
             f"- 한 번의 호출에는 한 덩어리만 담으세요. `{write}` 로 파일 전체를 다시 쓰는 "
             f"방식으로 이어붙이면 호출이 점점 커져 결국 잘립니다."
         )
@@ -1096,6 +1140,11 @@ def file_writing_guidance(tools: Optional[List[Dict[str, Any]]] = None) -> Optio
         body = (
             f"- `{write}` 는 덮어쓰기라 이어붙일 수 없습니다. 내용이 길면 **파일을 여러 개로 "
             f"나누어**(예: `01-개요.md`, `02-설계.md`) 각각 한 번에 쓰세요."
+        )
+    if append and append.split("__", 1)[-1] == TRUE_APPEND_TOOL:
+        body += (
+            f"\n- `{append}` 의 결과에는 파일 끝 몇 줄이 줄 번호와 함께 나옵니다. 그것을 보고 다음 "
+            f"조각을 이어 쓰고, 이미 쓴 부분은 다시 보내지 마세요."
         )
     return f"{FILE_WRITING_HEAD}\n{body}"
 
@@ -1117,7 +1166,7 @@ def truncation_advice(tools: Optional[List[Dict[str, Any]]] = None) -> str:
     도구를 이름 꼬리로 찾는 것은 메모리 쪽(`memory_write_tool`)과 같은 방식입니다 —
     서버 키가 무엇이든, 꺼져 있든, 없는 도구를 부르라고 시키지 않기 위해서입니다.
     """
-    append, write = append_tool(tools), file_write_tool(tools)
+    append, write = file_tools(tools)
     tail = "\n그 밖의 호출이라면 인자를 더 짧게 만들어 다시 호출하세요."
 
     if append:

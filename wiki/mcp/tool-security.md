@@ -100,6 +100,7 @@ the host copies it into the workspace (`.mado/skills/<name>/`) and the agent run
 | git status/diff/log/show/branch | `read(repo_path)` |
 | git add/commit/reset/create_branch/checkout/init | `write(repo_path)` (+ `write(files)` for `git_add`) |
 | memory, `sequentialthinking`, `reset_kernel_state` | conversation state — allowed in every mode |
+| sandbox `write_workspace_file` / `append_workspace_file` | `write(filename)` |
 | sandbox `execute_python_code` / `run_python_file` | `exec(code)` + whatever the code scan finds |
 | sandbox `install_python_packages` | flagged execution (it brings in outside code) |
 | fetch `fetch` | `net(host)` |

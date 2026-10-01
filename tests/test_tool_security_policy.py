@@ -325,6 +325,8 @@ def test_other_conversations_memory_graphs_are_off_limits():
 def test_git_internals_are_not_written_by_file_tools_but_git_tools_work():
     assert _hard(ToolMeta("sandbox", "write_workspace_file"),
                  {"filename": "./workspace/.git/hooks/pre-commit", "content": "x"})
+    assert _hard(ToolMeta("sandbox", "append_workspace_file"),
+                 {"filename": ".git/hooks/pre-commit", "content": "x"})
     assert _hard(FS_READ, {"path": ".git/config"}) is None, "읽기는 막지 않습니다"
     assert _hard(ToolMeta("git", "git_commit"), {"repo_path": str(WS), "message": "m"}) is None
 
@@ -365,6 +367,18 @@ def test_session_denials_deny_and_say_it_was_the_user():
     verdict = evaluate(profile, Policy(mode="auto", denials=parse_rules(["net(python.org)"])))
     assert verdict.effect == DENY and verdict.source == "denial"
     assert "유저가 이 대화에서" in verdict.headline
+
+
+def test_the_sandbox_append_tool_is_judged_as_a_write_to_its_file():
+    """샌드박스 v0.8.0 의 덧붙이기 도구. 판정은 쓰기 도구와 같아야 합니다 — 모르는 도구로 두면
+    인자의 경로를 보지 못합니다."""
+    meta = ToolMeta("sandbox", "append_workspace_file")
+    profile = profile_call(meta, {"filename": "slides/deck/index.tsx", "content": "x"}, WS)
+    assert [(a.kind, a.target) for a in profile.actions if a.kind == "write"] == [
+        ("write", "slides/deck/index.tsx")
+    ]
+    assert _verdict(meta, {"filename": "slides/deck/index.tsx", "content": "x"}).effect == ALLOW
+    assert _verdict(meta, {"filename": "notes.md", "content": "x"}, mode="read_only").effect == DENY
 
 
 def test_denials_beat_session_grants_and_allow_rules():

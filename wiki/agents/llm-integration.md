@@ -219,7 +219,7 @@ not there. "Split the write across several calls" is good advice only if somethi
 
 | The agent has | It is told |
 | :--- | :--- |
-| an append tool (`edit_file`, `append_file`, …) | write the first part, then append with `<that tool>` by name — and *not* to continue with the overwriting tool, named too |
+| an append tool (`append_workspace_file`, `append_file`, `edit_file`, …) | write the first part, then append with `<that tool>` by name — and *not* to continue with the overwriting tool, named too |
 | only an overwriting tool (`write_file`) | splitting will not help; write several smaller **files** instead, or shorten the content |
 | no file tool | just shorten the arguments |
 
@@ -228,6 +228,18 @@ The middle row is the one worth having. The official `@modelcontextprotocol/serv
 everything written so far on every call — 5k, then 10k, then 15k characters — growing quadratically
 and hitting the same `max_tokens` again, only later. Naming the tool that can append, and the one
 that cannot, is the difference between advice that works and advice that loops.
+
+**Which append tool, and which write tool to pair it with** ([`file_tools()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py)).
+`APPEND_TOOLS` is a priority list, not a set. The sandbox's `append_workspace_file` (AirgappedPySandbox
+v0.8.0) comes first because it is the only real append: the filesystem server's `edit_file` is
+find-and-replace, and used as "append" it inserts at the **first** match of a repeated line (`);`,
+`</div>`) — or at the **top** of the file when the search text is empty. Long TSX files broke that way.
+`edit_file` is named only when nothing better is held. The write tool for the first part is taken from
+the **same server** as the append tool: the two servers read paths differently (the filesystem server
+against its allowed folder, the sandbox relative to the workspace), so a first part written by one and a
+rest appended by the other may not land in the same file. With `append_workspace_file` the standing rule
+gains one line: its result shows the file's last lines, numbered — read them before writing the next
+chunk, and never resend what is already there.
 
 ### 2.3. …and a plain answer that was cut off (v0.5.3)
 
@@ -272,8 +284,11 @@ prompt does not grow by a character).
 Note what it does *not* say. An earlier version of this argument rejected a standing instruction,
 correctly: "keep your arguments short" is unfollowable, because a model cannot count its own output
 tokens, and trying makes the content worse instead of shorter. What goes in the prompt is not a size
-but a **strategy** — which tool to reach for and what unit to split on (a section, a chapter). That
-needs no token counting, so the model can actually comply.
+but a **strategy** — which tool to reach for and what unit to split on (a section, a chapter; for code,
+a function or a component). That needs no token counting, so the model can actually comply. Which
+append tool is named, and which write tool goes with it, is decided as in §2.2; when it is the sandbox's
+`append_workspace_file`, a third line says to read the file's last lines in each result before writing
+the next chunk.
 
 It sits before `[Session Custom Instructions]`, which stay last: if a person tells the agent
 something different for this session, theirs is the more specific instruction and should win.

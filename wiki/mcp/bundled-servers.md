@@ -11,7 +11,7 @@ The platform comes pre-configured with a suite of official and open-source MCP s
 | `filesystem` | Node.js | `@modelcontextprotocol/server-filesystem` | 14 | **Enabled** | File read/write/search within `./workspace`. |
 | `memory` | Node.js | fork of `@modelcontextprotocol/server-memory` ([`mcp_servers/memory_scoped/`](file:///d:/MultiAgentDebateOrchestration/mcp_servers/memory_scoped/index.mjs)) | 9 | **Enabled** | Knowledge graph persistence, one graph per conversation. |
 | `git` | Python | `mcp-server-git` (pip package) | 12 | **Enabled** | Repository version control & diff tracking. |
-| `sandbox` | Python | [AirgappedPySandbox](https://github.com/HaJaehee/AirgappedPySandbox) v0.4.1 | 5 | **Enabled** | Stateful IPython kernel code execution, one namespace per conversation and speaker. |
+| `sandbox` | Python | [AirgappedPySandbox](https://github.com/HaJaehee/AirgappedPySandbox) v0.8.0 | 7 | **Enabled** | Stateful IPython kernel code execution, one namespace per conversation and speaker. |
 | `sequential_thinking` | Node.js | `@modelcontextprotocol/server-sequential-thinking`| 1 | *Disabled* | Step-by-step reasoning (used only when `mode = "mcp"`). |
 | `fetch` | Python | `mcp-server-fetch` (pip package) | 1 | *Disabled* | Web URL to Markdown extractor. **Keep disabled in air-gaps.** |
 
@@ -55,13 +55,17 @@ The platform comes pre-configured with a suite of official and open-source MCP s
 ### 2.4. Python Code Execution Sandbox (`sandbox`)
 - **Repository**: [HaJaehee/AirgappedPySandbox](https://github.com/HaJaehee/AirgappedPySandbox)
 - **Execution**: Embedded stateful IPython execution daemon.
-- **Bundled version**: v0.4.1. Vendored into `mcp_sandbox/`; the app does not fork it.
+- **Bundled version**: v0.8.0. Vendored into `mcp_sandbox/`; the app does not fork it.
 - **Namespace binding**: Every tool takes a `namespace` argument, but the host overrides it with the scope it sends in `_meta` — one namespace per conversation *and speaker* (see [Per-conversation tool scope](#per-conversation-tool-scope-_meta)). The argument only decides the namespace for clients that send no metadata.
 - **Offline Kernel Requirements**: Core data science libraries (`requirements-kernel.txt`: `ipykernel`, `pandas`, `numpy`, `matplotlib`, `seaborn`, `scipy`, `sympy`) are pre-packaged into offline bundle wheels.
 - **Why It Matters**: Prevents hallucination by allowing the Coder to verify implementations and empowering the Critic to test hypotheses and security boundaries with real code executions.
 - **Key Tools**:
   - `execute_python_code`: Runs code snippets in an isolated namespace; maintains variables and imports across calls.
   - `run_python_file`: Executes a target script inside the workspace.
+  - `write_workspace_file`: Saves text verbatim to a workspace file without running anything.
+  - `append_workspace_file` (v0.8.0): Adds a chunk to the end of a workspace file and answers with the
+    file's last 8 lines. For files longer than one reply's output limit; MADO's file-writing rule names it
+    ahead of the filesystem server's `edit_file` ([LLM Integration §2.2](../agents/llm-integration.md)).
   - `reset_kernel_state`: Clears kernel state and memory when starting a clean session.
 
 ---

@@ -524,6 +524,41 @@ def test_an_overwriting_only_agent_is_told_to_split_into_files():
     assert "덧붙이세요" not in text
 
 
+FS_AND_SANDBOX = (
+    "filesystem__write_file", "filesystem__edit_file",
+    "sandbox__write_workspace_file", "sandbox__append_workspace_file",
+)
+
+
+def test_a_true_append_tool_wins_over_edit_file_and_pairs_with_its_own_server():
+    """`edit_file` 은 찾아 바꾸기라 덧붙이기로 쓰면 첫 일치 위치나 파일 맨 앞에 들어갑니다.
+
+    진짜 덧붙이기(샌드박스 v0.8.0)가 있으면 그것을 짚고, 첫 부분도 **같은 서버**의 쓰기
+    도구로 쓰게 합니다 — 서버마다 경로를 읽는 방식이 달라 섞으면 다른 파일이 될 수 있습니다.
+    """
+    text = file_writing_guidance(_tools(*FS_AND_SANDBOX))
+    assert "`sandbox__append_workspace_file` 로 **뒤에 덧붙이세요.**" in text
+    assert "먼저 `sandbox__write_workspace_file` 로 첫 부분" in text
+    assert "filesystem__edit_file" not in text and "filesystem__write_file" not in text
+    assert "파일 끝 몇 줄" in text, "결과의 꼬리 줄을 보고 이어 쓰라고 합니다"
+
+    advice = truncation_advice(_tools(*FS_AND_SANDBOX))
+    assert "`sandbox__append_workspace_file` 로 **뒤에 덧붙이세요**" in advice
+    assert "`sandbox__write_workspace_file` 로 이어쓰려 하면" in advice
+
+
+def test_edit_file_is_still_the_fallback_and_gets_no_tail_line():
+    text = file_writing_guidance(_tools("filesystem__write_file", "filesystem__edit_file"))
+    assert "`filesystem__edit_file` 로 **뒤에 덧붙이세요.**" in text
+    assert "파일 끝 몇 줄" not in text, "edit_file 의 결과에는 파일 끝 줄이 나오지 않습니다"
+
+
+def test_a_sandbox_only_agent_writes_and_appends_with_the_sandbox():
+    text = file_writing_guidance(_tools("sandbox__write_workspace_file", "sandbox__append_workspace_file"))
+    assert "`sandbox__write_workspace_file`" in text and "`sandbox__append_workspace_file`" in text
+    assert "여러 개로" not in text, "덧붙일 수 있는데 파일을 쪼개라고 하면 안 됩니다"
+
+
 def test_an_agent_without_file_tools_gets_nothing():
     """비평가처럼 파일을 만지지 않는 에이전트의 프롬프트는 한 글자도 늘면 안 됩니다."""
     assert file_writing_guidance(_tools("memory__search_nodes")) is None

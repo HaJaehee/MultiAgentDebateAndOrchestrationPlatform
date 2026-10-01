@@ -70,6 +70,17 @@ async def test_xlsx_refusal_points_at_the_sheet_tool():
 
 
 @pytest.mark.asyncio
+async def test_appending_text_to_a_pptx_is_refused_too():
+    """덧붙이기도 텍스트 쓰기입니다 — 조각으로 나누어도 .pptx 는 텍스트로 만들 수 없습니다."""
+    manager, _ = _manager()
+    output, status = await manager.execute_tool(
+        "sandbox__append_workspace_file", {"filename": "deck.pptx", "content": "<slide/>"}
+    )
+    assert status == "error"
+    assert "pair_slide__slide_open" in output
+
+
+@pytest.mark.asyncio
 async def test_refusal_without_slide_tools_tells_it_to_write_markdown():
     """pair_slide 를 꺼 둔 배포에서 모델이 '만들었다' 고 거짓 보고하는 것을 막습니다."""
     manager, _ = _manager(with_slides=False)

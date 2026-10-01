@@ -350,6 +350,7 @@ KNOWN_TOOLS: Dict[str, ToolKind] = {
     "execute_python_code": ToolKind(EXEC, code_arg="code"),
     "run_python_file": ToolKind(EXEC, code_file_arg="file_path"),
     "write_workspace_file": _fs(WRITE, "write", "filename"),
+    "append_workspace_file": _fs(WRITE, "write", "filename"),
     "list_workspace_files": ToolKind(READ),
     "reset_kernel_state": ToolKind(STATE),
     # 패키지 설치는 밖의 코드를 들여오는 일입니다 (사내 미러라도).

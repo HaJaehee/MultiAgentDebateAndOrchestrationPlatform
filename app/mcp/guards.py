@@ -20,11 +20,11 @@ BINARY_DOC_EXTENSIONS = frozenset({
 })
 
 # 텍스트를 파일에 쓰는 도구들의 이름 꼬리(`server__tool` 의 `__` 뒤).
-# `llm.FILE_WRITE_TOOLS` / `llm.APPEND_TOOLS` 와 같은 집합에 샌드박스의
-# `write_workspace_file` 을 더한 것입니다.
+# `llm.FILE_WRITE_TOOLS` / `llm.APPEND_TOOLS` 와 같은 집합입니다 (샌드박스의
+# `write_workspace_file` · `append_workspace_file` 포함).
 TEXT_WRITE_TOOL_TAILS = frozenset({
     "write_file", "write_text_file", "create_file", "write_workspace_file",
-    "edit_file", "edit_text_file", "append_file", "patch_file", "str_replace",
+    "append_workspace_file", "edit_file", "edit_text_file", "append_file", "patch_file", "str_replace",
 })
 
 # 인자 이름이 이 중 하나면 "파일 경로" 로 봅니다.

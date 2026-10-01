@@ -15,6 +15,15 @@ normal `skills__load_skill` tool card). It works outside the specialist's `allow
 never for a skill that is switched off, and survives resuming an interrupted turn.
 → [Skills §9](agents/skills.md#9-designating-a-skill-from-the-input-bar) · [UI Components §1.3.4](ui/components.md) · ADR-027
 
+**Long files are appended, not edited into place.** The bundled sandbox is now AirgappedPySandbox v0.8.0,
+which adds `append_workspace_file`: it adds a chunk verbatim to the end of a workspace file and answers with
+the file's last 8 lines. The standing file-writing rule now names it first — write the first part with the
+sandbox's `write_workspace_file`, append the rest — instead of the filesystem server's `edit_file`, which is
+find-and-replace and put "appended" chunks at the first matching line or at the top of the file (long TSX
+files broke this way). Agents with the filesystem server only still get `edit_file`. The tool gate judges
+the new tool as a write, and appending text to `.pptx`/`.xlsx`/… is refused like any text write.
+→ [LLM Integration §2.2, §2.5](agents/llm-integration.md) · [Bundled Servers](mcp/bundled-servers.md)
+
 ---
 
 ## v1.1
