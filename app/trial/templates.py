@@ -18,7 +18,7 @@
 참여자마다 `base` 에이전트(conf.json)의 운영 설정 — 모델·엔드포인트·키·샘플링 — 을 빌리고,
 인격만 템플릿의 것으로 바꿉니다. 그리고 **모든 도구 할당을 해제합니다** (`allowed_mcp_servers = []`,
 스킬 역시 `allowed_skills = []`).
-그 구성을 대화의 `session_agents.config_snapshot` 에 미리 굳혀 대화를 잠근 상태로 만듭니다.
+그 구성을 대화의 `session_agents.config_snapshot` 에 미리 고정해 대화를 잠근 상태로 만듭니다.
 엔진은 잠긴 대화를 스냅샷 그대로 돌리므로, conf.json 에 없는 참여자 키도 발언합니다
 (`app/agents/personas.py`). 코어 엔진은 체험 서버를 모릅니다.
 """

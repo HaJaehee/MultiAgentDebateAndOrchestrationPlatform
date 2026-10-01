@@ -518,7 +518,7 @@ class AgentToolSecurity(BaseModel):
     생기면 안 되기 때문입니다.
 
     `agents.<key>` 안이 아니라 여기 두는 이유: 에이전트 설정은 대화가 시작될 때
-    스냅샷으로 굳습니다(`session_agents.config_snapshot`). 보안은 굳으면 안 됩니다 —
+    스냅샷으로 고정됩니다(`session_agents.config_snapshot`). 보안은 고정되면 안 됩니다 —
     나중에 조인 규칙이 지난 대화에도 바로 걸려야 합니다. 보안 설정이 한 곳에 모여
     있어야 무엇이 풀려 있는지 한눈에 보이기도 합니다.
     """
@@ -1300,7 +1300,7 @@ def set_agent_allowed_mcp_servers_in_conf_file(
 
     어떤 에이전트가 어떤 도구를 쓰는지는 배포 설정이라 이 파일이 정본입니다.
     다만 **아직 시작하지 않은 대화**에만 걸립니다. 대화는 첫 발언과 함께 도구
-    권한까지 `session_agents.config_snapshot` 으로 굳으므로, 이미 시작한 대화는
+    권한까지 `session_agents.config_snapshot` 으로 고정되므로, 이미 시작한 대화는
     여기서 무엇을 바꾸든 그때의 권한을 그대로 씁니다.
     """
     key = _require_key(agent_key, "에이전트 키")

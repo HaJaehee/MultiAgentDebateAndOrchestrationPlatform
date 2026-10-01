@@ -125,7 +125,7 @@ class AgentRosterControl:
         on_resync_agents: Optional[Callable[[], Coroutine[None, None, None]]] = None,
     ):
         self.on_config_changed = on_config_changed
-        # 잠긴 대화의 구성 스냅샷을 지금 conf.json 로 다시 굳히는 콜백. DB 를 만지므로
+        # 잠긴 대화의 구성 스냅샷을 지금 conf.json 로 다시 고정하는 콜백. DB 를 만지므로
         # 화면을 소유한 쪽(app.py)이 구현합니다.
         self.on_resync_agents = on_resync_agents
         self.agent_pool: AgentPool = get_agent_pool()
@@ -232,7 +232,7 @@ class AgentRosterControl:
         # conf.json 에 있지만 꺼 둔 에이전트. 풀에는 등록되지 않아 카드로는 보이지
         # 않으므로, 여기서 따로 보여주지 않으면 다시 켤 방법이 없습니다.
         self.disabled_row: Optional[ui.row] = None
-        # 잠긴 대화가 잠글 때 굳힌 에이전트. 살아 있는 풀 대신 이것을 그립니다.
+        # 잠긴 대화가 잠글 때 고정한 에이전트. 살아 있는 풀 대신 이것을 그립니다.
         self.session_agents: Optional[List[Agent]] = None
         self.resync_btn: Optional[ui.button] = None
         # 드래그로 순서를 바꾸는 중에 집어 든 에이전트 키.
@@ -312,7 +312,7 @@ class AgentRosterControl:
                             .classes("text-[11px]")
                         )
                         self.resync_btn.tooltip(
-                            "이 대화가 굳혀 둔 모델·엔드포인트·API 키·도구를 지금 conf.json "
+                            "이 대화가 고정해 둔 모델·엔드포인트·API 키·도구를 지금 conf.json "
                             "값으로 다시 맞춥니다 (페르소나는 그대로)"
                         )
                         self.resync_btn.set_visibility(False)
@@ -592,7 +592,7 @@ class AgentRosterControl:
     def _roster_agents(self) -> List[Agent]:
         """이 대화의 로스터에 보일 에이전트.
 
-        잠긴 대화는 잠글 때 굳은 구성을, 아직 시작하지 않은 대화는 살아 있는 풀을
+        잠긴 대화는 잠글 때 고정된 구성을, 아직 시작하지 않은 대화는 살아 있는 풀을
         씁니다. 이것을 쓰지 않으면 conf.json 에서 지운 에이전트가 카드도 없이
         발언하는 대화가 생깁니다 — 실행은 스냅샷을 보는데 화면만 풀을 보기 때문에.
         """
@@ -1340,7 +1340,7 @@ class AgentRosterControl:
                         delete_btn.tooltip("conf.json에서 해당 에이전트를 삭제합니다.")
 
     async def _on_resync_agent_configs(self) -> None:
-        """잠긴 대화가 굳혀 둔 구성을 지금 conf.json 값으로 다시 맞춥니다.
+        """잠긴 대화가 고정해 둔 구성을 지금 conf.json 값으로 다시 맞춥니다.
 
         스냅샷이 정본이 된 대가입니다. 게이트웨이 주소가 바뀌거나 API 키가 만료되면
         옛 대화가 죽은 엔드포인트를 계속 두드리게 되는데, 그때 이 버튼이 유일한
@@ -1471,7 +1471,7 @@ class AgentRosterControl:
                 f"함께 삭제되며 복구할 수 없습니다."
             ).classes("text-xs text-slate-300 leading-snug")
             # 예전에는 여기서 "이어서 진행하면 더 이상 발언하지 않습니다" 를 경고해야
-            # 했습니다. 이제는 대화가 첫 발언 때 구성을 통째로 굳히므로 그렇지 않습니다.
+            # 했습니다. 이제는 대화가 첫 발언 때 구성을 통째로 고정하므로 그렇지 않습니다.
             ui.label(
                 "이미 토론이 시작된 세션은 영향을 받지 않습니다. 해당 세션들은 시작 시점의 "
                 "에이전트 구성(모델·엔드포인트·키·도구·프롬프트)이 저장되어 "
@@ -2123,7 +2123,7 @@ class AgentRosterControl:
         """이 에이전트가 호출할 수 있는 MCP 서버를 고릅니다.
 
         도구 할당은 conf.json 에 저장되어 **아직 시작하지 않은 대화**에 걸립니다.
-        이미 시작한 대화는 첫 발언 때 도구 권한까지 스냅샷으로 굳었으므로 여기서
+        이미 시작한 대화는 첫 발언 때 도구 권한까지 스냅샷으로 고정되었으므로 여기서
         바꿔도 그 대화에는 닿지 않습니다. 그래서 다른 구성 변경과 같은 잠금을
         씁니다 (`_agent_admin_lock_reason`) — 닿지 않는 조작을 열어 두면 바꿨다고
         착각하게 됩니다.
@@ -2157,7 +2157,7 @@ class AgentRosterControl:
             ui.label(
                 "이 에이전트가 발언 중 호출할 수 있는 MCP 서버입니다. conf.json 에 저장되어 "
                 "아직 시작하지 않은 대화와 앞으로 만드는 대화에 적용됩니다. 이미 시작한 "
-                "대화는 그때 굳은 도구 권한을 그대로 씁니다."
+                "대화는 그때 고정한 도구 권한을 그대로 씁니다."
             ).classes("text-[12px] text-amber-400 mb-2 leading-snug")
 
             if not configured and not orphans:
@@ -2215,7 +2215,7 @@ class AgentRosterControl:
         """이 에이전트가 불러 쓸 수 있는 스킬을 고릅니다.
 
         도구 할당과 같습니다 — conf.json 에 저장되어 **아직 시작하지 않은 대화**에 걸리고,
-        이미 시작한 대화는 첫 발언 때 굳은 할당을 그대로 씁니다. 그래서 같은 잠금을 씁니다.
+        이미 시작한 대화는 첫 발언 때 고정된 할당을 그대로 씁니다. 그래서 같은 잠금을 씁니다.
         스킬의 내용과 켜기·끄기는 이와 달리 어느 대화에나 바로 걸립니다.
         """
         if self._blocked_for_agent_admin():
@@ -2678,7 +2678,7 @@ class AgentRosterControl:
     def _graph_preview_source(self):
         """미리보기에 그릴 (그래프, 실행 상태, 안내 문구).
 
-        - 도는 중: 그 턴에 굳힌 그래프와 실행 상태. 파일을 고쳐도 도는 턴은 그대로이기 때문입니다.
+        - 도는 중: 그 턴에 고정한 그래프와 실행 상태. 파일을 고쳐도 도는 턴은 그대로이기 때문입니다.
         - 끝난 뒤: 고른 파일이 그 턴의 그래프와 같으면 실행 상태를 얹고, 바뀌었으면 파일만 그립니다 —
           지난 그림을 고친 그래프 위에 얹으면 없는 선이 흐른 것처럼 보입니다.
         """

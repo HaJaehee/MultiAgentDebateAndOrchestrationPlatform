@@ -54,7 +54,7 @@ def create_personas_page() -> None:
                 return
 
             personas = await effective_personas(db, session_id, pool)
-            # 잠긴 대화는 잠글 때 굳은 에이전트를 보여줍니다. 그 사이 conf.json 에서
+            # 잠긴 대화는 잠글 때 고정된 에이전트를 보여줍니다. 그 사이 conf.json 에서
             # 지워진 에이전트도 이 대화에서는 계속 발언하므로 카드가 있어야 합니다.
             agents = await session_roster_agents(db, session_model, pool)
             locked = session_model.personas_locked
@@ -143,7 +143,7 @@ def create_personas_page() -> None:
             # ---------------- 에이전트 카드 ----------------
             for agent in agents:
                 # 이 대화에만 남은 에이전트는 conf.json 기본값이 없습니다.
-                # 그때는 이 대화가 굳혀 둔 값이 곧 기본값입니다.
+                # 그때는 이 대화가 고정해 둔 값이 곧 기본값입니다.
                 fallback = persona_from_agent(agent)
                 persona = personas.get(agent.key) or fallback
                 inputs[agent.key] = _build_agent_card(

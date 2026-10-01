@@ -59,8 +59,8 @@ async def _seed_session(workspace: str = "") -> str:
         ))
         db.add(SessionAgentModel(
             id=str(uuid.uuid4()), session_id=sid, agent_key="architect",
-            name="굳은 아키텍트", role="Design", system_prompt="너는 설계를 맡는다",
-            config_snapshot={"name": "굳은 아키텍트", "model": "fake/frozen"},
+            name="고정된 아키텍트", role="Design", system_prompt="너는 설계를 맡는다",
+            config_snapshot={"name": "고정된 아키텍트", "model": "fake/frozen"},
         ))
         db.add(MessageModel(
             id=str(uuid.uuid4()), session_id=sid, sender_key="user",
@@ -110,8 +110,8 @@ async def test_settings_and_agents_are_inherited():
 
     # conf.json 에서 사라진 에이전트도 계속 발언할 수 있어야 합니다.
     assert len(rows) == 1
-    assert rows[0].name == "굳은 아키텍트"
-    assert rows[0].config_snapshot == {"name": "굳은 아키텍트", "model": "fake/frozen"}
+    assert rows[0].name == "고정된 아키텍트"
+    assert rows[0].config_snapshot == {"name": "고정된 아키텍트", "model": "fake/frozen"}
 
 
 @pytest.mark.asyncio

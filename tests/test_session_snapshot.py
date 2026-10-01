@@ -1,15 +1,15 @@
 """시작한 대화는 자기완결적이다.
 
 첫 유저 메시지와 함께 인격만이 아니라 `AgentConfig` 전체 — 모델·엔드포인트·API 키·
-샘플링 값·도구 권한·단계적 사고 — 가 `session_agents.config_snapshot` 에 굳습니다.
+샘플링 값·도구 권한·단계적 사고 — 가 `session_agents.config_snapshot` 에 고정됩니다.
 그 뒤 `conf.json` 에서 그 에이전트를 지우든, 끄든, 모델을 바꾸든 이 대화는 잠글 때의
 구성 그대로 이어집니다.
 
 여기서 지키려는 것은 세 가지입니다.
 
-1. **굳는다.** 잠근 뒤 conf.json 을 어떻게 바꿔도 그 대화의 발언자 구성은 그대로다.
+1. **고정된다.** 잠근 뒤 conf.json 을 어떻게 바꿔도 그 대화의 발언자 구성은 그대로다.
 2. **살아남는다.** conf.json 에서 지운 에이전트도 그 대화에서는 계속 발언한다.
-3. **탈출구가 있다.** 엔드포인트나 키가 바뀌면 인격은 두고 운영 설정만 다시 굳힐 수 있다.
+3. **탈출구가 있다.** 엔드포인트나 키가 바뀌면 인격은 두고 운영 설정만 다시 고정할 수 있다.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -85,7 +85,7 @@ async def _new_session(factory) -> str:
 
 
 async def _lock(factory, sid: str, pool: AgentPool) -> None:
-    """첫 유저 메시지에 해당하는 동작 — 구성을 굳히고 잠급니다."""
+    """첫 유저 메시지에 해당하는 동작 — 구성을 고정하고 잠급니다."""
     async with factory() as db:
         session_model = await db.get(SessionModel, sid)
         await freeze_personas(db, session_model, pool)
@@ -118,7 +118,7 @@ def test_a_broken_snapshot_does_not_raise():
     assert agent_from_snapshot("critic", {"model": 5}) is None
 
 
-# --------------------------------------------------------------- 굳는다
+# --------------------------------------------------------------- 고정된다
 
 
 @pytest.mark.asyncio
@@ -186,7 +186,7 @@ async def test_a_deleted_agent_keeps_speaking_in_a_started_conversation(db_facto
 
 @pytest.mark.asyncio
 async def test_a_persona_draft_survives_the_freeze_with_its_config(db_factory):
-    """초안으로 고친 인격은 그대로, 운영 설정은 conf.json 값으로 굳습니다."""
+    """초안으로 고친 인격은 그대로, 운영 설정은 conf.json 값으로 고정됩니다."""
     sid = await _new_session(db_factory)
     async with db_factory() as db:
         session_model = await db.get(SessionModel, sid)

@@ -355,7 +355,7 @@ async def test_the_example_graph_runs_end_to_end(graphs):
         ("design", 1), ("impl", 2), ("sec", 2), ("merge", 3), ("gate", 4),
         ("impl", 5), ("merge", 6), ("gate", 7),
     ], "기록 순서는 완료 순서가 아니라 노드 순서"
-    assert session.graph_snapshot["id"] == "review-loop", "실제로 돈 그래프를 굳혀 둡니다"
+    assert session.graph_snapshot["id"] == "review-loop", "실제로 돈 그래프를 고정해 둡니다"
     # 참여자는 로스터 체크박스(architect 만)가 아니라 그래프입니다.
     assert {"coder", "critic"} <= {k for k, _m in llm.sent}
 

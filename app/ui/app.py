@@ -523,10 +523,10 @@ def create_ui() -> None:
             runner.set_tool_mode(current_session_id, roster_control.tool_mode)
 
         async def on_resync_agents() -> None:
-            """잠긴 대화가 굳혀 둔 에이전트 구성을 지금 conf.json 값으로 다시 맞춥니다.
+            """잠긴 대화가 고정해 둔 에이전트 구성을 지금 conf.json 값으로 다시 맞춥니다.
 
             대화가 자기완결적이 된 대가입니다. 엔드포인트나 API 키가 바뀌면 옛 대화가
-            죽은 주소를 계속 두드리므로, 인격은 그대로 두고 운영 설정만 다시 굳힙니다.
+            죽은 주소를 계속 두드리므로, 인격은 그대로 두고 운영 설정만 다시 고정합니다.
             """
             if not current_session_id:
                 return
@@ -885,7 +885,7 @@ def create_ui() -> None:
         artifact_viewer = ArtifactViewer(on_open_workspace_files=workspace_download.open)
 
         # 로스터가 카드를 다시 그릴 때마다 채팅 피드도 같은 겉모습을 받습니다.
-        # 잠긴 대화에서는 이 값이 conf.json 이 아니라 그때 굳은 스냅샷에서 오므로,
+        # 잠긴 대화에서는 이 값이 conf.json 이 아니라 그때 고정된 스냅샷에서 오므로,
         # 나중에 색이나 아이콘을 바꿔도 지난 발언은 그대로 남습니다.
         roster_control.on_roster_changed = chat_feed.set_agent_styles
         # 첫 화면은 카드를 곧바로 그리므로 (`build_ui`) 위 콜백을 거치지 않습니다.
@@ -1026,7 +1026,7 @@ def create_ui() -> None:
                 if s_obj:
                     pool = roster_control.agent_pool
                     personas = await effective_personas(db, sid, pool)
-                    # 잠긴 대화는 잠글 때 굳은 에이전트로 로스터를 그립니다.
+                    # 잠긴 대화는 잠글 때 고정된 에이전트로 로스터를 그립니다.
                     # conf.json 에서 지워진 에이전트도 이 대화에서는 계속 발언합니다.
                     frozen = await session_roster_agents(db, s_obj, pool)
                     graph_spec = s_obj.graph_snapshot or None
@@ -1122,7 +1122,7 @@ def create_ui() -> None:
                     formatted_arts = merge_artifacts(formatted_arts, snapshot["artifacts"])
 
             # 그래프 토론의 실행 표시와 노드 배지. 도는 중이면 러너가 들고 있는 그래프와 진행 상태를,
-            # 끝났으면 그 턴에 굳힌 그래프(`sessions.graph_snapshot`)와 기록을 씁니다.
+            # 끝났으면 그 턴에 고정한 그래프(`sessions.graph_snapshot`)와 기록을 씁니다.
             graph_state = snapshot.get("graph") if running else None
             if graph_state and graph_state.get("spec"):
                 graph_spec = graph_state["spec"]

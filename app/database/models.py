@@ -50,7 +50,7 @@ class SessionModel(Base):
     # 페르소나와 달리 잠기지 않습니다 — 토론 도중에도 바꿀 수 있어야 합니다.
     workspace_dir: Mapped[str] = mapped_column(Text, default="", nullable=False)
     # 그래프 토론: 이 대화가 쓰는 그래프 파일 id (`data/graphs/<id>.json`), 그리고 **마지막 턴이
-    # 실제로 돈** 그래프. 턴이 시작될 때 굳혀, 토론 중에 파일을 고치거나 지워도 흔들리지 않습니다.
+    # 실제로 돈** 그래프. 턴이 시작될 때 고정해 두어, 토론 중에 파일을 고치거나 지워도 흔들리지 않습니다.
     graph_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     graph_snapshot: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     # 도구 보안 모드 (`read_only` · `default` · `review` · `auto`). 비어 있으면 conf.json 의
@@ -297,7 +297,7 @@ class SessionAgentModel(Base):
     # 스냅샷이 없던 옛 대화에도 붙고, JSON 을 풀지 않고도 읽힙니다.
     card_color: Mapped[str] = mapped_column(String(40), default="", nullable=False)
     icon_path: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    # 잠글 때 굳힌 `AgentConfig` 전체. None 이면 이 컬럼이 생기기 전에 잠긴 대화라
+    # 잠글 때 고정한 `AgentConfig` 전체. None 이면 이 컬럼이 생기기 전에 잠긴 대화라
     # 살아 있는 conf.json 을 그대로 씁니다 (지금까지 그래 왔던 대로).
     config_snapshot: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

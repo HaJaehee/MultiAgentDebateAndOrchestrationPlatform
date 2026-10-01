@@ -17,14 +17,14 @@
 
 **시작한 대화는 자기완결적입니다.** 잠그는 시점에 인격(이름·역할·시스템 프롬프트)만이
 아니라 `AgentConfig` 전체 — 모델·엔드포인트·API 키·샘플링 값·도구 권한·단계적 사고까지 —
-를 `session_agents.config_snapshot` 에 굳힙니다. 그 뒤 `conf.json` 에서 그 에이전트를
+를 `session_agents.config_snapshot` 에 고정합니다. 그 뒤 `conf.json` 에서 그 에이전트를
 지우거나, 끄거나, 모델을 바꿔도 이 대화는 잠글 때의 구성 그대로 이어집니다.
 
 그래서 편집 화면의 잠금 규칙과 실행이 같은 말을 합니다 — "이미 시작한 대화에는 영향이
 없다" 가 인격뿐 아니라 구성 전체에 대해 참입니다.
 
 바꾼 게이트웨이 주소나 새 API 키를 옛 대화에도 먹여야 한다면 `resync_agent_configs()`
-가 스냅샷을 지금 `conf.json` 값으로 다시 굳힙니다 (인격은 그대로 둡니다).
+가 스냅샷을 지금 `conf.json` 값으로 다시 고정합니다 (인격은 그대로 둡니다).
 """
 
 import logging
@@ -42,7 +42,7 @@ from app.database.models import SessionAgentModel, SessionModel
 logger = logging.getLogger(__name__)
 
 # 세션별로 편집할 수 있는 항목. 나머지 운영 설정은 conf.json 이 정본이되, 대화를
-# 잠그는 순간 `config_snapshot` 으로 함께 굳습니다.
+# 잠그는 순간 `config_snapshot` 으로 함께 고정됩니다.
 EDITABLE_FIELDS = ("name", "role", "system_prompt", "card_color", "icon")
 
 
@@ -63,7 +63,7 @@ class AgentPersona(BaseModel):
     name: str
     role: str
     system_prompt: str = ""
-    # 카드 색과 아이콘. 인격과 같은 수명을 갖습니다 — 대화가 잠기면 함께 굳고,
+    # 카드 색과 아이콘. 인격과 같은 수명을 갖습니다 — 대화가 잠기면 함께 고정되고,
     # 그 뒤 conf.json 에서 색을 바꿔도 이 대화의 기록은 그대로입니다.
     card_color: str = ""
     icon: str = ""
@@ -202,7 +202,7 @@ async def freeze_personas(
 ) -> Dict[str, AgentPersona]:
     """첫 유저 메시지 시점의 유효 구성을 전부 기록하고 세션을 잠급니다.
 
-    인격뿐 아니라 `AgentConfig` 전체를 `config_snapshot` 에 굳힙니다. 이 대화는
+    인격뿐 아니라 `AgentConfig` 전체를 `config_snapshot` 에 고정합니다. 이 대화는
     이 순간부터 conf.json 에 의존하지 않습니다 — 에이전트가 지워지든 모델이
     바뀌든 잠글 때의 구성 그대로 이어집니다.
 
@@ -229,12 +229,12 @@ async def freeze_personas(
                 icon_path=persona.icon,
             )
             db.add(row)
-        # 초안이 이미 있으면 인격은 그대로 두고 운영 설정만 굳힙니다.
+        # 초안이 이미 있으면 인격은 그대로 두고 운영 설정만 고정합니다.
         agent = live.get(key)
         if agent is not None:
             merged = _with_persona(agent, persona)
             row.config_snapshot = config_snapshot_of(merged)
-            # 카드 색·아이콘은 컬럼에도 함께 굳힙니다. 손대지 않은 에이전트는
+            # 카드 색·아이콘은 컬럼에도 함께 고정합니다. 손대지 않은 에이전트는
             # 지금 conf.json 값이 그대로 이 대화의 겉모습이 됩니다.
             row.card_color = merged.card_color or ""
             row.icon_path = merged.icon or ""
@@ -307,7 +307,7 @@ def agent_from_snapshot(agent_key: str, snapshot: Any) -> Optional[Agent]:
 async def frozen_agents(
     db: AsyncSession, session_id: str, pool: AgentPool
 ) -> List[Agent]:
-    """이 대화가 잠길 때 굳은 에이전트 전부.
+    """이 대화가 잠길 때 고정된 에이전트 전부.
 
     스냅샷이 없는 행은 이 기능이 생기기 전에 잠긴 대화입니다. 그런 행은 살아 있는
     풀에서 찾아 페르소나만 입혀 씁니다 — 그 대화가 지금까지 돌아왔던 그대로입니다.
@@ -339,7 +339,7 @@ async def session_roster_agents(
 ) -> List[Agent]:
     """이 대화의 로스터에 보여야 할 에이전트.
 
-    잠긴 대화는 잠글 때 굳은 구성, 아직 시작하지 않은 대화는 살아 있는 풀입니다.
+    잠긴 대화는 잠글 때 고정된 구성, 아직 시작하지 않은 대화는 살아 있는 풀입니다.
     화면이 이것을 쓰지 않으면 지워진 에이전트가 카드 없이 발언하게 됩니다.
     """
     if not session_model.personas_locked:
@@ -351,7 +351,7 @@ async def session_roster_agents(
 async def resync_agent_configs(
     db: AsyncSession, session_model: SessionModel, pool: AgentPool
 ) -> List[str]:
-    """잠긴 대화의 구성 스냅샷을 지금 conf.json 값으로 다시 굳힙니다.
+    """잠긴 대화의 구성 스냅샷을 지금 conf.json 값으로 다시 고정합니다.
 
     인격(이름·역할·시스템 프롬프트)은 건드리지 않습니다. 바뀌는 것은 모델·
     엔드포인트·키·도구처럼 운영에 속하는 값뿐입니다.

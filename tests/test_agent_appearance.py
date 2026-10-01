@@ -4,7 +4,7 @@
 
 1. 사람이 정한 색·아이콘이 conf.json 에 적히고 다시 읽힌다.
 2. 아이콘 그림을 못 찾아도 화면이 깨지지 않는다 (기본 아이콘으로 물러선다).
-3. 대화를 잠그면 그때의 겉모습이 함께 굳어, 나중에 conf.json 을 바꿔도
+3. 대화를 잠그면 그때의 겉모습이 함께 고정되어, 나중에 conf.json 을 바꿔도
    지난 기록의 카드는 그대로다.
 """
 
@@ -260,7 +260,7 @@ async def test_appearance_is_saved_with_the_persona(db_factory):
 
 @pytest.mark.asyncio
 async def test_freezing_pins_the_appearance_of_untouched_agents(db_factory):
-    """손대지 않은 에이전트도 잠글 때의 conf.json 겉모습으로 굳는다."""
+    """손대지 않은 에이전트도 잠글 때의 conf.json 겉모습으로 고정된다."""
     session = await _new_session(db_factory)
     async with db_factory() as db:
         await freeze_personas(db, session, _pool(card_color="#0097a7", icon="insights"))

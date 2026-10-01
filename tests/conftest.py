@@ -51,7 +51,7 @@ def real_mcp_runtimes():
 def _never_touch_the_real_database():
     """DB 엔진이 아직 없으면 메모리 DB 로 먼저 만들어 둡니다.
 
-    엔진은 프로세스에 하나뿐인 싱글턴이고, **처음 만든 쪽의 주소**로 굳습니다.
+    엔진은 프로세스에 하나뿐인 싱글턴이고, **처음 만든 쪽의 주소**로 고정됩니다.
     `OrchestratorEngine()` 이나 `get_session_factory()` 는 주소를 주지 않으면 기본값
     `./multiagent.db` 를 씁니다. 그래서 테스트가 `init_db(":memory:")` 보다 엔진을 먼저
     만들면(또는 앞 테스트가 싱글턴을 비워 두고 끝나면) 그 뒤의 모든 테스트가 **개발자의

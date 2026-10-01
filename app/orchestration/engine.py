@@ -88,7 +88,7 @@ class TurnSetup:
     skill_designations: Dict[str, List[str]] = field(default_factory=dict)
 
     def config(self, workspace: Path) -> Dict[str, Any]:
-        """턴 기록에 굳혀 둘 구성 (`TurnModel.config`). 끊긴 턴은 이 구성으로 마칩니다."""
+        """턴 기록에 고정해 둘 구성 (`TurnModel.config`). 끊긴 턴은 이 구성으로 마칩니다."""
         return {
             "strategy": self.strategy_name,
             "max_rounds": self.max_rounds,
@@ -835,7 +835,7 @@ class OrchestratorEngine:
             turns.draft_key(agent.key, kind, round_number, graph_node_id), None
         )
         # 유저가 이 전문가에게 지정한 스킬 (입력창의 `@전문가 @스킬`). 이 발언에서만 `allowed_skills`
-        # 에 더하고, 첫 판 전에 불러 둡니다. 대화에 굳은 에이전트 설정은 그대로입니다.
+        # 에 더하고, 첫 판 전에 불러 둡니다. 대화에 고정된 에이전트 설정은 그대로입니다.
         designated = list(state.skill_designations.get(agent.key) or [])
         agent = with_designated_skills(agent, designated)
         draft_state: Optional[Dict[str, Any]] = draft["state"] if draft else None
@@ -1638,7 +1638,7 @@ class OrchestratorEngine:
                 raise ValueError("이어 갈 턴을 찾지 못했습니다.")
             config = dict(turn.config or {})
 
-            # 그래프는 그 턴이 시작될 때 굳혀 둔 것입니다. 파일은 그 사이 바뀌었을 수 있습니다.
+            # 그래프는 그 턴이 시작될 때 고정해 둔 것입니다. 파일은 그 사이 바뀌었을 수 있습니다.
             graph_spec: Optional[GraphSpec] = None
             if get_strategy(resolve_strategy_name(config.get("strategy"))).runs_graph:
                 if not session_model.graph_snapshot:
@@ -1774,7 +1774,7 @@ class OrchestratorEngine:
         """턴의 구성과 참여자를 세웁니다. 도구 보안 문지기도 여기서 섭니다.
 
         `config` 가 없으면 지금 대화 설정으로(새 턴), 있으면 그 구성으로(끊긴 턴) 세웁니다.
-        스킬 지정도 같습니다 — 새 턴은 `skill_designations` 를, 끊긴 턴은 굳혀 둔 것을 씁니다.
+        스킬 지정도 같습니다 — 새 턴은 `skill_designations` 를, 끊긴 턴은 고정해 둔 것을 씁니다.
         도구 보안(모드·허용·거부)은 어느 쪽이든 **지금** 대화 설정을 따릅니다 — 사람이 끊긴
         사이에 조인 보안을 이어 가는 턴이 우회하면 안 됩니다.
         """
@@ -3186,7 +3186,7 @@ class OrchestratorEngine:
     async def _graph_for_turn(
         self, db, session_model: SessionModel, max_rounds: int
     ) -> GraphSpec:
-        """이 턴에 쓸 그래프를 읽고 검사하고, 굳혀 둡니다. 쓸 수 없으면 `GraphTurnError`."""
+        """이 턴에 쓸 그래프를 읽고 검사하고, 고정해 둡니다. 쓸 수 없으면 `GraphTurnError`."""
         from app.agents.personas import frozen_agents
         from app.config import get_config
         from app.graph_store import load_graph
@@ -3204,7 +3204,7 @@ class OrchestratorEngine:
         except ValueError as exc:
             raise GraphTurnError(f"그래프 {graph_id} 를 읽지 못했습니다: {exc}")
 
-        # 있는 에이전트는 이 엔진의 풀과, 이미 시작한 대화가 굳혀 둔 스냅샷입니다(conf.json 에서
+        # 있는 에이전트는 이 엔진의 풀과, 이미 시작한 대화가 고정해 둔 스냅샷입니다(conf.json 에서
         # 사라졌어도 그 대화에서는 발언합니다). 풀에는 켜진 에이전트만 있어 "꺼짐" 과 "없음" 을
         # 가릴 수 없으므로, conf.json 에서 꺼진 것만 따로 표시해 오류 문구를 정확히 합니다.
         known: Dict[str, bool] = {}

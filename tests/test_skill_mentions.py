@@ -3,7 +3,7 @@
 * 스킬 언급은 **같은 줄에서 바로 앞에 언급한 전문가**에게 갑니다. 앞에 없으면 그 줄의 뒤 첫째,
   그 줄에 아무도 없으면 앞 줄들에서 가장 가까운 전문가. 그래도 없으면 지정하지 않고 알립니다.
 * 지정은 **이번 턴에만** 겁니다. 그 전문가의 `allowed_skills` 밖이어도 그 턴의 발언에서는 주고,
-  대화에 굳은 설정은 바꾸지 않습니다. 꺼진 스킬은 지정해도 주지 않습니다 (켜기·끄기가 앞섭니다).
+  대화에 고정된 설정은 바꾸지 않습니다. 꺼진 스킬은 지정해도 주지 않습니다 (켜기·끄기가 앞섭니다).
 * 지정한 스킬은 모델에게 맡기지 않고 **발언 첫머리에 호스트가 불러 둡니다** — 도구 카드로 남습니다.
 """
 
@@ -182,7 +182,7 @@ def test_designation_adds_skills_to_a_copy_only():
     agent = _agent("a")
     copy = with_designated_skills(agent, ["b", "a", "b"])
     assert copy.allowed_skills == ["a", "b"]
-    assert agent.allowed_skills == ["a"], "대화에 굳은 설정은 그대로입니다"
+    assert agent.allowed_skills == ["a"], "대화에 고정된 설정은 그대로입니다"
     assert with_designated_skills(agent, ["a"]) is agent
     assert with_designated_skills(agent, None) is agent
 

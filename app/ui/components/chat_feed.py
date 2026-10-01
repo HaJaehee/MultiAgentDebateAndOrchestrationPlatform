@@ -307,7 +307,7 @@ class ChatFeed:
         self.budget_extend_button: Optional[ui.button] = None
         self.budget_icon: Optional[ui.icon] = None
         # 이 대화의 에이전트별 색·아이콘. 잠긴 대화는 conf.json 이 아니라 그때
-        # 굳은 스냅샷의 겉모습으로 그려야, 나중에 색을 바꿔도 지난 기록이 그대로
+        # 고정된 스냅샷의 겉모습으로 그려야, 나중에 색을 바꿔도 지난 기록이 그대로
         # 남습니다. 비어 있으면 예전처럼 키에서 정해집니다.
         self._agent_styles: Dict[str, Dict[str, Any]] = {}
         self.budget_wrap_up_button: Optional[ui.button] = None

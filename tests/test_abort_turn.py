@@ -139,7 +139,7 @@ async def test_discarding_the_first_turn_puts_the_session_back_to_not_started():
 
 @pytest.mark.asyncio
 async def test_the_frozen_agent_snapshot_survives():
-    """잠금만 풀고 굳혀 둔 구성은 남깁니다. 다음 턴이 그때의 conf.json 으로 다시 굳힙니다."""
+    """잠금만 풀고 고정해 둔 구성은 남깁니다. 다음 턴이 그때의 conf.json 으로 다시 고정합니다."""
     factory, sid, first, second = await _seed()
 
     async with factory() as db:

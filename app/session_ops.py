@@ -77,8 +77,8 @@ async def discard_turn(
     돌려주는 값은 **이 대화가 시작 전 상태로 돌아갔는지**입니다. 남은 발언이
     하나도 없으면 페르소나 잠금을 풀어 줍니다 — 첫 요청을 지웠다면 이 대화는
     아직 시작하지 않은 것이고, 그렇다면 에이전트 구성도 다시 만질 수 있어야
-    말이 맞습니다. 굳혀 둔 구성 스냅샷(`session_agents`)은 지우지 않습니다.
-    다음 턴이 시작될 때 그 시점의 `conf.json` 으로 다시 굳고 다시 잠깁니다.
+    말이 맞습니다. 고정해 둔 구성 스냅샷(`session_agents`)은 지우지 않습니다.
+    다음 턴이 시작될 때 그 시점의 `conf.json` 으로 다시 고정되고 다시 잠깁니다.
 
     도구 기록을 먼저 지웁니다. `messages.id` 를 가리키는 행이라, 발언을 먼저
     지우면 아무도 가리키지 않는 기록이 남습니다 (SQLite 가 외래키를 검사하지
@@ -221,7 +221,7 @@ async def continue_session(
     * 작업 공간 — 같은 폴더. 파일과 git 기록이 그대로입니다.
     * 지식 그래프 — memory 서버의 대화별 파일을 복사합니다 (`carry_over_memory_graph`).
       경계는 호스트가 정하므로 옮기는 것도 호스트가 합니다.
-    * 에이전트 구성 — 참여자, 페르소나 초안, 굳혀 둔 `config_snapshot` 까지.
+    * 에이전트 구성 — 참여자, 페르소나 초안, 고정해 둔 `config_snapshot` 까지.
       conf.json 에서 사라진 에이전트도 스냅샷으로 계속 발언합니다.
     * 전략·라운드 수·동시 실행 상한·커스텀 지침·결정 장부.
     * 이전 세션의 최종 결론 — 오케스트레이터의 첫 발언(인수인계 쪽지)으로 들어갑니다.
@@ -260,12 +260,12 @@ async def continue_session(
         # 그 대화에서 사람이 본 호출에 대한 것이라, 새 대화에서 다시 묻는 편이 맞습니다.
         tool_mode=source.tool_mode or "",
         # 아직 시작하지 않은 대화입니다. 첫 요청이 들어올 때 그 시점의 구성으로
-        # 다시 굳고 다시 잠깁니다.
+        # 다시 고정되고 다시 잠깁니다.
         personas_locked=False,
     ))
 
-    # 페르소나와 굳혀 둔 구성을 초안으로 옮깁니다. 살아 있는 에이전트는 다음
-    # 잠금 때 conf.json 의 현재 값으로 다시 굳고, conf.json 에서 사라진
+    # 페르소나와 고정해 둔 구성을 초안으로 옮깁니다. 살아 있는 에이전트는 다음
+    # 잠금 때 conf.json 의 현재 값으로 다시 고정되고, conf.json 에서 사라진
     # 에이전트만 이 스냅샷으로 계속 발언합니다.
     rows = (await db.execute(
         select(SessionAgentModel).where(SessionAgentModel.session_id == source_session_id)
