@@ -280,7 +280,7 @@ class AgentRosterControl:
                 with ui.row().classes("w-full items-center justify-between"):
                     with ui.row().classes("items-center gap-2"):
                         ui.label("토론 참여 에이전트 선택").classes("text-xs font-bold text-slate-300")
-                        self.persona_badge = ui.badge("고정됨", color="amber-8").props("dense text-[9px]")
+                        self.persona_badge = ui.badge("고정됨", color="amber-8").props("dense text-[11px]")
                         self.persona_badge.set_visibility(False)
                         ui.checkbox(
                             "요약 보기", value=self.compact_cards,
@@ -343,7 +343,7 @@ class AgentRosterControl:
                 self._refresh_persona_controls()
 
                 self.agent_admin_hint = ui.label("").classes(
-                    "text-[10px] text-slate-500 w-full leading-snug -mt-1"
+                    "text-[12px] text-slate-500 w-full leading-snug -mt-1"
                 )
 
                 self.cards_row = ui.row().classes("w-full gap-2 flex-wrap")
@@ -369,17 +369,17 @@ class AgentRosterControl:
                     with ui.row().classes("items-center gap-2"):
                         ui.label("MCP 서버").classes("text-xs font-bold text-slate-300")
                         self.mcp_badge = ui.badge("-", color="slate-7").props("dense text-xs")
-                        self.mcp_lock_badge = ui.badge("잠김", color="amber-8").props("dense text-[9px]")
+                        self.mcp_lock_badge = ui.badge("잠김", color="amber-8").props("dense text-[11px]")
                         self.mcp_lock_badge.set_visibility(False)
                     with ui.row().classes("items-center gap-1"):
                         self.mcp_add_btn = (
                             ui.button("서버 추가", icon="add", on_click=self._open_mcp_add_dialog)
-                            .props("flat dense no-caps size=sm color=indigo-4")
+                            .props("flat dense no-caps size=12px color=indigo-4")
                             .classes("text-[11px]")
                         )
                         self.mcp_reconnect_btn = (
                             ui.button(icon="refresh", on_click=self._on_mcp_reconnect)
-                            .props("flat dense round size=sm color=slate-4")
+                            .props("flat dense round size=12px color=slate-4")
                         )
                         self.mcp_reconnect_btn.tooltip("연결되지 않은 MCP 서버 다시 시도")
 
@@ -388,9 +388,9 @@ class AgentRosterControl:
                 ui.label(
                     "⚠️ MCP 서버의 추가·삭제·on/off 는 conf.json 에 저장되며, 지금 열려 있는 모든 "
                     "대화와 앞으로 만드는 모든 대화에 함께 적용됩니다."
-                ).classes("text-[10px] text-amber-400/90 w-full leading-snug -mt-1")
+                ).classes("text-[12px] text-amber-400/90 w-full leading-snug -mt-1")
                 self.mcp_lock_hint = ui.label("").classes(
-                    "text-[10px] text-rose-300/90 w-full leading-snug"
+                    "text-[12px] text-rose-300/90 w-full leading-snug"
                 )
                 self.mcp_lock_hint.set_visibility(False)
 
@@ -424,13 +424,13 @@ class AgentRosterControl:
                     self.workspace_download_btn = (
                         ui.button("작업 공간 파일 다운로드", icon="download",
                                   on_click=self._on_workspace_download)
-                        .props("flat dense no-caps color=sky-4 size=sm").classes("text-[11px]")
+                        .props("flat dense no-caps color=sky-4 size=12px").classes("text-[11px]")
                     )
                     self.workspace_download_btn.tooltip(
                         "이 대화에 적용된 작업 공간의 파일을 받습니다. 여러 개는 zip 으로 묶습니다"
                     )
                 self.workspace_hint = ui.label("").classes(
-                    "text-[10px] text-slate-500 truncate w-full"
+                    "text-[12px] text-slate-500 truncate w-full"
                 )
                 self._refresh_workspace_hint()
 
@@ -444,13 +444,13 @@ class AgentRosterControl:
                         self.skills_badge = ui.badge("-", color="slate-7").props("dense text-xs")
                     skills_refresh = (
                         ui.button(icon="refresh", on_click=lambda: self.refresh_skills(force=True))
-                        .props("flat dense round size=sm color=slate-4")
+                        .props("flat dense round size=12px color=slate-4")
                     )
                     skills_refresh.tooltip("스킬 폴더를 다시 읽습니다")
                 ui.label(
                     "⚡ 스킬의 켜기·끄기(conf.json)와 스킬 폴더의 수정은 진행 중인 대화에도 다음 "
                     "발언부터 바로 적용됩니다. 어느 에이전트가 쓸지는 에이전트 카드의 '스킬' 에서 정합니다."
-                ).classes("text-[10px] text-sky-300/90 w-full leading-snug -mt-1")
+                ).classes("text-[12px] text-sky-300/90 w-full leading-snug -mt-1")
                 self.skills_row = ui.row().classes("w-full gap-2 flex-wrap items-center")
                 self.refresh_skills(force=True)
                 ui.timer(5.0, self.refresh_skills)
@@ -497,7 +497,7 @@ class AgentRosterControl:
                         self.tool_rules_button = (
                             ui.button(self._tool_rules_label(), icon="rule",
                                       on_click=self._open_tool_rules)
-                            .props("flat dense no-caps color=emerald-4 size=sm")
+                            .props("flat dense no-caps color=emerald-4 size=12px")
                             .tooltip(
                                 "승인 카드에서 '이 대화에서 허용·거부' 로 쌓인 규칙을 보고 지웁니다. "
                                 "'항상' 규칙은 conf.json 의 tool_security 에 있습니다."
@@ -537,27 +537,27 @@ class AgentRosterControl:
                         self.graph_edit_btn = ui.button(
                             "그래프 편집", icon="edit",
                             on_click=lambda: ui.navigate.to(f"/graphs/{self.graph_id}"),
-                        ).props("unelevated dense no-caps size=sm color=teal-8")
+                        ).props("unelevated dense no-caps size=12px color=teal-8")
                         self.graph_edit_btn.tooltip("선택한 그래프를 편집 화면에서 엽니다.")
                         ui.button(
                             "새 그래프", icon="add", on_click=self._create_blank_graph,
-                        ).props("flat dense no-caps size=sm color=teal-4").tooltip(
+                        ).props("flat dense no-caps size=12px color=teal-4").tooltip(
                             "시작 및 최종 합성 노드로 구성된 새 그래프를 생성하여 편집 화면을 엽니다."
                         )
                         ui.button(
                             "현재 카드 순서로 만들기", icon="account_tree",
                             on_click=self._create_graph_from_cards,
-                        ).props("flat dense no-caps size=sm color=teal-4").tooltip(
+                        ).props("flat dense no-caps size=12px color=teal-4").tooltip(
                             "참여로 선택된 전문가 에이전트를 카드 순서대로 연결한 새 그래프를 생성하여 선택합니다."
                         )
-                    self.graph_status = ui.label("").classes("text-[10px] leading-snug w-full")
+                    self.graph_status = ui.label("").classes("text-[12px] leading-snug w-full")
                     with ui.row().classes("w-full items-center gap-2 no-wrap"):
                         self.graph_run_label = ui.label("").classes(
-                            "text-[10px] leading-snug text-slate-300 flex-grow min-w-0 truncate"
+                            "text-[12px] leading-snug text-slate-300 flex-grow min-w-0 truncate"
                         )
                         self.graph_size_btn = ui.button(
                             "크게 보기", icon="open_in_full", on_click=self._open_graph_dialog,
-                        ).props("flat dense no-caps size=sm color=slate-4")
+                        ).props("flat dense no-caps size=12px color=slate-4")
                         self.graph_size_btn.tooltip("그래프와 실행 상태를 확대 창에서 확인합니다.")
                     self.graph_preview_box = ui.element("div").classes(
                         "w-full h-[220px] rounded-lg overflow-hidden border border-slate-700"
@@ -582,7 +582,7 @@ class AgentRosterControl:
                         "미해결 쟁점, 담당 업무를 정리합니다. 모든 에이전트의 지시문 앞에 포함되어 "
                         "이전 기록이 생략되더라도 유지됩니다. 읽기 전용이며, "
                         "수정이 필요한 항목은 채팅으로 전달하시면 다음 갱신 시 반영됩니다."
-                    ).classes("text-[10px] text-slate-500 leading-snug px-2")
+                    ).classes("text-[12px] text-slate-500 leading-snug px-2")
                     self.ledger_view = MathMarkdown("").classes(
                         "w-full px-2 pb-2 text-[11px] text-slate-300 break-words"
                     )
@@ -645,7 +645,7 @@ class AgentRosterControl:
                     hidden += 1
             if hidden:
                 ui.label(f"비활성 {hidden}개 숨김").classes(
-                    "text-[10px] text-slate-500 self-center"
+                    "text-[12px] text-slate-500 self-center"
                 )
 
     def _on_view_option(self, name: str, value: bool) -> None:
@@ -692,7 +692,7 @@ class AgentRosterControl:
             over = len(speakers) > self.parallel_limit
             note = f"동시 실행 (한 번에 최대 {self.parallel_limit}명"
             note += ", 나머지는 순차로 밀림)" if over else ")"
-            return note + " · 과업은 매 라운드 오케스트레이터가 나눕니다"
+            return note + " · 태스크는 매 라운드 오케스트레이터가 나눕니다"
         if strategy.orchestrator_selects_speakers:
             return "매 라운드 오케스트레이터가 지명합니다 · 아래는 지명 실패 시의 순서"
         if strategy.name == "adversarial_debate":
@@ -746,7 +746,7 @@ class AgentRosterControl:
                 chip.tooltip(f"{agent.role} · 우선순위 {agent.debate_priority}")
 
             ui.label(self._order_preview_note(strategy, speakers)).classes(
-                "text-[10px] text-slate-500 w-full leading-snug"
+                "text-[12px] text-slate-500 w-full leading-snug"
             )
 
     def _build_agent_card(self, agent: Agent, persona: Optional[Any] = None) -> bool:
@@ -856,7 +856,7 @@ class AgentRosterControl:
                                     "conf.json에서는 삭제되었으나, 본 세션은 시작 시점의 "
                                     "구성을 계속 유지합니다."
                                 )
-                        ui.label(display_role).classes("text-[10px] text-slate-400 truncate w-full")
+                        ui.label(display_role).classes("text-[12px] text-slate-400 truncate w-full")
 
                 if is_orchestrator:
                     ui.badge("필수", color="indigo-9").props("dense").classes("text-[13px]")
@@ -880,7 +880,7 @@ class AgentRosterControl:
                         # 걸리는 위의 참여 체크박스와 나란히 두면 반드시 헷갈립니다.
                         # 한 겹 안에 둡니다.
                         admin_btn = ui.button(icon="more_vert").props(
-                            "flat dense round size=xs color=slate-5"
+                            "flat dense round size=10px color=slate-5"
                         )
                         admin_reason = self._agent_admin_lock_reason()
                         if admin_reason:
@@ -916,7 +916,7 @@ class AgentRosterControl:
             # Model / endpoint / sequential-thinking summary (from conf.json)
             with ui.row().classes("w-full items-center gap-1 mt-1 no-wrap"):
                 ui.icon("smart_toy", size="11px").classes("text-slate-500")
-                ui.label(agent.model).classes("text-[10px] text-slate-400 truncate max-w-[120px]")
+                ui.label(agent.model).classes("text-[12px] text-slate-400 truncate max-w-[120px]")
                 if agent.sequential_thinking.enabled:
                     ui.badge(f"ST·{agent.sequential_thinking.mode}", color="teal-9").props("dense").classes("text-[13px]")
                 if not agent.is_live:
@@ -936,7 +936,7 @@ class AgentRosterControl:
                     "flex-shrink-0"
                 ).style("font-size: 11px")  # size=sm 이 글자 크기를 인라인(10px)으로 박아 클래스로는 못 바꿉니다
                 ui.label(", ".join(allowed) or "없음").classes(
-                    "text-[10px] text-slate-500 truncate"
+                    "text-[12px] text-slate-500 truncate"
                 )
                 tools_reason = self._agent_admin_lock_reason()
                 if tools_reason:
@@ -957,7 +957,7 @@ class AgentRosterControl:
                     "flex-shrink-0"
                 ).style("font-size: 11px")  # size=sm 이 글자 크기를 인라인(10px)으로 박아 클래스로는 못 바꿉니다
                 ui.label(", ".join(skills) or "없음").classes(
-                    "text-[10px] text-slate-500 truncate"
+                    "text-[12px] text-slate-500 truncate"
                 )
                 if tools_reason:
                     skills_button.disable()
@@ -1101,7 +1101,7 @@ class AgentRosterControl:
                     remove = ui.button(
                         icon="delete_outline",
                         on_click=lambda _, n=name: self._open_mcp_delete_dialog(n),
-                    ).props("flat dense round size=xs color=rose-4")
+                    ).props("flat dense round size=10px color=rose-4")
                     if self.mcp_locked:
                         toggle.disable()
                         remove.disable()
@@ -1279,7 +1279,7 @@ class AgentRosterControl:
             if reason:
                 self.agent_admin_hint.set_text(f"🔒 {reason}")
                 self.agent_admin_hint.classes(
-                    replace="text-[10px] text-amber-400/90 w-full leading-snug -mt-1"
+                    replace="text-[12px] text-amber-400/90 w-full leading-snug -mt-1"
                 )
             else:
                 self.agent_admin_hint.set_text(
@@ -1288,7 +1288,7 @@ class AgentRosterControl:
                     "고정된 구성을 그대로 씁니다."
                 )
                 self.agent_admin_hint.classes(
-                    replace="text-[10px] text-slate-500 w-full leading-snug -mt-1"
+                    replace="text-[12px] text-slate-500 w-full leading-snug -mt-1"
                 )
 
     def _refresh_disabled_agents(self) -> None:
@@ -1314,23 +1314,23 @@ class AgentRosterControl:
 
         reason = self._agent_admin_lock_reason()
         with self.disabled_row:
-            ui.label("꺼둔 에이전트:").classes("text-[10px] font-semibold text-slate-500")
+            ui.label("꺼둔 에이전트:").classes("text-[12px] font-semibold text-slate-500")
             for key, agent_cfg in disabled.items():
                 with ui.element("div").classes(
                     "flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-md "
                     "bg-slate-900/70 border border-slate-800"
                 ):
                     ui.icon("toggle_off", size="12px").classes("text-slate-500")
-                    ui.label(agent_cfg.name or key).classes("text-[10px] text-slate-400")
-                    ui.label(f"({key})").classes("text-[9px] text-slate-600")
+                    ui.label(agent_cfg.name or key).classes("text-[12px] text-slate-400")
+                    ui.label(f"({key})").classes("text-[11px] text-slate-600")
                     enable_btn = ui.button(
                         icon="play_arrow",
                         on_click=lambda _, k=key: self._on_agent_enable(k),
-                    ).props("flat dense round size=xs color=teal-4")
+                    ).props("flat dense round size=10px color=teal-4")
                     delete_btn = ui.button(
                         icon="delete_outline",
                         on_click=lambda _, k=key: self._open_agent_delete_dialog(k),
-                    ).props("flat dense round size=xs color=rose-4")
+                    ).props("flat dense round size=10px color=rose-4")
                     if reason:
                         enable_btn.disable()
                         delete_btn.disable()
@@ -1481,7 +1481,7 @@ class AgentRosterControl:
             ui.label(
                 "아직 시작하지 않은 세션과 향후 생성할 세션에 변경 사항이 적용됩니다. "
                 "설정을 보존하면서 참여만 제외하시려면 '비활성화'를 선택하십시오."
-            ).classes("text-[10px] text-slate-500 mt-2 leading-snug")
+            ).classes("text-[12px] text-slate-500 mt-2 leading-snug")
 
             async def do_delete() -> None:
                 dialog.close()
@@ -1577,7 +1577,7 @@ class AgentRosterControl:
                     )
                 ui.label(
                     "발언 순서는 목록 맨 뒤에 추가됩니다. 추가 후 카드를 드래그하여 순서를 변경하십시오."
-                ).classes("text-[10px] text-slate-500 -mt-1 leading-snug")
+                ).classes("text-[12px] text-slate-500 -mt-1 leading-snug")
 
                 ui.label("카드 색 & 아이콘").classes(
                     "text-[11px] font-semibold text-slate-400 mt-1"
@@ -1601,7 +1601,7 @@ class AgentRosterControl:
                 ui.label(
                     "페르소나는 세션별로 개별 수정할 수 있습니다 (로스터의 '페르소나 편집'). "
                     "여기서 입력한 값은 기본값으로 적용됩니다."
-                ).classes("text-[10px] text-slate-500 -mt-1 leading-snug")
+                ).classes("text-[12px] text-slate-500 -mt-1 leading-snug")
 
                 with ui.expansion("LLM 설정", icon="smart_toy", value=False).classes(
                     "w-full bg-slate-800/40 rounded-lg border border-slate-800"
@@ -1610,7 +1610,7 @@ class AgentRosterControl:
                         "아래 값은 .env 와 conf.json 의 llm 에서 가져온 현재 기본값입니다. "
                         "그대로 두면 파일에 적지 않고 llm 을 상속하므로 .env 를 바꾸면 이 "
                         "에이전트도 함께 따라갑니다. 바꾼 항목만 기록됩니다."
-                    ).classes("text-[10px] text-slate-500 leading-snug px-2 pb-1")
+                    ).classes("text-[12px] text-slate-500 leading-snug px-2 pb-1")
                     with ui.column().classes("w-full gap-2 p-2 pt-0"):
                         with ui.row().classes("w-full gap-2 flex-wrap"):
                             _text("model", "모델", "openai/gpt-4o")
@@ -1671,7 +1671,7 @@ class AgentRosterControl:
                             )
                             ui.label(server_name).classes("text-xs text-slate-200")
                             if not server_cfg.enabled:
-                                ui.badge("꺼짐", color="grey-8").props("dense text-[9px]")
+                                ui.badge("꺼짐", color="grey-8").props("dense text-[11px]")
 
                 ui.label("사용할 스킬").classes(
                     "text-[11px] font-semibold text-slate-400 mt-1"
@@ -1689,7 +1689,7 @@ class AgentRosterControl:
                             ui.label(skill.name).classes("text-xs text-slate-200")
                             self._skill_state_badge(skill)
                             if skill.description:
-                                ui.tooltip(skill.description).classes("text-[10px] max-w-[320px]")
+                                ui.tooltip(skill.description).classes("text-[12px] max-w-[320px]")
 
             async def do_add() -> None:
                 key = (key_in.value or "").strip()
@@ -1898,7 +1898,7 @@ class AgentRosterControl:
                 ui.label(
                     "토큰 등 민감 정보는 직접 입력하지 마시고 ${환경변수} 형식으로 지정하십시오. conf.json에는 해당 "
                     "표기가 저장되고, 실제 값은 .env에서 불러옵니다."
-                ).classes("text-[10px] text-amber-400/90 leading-snug")
+                ).classes("text-[12px] text-amber-400/90 leading-snug")
 
             def _sync_kind() -> None:
                 remote = kind_toggle.value == "remote"
@@ -1914,7 +1914,7 @@ class AgentRosterControl:
                 "${VAR} 와 ${VAR:-기본값} 표기를 그대로 쓸 수 있습니다. 추가한 뒤에는 "
                 "conf.json 의 agents.*.allowed_mcp_servers 에 이 이름을 넣어야 "
                 "에이전트가 이 서버의 도구를 씁니다."
-            ).classes("text-[10px] text-slate-500 leading-snug mt-1")
+            ).classes("text-[12px] text-slate-500 leading-snug mt-1")
 
             async def do_add() -> None:
                 name = (name_in.value or "").strip()
@@ -2010,7 +2010,7 @@ class AgentRosterControl:
                     f"삭제 후 해당 에이전트들은 관련 도구 없이 토론을 진행합니다."
                 ).classes("text-[11px] text-amber-400 mt-2 leading-snug")
             ui.label("서버 위에 적어 둔 설명 주석은 그대로 남습니다.").classes(
-                "text-[10px] text-slate-500 mt-2"
+                "text-[12px] text-slate-500 mt-2"
             )
 
             async def do_delete() -> None:
@@ -2767,7 +2767,7 @@ class AgentRosterControl:
             with ui.row().classes("w-full items-center gap-2 no-wrap"):
                 ui.icon("hub", size="xs").classes("text-teal-400")
                 self._graph_dialog_label = ui.label("").classes("text-sm text-slate-200 flex-grow min-w-0 truncate")
-                ui.button(icon="close", on_click=dialog.close).props("flat dense round size=sm color=slate-4")
+                ui.button(icon="close", on_click=dialog.close).props("flat dense round size=12px color=slate-4")
             self._graph_dialog_box = ui.element("div").classes(
                 "w-full flex-grow rounded-lg overflow-hidden border border-slate-700"
             )
@@ -2938,7 +2938,7 @@ class AgentRosterControl:
                             ui.button(
                                 icon="delete_outline",
                                 on_click=lambda _e, k=kind, r=rule: self._remove_tool_rule(k, r),
-                            ).props("flat round dense color=grey-5 size=sm").tooltip("이 규칙 지우기")
+                            ).props("flat round dense color=grey-5 size=12px").tooltip("이 규칙 지우기")
 
     async def _remove_tool_rule(self, kind: str, rule: str) -> None:
         grants = [r for r in self.tool_grants if not (kind == "grants" and r == rule)]

@@ -304,7 +304,7 @@ def create_ui() -> None:
             elif etype == "plan_tasks_started":
                 chat_feed.set_busy(
                     True,
-                    f"[{event.get('agent_name', '')}] 승인받을 과업 분담표를 정리하는 중입니다...",
+                    f"[{event.get('agent_name', '')}] 승인받을 태스크 분담표를 정리하는 중입니다...",
                     "Plan",
                 )
             elif etype == "plan_approval_requested":
@@ -313,7 +313,7 @@ def create_ui() -> None:
                 chat_feed.set_plan_approval({k: v for k, v in event.items() if k != "type"})
                 chat_feed.set_busy(
                     True,
-                    "계획 승인 대기 — 과업을 확인하고 승인하시거나, 의견을 적어 수정을 요청해 주십시오.",
+                    "계획 승인 대기 — 태스크를 확인하고 승인하시거나, 의견을 적어 수정을 요청해 주십시오.",
                     "Plan approval",
                 )
                 ui.notify(

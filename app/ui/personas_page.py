@@ -258,7 +258,7 @@ def _build_agent_card(
                     ui.avatar(style["avatar"], color=style["color"], text_color="white", size="sm")
                 with ui.column().classes("gap-0 min-w-0"):
                     ui.label(agent_key).classes("text-xs font-mono text-slate-500")
-                    ui.label(model_label).classes("text-[10px] text-slate-500 truncate")
+                    ui.label(model_label).classes("text-[12px] text-slate-500 truncate")
             with ui.row().classes("items-center gap-1.5"):
                 badge = ui.badge("기본값과 다름", color="indigo-7").props("dense")
                 badge.tooltip("conf.json의 전역 기본값과 다른 설정이 현재 세션에 적용되어 있습니다.")
@@ -304,7 +304,7 @@ def _build_agent_card(
         fields["appearance"] = appearance
 
         with ui.row().classes("w-full items-center justify-between"):
-            ui.label(f"엔드포인트: {endpoint_label}").classes("text-[10px] text-slate-500 truncate")
+            ui.label(f"엔드포인트: {endpoint_label}").classes("text-[12px] text-slate-500 truncate")
             if not locked:
                 with ui.row().classes("gap-2"):
                     ui.button("기본값으로", icon="restart_alt", on_click=on_reset).props(

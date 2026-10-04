@@ -153,7 +153,7 @@ class ArtifactViewer:
                 with ui.row().classes("items-center gap-2"):
                     ui.label(title).classes("font-bold text-slate-200 truncate max-w-[200px]")
                     badge_color = "purple-7" if art_type == "mermaid" else "indigo-7"
-                    ui.badge(art_type.upper(), color=badge_color).props("dense text-[10px]")
+                    ui.badge(art_type.upper(), color=badge_color).props("dense text-[12px]")
 
                 if art_type == "mermaid":
                     with ui.row().classes("items-center gap-1 flex-wrap"):
@@ -163,8 +163,8 @@ class ArtifactViewer:
                                 "이미지 복사",
                                 icon="photo_library",
                                 on_click=lambda _, wid=wrapper_id: self._copy_mermaid_image(wid),
-                            ).props("flat dense size=sm color=indigo-3").tooltip("PNG 다이어그램 이미지를 클립보드에 복사합니다 (Ctrl+V로 붙여넣기 가능).")
-                            with ui.button(icon="arrow_drop_down").props("flat dense size=sm color=indigo-3"):
+                            ).props("flat dense size=12px color=indigo-3").tooltip("PNG 다이어그램 이미지를 클립보드에 복사합니다 (Ctrl+V로 붙여넣기 가능).")
+                            with ui.button(icon="arrow_drop_down").props("flat dense size=12px color=indigo-3"):
                                 with ui.menu().classes("bg-slate-900 border border-slate-800 text-xs text-slate-200"):
                                     ui.menu_item("🖼️ PNG 이미지 복사", on_click=lambda _, wid=wrapper_id: self._copy_mermaid_image(wid))
                                     ui.menu_item("📐 SVG 코드 복사", on_click=lambda _, wid=wrapper_id: self._copy_mermaid_svg(wid))
@@ -175,31 +175,31 @@ class ArtifactViewer:
                             "PNG",
                             icon="image",
                             on_click=lambda _, wid=wrapper_id, t=title: self._download_mermaid_png(wid, t),
-                        ).props("flat dense size=sm color=emerald-4").tooltip("고해상도(2x) PNG 이미지로 다운로드합니다.")
+                        ).props("flat dense size=12px color=emerald-4").tooltip("고해상도(2x) PNG 이미지로 다운로드합니다.")
 
                         ui.button(
                             "SVG",
                             icon="polyline",
                             on_click=lambda _, wid=wrapper_id, t=title: self._download_mermaid_svg(wid, t),
-                        ).props("flat dense size=sm color=sky-4").tooltip("SVG 벡터 이미지로 다운로드합니다.")
+                        ).props("flat dense size=12px color=sky-4").tooltip("SVG 벡터 이미지로 다운로드합니다.")
 
                         ui.button(
                             "HTML",
                             icon="code",
                             on_click=lambda _, wid=wrapper_id, t=title, c=content: self._download_mermaid_html(wid, t, c),
-                        ).props("flat dense size=sm color=amber-4").tooltip("확대/축소 및 소스 보기가 가능한 독립 실행형 HTML 문서로 다운로드합니다 (오프라인에서도 열람 가능).")
+                        ).props("flat dense size=12px color=amber-4").tooltip("확대/축소 및 소스 보기가 가능한 독립 실행형 HTML 문서로 다운로드합니다 (오프라인에서도 열람 가능).")
 
                         ui.button(
                             "StarUML",
                             icon="schema",
                             on_click=lambda _, t=title, c=content: self._download_mermaid_staruml(t, c),
-                        ).props("flat dense size=sm color=purple-4").tooltip("StarUML 호환 프로젝트(.mdj) 파일로 다운로드합니다 (StarUML에서 즉시 편집 가능).")
+                        ).props("flat dense size=12px color=purple-4").tooltip("StarUML 호환 프로젝트(.mdj) 파일로 다운로드합니다 (StarUML에서 즉시 편집 가능).")
 
                         ui.button(
                             "MMD",
                             icon="text_snippet",
                             on_click=lambda _, t=title, c=content: self._download_artifact(t, c, "mermaid"),
-                        ).props("flat dense size=sm color=slate-4").tooltip("Mermaid 원본 스크립트(.mmd) 파일로 다운로드합니다.")
+                        ).props("flat dense size=12px color=slate-4").tooltip("Mermaid 원본 스크립트(.mmd) 파일로 다운로드합니다.")
                 else:
                     with ui.row().classes("items-center gap-1"):
                         if art_type == "markdown" and self.on_open_workspace_files is not None:
@@ -207,19 +207,19 @@ class ArtifactViewer:
                                 "작업 공간 파일",
                                 icon="folder_zip",
                                 on_click=self._open_workspace_files,
-                            ).props("flat dense size=sm color=sky-4").tooltip(
+                            ).props("flat dense size=12px color=sky-4").tooltip(
                                 "토론 중 작업 공간에 생성된 파일을 다운로드합니다 (여러 파일은 zip으로 압축)."
                             )
                         ui.button(
                             "Copy",
                             icon="content_copy",
                             on_click=lambda _, text=content: self._copy_to_clipboard(text),
-                        ).props("flat dense size=sm color=slate-3")
+                        ).props("flat dense size=12px color=slate-3")
                         ui.button(
                             "Download",
                             icon="download",
                             on_click=lambda _, t=title, c=content, ty=art_type: self._download_artifact(t, c, ty),
-                        ).props("flat dense size=sm color=slate-3")
+                        ).props("flat dense size=12px color=slate-3")
 
             # Body based on type (Scrolls vertically)
             with ui.scroll_area().classes("w-full flex-grow min-h-0 p-3 bg-slate-950/80 border border-slate-800 rounded-lg"):
@@ -239,7 +239,7 @@ class ArtifactViewer:
                             "작업 공간 파일 다운로드",
                             icon="download",
                             on_click=self._open_workspace_files,
-                        ).props("outline dense no-caps size=sm color=sky-4").classes("mt-3")
+                        ).props("outline dense no-caps size=12px color=sky-4").classes("mt-3")
 
     def _render_mermaid(self, content: str, wrapper_id: Optional[str] = None) -> None:
         """Mermaid 다이어그램. 렌더링에 실패하면 그 사실과 원본을 같이 보여줍니다.
@@ -272,8 +272,8 @@ class ArtifactViewer:
                             "text-xs font-semibold text-rose-300"
                         )
                     if reason:
-                        ui.label(reason).classes("text-[10px] text-rose-400/80 whitespace-pre-line")
-                    ui.label("아래는 모델이 생성한 원본입니다.").classes("text-[10px] text-slate-500")
+                        ui.label(reason).classes("text-[12px] text-rose-400/80 whitespace-pre-line")
+                    ui.label("아래는 모델이 생성한 원본입니다.").classes("text-[12px] text-slate-500")
                     ui.code(content, language="mermaid").classes("w-full text-xs")
                 error_box.set_visibility(True)
 

@@ -22,7 +22,7 @@ pytest -k "snapshot"
 | `test_llm_settings.py` | `llm` 전역 설정 상속, 요청 파라미터 매핑, 단계적 사고 모드 동작 |
 | `test_orchestrator.py` | 에이전트 발언 우선순위 정렬 및 전략별 발언 순서 배치 |
 | `test_speaker_selection.py` | 오케스트레이터의 동적 발언자 지명 및 실패 시 안전 폴백 메커니즘 |
-| `test_parallel_dispatch.py` | 병렬 지시 전략: 비동기 동시 실행, 세부 과업 분배, 라운드 취합, 동시성 제한 |
+| `test_parallel_dispatch.py` | 병렬 지시 전략: 비동기 동시 실행, 세부 태스크 분배, 라운드 취합, 동시성 제한 |
 | `test_personas.py` | 세션별 페르소나 생애주기: 초안 편집 → 첫 턴 잠금 → 세션 재개 |
 | `test_agent_appearance.py` | 카드 색상/아이콘: 이미지 업로드 → 설정 저장 → UI 렌더링 → 스냅샷 및 폴백 |
 | `test_session_snapshot.py` | **시작된 대화 세션의 완전한 자기완결성 및 외부 설정 격리 보장** |

@@ -155,7 +155,7 @@ async def history_view(visitor: Visitor) -> None:
                             ui.button(
                                 icon="delete_outline",
                                 on_click=lambda sid=row.session_id, title=row.title: confirm_delete(sid, title),
-                            ).props("flat dense round size=sm color=grey-6")
+                            ).props("flat dense round size=12px color=grey-6")
 
     async def confirm_delete(session_id: str, title: str) -> None:
         with ui.dialog() as dialog, ui.card().classes("bg-slate-900 text-slate-100 p-4 gap-3"):
@@ -200,10 +200,10 @@ async def copies_view(visitor: Visitor) -> None:
                     with ui.row().classes("gap-1 justify-end w-full"):
                         ui.button("수정", icon="edit",
                                   on_click=lambda cid=row.id: ui.navigate.to(f"/trial/edit/{cid}")).props(
-                            "flat dense no-caps size=sm color=indigo-3")
+                            "flat dense no-caps size=12px color=indigo-3")
                         ui.button("삭제", icon="delete_outline",
                                   on_click=lambda cid=row.id: remove(cid)).props(
-                            "flat dense no-caps size=sm color=grey-6")
+                            "flat dense no-caps size=12px color=grey-6")
 
     async def remove(copy_id: str) -> None:
         async with get_session_factory()() as db:

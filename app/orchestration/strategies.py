@@ -50,7 +50,7 @@ class BaseDebateStrategy(ABC):
     orchestrator_selects_speakers: bool = False
 
     # 한 라운드의 발언자들이 **동시에** 도는 전략인지. True 면 엔진이 라운드마다
-    # 과업을 나눠 주고(dispatch), 지목된 에이전트를 함께 띄운 뒤(gather),
+    # 태스크를 나눠 주고(dispatch), 지목된 에이전트를 함께 띄운 뒤(gather),
     # 오케스트레이터가 결과를 취합합니다. False 면 한 명씩 순서대로 돕니다.
     orchestrator_dispatches_parallel: bool = False
 
@@ -212,11 +212,11 @@ class OrchestratorLedStrategy(BaseDebateStrategy):
 
 
 class ParallelDispatchStrategy(BaseDebateStrategy):
-    """병렬 지시: 오케스트레이터가 과업을 나눠 주고 여러 에이전트가 동시에 답합니다.
+    """병렬 지시: 오케스트레이터가 태스크를 나눠 주고 여러 에이전트가 동시에 답합니다.
 
     다른 세 전략은 한 명이 끝나야 다음 사람이 시작합니다. 그래서 라운드 시간은
     발언 시간의 합이고, 뒷사람은 앞사람의 결론을 읽고 이어갑니다. 여기서는
-    반대입니다 — 오케스트레이터가 **서로 겹치지 않는 과업**을 나눠 주고, 지목된
+    반대입니다 — 오케스트레이터가 **서로 겹치지 않는 태스크**을 나눠 주고, 지목된
     에이전트들이 같은 시각에 각자의 일을 합니다. 라운드 시간은 가장 느린 한 명의
     시간이고, 서로의 이번 라운드 결과는 볼 수 없습니다.
 
@@ -230,7 +230,7 @@ class ParallelDispatchStrategy(BaseDebateStrategy):
 
     실제 분배와 취합은 엔진이 합니다 (`orchestrator_dispatches_parallel`). LLM 을
     부르는 일이라 순수 함수인 전략 객체가 할 수 없습니다. 분배에 실패하면 우선순위
-    순의 전원을 과업 없이 동시에 돌리는 것으로 물러섭니다 — 지시를 못 받았을 뿐,
+    순의 전원을 태스크 없이 동시에 돌리는 것으로 물러섭니다 — 지시를 못 받았을 뿐,
     병렬이라는 성질은 남깁니다.
     """
 
@@ -247,9 +247,9 @@ class ParallelDispatchStrategy(BaseDebateStrategy):
     def turn_instruction(
         self, agent: Agent, speakers: List[Agent], index: int, state: DebateState
     ) -> str:
-        """분배가 실패했을 때 붙는 지침. 정상 경로에서는 엔진이 개별 과업을 씁니다."""
+        """분배가 실패했을 때 붙는 지침. 정상 경로에서는 엔진이 개별 태스크를 씁니다."""
         return (
-            "[병렬 라운드] 오케스트레이터의 과업 분배를 받지 못했습니다. 다른 에이전트가 "
+            "[병렬 라운드] 오케스트레이터의 태스크 분배를 받지 못했습니다. 다른 에이전트가 "
             "지금 동시에 발언 중이라 그들의 이번 라운드 결과는 볼 수 없습니다. 당신의 전문 "
             "영역에 한정해 기여하고, 남의 결론이 필요하면 가정으로 명시하세요."
         )

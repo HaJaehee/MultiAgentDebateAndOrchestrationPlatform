@@ -267,7 +267,7 @@ class SessionSidebar:
                             on_click=lambda: self._set_sort(
                                 SessionSort(self.sort.key, not self.sort.descending)
                             ),
-                        ).props("flat round dense size=sm color=grey-4")
+                        ).props("flat round dense size=12px color=grey-4")
                         # 툴팁은 한 번만 만들고 글자만 바꿉니다. `.tooltip()` 은 부를 때마다
                         # 새 요소를 만들어 쌓고, 페이지가 사라진 뒤에 부르면 예외가 납니다.
                         with self.sort_direction_btn:
@@ -446,29 +446,29 @@ class SessionSidebar:
                                     to_local(started).strftime("%m-%d %H:%M") if started
                                     else "시작 전"
                                 )
-                            ui.label(date_str).classes("text-[10px]")
+                            ui.label(date_str).classes("text-[12px]")
 
                             agents_count = len(s.active_agents) if s.active_agents else 0
-                            ui.badge(f"{agents_count} Agents", color="slate-700").props("dense text-[9px] text-color=grey-3")
+                            ui.badge(f"{agents_count} Agents", color="slate-700").props("dense text-[11px] text-color=grey-3")
 
                         # Action Buttons (Edit / Save / Delete) - Isolated from card click
                         with ui.row().classes("items-center gap-0.5 flex-shrink-0"):
                             ui.button(
                                 icon="edit",
                                 on_click=lambda _, s_obj=s: self._show_rename_dialog(s_obj),
-                            ).props("flat round dense size=xs color=grey-4").tooltip("이름 변경")
+                            ).props("flat round dense size=10px color=grey-4").tooltip("이름 변경")
 
                             ui.button(
                                 icon="save",
                                 on_click=lambda _, sid=s.id: self._save_session_markdown(sid),
-                            ).props("flat round dense size=xs color=teal-4").tooltip(
+                            ).props("flat round dense size=10px color=teal-4").tooltip(
                                 "세션 전체 대화 내역을 마크다운 파일로 저장합니다."
                             )
 
                             continue_btn = ui.button(
                                 icon="fork_right",
                                 on_click=lambda _, sid=s.id: self._continue_session(sid),
-                            ).props("flat round dense size=xs color=amber-4")
+                            ).props("flat round dense size=10px color=amber-4")
                             if is_running:
                                 # 돌고 있는 토론의 결론은 아직 없습니다. 지금
                                 # 이어받으면 인수인계 쪽지가 반쪽짜리가 됩니다.
@@ -485,7 +485,7 @@ class SessionSidebar:
                             ui.button(
                                 icon="delete",
                                 on_click=lambda _, sid=s.id: self._show_delete_dialog(sid),
-                            ).props("flat round dense size=xs color=red-4").tooltip("삭제")
+                            ).props("flat round dense size=10px color=red-4").tooltip("삭제")
 
     async def _continue_session(self, session_id: str) -> None:
         """컨텍스트만 비운 새 대화로 이어갑니다.

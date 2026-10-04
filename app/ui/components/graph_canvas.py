@@ -136,7 +136,7 @@ GRAPH_EDITOR_CSS = """
 .gnode-selected { border-color: #a5b4fc; box-shadow: 0 0 0 2px rgba(165,180,252,.45); }
 .gnode-invalid { border-color: #f87171; }
 .gnode-band { display: flex; justify-content: space-between; gap: 6px; background: #4f46e5; color: #fff;
-              font: 600 10px/1 ui-monospace, Consolas, monospace; letter-spacing: .06em; padding: 5px 9px;
+              font: 600 12px/1 ui-monospace, Consolas, monospace; letter-spacing: .06em; padding: 5px 9px;
               border-radius: 8px 8px 0 0; }
 .gnode-merge .gnode-band, .gnode-gate .gnode-band { background: #475069; }
 .gnode-start .gnode-band, .gnode-end .gnode-band { background: #0c8577; }
@@ -148,7 +148,7 @@ GRAPH_EDITOR_CSS = """
 .gnode .gpin.vue-flow__handle-right { background: #9aa2c0; }
 .gnode .gpin-yes { border-color: #4ad37f; background: #4ad37f !important; }
 .gnode .gpin-no { border-color: #fb8c4c; background: #fb8c4c !important; }
-.gport { position: absolute; right: 12px; font: 10px ui-monospace, Consolas, monospace; transform: translateY(-50%); }
+.gport { position: absolute; right: 12px; font: 12px ui-monospace, Consolas, monospace; transform: translateY(-50%); }
 .gport-yes { top: 46%; color: #4ad37f; } .gport-no { top: 80%; color: #fb8c4c; }
 .gedge .vue-flow__edge-path { stroke-width: 2.4; }
 .gedge-full .vue-flow__edge-path { stroke: #8c88ff; }
@@ -174,7 +174,7 @@ GRAPH_EDITOR_CSS = """
 .vue-flow__connectionline .vue-flow__connection-path { stroke: #a5b4fc; stroke-width: 2; }
 /* 실행 표시 (로스터 미리보기). 안 돈 노드와 선은 흐리게, 도는 노드는 숨 쉬듯 빛나게. */
 .gnode-chip { position: absolute; top: -10px; right: 8px; background: #1e2640; color: #cbd2ea;
-              border: 1px solid #3b4566; border-radius: 999px; font: 600 10px/1 ui-monospace, Consolas, monospace;
+              border: 1px solid #3b4566; border-radius: 999px; font: 600 12px/1 ui-monospace, Consolas, monospace;
               padding: 3px 7px; white-space: nowrap; }
 .gnode-chip-yes { color: #4ad37f; border-color: #2f7a4d; }
 .gnode-chip-no { color: #fb8c4c; border-color: #8a4a26; }

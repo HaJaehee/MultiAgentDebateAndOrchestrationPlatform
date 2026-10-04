@@ -88,7 +88,7 @@ INTERJECTION_PREFIX = "[토론 중 유저 개입]"
 USER_RECORD_SHARE = 0.25
 # 이번 턴 오케스트레이터 계획의 몫. 넘치면 고정하지 않고 기록에 둡니다.
 PLAN_PIN_SHARE = 0.15
-# 발언자 지명·과업 분배처럼 JSON 한 줄을 받는 짧은 호출에서의 몫.
+# 발언자 지명·태스크 분배처럼 JSON 한 줄을 받는 짧은 호출에서의 몫.
 ROUTING_RECORD_SHARE = 0.1
 
 # ---------------------------------------------------------------- 2. 장부
@@ -357,7 +357,7 @@ def build_user_record(state: DebateState, *, model: str, token_cap: int) -> User
 def build_plan_pin(state: DebateState, *, model: str, token_cap: int) -> str:
     """이번 턴 오케스트레이터 계획. 몫을 넘거나 계획이 없으면 빈 문자열.
 
-    유저가 승인한 과업 분담이 있으면 (ADR-028) 계획 뒤에 함께 고정합니다. 사람이 승인 화면에서
+    유저가 승인한 태스크 분담이 있으면 (ADR-028) 계획 뒤에 함께 고정합니다. 사람이 승인 화면에서
     고친 값은 계획 본문과 다를 수 있으므로, 어느 쪽이 우선하는지를 그 자리에 적습니다.
     """
     i = state.plan_index
@@ -383,7 +383,7 @@ OPENING_PLACEHOLDER = "(이번 턴 요청 — 위 [User Goal / Current Request]�
 PLAN_PLACEHOLDER = "(이번 턴 계획 — 위 [이번 턴 오케스트레이터 계획]에 전문이 있습니다)"
 # 계획 승인 (ADR-028). 승인된 분담은 계획과 함께 고정되므로 기록 안의 승인 발언은 참조로 바꾸고,
 # 수정 요청으로 다시 쓰기 전의 계획은 싣지 않습니다 — 두 계획을 함께 읽으면 어느 쪽을 따를지 흔들립니다.
-APPROVAL_PLACEHOLDER = "(유저의 계획 승인 — 승인된 과업 분담은 위 [이번 턴 오케스트레이터 계획]에 있습니다)"
+APPROVAL_PLACEHOLDER = "(유저의 계획 승인 — 승인된 태스크 분담은 위 [이번 턴 오케스트레이터 계획]에 있습니다)"
 SUPERSEDED_PLAN_PLACEHOLDER = (
     "(유저의 수정 요청으로 다시 쓰기 전의 계획 — 싣지 않습니다. 유효한 계획은 그 뒤에 다시 쓴 것입니다)"
 )

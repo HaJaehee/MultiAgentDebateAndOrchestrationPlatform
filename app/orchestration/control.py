@@ -372,7 +372,7 @@ class TurnControl:
     ) -> "PlanApprovalRequest":
         """계획을 사람에게 보이고 답을 기다립니다 (ADR-028).
 
-        `payload` 는 화면이 그릴 내용입니다 (어느 계획인지, 전문가별 과업). 기다림이 끝나면
+        `payload` 는 화면이 그릴 내용입니다 (어느 계획인지, 전문가별 태스크). 기다림이 끝나면
         요청의 `decision` 이 채워져 있습니다 — `approve` · `revise` 는 사람의 답이고,
         `timeout` 은 답이 없었던 것, `stopped` 는 사람이 정지를 누른 것입니다. 이미 정지를
         요청한 턴에는 묻지 않습니다.
@@ -572,7 +572,7 @@ class PlanApprovalRequest(DecisionRequest):
     """오케스트레이터의 계획에 대한 승인 쪽지 (ADR-028).
 
     같은 우편함·같은 기다림을 쓰되, 답의 모양이 다릅니다 — **승인**(사람이 카드에서 고친
-    과업과 함께)이거나 **수정 요청**(의견과 함께)입니다. 답이 없으면 승인이 아닙니다. 사람이
+    태스크와 함께)이거나 **수정 요청**(의견과 함께)입니다. 답이 없으면 승인이 아닙니다. 사람이
     자리에 없다고 확인받지 않은 계획으로 토론을 시작하지는 않습니다.
     """
 
@@ -584,10 +584,10 @@ class PlanApprovalRequest(DecisionRequest):
         )
         # approve | revise | timeout | stopped
         self.decision: str = "pending"
-        # 사람이 카드에서 돌려준 전문가별 과업·완료 기준 (승인이든 수정 요청이든 함께 옵니다).
+        # 사람이 카드에서 돌려준 전문가별 태스크·완료 기준 (승인이든 수정 요청이든 함께 옵니다).
         self.tasks: List[Dict[str, Any]] = []
         self.comment: str = ""                    # 계획 전체에 대한 의견
-        self.task_comments: Dict[str, str] = {}   # 전문가 키 → 그 과업에 대한 의견
+        self.task_comments: Dict[str, str] = {}   # 전문가 키 → 그 태스크에 대한 의견
         self.approver: str = ""                   # local | remote
 
     @property

@@ -4,7 +4,7 @@
 
 1. **승인 전에는 아무도 발언하지 않는다** — 계획이 기록되면 엔진이 승인을 열고, 답이 올 때까지
    전문가를 부르지 않는다. 모델이 건너뛸 수 있는 자리가 아니다.
-2. **고친 것이 그대로 간다** — 사람이 카드에서 고친 과업·완료 기준이 승인된 분담이 되어, 모든
+2. **고친 것이 그대로 간다** — 사람이 카드에서 고친 태스크·완료 기준이 승인된 분담이 되어, 모든
    발언자의 맥락과 그 전문가의 차례 지시, 합성의 완료 확인에 실린다.
 3. **수정 요청은 계획을 다시 쓰게 한다** — 의견은 유저 발언으로 남고, 다시 쓴 계획이 앞의 것을
    대신한다. 카드에 적은 것은 하나도 버려지지 않는다.
@@ -27,7 +27,11 @@ from app.orchestration import plan_gate, turns
 from app.orchestration.control import PlanApprovalRequest, TurnControl
 from app.orchestration.runner import DebateRunner
 from app.orchestration.state import DebateMessage, DebateState
-from app.ui.components.chat_feed import unfinished_turn_text
+from app.ui.components.chat_feed import (
+    background_paint,
+    toggled_visibility,
+    unfinished_turn_text,
+)
 from tests.fake_llm import FakeLLMCaller
 from tests.test_resilience import _engine, _make_session
 
@@ -176,7 +180,7 @@ async def test_the_approval_is_recorded_with_the_plan_it_approved(plan_approval)
     assert approval.turn_meta["approver"] == "local"
     assert approval.turn_meta["changes"] == []
     assert [t["task"] for t in approval.turn_meta["tasks"]][0] == "캐시 스키마를 설계한다"
-    assert "alternatives" not in approval.turn_meta["tasks"][0], "고른 것이 곧 과업입니다"
+    assert "alternatives" not in approval.turn_meta["tasks"][0], "고른 것이 곧 태스크입니다"
     assert approval.content.startswith("[계획 승인] 유저가 계획을 승인했습니다.")
     assert approval.sender_key == "orchestrator", "유저 발언 기록에 승인 문구가 쌓이면 안 됩니다"
     assert (await _turn_row(state.session_id)).status == TURN_COMPLETED
@@ -203,7 +207,7 @@ async def test_what_the_human_edited_is_what_the_specialists_get(plan_approval):
     ]
     approval = next(m for m in state.messages if turns.kind_of(m) == turns.KIND_APPROVAL)
     assert approval.turn_meta["changes"] == [
-        "System Architect: 대안 1 선택", "Senior Engineer: 과업 수정", "Quality Critic: 완료 기준 추가",
+        "System Architect: 대안 1 선택", "Senior Engineer: 태스크 수정", "Quality Critic: 완료 기준 추가",
     ]
     assert "유저가 고친 곳 3건" in approval.content
 
@@ -211,8 +215,8 @@ async def test_what_the_human_edited_is_what_the_specialists_get(plan_approval):
     # 모든 발언자의 머리에 승인된 분담이 고정되고, 어느 쪽이 우선하는지 적혀 있습니다.
     assert plan_gate.PINNED_TASKS_HEADING in coder[0]["content"]
     assert "Redis 자료구조로 설계한다" in coder[0]["content"]
-    # 자기 차례의 지시 끝에는 자기 과업만 한 번 더 붙습니다.
-    assert "[유저가 승인한 당신의 과업]" in coder[-1]["content"]
+    # 자기 차례의 지시 끝에는 자기 태스크만 한 번 더 붙습니다.
+    assert "[유저가 승인한 당신의 태스크]" in coder[-1]["content"]
     assert "캐시 계층을 구현하고 테스트를 붙인다\n완료 기준: cache.py 가 있다" in coder[-1]["content"]
     assert "Redis 자료구조로 설계한다" not in coder[-1]["content"]
     # 승인 발언은 고정문을 가리키는 참조로 바뀌어, 같은 분담이 두 번 실리지 않습니다.
@@ -226,11 +230,11 @@ async def test_the_synthesis_checks_each_approved_task_against_what_was_recorded
     state, _ = await _turn(llm, control, [_approve])
 
     synthesis = llm.prompts("orchestrator", "최종 합의 보고서")[0][-1]["content"]
-    assert "[유저가 승인한 과업과 기록]" in synthesis
+    assert "[유저가 승인한 태스크와 기록]" in synthesis
     assert "1. System Architect: 캐시 스키마를 설계한다 | 완료 기준: 스키마 표가 있다 | 기록: 발언 1회" in synthesis
     assert "3. Quality Critic: 설계와 구현을 검토한다 | 기록: 응답 실패 — 발언 없음" in synthesis
     assert "다음 세 가지만 쓰세요" in synthesis
-    assert "3. **과업별 완료 확인**" in synthesis
+    assert "3. **태스크별 완료 확인**" in synthesis
     assert state.failed_agent_keys == ["critic"]
 
 
@@ -243,7 +247,7 @@ async def test_a_turn_without_approval_keeps_the_old_synthesis_prompt():
 
     synthesis = llm.prompts("orchestrator", "최종 합의 보고서")[0][-1]["content"]
     assert "다음 두 가지만 쓰세요" in synthesis
-    assert "과업별 완료 확인" not in synthesis
+    assert "태스크별 완료 확인" not in synthesis
     assert "[유저가 승인한" not in _text(llm.prompts("coder")[0])
     assert llm.count(plan_gate.TASKS_MARKER) == 0, "승인이 없으면 분담표도 묻지 않습니다"
 
@@ -286,7 +290,7 @@ async def test_a_revision_request_makes_the_orchestrator_rewrite_the_plan(plan_a
     request = next(m for m in state.messages if turns.kind_of(m) == turns.KIND_PLAN_REVISION)
     assert request.sender_key == "user"
     assert request.content == (
-        "[계획 수정 요청]\nAPI 부터 정해 주세요.\n\n과업별 의견:\n"
+        "[계획 수정 요청]\nAPI 부터 정해 주세요.\n\n태스크별 의견:\n"
         "- System Architect: 스키마는 뒤로 미룹니다\n\n"
         "유저가 카드에서 직접 고친 값 (다시 쓸 때 그대로 반영하세요):\n"
         "- Senior Engineer 완료 기준: 테스트가 통과한다"
@@ -442,7 +446,7 @@ async def test_a_turn_cut_after_approval_is_not_asked_again(plan_approval):
 
     assert resumed.pending_plan_approval is None
     assert [t["agent"] for t in state.plan_tasks] == ["architect", "coder", "critic"]
-    assert "[유저가 승인한 당신의 과업]" in llm.prompts("coder")[0][-1]["content"]
+    assert "[유저가 승인한 당신의 태스크]" in llm.prompts("coder")[0][-1]["content"]
     assert sum(1 for m in state.messages if turns.kind_of(m) == turns.KIND_APPROVAL) == 1
 
 
@@ -563,7 +567,7 @@ async def test_a_stop_before_the_card_never_opens_it(plan_approval):
 @pytest.mark.asyncio
 async def test_a_task_list_that_cannot_be_read_still_opens_the_card(plan_approval):
     """깨진 답이어도 승인을 건너뛰지 않습니다. 전문가마다 빈 칸으로 뜨고, 사람이 채웁니다."""
-    llm, control = PlanLLM(tasks_reply="과업은 위 계획과 같습니다."), TurnControl()
+    llm, control = PlanLLM(tasks_reply="태스크는 위 계획과 같습니다."), TurnControl()
 
     def answer(control, request):
         assert [(t["agent"], t["task"]) for t in request.payload["tasks"]] == [
@@ -578,8 +582,8 @@ async def test_a_task_list_that_cannot_be_read_still_opens_the_card(plan_approva
     approval = next(m for m in state.messages if turns.kind_of(m) == turns.KIND_APPROVAL)
     assert f"- System Architect (Architecture): {plan_gate.FOLLOWS_PLAN}" in approval.content
     assert "- Senior Engineer (Implementation): 캐시를 구현한다" in approval.content
-    assert "[유저가 승인한 당신의 과업]" not in llm.prompts("architect")[0][-1]["content"]
-    assert "[유저가 승인한 당신의 과업]" in llm.prompts("coder")[0][-1]["content"]
+    assert "[유저가 승인한 당신의 태스크]" not in llm.prompts("architect")[0][-1]["content"]
+    assert "[유저가 승인한 당신의 태스크]" in llm.prompts("coder")[0][-1]["content"]
 
 
 @pytest.mark.asyncio
@@ -613,7 +617,7 @@ def test_parsing_takes_what_it_can_and_keeps_the_roster_order():
     assert tasks[0]["task"] == "" and tasks[0]["name"] == "System Architect"
     assert tasks[1]["task"] == "구현한다", "이름으로 적어도 찾고, 첫 줄을 씁니다"
     assert tasks[1]["done_when"] == "파일이 있다", "완료 기준은 한 줄입니다"
-    assert tasks[1]["alternatives"] == ["라이브러리를 쓴다", "직접 짠다"], "과업과 같은 것·빈 것은 빼고 상한까지"
+    assert tasks[1]["alternatives"] == ["라이브러리를 쓴다", "직접 짠다"], "태스크와 같은 것·빈 것은 빼고 상한까지"
 
 
 @pytest.mark.parametrize("content", ["", "JSON 이 아닙니다", '{"tasks": "문자열"}', '{"tasks": [1, 2]}', "{깨진"])
@@ -630,13 +634,13 @@ def test_an_assignments_list_is_read_too():
 def test_settling_ignores_agents_that_were_not_proposed():
     proposed = plan_gate.parse_tasks(TASKS_REPLY, ROSTER)
     tasks, changes = plan_gate.settle(proposed, [
-        {"agent": "ghost", "task": "끼어든 과업"},
+        {"agent": "ghost", "task": "끼어든 태스크"},
         {"agent": "coder", "task": "", "done_when": ""},
         "문자열",
     ])
     assert [t["agent"] for t in tasks] == ["architect", "coder"]
     assert tasks[0]["task"] == "캐시 스키마를 설계한다", "답에 없는 칸은 제안 그대로"
-    assert changes == ["Senior Engineer: 과업 비움", "Senior Engineer: 완료 기준 삭제"]
+    assert changes == ["Senior Engineer: 태스크 비움", "Senior Engineer: 완료 기준 삭제"]
     assert plan_gate.settle(proposed, None) == (
         [{k: t[k] for k in ("agent", "name", "role", "task", "done_when")} for t in proposed], []
     )
@@ -665,6 +669,42 @@ def test_long_fields_are_cut_at_the_cap():
 def test_the_approve_button_leaves_while_a_comment_is_written(comment, task_comments, expected):
     """승인은 의견을 싣지 못합니다. 의견이 있으면 승인 대신 수정 요청이 보입니다."""
     assert plan_gate.card_actions(comment, task_comments) == expected
+
+
+@pytest.mark.parametrize("visible, value, shown", [
+    (False, "", True),            # 접힌 칸을 엽니다
+    (True, "", False),            # 빈 칸은 다시 접힙니다
+    (True, "   ", False),
+    (True, None, False),
+    (True, "테스트도 붙여 주세요", True),   # 글이 적힌 칸은 접지 않습니다
+    (False, "남은 글", True),
+])
+def test_a_field_with_text_in_it_is_never_folded_away(visible, value, shown):
+    """완료 기준과 의견은 버튼으로 접어 둡니다. 접힌 칸의 글도 답에 실리므로, 적은 것이 보이지
+    않는 채로 전달되지 않게 합니다."""
+    assert toggled_visibility(visible, value) is shown
+
+
+@pytest.mark.parametrize("color, expected", [
+    ("teal-8", ("bg-teal-8", "")),                       # 표의 Quasar 색 이름
+    ("primary", ("bg-primary", "")),
+    ("#009688", ("", "background-color: #009688")),      # 사람이 고른 CSS 색
+    ("rgb(0, 150, 136)", ("", "background-color: rgb(0, 150, 136)")),
+    ("", ("", "")),
+    (None, ("", "")),
+])
+def test_a_section_bar_is_painted_the_way_the_avatar_is(color, expected):
+    """전문가 섹션의 세로 막대는 그 전문가의 아바타와 같은 색입니다. 색 이름이면 Quasar 의 배경
+    클래스를, CSS 색이면 인라인 스타일을 써야 아바타와 똑같이 칠해집니다."""
+    assert background_paint(color) == expected
+
+
+def test_every_agent_style_has_a_color_the_bar_can_use():
+    from app.agents.base import style_for_agent
+
+    for key, card_color in (("architect", None), ("새-전문가", None), ("", None), ("coder", "#c2185b")):
+        css_class, css_style = background_paint(style_for_agent(key, card_color)["color"])
+        assert css_class or css_style, key
 
 
 # ------------------------------------------------------------------ 기록에서 다시 읽기

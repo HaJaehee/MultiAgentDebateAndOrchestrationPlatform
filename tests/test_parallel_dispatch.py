@@ -1,10 +1,10 @@
-"""오케스트레이터가 과업을 나눠 주고 여러 에이전트가 동시에 답한다 — 병렬 지시 전략.
+"""오케스트레이터가 태스크를 나눠 주고 여러 에이전트가 동시에 답한다 — 병렬 지시 전략.
 
 다른 세 전략은 한 명이 끝나야 다음 사람이 시작합니다. 여기서는 지목된 사람들이
-같은 시각에 각자의 과업을 수행합니다. 그래서 지켜야 할 것이 늘어납니다.
+같은 시각에 각자의 태스크를 수행합니다. 그래서 지켜야 할 것이 늘어납니다.
 
 1. **정말 겹쳐서 돈다.** 발언이 순서대로 줄 서면 이 전략은 이름만 병렬입니다.
-2. **각자 자기 과업을 받는다.** 같은 지시를 여럿에게 주면 답이 겹칩니다.
+2. **각자 자기 태스크를 받는다.** 같은 지시를 여럿에게 주면 답이 겹칩니다.
 3. **서로의 이번 라운드 결과를 못 본다.** 먼저 끝난 동료의 답이 늦게 시작한 쪽의
    맥락에 섞이면, 같은 라운드인데 누구는 남의 답을 보고 누구는 못 보게 됩니다.
 4. **라운드 끝에 취합한다.** 아무도 서로를 못 봤으므로 이 접합부가 없으면 라운드는
@@ -93,7 +93,7 @@ def test_unknown_agents_are_dropped_and_duplicates_collapse():
 
 
 def test_a_broken_dispatch_still_salvages_who_was_called():
-    """과업 문장을 잃더라도 라운드를 통째로 날리지는 않습니다."""
+    """태스크 문장을 잃더라도 라운드를 통째로 날리지는 않습니다."""
     pairs, _ = OrchestratorEngine._parse_assignments(
         "이번엔 critic 과 architect 가 각자 봐 주세요.", _candidates()
     )
@@ -134,7 +134,7 @@ class _DispatchingLLM(FakeLLMCaller):
         self.orchestrator_prompts: List[str] = []
 
     def _is_dispatch(self, messages: List[Dict[str, Any]]) -> bool:
-        return "겹치지 않게 과업을 나누세요" in (messages[-1]["content"] if messages else "")
+        return "겹치지 않게 태스크를 나누세요" in (messages[-1]["content"] if messages else "")
 
     async def call_agent(self, agent, messages, custom_instructions="",
                          on_tool_call=None, on_chunk=None, session_id=None,
@@ -248,9 +248,9 @@ async def test_each_agent_gets_its_own_task():
 
     assert "인증 흐름을 설계한다" in llm.seen_context["architect"]
     assert "토큰 갱신 스켈레톤을 작성한다" in llm.seen_context["coder"]
-    # 남의 과업은 '동시 진행 중' 판으로만 보입니다. 자기 과업으로 받지는 않습니다.
+    # 남의 태스크는 '동시 진행 중' 판으로만 보입니다. 자기 태스크로 받지는 않습니다.
     assert "[병렬 지시]" in llm.seen_context["coder"]
-    assert llm.seen_context["coder"].count("당신에게 맡긴 과업") == 1
+    assert llm.seen_context["coder"].count("당신에게 맡긴 태스크") == 1
 
 
 @pytest.mark.asyncio
@@ -349,7 +349,7 @@ async def test_a_failed_dispatch_falls_back_to_everyone_and_says_so():
     assert spoke == ["architect", "coder", "critic"]
     assert llm.max_concurrent == 3, "지시가 없어도 병렬이라는 성질은 남습니다"
     failures = [r.content for r in rows if r.msg_type == "error"]
-    assert any("과업 분배 실패" in c for c in failures)
+    assert any("태스크 분배 실패" in c for c in failures)
 
 
 @pytest.mark.asyncio

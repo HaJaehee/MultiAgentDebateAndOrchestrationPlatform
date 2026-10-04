@@ -114,7 +114,7 @@ class AgentAppearanceEditor:
                     )
                     reset_btn = ui.button(
                         icon="restart_alt", on_click=self._reset
-                    ).props("flat dense round size=sm color=slate-5")
+                    ).props("flat dense round size=12px color=slate-5")
                     reset_btn.tooltip("색과 아이콘을 기본값으로 되돌립니다")
                     if not self.enabled:
                         self._color_input.disable()
@@ -123,7 +123,7 @@ class AgentAppearanceEditor:
                         reset_btn.disable()
 
                 self._icon_label = ui.label("").classes(
-                    "text-[10px] text-slate-500 truncate w-full"
+                    "text-[12px] text-slate-500 truncate w-full"
                 )
                 self._render_icon_label()
 

@@ -83,8 +83,8 @@ class CrashingLLM(FakeLLMCaller):
 
     def _reply_for(self, agent, messages):
         last = messages[-1]["content"] if messages else ""
-        # 병렬 지시의 과업 분배와 오케스트레이터 지명에는 읽을 수 있는 JSON 으로 답합니다.
-        if "[과업을 맡길 수 있는 에이전트]" in last:
+        # 병렬 지시의 태스크 분배와 오케스트레이터 지명에는 읽을 수 있는 JSON 으로 답합니다.
+        if "[태스크를 맡길 수 있는 에이전트]" in last:
             return json.dumps({"assignments": [
                 {"agent": "architect", "task": "스키마 설계"}, {"agent": "coder", "task": "캐시 구현"},
             ], "reason": "분담"}, ensure_ascii=False)

@@ -62,7 +62,7 @@ KIND_SPEECH = "speech"              # 전문가 발언 (라운드·병렬·그�
 KIND_MERGE = "merge"                # 오케스트레이터 취합 (병렬 라운드 끝, 그래프 취합 노드)
 KIND_GATE = "gate"                  # 그래프 판정
 KIND_NOMINATION = "nomination"      # 이번 라운드 발언자 지명. 값: speakers
-KIND_ASSIGNMENT = "assignment"      # 이번 라운드 병렬 과업 분배. 값: tasks
+KIND_ASSIGNMENT = "assignment"      # 이번 라운드 병렬 태스크 분배. 값: tasks
 KIND_NOTE = "note"                  # 그 밖의 안내 (지명 실패, 그래프 상한 등)
 KIND_FAILURE = "failure"            # 발언이 예외로 끝났다는 안내 (병렬·그래프)
 KIND_INTERRUPTED = "interrupted"    # 서버 중단으로 발언이 끊겼다는 안내 (재개할 때 남김)
@@ -204,7 +204,7 @@ class RoundRecord:
 
     # 기록된 지명 (에이전트 키, 발언 순서). 지명 전에 끊겼으면 None.
     nominated: Optional[List[str]] = None
-    # 기록된 병렬 분배 [(에이전트 키, 과업)]. 분배 전에 끊겼으면 None.
+    # 기록된 병렬 분배 [(에이전트 키, 태스크)]. 분배 전에 끊겼으면 None.
     tasks: Optional[List[Tuple[str, str]]] = None
     # 병렬 라운드의 취합까지 기록됐는지.
     merged: bool = False

@@ -127,7 +127,7 @@ def build_edit() -> None:
                                 ui.label("사회자" if is_host else f"참여자 {index}").classes("text-xs text-slate-500")
                             if not is_host:
                                 ui.button(icon="delete_outline", on_click=lambda i=index: remove(i)).props(
-                                    "flat dense round size=sm color=grey-6")
+                                    "flat dense round size=12px color=grey-6")
                         with ui.row().classes("w-full gap-2 flex-nowrap"):
                             ui.input("이름").bind_value(p, "name").props("outlined dark dense maxlength=60").classes("w-1/3")
                             ui.input("역할 (한 줄 설명)").bind_value(p, "role").props(

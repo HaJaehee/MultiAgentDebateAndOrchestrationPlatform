@@ -492,7 +492,7 @@ MAX_DEBATE_CODE_ARTIFACTS = 12
 
 
 def format_roster(agents: List[Agent], *, with_keys: bool = False) -> str:
-    """오케스트레이터에게 제공할 전문가 목록입니다. 계획 수립·발언자 지명·과업 분배 단계에서 공통으로 활용합니다.
+    """오케스트레이터에게 제공할 전문가 목록입니다. 계획 수립·발언자 지명·태스크 분배 단계에서 공통으로 활용합니다.
 
     이름과 역할, 사용 가능한 도구 서버 및 스킬 명칭만 간결하게 기재합니다. 시스템 프롬프트 전체는 포함하지
     않습니다 — 역할 분담을 결정하기에는 이 정보만으로 충분하며, 시스템 프롬프트 전문을 매번 포함하면
@@ -2244,7 +2244,7 @@ class OrchestratorEngine:
         (`app/orchestration/plan_gate.py`). 그쪽은 모델이 도구를 불러 주어야 승인이 열렸지만,
         여기서는 계획이 기록되는 순간 엔진이 엽니다 — 모델이 건너뛸 수 없습니다.
 
-        * **승인** — 사람이 카드에서 고친 과업·완료 기준이 그대로 승인된 분담이 됩니다.
+        * **승인** — 사람이 카드에서 고친 태스크·완료 기준이 그대로 승인된 분담이 됩니다.
           기록에 남고(`KIND_APPROVAL`), 이후 모든 발언자의 맥락과 합성의 완료 확인에 실립니다.
         * **수정 요청** — 의견을 유저 발언으로 기록하고 계획을 다시 쓰게 한 뒤 다시 묻습니다.
           횟수 상한은 없습니다. 한 번마다 사람이 눌러야 하므로 혼자 도는 일이 없습니다.
@@ -2252,7 +2252,7 @@ class OrchestratorEngine:
         * **무응답** — 아무것도 실행하지 않고 턴을 멈춰 둡니다 (`PlanApprovalExpired`).
 
         묻지 않는 경우: 설정이 꺼져 있거나, 답할 사람이 없거나(`control` 없음 — 배치 실행·
-        테스트), 계획이 없거나 실패했거나, 과업을 받을 전문가가 없을 때. 계획 자체는 아무것도
+        테스트), 계획이 없거나 실패했거나, 태스크를 받을 전문가가 없을 때. 계획 자체는 아무것도
         실행하지 않고, 위험한 도구 호출은 도구 보안이 따로 막습니다.
         """
         settings = plan_approval_settings()
@@ -2388,7 +2388,7 @@ class OrchestratorEngine:
         *,
         on_event: Optional[EventCallback],
     ) -> List[Dict[str, Any]]:
-        """이 계획의 분담표 (전문가별 과업). 이미 받아 둔 것이 있으면 다시 묻지 않습니다.
+        """이 계획의 분담표 (전문가별 태스크). 이미 받아 둔 것이 있으면 다시 묻지 않습니다.
 
         받은 분담표는 턴 기록에 적어 둡니다. 승인을 기다리다 멈춘 턴을 이어 갈 때 LLM 을 다시
         부르지 않고, 사람이 같은 카드를 다시 봅니다. 분담표를 받지 못하면 전문가마다 빈 칸으로
@@ -2427,7 +2427,7 @@ class OrchestratorEngine:
         plan_message: DebateMessage,
         custom_instructions: str,
     ) -> List[Dict[str, Any]]:
-        """계획 본문을 전문가별 과업으로 옮겨 받습니다.
+        """계획 본문을 전문가별 태스크로 옮겨 받습니다.
 
         발언자 지명(`_ask_orchestrator_for_speakers`)과 같은 이유로 도구와 단계적 사고를 끈
         사본으로 부릅니다. 이건 JSON 을 받는 호출이지 발언이 아닙니다.
@@ -2523,7 +2523,7 @@ class OrchestratorEngine:
                     "max_rounds": max_rounds,
                 })
 
-            # 병렬 지시 전략은 라운드 전체를 다르게 돕니다 — 과업을 나눠 주고
+            # 병렬 지시 전략은 라운드 전체를 다르게 돕니다 — 태스크를 나눠 주고
             # 동시에 띄운 뒤 취합합니다. 발언자를 한 명씩 세우는 아래 루프와
             # 섞을 수 없어 라운드째로 갈라집니다.
             if strategy.orchestrator_dispatches_parallel:
@@ -3063,12 +3063,12 @@ class OrchestratorEngine:
     ) -> bool:
         """한 라운드를 병렬로 돕니다. 정지 요청으로 라운드를 접었으면 True.
 
-        순서: 개입 반영 → 과업 분배 → 동시 실행 → 취합. 사람의 개입과 정지를 보는
+        순서: 개입 반영 → 태스크 분배 → 동시 실행 → 취합. 사람의 개입과 정지를 보는
         지점이 라운드 경계뿐인 것은 이 전략의 성질입니다 — 다른 전략은 발언과 발언
         사이에서 볼 수 있지만, 여기서는 그 '사이' 에 전원이 이미 달리고 있습니다.
 
         `resume` 은 끊긴 라운드의 기록입니다 (ADR-024). 분배가 기록돼 있으면 다시 묻지 않고
-        그 과업으로, `done` 에 든 에이전트는 건너뛰고 남은 사람만 돌린 뒤 취합합니다. 남은 사람의
+        그 태스크로, `done` 에 든 에이전트는 건너뛰고 남은 사람만 돌린 뒤 취합합니다. 남은 사람의
         프롬프트는 이 라운드의 발언을 뺀 기록으로 만듭니다 — 도는 중에도 서로의 이번 라운드
         결과는 보지 못했습니다. 취합까지 기록돼 있으면 할 일이 없습니다.
         """
@@ -3086,7 +3086,7 @@ class OrchestratorEngine:
             if not candidates:
                 return False
 
-            # 분배 **전에** 개입을 반영합니다. 이 라운드의 과업을 정하는 근거가
+            # 분배 **전에** 개입을 반영합니다. 이 라운드의 태스크를 정하는 근거가
             # 되어야지, 이미 나눠 준 뒤에 들어와서는 다음 라운드까지 놀게 됩니다.
             await self._apply_interjections(
                 db=db, state=state, control=control, round_number=round_num, on_event=on_event
@@ -3217,9 +3217,9 @@ class OrchestratorEngine:
         parallel_limit: int,
         on_event: Optional[EventCallback],
     ) -> List[Tuple[Agent, str]]:
-        """이번 라운드의 과업 분배를 받아 기록하고 돌려줍니다.
+        """이번 라운드의 태스크 분배를 받아 기록하고 돌려줍니다.
 
-        분배에 실패하면 전원을 과업 없이 돌리는 것으로 물러섭니다. 지시를 받지
+        분배에 실패하면 전원을 태스크 없이 돌리는 것으로 물러섭니다. 지시를 받지
         못했을 뿐 병렬이라는 성질은 남기고, 물러섰다는 사실은 피드에 남깁니다 —
         조용히 다른 방식으로 도는 것이 제일 나쁩니다.
         """
@@ -3230,8 +3230,8 @@ class OrchestratorEngine:
                 db=db, state=state, on_event=on_event, agent=orchestrator,
                 round_number=round_num, msg_type="error",
                 content=(
-                    f"[과업 분배 실패] {why}\n"
-                    f"과업 없이 전원을 동시에 진행합니다: "
+                    f"[태스크 분배 실패] {why}\n"
+                    f"태스크 없이 전원을 동시에 진행합니다: "
                     f"{', '.join(a.name for a in candidates)}"
                 ),
                 kind=turns.KIND_ASSIGNMENT,
@@ -3260,17 +3260,17 @@ class OrchestratorEngine:
             if not assignments:
                 logger.warning("Orchestrator assigned nobody we know; running everyone without tasks.")
                 return await _fall_back(
-                    "오케스트레이터의 응답에서 과업을 맡길 에이전트를 찾지 못했습니다."
+                    "오케스트레이터의 응답에서 태스크를 맡길 에이전트를 찾지 못했습니다."
                 )
 
         named = [agent for agent, _ in assignments]
         lines = [
-            f"- **{agent.name}** ({agent.role}): {task or '(과업 지정 없음 — 전문 영역에서 자유 기여)'}"
+            f"- **{agent.name}** ({agent.role}): {task or '(태스크 지정 없음 — 전문 영역에서 자유 기여)'}"
             for agent, task in assignments
         ]
         over_limit = len(assignments) > parallel_limit
         summary = (
-            f"[Round {round_num} 병렬 지시] {len(assignments)}명에게 과업을 나눴습니다"
+            f"[Round {round_num} 병렬 지시] {len(assignments)}명에게 태스크를 나눴습니다"
             + (f" (동시 실행 상한 {parallel_limit} — 나머지는 순차적으로 밀립니다)" if over_limit else " (동시 실행)")
             + "\n" + "\n".join(lines)
         )
@@ -3297,7 +3297,7 @@ class OrchestratorEngine:
         parallel_limit: int,
         custom_instructions: str,
     ) -> "Tuple[List[Tuple[Agent, str]], str]":
-        """오케스트레이터에게 이번 라운드의 과업 분배를 물어봅니다.
+        """오케스트레이터에게 이번 라운드의 태스크 분배를 물어봅니다.
 
         발언자 지명(`_ask_orchestrator_for_speakers`)과 같은 이유로 도구와 단계적
         사고를 끈 사본으로 부릅니다. 이건 JSON 을 받는 호출이지 발언이 아닙니다.
@@ -3314,16 +3314,16 @@ class OrchestratorEngine:
             f"[목표]\n{state.user_prompt}\n\n"
             + self._routing_record(state, planner) +
             f"[지금까지의 토론]\n" + ("\n".join(recent) or "(아직 없음)") + "\n\n"
-            f"[과업을 맡길 수 있는 에이전트]\n{roster}\n\n"
+            f"[태스크를 맡길 수 있는 에이전트]\n{roster}\n\n"
             f"지금은 Round {round_num}/{state.max_rounds} 이고, 지목된 에이전트는 "
-            f"**동시에 각자의 과업을 수행합니다**. 서로의 이번 라운드 결과를 볼 수 없으므로 "
-            f"과업이 겹치면 같은 일을 두 번 하게 됩니다.\n\n"
-            f"겹치지 않게 과업을 나누세요. 전원을 부를 필요는 없고, 한 명만 불러도 됩니다. "
-            f"각 과업은 다른 에이전트의 결과를 기다리지 않고 혼자 끝낼 수 있는 것이어야 하며, "
+            f"**동시에 각자의 태스크를 수행합니다**. 서로의 이번 라운드 결과를 볼 수 없으므로 "
+            f"태스크가 겹치면 같은 일을 두 번 하게 됩니다.\n\n"
+            f"겹치지 않게 태스크를 나누세요. 전원을 부를 필요는 없고, 한 명만 불러도 됩니다. "
+            f"각 태스크는 다른 에이전트의 결과를 기다리지 않고 혼자 끝낼 수 있는 것이어야 하며, "
             f"무엇을 만들어 낼지(산출물)까지 한두 문장으로 적으세요. "
             f"동시 실행은 {parallel_limit}명까지이고 그보다 많이 부르면 나머지는 순차적으로 밀립니다.\n\n"
             f"다음 JSON 형식으로만 답하세요:\n"
-            '{"assignments": [{"agent": "에이전트키", "task": "이 라운드에 맡길 구체적 과업"}], '
+            '{"assignments": [{"agent": "에이전트키", "task": "이 라운드에 맡길 구체적 태스크"}], '
             '"reason": "한두 문장으로 분배 사유"}'
         )}]
 
@@ -3337,10 +3337,10 @@ class OrchestratorEngine:
     def _parse_assignments(
         content: str, candidates: List[Agent]
     ) -> "Tuple[List[Tuple[Agent, str]], str]":
-        """응답에서 (에이전트, 과업) 목록과 분배 사유를 뽑습니다.
+        """응답에서 (에이전트, 태스크) 목록과 분배 사유를 뽑습니다.
 
-        과업 문장을 잃더라도 누구를 부를지는 건집니다. `assignments` 가 깨졌으면
-        발언자 지명과 같은 방식으로 아는 키를 등장 순서대로 긁고, 과업은 빈
+        태스크 문장을 잃더라도 누구를 부를지는 건집니다. `assignments` 가 깨졌으면
+        발언자 지명과 같은 방식으로 아는 키를 등장 순서대로 긁고, 태스크는 빈
         문자열이 됩니다 — 지시 없는 병렬 라운드가 라운드를 통째로 날리는 것보다
         낫습니다.
         """
@@ -3390,7 +3390,7 @@ class OrchestratorEngine:
         없으면 여럿이 같은 표를 각자 그려 오고, 취합이 중복 제거부터 시작합니다.
         """
         return "\n".join(
-            f"- {agent.name}({agent.role}): {task or '(과업 지정 없음)'}"
+            f"- {agent.name}({agent.role}): {task or '(태스크 지정 없음)'}"
             for agent, task in assignments
         )
 
@@ -3398,9 +3398,9 @@ class OrchestratorEngine:
     def _parallel_turn_instruction(
         strategy: BaseDebateStrategy, agent: Agent, task: str, board: str
     ) -> str:
-        """병렬 라운드에서 한 에이전트에게 붙는 지침 = 내 과업 + 동시 실행 현황."""
+        """병렬 라운드에서 한 에이전트에게 붙는 지침 = 내 태스크 + 동시 실행 현황."""
         if task:
-            head = f"[병렬 지시] 오케스트레이터가 이번 라운드에 당신에게 맡긴 과업입니다:\n{task}"
+            head = f"[병렬 지시] 오케스트레이터가 이번 라운드에 당신에게 맡긴 태스크입니다:\n{task}"
         else:
             # 분배가 실패한 라운드. 전략이 들고 있는 문구를 그대로 씁니다.
             head = strategy.turn_instruction(
@@ -3411,7 +3411,7 @@ class OrchestratorEngine:
             f"{head}\n\n"
             f"[동시 진행 중]\n{board}\n\n"
             f"이들은 지금 당신과 **같은 시각에** 답하고 있어 이번 라운드 결과를 볼 수 없습니다. "
-            f"남의 과업을 대신 하지 말고 당신 몫을 끝까지 마치세요. 다른 과업의 결과가 필요하면 "
+            f"남의 태스크를 대신 하지 말고 당신 몫을 끝까지 마치세요. 다른 태스크의 결과가 필요하면 "
             f"추측해 채우지 말고 어떤 가정을 두었는지 명시하세요. 라운드 끝에 오케스트레이터가 "
             f"결과를 합칩니다."
         )
@@ -3444,7 +3444,7 @@ class OrchestratorEngine:
 
         board = self._assignment_board(assignments)
         instruction = (
-            f"[Round {round_num} 취합] 방금 다음 에이전트가 **동시에** 각자의 과업을 수행했습니다:\n"
+            f"[Round {round_num} 취합] 방금 다음 에이전트가 **동시에** 각자의 태스크를 수행했습니다:\n"
             f"{board}\n\n"
             f"이들은 서로의 결과를 보지 못한 채 답했습니다. 수석 오케스트레이터로서 "
             f"이번 라운드의 결과를 하나로 붙이세요:\n"
@@ -4083,7 +4083,7 @@ class OrchestratorEngine:
     def _tool_less(agent: Agent) -> Agent:
         """도구와 단계적 사고를 끈 사본.
 
-        JSON 한 줄(발언자 지명·과업 분배)이나 정해진 형식의 글(장부·요약)을 받는 호출에
+        JSON 한 줄(발언자 지명·태스크 분배)이나 정해진 형식의 글(장부·요약)을 받는 호출에
         씁니다. 도구를 붙이면 파일을 읽기 시작하고, 단계적 사고 프로토콜이 주입되면
         `Thought 1..N` 을 쓰다가 형식을 놓칩니다.
         """
@@ -4125,9 +4125,9 @@ class OrchestratorEngine:
         return text[:limit]
 
     def _routing_record(self, state: DebateState, agent: Agent) -> str:
-        """발언자 지명·과업 분배 프롬프트에 넣을 사용자 발언 기록 (짧은 몫).
+        """발언자 지명·태스크 분배 프롬프트에 넣을 사용자 발언 기록 (짧은 몫).
 
-        유저가 승인한 과업 분담이 있으면 (ADR-028) 함께 싣습니다. 지명과 라운드별 분배는
+        유저가 승인한 태스크 분담이 있으면 (ADR-028) 함께 싣습니다. 지명과 라운드별 분배는
         오케스트레이터가 그때그때 정하는데, 승인된 분담을 모르고 정하면 사람이 확인한 것과
         다른 일을 시키게 됩니다.
         """
@@ -4491,7 +4491,7 @@ class OrchestratorEngine:
         )
         if turn_instruction:
             turn_prompt += f"\n\n{turn_instruction}"
-        # 유저가 승인한 이 전문가의 과업 (ADR-028). 고정문에도 있지만, 마지막 메시지에 한 번 더
+        # 유저가 승인한 이 전문가의 태스크 (ADR-028). 고정문에도 있지만, 마지막 메시지에 한 번 더
         # 둡니다 — 긴 토론에서 자기 몫을 가장 덜 잊는 자리입니다.
         own_task = plan_gate.own_task(state.plan_tasks, agent.key)
         if own_task:
@@ -4773,7 +4773,7 @@ class OrchestratorEngine:
                 f"보고서에 누락 사실을 명시하세요.\n"
             )
 
-        # 유저가 승인한 과업의 완료 확인 (ADR-028). 누가 몇 번 말했고 누가 응답하지 못했는지는
+        # 유저가 승인한 태스크의 완료 확인 (ADR-028). 누가 몇 번 말했고 누가 응답하지 못했는지는
         # 엔진이 기록에서 센 값입니다 — 모델의 자기 보고에 맡기면 하지 않은 일이 완료로 적힙니다.
         completion = ""
         if state.plan_tasks:

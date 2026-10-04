@@ -555,11 +555,11 @@ class TrialSessionScreen:
         elif etype in ("tool_budget_resolved", "context_window_resolved"):
             feed.clear_budget_request(event.get("id"))
         elif etype == "plan_tasks_started":
-            feed.set_busy(True, "승인받을 과업 분담표를 정리하는 중입니다...", "계획")
+            feed.set_busy(True, "승인받을 태스크 분담표를 정리하는 중입니다...", "계획")
         elif etype == "plan_approval_requested":
             # 승인하기 전에는 아무도 발언하지 않습니다 (ADR-028).
             feed.set_plan_approval({k: v for k, v in event.items() if k != "type"})
-            feed.set_busy(True, "계획 승인 대기 — 과업을 확인하고 승인하시거나, 의견을 적어 수정을 요청해 주십시오.", "승인 대기")
+            feed.set_busy(True, "계획 승인 대기 — 태스크를 확인하고 승인하시거나, 의견을 적어 수정을 요청해 주십시오.", "승인 대기")
             ui.notify("계획이 승인을 기다리고 있습니다. 승인하시기 전에는 토론이 시작되지 않습니다.", type="warning")
         elif etype == "plan_approval_resolved":
             feed.clear_plan_approval(event.get("id"))

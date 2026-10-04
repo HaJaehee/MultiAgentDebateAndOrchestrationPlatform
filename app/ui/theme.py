@@ -13,6 +13,12 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
+/* 툴팁 글씨. Quasar 기본값은 10px 입니다. 칸과 버튼의 설명을 툴팁에 두는 자리가 많아, 화면의
+   다른 작은 글씨와 같은 12px 로 올립니다. */
+.q-tooltip {
+    font-size: 12px;
+}
+
 /* Chat timeline container styling */
 .debate-timeline {
     scroll-behavior: smooth;

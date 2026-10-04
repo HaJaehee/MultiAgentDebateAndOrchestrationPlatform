@@ -407,7 +407,7 @@ class TurnRun:
         elif etype == "plan_tasks_started":
             self.busy = True
             self.status_text = self._pending_prefix(
-                f"[{event.get('agent_name', '')}] 승인받을 과업 분담표를 정리하는 중..."
+                f"[{event.get('agent_name', '')}] 승인받을 태스크 분담표를 정리하는 중..."
             )
             self.round_info = "Plan"
 
@@ -415,7 +415,7 @@ class TurnRun:
             self.plan_approval = {k: v for k, v in event.items() if k != "type"}
             self.busy = True
             self.status_text = (
-                "계획 승인을 기다립니다 — 과업을 확인하고 승인하시거나, 의견을 적어 수정을 요청해 주십시오."
+                "계획 승인을 기다립니다 — 태스크를 확인하고 승인하시거나, 의견을 적어 수정을 요청해 주십시오."
             )
             self.round_info = "Plan approval"
 

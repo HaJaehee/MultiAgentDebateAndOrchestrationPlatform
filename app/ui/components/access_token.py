@@ -196,7 +196,7 @@ def build_access_buttons(env_path: Path = ENV_PATH, bind_host: Optional[str] = N
                     ui.button(icon="content_copy", on_click=lambda: (
                         copy_to_clipboard(token),
                         ui.notify("토큰을 복사했습니다.", type="positive", position="bottom-right"),
-                    )).props("flat dense round size=sm color=grey-4")
+                    )).props("flat dense round size=12px color=grey-4")
             token_box.set_visibility(True)
 
         async def after_change() -> None:
@@ -251,11 +251,11 @@ def build_access_buttons(env_path: Path = ENV_PATH, bind_host: Optional[str] = N
                 f"로그인 실패로 잠긴 IP ({MAX_FAILURES}회 실패 시 {LOCKOUT_SECONDS // 60}분)"
             ).classes("text-xs font-semibold text-slate-300")
             ui.button(icon="refresh", on_click=lambda: render_locks()).props(
-                "flat dense round size=sm color=grey-4"
+                "flat dense round size=12px color=grey-4"
             ).tooltip("목록 새로고침")
         locks_box = ui.column().classes("w-full gap-1")
         # 잠금·해제는 감사 기록 파일에도 남습니다 (재기동해도 남는 공격 흔적).
-        audit_label = ui.label("").classes("text-[10px] text-slate-500 break-all")
+        audit_label = ui.label("").classes("text-[12px] text-slate-500 break-all")
         with ui.expansion("최근 잠금·해제 기록", icon="history").props("dense dark").classes(
             "w-full text-xs text-slate-300"
         ):
@@ -279,7 +279,7 @@ def build_access_buttons(env_path: Path = ENV_PATH, bind_host: Optional[str] = N
                         text = f"{rec.get('at', '')}  해제  {rec.get('ip', '')}  (서버 PC)"
                     else:
                         text = f"{rec.get('at', '')}  {rec.get('event', '')}  {rec.get('ip', '')}"
-                    ui.label(text).classes("font-mono text-[10px] text-slate-400 whitespace-pre")
+                    ui.label(text).classes("font-mono text-[12px] text-slate-400 whitespace-pre")
 
         def unlock_ips(ips: List[str]) -> None:
             if not _caller_is_loopback():
@@ -310,12 +310,12 @@ def build_access_buttons(env_path: Path = ENV_PATH, bind_host: Optional[str] = N
                         with ui.row().classes("items-center gap-2 no-wrap"):
                             ui.label(f"{int(remaining // 60) + 1}분 남음").classes("text-[11px] text-slate-500")
                             ui.button("해제", icon="lock_open", on_click=lambda _, ip=ip: unlock_ips([ip])).props(
-                                "flat dense no-caps size=sm color=amber-4"
+                                "flat dense no-caps size=12px color=amber-4"
                             )
                 if len(locked) > 1:
                     ui.button("모두 해제", icon="lock_open",
                               on_click=lambda: unlock_ips([ip for ip, _ in control.locked_ips()])).props(
-                        "flat dense no-caps size=sm color=amber-4"
+                        "flat dense no-caps size=12px color=amber-4"
                     ).classes("self-end")
 
         with ui.row().classes("w-full justify-end"):

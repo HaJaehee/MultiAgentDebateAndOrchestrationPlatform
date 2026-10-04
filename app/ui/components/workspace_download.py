@@ -116,7 +116,7 @@ class WorkspaceDownloadDialog:
         ):
             with ui.row().classes("w-full items-center justify-between no-wrap"):
                 ui.label("작업 공간 파일 다운로드").classes("text-sm font-bold")
-                ui.button(icon="close", on_click=dialog.close).props("flat round dense size=sm color=grey-5")
+                ui.button(icon="close", on_click=dialog.close).props("flat round dense size=12px color=grey-5")
             ui.label(str(root)).classes("text-[11px] text-slate-400 break-all")
             note = (
                 f"최근에 바뀐 파일부터 보입니다 (열 제목을 눌러 경로·크기·수정 시각으로 정렬). 하나를 고르면 그대로, 여럿이면 zip 으로 받습니다 "
@@ -143,13 +143,13 @@ class WorkspaceDownloadDialog:
                 summary = ui.label("").classes("text-[11px] text-slate-400")
                 with ui.row().classes("items-center gap-1"):
                     ui.button("보이는 항목 모두 선택", on_click=lambda: select_visible()).props(
-                        "flat dense no-caps size=sm color=slate-3"
+                        "flat dense no-caps size=12px color=slate-3"
                     )
                     ui.button("선택 해제", on_click=lambda: clear_selection()).props(
-                        "flat dense no-caps size=sm color=slate-3"
+                        "flat dense no-caps size=12px color=slate-3"
                     )
                     download_btn = ui.button("다운로드", icon="download", on_click=lambda: download()).props(
-                        "unelevated dense no-caps size=sm color=indigo-6"
+                        "unelevated dense no-caps size=12px color=indigo-6"
                     )
 
             if not all_rows:

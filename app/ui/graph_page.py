@@ -158,7 +158,7 @@ def create_graph_page() -> None:
                             )
                             with ui.column().classes("gap-0 items-start min-w-0"):
                                 ui.label(name).classes("text-xs text-slate-200 truncate")
-                                ui.label(key).classes("text-[10px] text-slate-500 font-mono")
+                                ui.label(key).classes("text-[12px] text-slate-500 font-mono")
 
                 ui.separator().classes("bg-slate-800 my-1")
                 ui.button("카드 순서로 다시 채우기", icon="account_tree", on_click=lambda: refill_dialog.open()).props(
@@ -170,7 +170,7 @@ def create_graph_page() -> None:
                 ui.label(
                     "출력 핀을 드래그하여 다른 노드의 입력 핀에 연결하면 선이 생성됩니다. 노드나 선을 클릭하면 우측에서 "
                     "속성을 수정할 수 있으며, Delete 키로 삭제합니다. 빈 영역을 드래그하면 화면이 이동하고 휠로 확대/축소합니다."
-                ).classes("text-[10px] text-slate-500 leading-snug mt-2")
+                ).classes("text-[12px] text-slate-500 leading-snug mt-2")
 
             # ---------------- 캔버스 ----------------
             with ui.element("div").classes("flex-grow min-w-0 h-full"):
@@ -210,7 +210,7 @@ def create_graph_page() -> None:
                 with ui.row().classes("w-full items-center justify-between no-wrap"):
                     ui.label(f"노드 · {node_id}").classes("text-xs font-semibold text-slate-300 font-mono")
                     ui.button(icon="delete", on_click=lambda: canvas.run_method("removeElement", "node", node_id)).props(
-                        "flat dense round size=sm color=red-4"
+                        "flat dense round size=12px color=red-4"
                     ).tooltip("해당 노드 및 연결된 선을 삭제합니다.")
                 ui.label(NODE_HELP.get(kind, "")).classes("text-[11px] text-slate-500 leading-snug")
 
@@ -276,7 +276,7 @@ def create_graph_page() -> None:
                 with ui.row().classes("w-full items-center justify-between no-wrap"):
                     ui.label(f"선 · {edge_id}").classes("text-xs font-semibold text-slate-300 font-mono")
                     ui.button(icon="delete", on_click=lambda: canvas.run_method("removeElement", "edge", edge_id)).props(
-                        "flat dense round size=sm color=red-4"
+                        "flat dense round size=12px color=red-4"
                     ).tooltip("해당 선을 삭제합니다.")
                 source, target = data.get("from") or ["?", "?"], data.get("to") or ["?", "?"]
                 branch = {"yes": " (예)", "no": " (아니오)"}.get(source[1], "")
@@ -317,7 +317,7 @@ def create_graph_page() -> None:
                     ui.label(f"경고 · {warning}").classes("text-[11px] text-amber-300 leading-snug")
                 ui.label(
                     f"호출 횟수는 상한이 지정되지 않은 노드를 {PREVIEW_MAX_VISITS}회로 계산하였습니다. 실제 토론 시에는 해당 세션의 최대 라운드가 적용됩니다."
-                ).classes("text-[10px] text-slate-500 leading-snug")
+                ).classes("text-[12px] text-slate-500 leading-snug")
 
         async def current_spec(graph_id_: str, name: str):
             raw = await canvas.run_method("getGraph", timeout=10)

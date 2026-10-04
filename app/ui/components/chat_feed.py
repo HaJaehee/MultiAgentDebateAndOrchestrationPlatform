@@ -28,7 +28,7 @@ UploadHandler = Callable[[str, bytes], Coroutine[None, None, str]]
 # 도구 승인 카드의 답을 받는 쪽. (요청 id, 결정, 허용 범위, 거부 사유) → 받아들여졌는가.
 ToolApprovalHandler = Callable[[str, str, List[str], str], Coroutine[None, None, bool]]
 # 계획 승인 카드의 답을 받는 쪽 (ADR-028).
-# (요청 id, 결정, 전문가별 과업, 계획 전체 의견, 과업별 의견) → 받아들여졌는가.
+# (요청 id, 결정, 전문가별 태스크, 계획 전체 의견, 태스크별 의견) → 받아들여졌는가.
 PlanApprovalHandler = Callable[
     [str, str, List[Dict[str, Any]], str, Dict[str, str]], Coroutine[None, None, bool]
 ]
@@ -123,8 +123,8 @@ DECISION_STYLES = {
         "icon_color": "text-amber-300",
         "label": "text-amber-100",
         "countdown": "text-amber-300",
-        "extend": "unelevated dense no-caps color=amber-7 text-color=grey-10 size=sm",
-        "wrap_up": "flat dense no-caps color=amber-3 size=sm",
+        "extend": "unelevated dense no-caps color=amber-7 text-color=grey-10 size=12px",
+        "wrap_up": "flat dense no-caps color=amber-3 size=12px",
     },
     "context_window": {
         # 컨텍스트의 무응답은 마무리가 아닙니다 — 오래된 것부터 생략하고 계속
@@ -135,8 +135,8 @@ DECISION_STYLES = {
         "icon_color": "text-orange-300",
         "label": "text-orange-100",
         "countdown": "text-orange-300",
-        "extend": "unelevated dense no-caps color=orange-8 text-color=grey-10 size=sm",
-        "wrap_up": "flat dense no-caps color=orange-3 size=sm",
+        "extend": "unelevated dense no-caps color=orange-8 text-color=grey-10 size=12px",
+        "wrap_up": "flat dense no-caps color=orange-3 size=12px",
     },
 }
 
@@ -148,7 +148,55 @@ APPROVAL_CARD_CLASSES = (
 PLAN_CARD_CLASSES = (
     "w-full gap-2 px-3 py-2 rounded-lg text-xs border bg-emerald-950/40 border-emerald-700/70"
 )
-PLAN_TASK_CLASSES = "w-full gap-1 pl-2 border-l-2 border-emerald-800/80"
+PLAN_TASK_CLASSES = "w-full gap-1 pl-2.5 relative"
+# 전문가 섹션 왼쪽의 세로 막대. 섹션의 테두리가 아니라 따로 둔 칸이라, 아바타와 똑같은 방법으로
+# 칠할 수 있습니다 (`background_paint`).
+PLAN_TASK_BAR_CLASSES = "absolute left-0 top-0 bottom-0 w-0.5 rounded"
+# 전문가 섹션 사이에 두는 빈 줄 하나 (카드 글씨 text-xs 의 한 줄 = 1rem). 붙어 있으면 어느 칸이
+# 누구의 것인지 한눈에 갈리지 않습니다.
+PLAN_TASK_GAP = "mt-4"
+# 승인 · 거부처럼 답을 정하는 버튼의 글씨 크기 (계획 승인 카드와 도구 승인 카드). 카드 본문
+# (text-xs)과 같은 12px 입니다. Quasar 의 `md`(14px)는 카드의 다른 글씨보다 두드러지게 컸습니다.
+DECISION_BUTTON_SIZE = "size=12px"
+# 권장안·대안을 고르는 라디오 버튼의 크기. 동그라미가 옆 글씨(text-xs, 12px)와 같은 크기가
+# 되게 합니다. 라디오·체크박스·토글의 `size` 는 버튼과 뜻이 다릅니다 — 버튼은 글씨 크기이지만
+# 이쪽은 바깥 칸의 크기이고, `dense` 일 때 동그라미는 그 절반입니다. 그래서 24px 입니다.
+PLAN_RADIO_SIZE = "size=24px"
+# 접어 둔 칸(완료 기준 · 의견)을 여는 버튼. 평평하면 글자처럼 보여 눌리는 것인 줄 모르므로,
+# 그림자가 있는 기본 모양에 굵은 글씨로 둡니다.
+PLAN_TOGGLE_PROPS = "dense no-caps size=12px color=blue-grey-9 text-color=grey-3"
+# 칸 이름은 짧게 두고, 적으면 어떻게 되는지는 툴팁에 둡니다.
+PLAN_TASK_HINT = "비워 두면 계획 본문을 따릅니다."
+PLAN_DONE_WHEN_HINT = "작성하면 태스크 완료 여부를 기준에 맞추어 평가합니다."
+PLAN_COMMENT_HINT = "작성하면 오케스트레이터가 계획을 다시 씁니다."
+
+
+def toggled_visibility(visible: bool, value: Any) -> bool:
+    """접는 버튼을 눌렀을 때 그 칸이 보일지. 글이 적힌 칸은 접지 않습니다.
+
+    접힌 칸의 글도 답에 실립니다. 적어 둔 것이 보이지 않는 채로 전달되면, 무엇을 보냈는지
+    사람이 알 수 없습니다.
+    """
+    if visible and str(value or "").strip():
+        return True
+    return not visible
+
+
+def background_paint(color: str) -> Tuple[str, str]:
+    """에이전트의 색으로 배경을 칠하는 (클래스, 인라인 스타일). 아바타가 칠해지는 것과 같은 규칙입니다.
+
+    에이전트의 색은 Quasar 색 이름(`teal-8`)이거나 사람이 고른 CSS 색(`#009688`)입니다. 이름이면
+    Quasar 의 배경 클래스를, CSS 색이면 인라인 스타일을 씁니다. 표에 적어 둔 근사값(`badge_color`)을
+    쓰면 아바타와 살짝 다른 색이 됩니다.
+    """
+    value = (color or "").strip()
+    if not value:
+        return "", ""
+    if value.startswith("#") or "(" in value:
+        return "", f"background-color: {value}"
+    return f"bg-{value}", ""
+
+
 # 위험 등급별 배지 색 (`app/mcp/policy.py` 의 RISK_LABELS 와 같은 키).
 RISK_BADGE_COLORS = {
     "read": "blue-grey-7", "state": "blue-grey-7", "write": "amber-9", "exec": "amber-9",
@@ -403,13 +451,13 @@ class ChatFeed:
                         self.status_label = ui.label("대기 중").classes("font-semibold text-slate-300")
                         # 경과 시간. 상태 막대는 스크롤과 무관하게 늘 보이므로,
                         # 타임라인이 아무리 길어져도 여기서 초가 올라갑니다.
-                        self.elapsed_badge = ui.badge("", color="indigo-9").props("dense text-[10px]")
+                        self.elapsed_badge = ui.badge("", color="indigo-9").props("dense text-[12px]")
                         self.elapsed_badge.set_visibility(False)
                     with ui.row().classes("items-center gap-2 flex-shrink-0"):
                         self.follow_button = (
                             ui.button("맨 아래로", icon="vertical_align_bottom",
                                       on_click=self._handle_follow)
-                            .props("flat dense no-caps color=amber-4 size=sm")
+                            .props("flat dense no-caps color=amber-4 size=12px")
                             .tooltip(
                                 "새 발언 자동 스크롤이 비활성화된 상태입니다. 스크롤을 직접 이동하셨다면 "
                                 "이 버튼을 클릭하여 자동 스크롤을 재개할 수 있으며, 카드를 펼쳐 "
@@ -419,7 +467,7 @@ class ChatFeed:
                         self.follow_button.set_visibility(False)
                         self.stop_button = (
                             ui.button("정지", icon="stop_circle", on_click=self._handle_stop)
-                            .props("flat dense no-caps color=rose-4 size=sm")
+                            .props("flat dense no-caps color=rose-4 size=12px")
                             .tooltip(
                                 "남은 라운드를 건너뛰고 지금까지의 토론 내용을 바탕으로 최종 산출물을 생성합니다. "
                                 "진행 중인 발언은 완료될 때까지 대기합니다."
@@ -428,7 +476,7 @@ class ChatFeed:
                         self.stop_button.set_visibility(False)
                         self.abort_button = (
                             ui.button("긴급 종료", icon="cancel", on_click=self._handle_abort)
-                            .props("flat dense no-caps color=red-5 size=sm")
+                            .props("flat dense no-caps color=red-5 size=12px")
                             .tooltip(
                                 "요청을 취소할 때 사용합니다. 진행 중인 발언을 즉시 중단하고 이번 "
                                 "요청과 관련 발언을 기록에서 삭제한 후, 보낸 내용을 "
@@ -461,13 +509,13 @@ class ChatFeed:
                                   on_click=self._handle_budget_extend)
                         # 앰버 바탕에는 흰 글자가 묻힙니다. Quasar 기본값이
                         # 흰색이라 글자색을 명시해야 합니다.
-                        .props("unelevated dense no-caps color=amber-7 text-color=grey-10 size=sm")
+                        .props("unelevated dense no-caps color=amber-7 text-color=grey-10 size=12px")
                         .tooltip("해당 발언에 한하여 도구 호출 횟수 상한을 늘립니다. 토론은 즉시 계속 진행됩니다.")
                     )
                     self.budget_wrap_up_button = (
                         ui.button("지금 마무리", icon="done_all",
                                   on_click=self._handle_budget_wrap_up)
-                        .props("flat dense no-caps color=amber-3 size=sm")
+                        .props("flat dense no-caps color=amber-3 size=12px")
                         .tooltip("도구를 추가로 호출하지 않고 지금까지의 결과만으로 결론을 작성하도록 합니다.")
                     )
                 self.budget_bar.set_visibility(False)
@@ -484,13 +532,13 @@ class ChatFeed:
                         self.unfinished_continue_button = (
                             ui.button("이어서 진행", icon="play_arrow",
                                       on_click=lambda: self._handle_resume_turn("continue"))
-                            .props("unelevated dense no-caps color=violet-7 size=sm")
+                            .props("unelevated dense no-caps color=violet-7 size=12px")
                             .tooltip("기록에서 어디까지 진행되었는지 다시 계산하여 남은 발언부터 이어 갑니다.")
                         )
                         self.unfinished_finish_button = (
                             ui.button("지금까지로 결론", icon="done_all",
                                       on_click=lambda: self._handle_resume_turn("finish"))
-                            .props("flat dense no-caps color=violet-3 size=sm")
+                            .props("flat dense no-caps color=violet-3 size=12px")
                             .tooltip(
                                 "기록된 발언만으로 최종 결론을 작성합니다. '정지'와 같은 의미이므로 "
                                 "합의로 표시하지 않으며, 보고서에 서버 중단 사실을 적습니다."
@@ -499,7 +547,7 @@ class ChatFeed:
                         self.unfinished_discard_button = (
                             ui.button("버리기", icon="delete_sweep",
                                       on_click=self._handle_discard_turn)
-                            .props("flat dense no-caps color=red-4 size=sm")
+                            .props("flat dense no-caps color=red-4 size=12px")
                             .tooltip("이 턴의 요청과 발언을 기록에서 삭제하고, 요청 내용을 입력창으로 복원합니다.")
                         )
                 self.unfinished_bar.set_visibility(False)
@@ -1063,12 +1111,12 @@ class ChatFeed:
                     ui.button(
                         "이번만 허용", icon="check",
                         on_click=lambda _e, rid=request_id: self._answer_approval(rid, "allow_once"),
-                    ).props("unelevated dense no-caps color=sky-7 size=sm")
+                    ).props(f"unelevated dense no-caps color=sky-7 {DECISION_BUTTON_SIZE}")
                     if can_remember:
                         ui.button(
                             "이 대화에서 허용", icon="playlist_add_check",
                             on_click=lambda _e, rid=request_id: self._answer_approval(rid, "allow_session"),
-                        ).props("flat dense no-caps color=sky-3 size=sm").tooltip(
+                        ).props(f"flat dense no-caps color=sky-3 {DECISION_BUTTON_SIZE}").tooltip(
                             "위 범위를 현재 대화에서 확인 없이 항상 실행합니다. 기존 거부 및 확인 규칙이 우선 적용됩니다. "
                             "로스터의 '대화 규칙'에서 삭제하실 수 있습니다."
                         )
@@ -1076,18 +1124,18 @@ class ChatFeed:
                             ui.button(
                                 "항상 허용", icon="bookmark_added",
                                 on_click=lambda _e, rid=request_id: self._answer_approval(rid, "allow_always"),
-                            ).props("flat dense no-caps color=sky-3 size=sm").tooltip(
+                            ).props(f"flat dense no-caps color=sky-3 {DECISION_BUTTON_SIZE}").tooltip(
                                 "위 범위를 conf.json의 tool_security.allow에 영구 저장합니다 (서버 환경에서만 지원)."
                             )
                     ui.element("div").classes("w-3")
                     ui.button(
                         "거부", icon="block",
                         on_click=lambda _e, rid=request_id: self._answer_approval(rid, "deny"),
-                    ).props("unelevated dense no-caps color=red-9 size=sm")
+                    ).props(f"unelevated dense no-caps color=red-9 {DECISION_BUTTON_SIZE}")
                     ui.button(
                         "이 대화에서 거부", icon="playlist_remove",
                         on_click=lambda _e, rid=request_id: self._answer_approval(rid, "deny_session"),
-                    ).props("flat dense no-caps color=red-4 size=sm").tooltip(
+                    ).props(f"flat dense no-caps color=red-4 {DECISION_BUTTON_SIZE}").tooltip(
                         "위 범위를 현재 대화에서 확인 없이 자동으로 거부합니다. 다음 턴에도 유지되며, "
                         "로스터의 '대화 규칙'에서 삭제하실 수 있습니다."
                     )
@@ -1095,7 +1143,7 @@ class ChatFeed:
                         ui.button(
                             "항상 거부", icon="gpp_bad",
                             on_click=lambda _e, rid=request_id: self._answer_approval(rid, "deny_always"),
-                        ).props("flat dense no-caps color=red-4 size=sm").tooltip(
+                        ).props(f"flat dense no-caps color=red-4 {DECISION_BUTTON_SIZE}").tooltip(
                             "위 범위를 conf.json의 tool_security.deny에 영구 저장합니다 (서버 환경에서만 지원). "
                             "기본 거부 목록은 그대로 유지됩니다."
                         )
@@ -1144,7 +1192,7 @@ class ChatFeed:
         """계획 승인 카드를 띄우거나(`info`) 걷습니다(None).
 
         같은 요청의 카드가 이미 떠 있으면 **그대로 둡니다**. 스냅샷 복원이나 다시 붙기로 같은
-        카드가 한 번 더 들어오는 일이 흔한데, 그때마다 다시 그리면 사람이 고치던 과업과 적던
+        카드가 한 번 더 들어오는 일이 흔한데, 그때마다 다시 그리면 사람이 고치던 태스크와 적던
         의견이 사라집니다.
         """
         request_id = str((info or {}).get("id") or "")
@@ -1174,7 +1222,7 @@ class ChatFeed:
                         f"{COUNTDOWN_CLASSES} text-emerald-300"
                     )
                 ui.label(
-                    "승인하시기 전에는 어떤 전문가도 발언하지 않습니다. 과업과 완료 기준은 여기서 "
+                    "승인하시기 전에는 어떤 전문가도 발언하지 않습니다. 태스크와 완료 기준은 여기서 "
                     "직접 고쳐 그대로 승인하실 수 있습니다."
                 ).classes("text-emerald-100")
                 if notice:
@@ -1182,7 +1230,8 @@ class ChatFeed:
                 plan_body = str(info.get("plan") or "").strip()
                 if plan_body:
                     # 피드의 오케스트레이터 발언과 같은 글입니다. 카드와 피드를 오가지 않고 읽습니다.
-                    with ui.expansion("계획 본문 보기", icon="article").classes(
+                    # 펼친 채로 엽니다 — 승인하려는 것이 이 글이라, 접어 두면 읽지 않고 누르게 됩니다.
+                    with ui.expansion("계획 본문 보기", icon="article", value=True).classes(
                         "w-full text-xs text-slate-300"
                     ):
                         MathMarkdown(plan_body).classes("text-xs text-slate-200")
@@ -1196,14 +1245,24 @@ class ChatFeed:
                         who += f" ({task['role']})"
                     proposed = str(task.get("task") or "")
                     alternatives = [str(a) for a in task.get("alternatives") or [] if str(a).strip()]
-                    with ui.column().classes(PLAN_TASK_CLASSES):
+                    # 첫 섹션 뒤부터 위에 빈 줄을 둡니다 (`entry["tasks"]` 에는 앞서 그린 섹션이 있습니다).
+                    # 세로 막대는 그 전문가의 색입니다 — 피드의 발언 카드·로스터 카드의 아바타와 같은
+                    # 색이라, 이름을 읽기 전에 누구의 섹션인지 알아봅니다.
+                    bar_class, bar_style = background_paint(self._style_for(row["agent"])["color"])
+                    with ui.column().classes(
+                        PLAN_TASK_CLASSES + (f" {PLAN_TASK_GAP}" if entry["tasks"] else "")
+                    ):
+                        ui.element("div").classes(
+                            f"{PLAN_TASK_BAR_CLASSES} {bar_class}".strip()
+                        ).style(bar_style)
                         ui.label(who).classes("font-semibold text-slate-100")
                         row["task"] = ui.textarea(
-                            label="과업" if proposed else "과업 (비워 두면 계획 본문을 따릅니다)",
-                            value=proposed,
-                        ).props("outlined dense dark autogrow rows=1").classes("w-full text-xs")
+                            label="태스크", value=proposed,
+                        ).props("outlined dense dark autogrow rows=1").classes(
+                            "w-full text-xs"
+                        ).tooltip(PLAN_TASK_HINT)
                         if alternatives:
-                            # 고른 글이 과업 칸에 들어갑니다. 그 뒤에 더 고쳐 쓸 수도 있습니다.
+                            # 고른 글이 태스크 칸에 들어갑니다. 그 뒤에 더 고쳐 쓸 수도 있습니다.
                             choices = [proposed] + alternatives
                             labels = {0: f"권장: {proposed}"}
                             labels.update({i: f"대안 {i}: {text}" for i, text in enumerate(alternatives, 1)})
@@ -1212,36 +1271,59 @@ class ChatFeed:
                                 on_change=lambda e, box=row["task"], options=choices: box.set_value(
                                     options[int(e.value or 0)]
                                 ),
-                            ).props("dense dark size=xs").classes("text-xs text-slate-300")
+                            ).props(f"dense dark {PLAN_RADIO_SIZE}").classes("text-xs text-slate-300")
+                        # 비어 있는 칸을 펼쳐 두면 채워야 하는 칸처럼 보입니다. 완료 기준과 의견은
+                        # 버튼으로 접어 두고, 누른 사람에게만 엽니다. 제안된 완료 기준이 있으면 그
+                        # 칸은 처음부터 보입니다 — 승인하는 내용의 일부이기 때문입니다.
+                        done_when = str(task.get("done_when") or "")
+                        with ui.row().classes("w-full items-center gap-1.5"):
+                            if not done_when:
+                                ui.button(
+                                    "완료 기준 추가", icon="add",
+                                    on_click=lambda _e, r=row: self._toggle_plan_field(r["done_when"]),
+                                ).props(PLAN_TOGGLE_PROPS).classes("font-bold").tooltip(
+                                    PLAN_DONE_WHEN_HINT
+                                )
+                            ui.button(
+                                "의견", icon="chat_bubble_outline",
+                                on_click=lambda _e, r=row: self._toggle_plan_field(r["comment"]),
+                            ).props(PLAN_TOGGLE_PROPS).classes("font-bold").tooltip(PLAN_COMMENT_HINT)
                         row["done_when"] = ui.input(
-                            label="완료 기준 (선택 사항) — 끝났을 때 무엇이 있거나 참인지",
-                            value=str(task.get("done_when") or ""),
-                        ).props("outlined dense dark").classes("w-full text-xs")
+                            label="태스크 완료 기준", value=done_when,
+                        ).props("outlined dense dark").classes("w-full text-xs").tooltip(
+                            PLAN_DONE_WHEN_HINT
+                        )
+                        row["done_when"].set_visibility(bool(done_when))
                         row["comment"] = ui.input(
-                            label="의견 — 적으시면 오케스트레이터가 계획을 다시 씁니다",
+                            label="의견",
                             on_change=lambda _e: self._refresh_plan_buttons(),
-                        ).props("outlined dense dark").classes("w-full text-xs")
+                        ).props("outlined dense dark").classes("w-full text-xs").tooltip(
+                            PLAN_COMMENT_HINT
+                        )
+                        row["comment"].set_visibility(False)
                     entry["tasks"].append(row)
 
                 entry["comment"] = ui.textarea(
-                    label="계획 전체에 대한 의견 — 적으시면 오케스트레이터가 계획을 다시 씁니다",
+                    label="계획 전체에 대한 의견",
                     on_change=lambda _e: self._refresh_plan_buttons(),
-                ).props("outlined dense dark autogrow rows=1").classes("w-full text-xs")
+                ).props("outlined dense dark autogrow rows=1").classes("w-full text-xs").tooltip(
+                    PLAN_COMMENT_HINT
+                )
 
                 with ui.row().classes("w-full items-center gap-1 flex-wrap justify-end"):
                     ui.label(
-                        "의견을 적으시면 [승인] 대신 [수정 요청] 버튼이 나타납니다."
+                        "의견을 적으면 [승인] 대신 [수정 요청] 버튼이 나타납니다."
                     ).classes("text-slate-400 mr-auto")
                     entry["approve"] = ui.button(
                         "승인", icon="check",
                         on_click=lambda _e: self._answer_plan("approve"),
-                    ).props("unelevated dense no-caps color=emerald-7 size=sm").tooltip(
-                        "위 과업과 완료 기준 그대로 토론을 시작합니다. 직접 고치신 내용이 그대로 반영됩니다."
+                    ).props(f"unelevated dense no-caps color=emerald-7 {DECISION_BUTTON_SIZE}").tooltip(
+                        "위 태스크와 완료 기준 그대로 토론을 시작합니다. 직접 고치신 내용이 그대로 반영됩니다."
                     )
                     entry["revise"] = ui.button(
                         "수정 요청", icon="edit_note",
                         on_click=lambda _e: self._answer_plan("revise"),
-                    ).props("unelevated dense no-caps color=amber-8 size=sm").tooltip(
+                    ).props(f"unelevated dense no-caps color=amber-8 {DECISION_BUTTON_SIZE}").tooltip(
                         "적으신 의견과 고치신 내용을 오케스트레이터에게 전달하여 계획을 다시 쓰게 합니다. "
                         "다시 쓴 계획으로 승인 카드가 한 번 더 열립니다."
                     )
@@ -1251,7 +1333,7 @@ class ChatFeed:
                         ui.element("div").classes("w-3")
                         ui.button(
                             "거부", icon="undo", on_click=lambda _e: self._handle_abort(),
-                        ).props("flat dense no-caps color=red-4 size=sm").tooltip(
+                        ).props(f"flat dense no-caps color=red-4 {DECISION_BUTTON_SIZE}").tooltip(
                             "이 요청과 계획을 기록에서 지우고, 요청 내용을 입력창으로 되돌립니다."
                         )
 
@@ -1260,6 +1342,16 @@ class ChatFeed:
         self.plan_column.set_visibility(True)
         self._refresh_plan_buttons()
         self._tick_plan_countdown()
+
+    @staticmethod
+    def _toggle_plan_field(box: Any) -> None:
+        """접어 둔 칸을 열거나 다시 접습니다 (`toggled_visibility`). 열면 그 칸에 커서를 둡니다."""
+        if box is None or box.is_deleted:
+            return
+        show = toggled_visibility(bool(box.visible), box.value)
+        box.set_visibility(show)
+        if show:
+            box.run_method("focus")
 
     def clear_plan_approval(self, request_id: Optional[str] = None) -> None:
         """계획 승인 카드를 걷습니다. `request_id` 를 주면 그 요청의 카드일 때만 걷습니다."""
@@ -1274,7 +1366,7 @@ class ChatFeed:
             self.plan_column.set_visibility(False)
 
     def _plan_comments(self) -> Tuple[str, Dict[str, str]]:
-        """카드에 적힌 의견 — (계획 전체, 전문가 키 → 과업별)."""
+        """카드에 적힌 의견 — (계획 전체, 전문가 키 → 태스크별)."""
         entry = self._plan_card or {}
         overall_box = entry.get("comment")
         overall = str(overall_box.value or "").strip() if overall_box is not None else ""
@@ -1803,14 +1895,14 @@ class ChatFeed:
                         with ui.row().classes("items-center gap-2"):
                             ui.label(sender_name).classes("text-sm font-bold text-slate-100")
                             if sender_role:
-                                ui.badge(sender_role, color=style["color"]).props("dense text-[10px]")
-                            failed_badge = ui.badge("응답 없음", color="red-9").props("dense text-[10px]")
+                                ui.badge(sender_role, color=style["color"]).props("dense text-[12px]")
+                            failed_badge = ui.badge("응답 없음", color="red-9").props("dense text-[12px]")
                             failed_badge.set_visibility(msg_type == "error")
                         # 발언 시작·종료 시각. 이름 밑에 작게 둡니다 — 오른쪽 버튼 줄에
                         # 넣으면 좁은 화면에서 라운드 배지와 버튼을 밀어냅니다.
                         time_text, time_full = card_time_text(msg)
                         time_label = ui.label(time_text).classes(
-                            "text-[10px] font-mono text-slate-400 leading-tight"
+                            "text-[12px] font-mono text-slate-400 leading-tight"
                         )
                         with time_label:
                             time_tip = ui.tooltip(time_full)
@@ -1818,21 +1910,21 @@ class ChatFeed:
 
                 with ui.row().classes("items-center gap-1 no-wrap flex-shrink-0"):
                     if node_badge:
-                        ui.badge(node_badge, color="teal-10").props("dense text-[10px]").classes(
+                        ui.badge(node_badge, color="teal-10").props("dense text-[12px]").classes(
                             "text-teal-100"
                         ).tooltip("그래프 토론에서 해당 발언을 생성한 노드입니다.")
                     if round_num > 0:
                         # 그래프 토론의 라운드는 단계입니다 (상태 줄의 "N단계" 와 같은 수).
                         round_word = "Step" if msg.get("graph_node_id") else "Round"
-                        ui.badge(f"{round_word} {round_num}", color="slate-700").props("dense text-[10px]")
+                        ui.badge(f"{round_word} {round_num}", color="slate-700").props("dense text-[12px]")
                     ui.button(
                         icon="content_copy", on_click=lambda: self._copy_card(info)
-                    ).props("flat dense round size=sm color=slate-4").tooltip(
+                    ).props("flat dense round size=12px color=slate-4").tooltip(
                         "해당 발언을 클립보드에 복사합니다."
                     )
                     expand_btn = ui.button(
                         icon="unfold_more", on_click=lambda: self._toggle_card(info)
-                    ).props("flat dense round size=sm color=slate-4")
+                    ).props("flat dense round size=12px color=slate-4")
                     # 툴팁은 여기서 한 번만 만들고 이후에는 문구만 갈아 끼웁니다.
                     # 접힘 상태가 바뀔 때마다 `tooltip()` 을 부르면 그때의 슬롯에
                     # 새 q-tooltip 이 쌓입니다.

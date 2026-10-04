@@ -205,5 +205,5 @@ def _file_loader(field: ui.element, max_bytes: int) -> None:
         on_rejected=lambda _: ui.notify(f"파일 용량이 초과되었습니다 (최대 {max_bytes // 1024:,}KB).", type="warning"),
     ).props("accept=.txt,.md,.markdown,.csv,.log").classes("hidden")
     ui.button("텍스트 파일에서 가져오기", icon="upload_file", on_click=lambda: upload.run_method("pickFiles")).props(
-        "flat dense no-caps size=sm color=grey-5"
+        "flat dense no-caps size=12px color=grey-5"
     ).classes("self-start")

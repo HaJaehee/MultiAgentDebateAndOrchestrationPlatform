@@ -251,7 +251,7 @@ def test_the_trim_notice_carries_the_memory_hint():
 
 ANCHOR = (
     "[Session Decision Ledger]: 장부\n## 결정 사항\n- LEDGER-7731 FastAPI 로 간다\n\n"
-    "[Debate Progress]: Round 2 of 3.\n\n이제 Coder 님의 차례입니다. TURN-4412 과업: 캐시 구현"
+    "[Debate Progress]: Round 2 of 3.\n\n이제 Coder 님의 차례입니다. TURN-4412 태스크: 캐시 구현"
 )
 
 
@@ -400,7 +400,7 @@ async def test_every_request_of_a_long_tool_loop_carries_the_ledger_and_the_inst
     prompt = [
         {"role": "user", "content": "목표"},
         {"role": "assistant", "content": "[Coder]: 1라운드 발언"},
-        {"role": "user", "content": "이제 Coder 님의 차례입니다. TURN-4412 과업: 캐시 구현"},
+        {"role": "user", "content": "이제 Coder 님의 차례입니다. TURN-4412 태스크: 캐시 구현"},
     ]
     trims = []
     with patch("litellm.acompletion", side_effect=fake_acompletion):
