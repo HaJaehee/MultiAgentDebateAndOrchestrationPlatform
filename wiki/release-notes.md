@@ -6,6 +6,22 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## Unreleased
+
+**Plan approval.** After the orchestrator's plan the engine opens an approval card and no specialist speaks
+until a human answers. The card lists one task per specialist (taken from the plan by one extra tool-less
+call), with an optional completion criterion and, where the choice is a matter of preference, alternatives.
+The human edits tasks and criteria in place and approves in one click; writing a comment swaps the approve
+button for a revise button, and the orchestrator rewrites the plan (the rewritten plan replaces the old one
+in every later prompt). Rejecting runs the existing abort. With no answer within `plan_approval.timeout`
+(default 10 minutes) the turn is parked with nothing executed and "이어서 진행" reopens the same card.
+Approved tasks are pinned with the plan, appended to each specialist's turn prompt and carried by routing
+calls; the synthesis prompt lists each task with what the records show (speeches counted, response failures)
+and the report gains a per-task completion check. `plan_approval.enabled = false` restores the old flow, and
+a run with no human channel is not gated. This is the planning harness's plan → approval → execute → check
+loop moved into the engine, where the model cannot skip it.
+→ [Plan Approval](orchestration/plan-approval.md) · ADR-028
+
 ## v1.1.2
 
 **Long files are appended, not edited into place.** The bundled sandbox is now AirgappedPySandbox v0.8.0,

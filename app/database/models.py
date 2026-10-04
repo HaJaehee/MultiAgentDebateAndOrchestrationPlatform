@@ -115,7 +115,8 @@ class TurnModel(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
     status: Mapped[str] = mapped_column(String(20), default=TURN_RUNNING, nullable=False)
-    # planning · debating · synthesizing · completed. 끊긴 턴을 어디서부터 이을지 정하는 첫 근거입니다.
+    # planning · approval · debating · synthesizing · completed. 끊긴 턴을 어디서부터 이을지 정하는 첫
+    # 근거입니다. `approval` 은 계획 승인을 기다리는 중입니다 (ADR-028) — 아직 아무도 발언하지 않았습니다.
     phase: Mapped[str] = mapped_column(String(20), default="planning", nullable=False)
     opening_message_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     # 턴이 시작될 때의 구성 — 참여자·전략·라운드 수·동시 실행 상한·커스텀 지침·작업 공간.

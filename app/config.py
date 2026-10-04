@@ -566,6 +566,31 @@ class ToolSecurityConfig(BaseModel):
         return _validate_rule_list(v)
 
 
+class PlanApprovalConfig(BaseModel):
+    """계획 승인 설정 (`plan_approval`, ADR-028).
+
+    켜면 오케스트레이터의 계획(0라운드)이 나온 뒤 토론을 시작하기 **전에** 사람의 승인을
+    받습니다. 사람은 승인 카드에서 전문가별 과업을 직접 고치거나, 의견을 적어 계획을 다시
+    쓰게 하거나, 요청을 되돌릴 수 있습니다. 도구 보안처럼 **지금의** 설정을 읽으므로 진행
+    중인 대화에도 다음 턴부터 걸립니다.
+
+    답할 사람이 없는 실행(화면 없이 엔진만 부른 경우)에는 걸리지 않습니다 — 계획 자체는
+    아무것도 실행하지 않고, 위험한 도구 호출은 도구 보안이 따로 막습니다.
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description="계획이 나온 뒤 토론을 시작하기 전에 사람의 승인을 받습니다.",
+    )
+    timeout: float = Field(
+        default=600.0, ge=30, le=86400,
+        description=(
+            "승인 카드에 답이 없으면 이 시간(초)이 지나 턴을 멈춰 둡니다. 아무것도 실행하지 "
+            "않으며, '이어서 진행' 을 누르면 같은 계획으로 승인 카드가 다시 열립니다."
+        ),
+    )
+
+
 class LLMConfig(BaseModel):
     """Global LLM defaults (the "llm" object). Every agent inherits these unless it overrides them."""
 
@@ -755,6 +780,7 @@ class RootConfig(BaseModel):
     mcp_servers: Dict[str, MCPServerConfig] = Field(default_factory=dict)
     agents: Dict[str, AgentConfig] = Field(default_factory=dict)
     tool_security: ToolSecurityConfig = Field(default_factory=ToolSecurityConfig)
+    plan_approval: PlanApprovalConfig = Field(default_factory=PlanApprovalConfig)
     trial: TrialConfig = Field(default_factory=TrialConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
 

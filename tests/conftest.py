@@ -48,6 +48,35 @@ def real_mcp_runtimes():
 
 
 @pytest.fixture(autouse=True)
+def _no_plan_approval(request, monkeypatch):
+    """계획 승인(ADR-028)을 끈 채로 돕니다.
+
+    승인은 기본으로 켜져 있고, 러너로 도는 테스트에는 답할 사람이 없습니다. 그대로 두면 그런
+    테스트가 전부 승인 카드 앞에서 대기 시간(기본 10분)만큼 멈춥니다. 승인을 확인하는
+    테스트는 `plan_approval` 픽스처를 받아 켭니다.
+    """
+    if "plan_approval" in request.fixturenames:
+        return
+    from app.config import PlanApprovalConfig
+    from app.orchestration import engine as engine_module
+
+    monkeypatch.setattr(
+        engine_module, "plan_approval_settings", lambda: PlanApprovalConfig(enabled=False)
+    )
+
+
+@pytest.fixture
+def plan_approval(monkeypatch):
+    """계획 승인을 켠 테스트가 받는 설정. 값을 고치면 그 테스트의 다음 계획부터 걸립니다."""
+    from app.config import PlanApprovalConfig
+    from app.orchestration import engine as engine_module
+
+    settings = PlanApprovalConfig(enabled=True, timeout=30)
+    monkeypatch.setattr(engine_module, "plan_approval_settings", lambda: settings)
+    return settings
+
+
+@pytest.fixture(autouse=True)
 def _never_touch_the_real_database():
     """DB 엔진이 아직 없으면 메모리 DB 로 먼저 만들어 둡니다.
 

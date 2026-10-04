@@ -27,6 +27,7 @@ from app.config import resolve_workspace_dir
 from app.orchestration.control import TurnControl
 from app.orchestration.engine import OrchestratorEngine, get_orchestrator_engine
 from app.orchestration.graph_run import GraphRunTracker
+from app.orchestration.plan_gate import PlanApprovalExpired
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,12 @@ class TurnRun:
         # 동시에 떠 있을 수 있습니다 — 병렬 라운드의 발언자마다 하나씩. 스냅샷에 들어가
         # 새로고침한 화면과 원격 화면에서도 같은 카드가 보입니다.
         self.approvals: List[Dict[str, Any]] = []
+
+        # 계획 승인 카드 (ADR-028). 한 턴에 많아야 하나입니다. 답할 수 있는 시간이 길어
+        # (기본 10분) 그 사이 새로고침하거나 다른 화면에서 붙는 일이 흔하므로, 스냅샷에 둡니다.
+        self.plan_approval: Optional[Dict[str, Any]] = None
+        # 승인을 기다리다 답이 없어 멈춰 둔 실행인지. 오류로 멈춘 것과 구분해 알립니다.
+        self.parked: bool = False
 
         # 컨텍스트 한도로 생략된 기록의 누적 건수. 화면이 "얼마나 잃었는지" 를
         # 계속 보여주기 위해 스냅샷에 남깁니다.
@@ -231,6 +238,28 @@ class TurnRun:
             return False
         return self.control.resolve_tool_approval(
             request_id, decision, scope=scope, reason=reason, approver=approver,
+        )
+
+    def resolve_plan_approval(
+        self,
+        request_id: str,
+        decision: str,
+        *,
+        tasks: Optional[List[Dict[str, Any]]] = None,
+        comment: str = "",
+        task_comments: Optional[Dict[str, str]] = None,
+        approver: str = "",
+    ) -> bool:
+        """계획 승인 카드에 답합니다 (ADR-028). 쓸 수 없는 답이면 ValueError (화면이 알립니다).
+
+        카드는 여기서 걷지 않습니다. 기다리던 엔진이 깨어나 `plan_approval_resolved` 를
+        보내면 그때 걷힙니다 — 같은 대화를 보는 다른 화면도 그 이벤트로 함께 걷습니다.
+        """
+        if self.status != "running":
+            return False
+        return self.control.resolve_plan_approval(
+            request_id, decision, tasks=tasks, comment=comment,
+            task_comments=task_comments, approver=approver,
         )
 
     # -------------------------------------------------- 상태 적용
@@ -375,6 +404,37 @@ class TurnRun:
             if not self.approvals:
                 self.round_info = "Debating"
 
+        elif etype == "plan_tasks_started":
+            self.busy = True
+            self.status_text = self._pending_prefix(
+                f"[{event.get('agent_name', '')}] 승인받을 과업 분담표를 정리하는 중..."
+            )
+            self.round_info = "Plan"
+
+        elif etype == "plan_approval_requested":
+            self.plan_approval = {k: v for k, v in event.items() if k != "type"}
+            self.busy = True
+            self.status_text = (
+                "계획 승인을 기다립니다 — 과업을 확인하고 승인하시거나, 의견을 적어 수정을 요청해 주십시오."
+            )
+            self.round_info = "Plan approval"
+
+        elif etype == "plan_approval_resolved":
+            shown_id = (self.plan_approval or {}).get("id")
+            if not event.get("id") or event.get("id") == shown_id:
+                self.plan_approval = None
+            decision = event.get("decision")
+            if decision == "approve":
+                text = "계획을 승인했습니다. 토론을 시작합니다."
+            elif decision == "revise":
+                text = "계획 수정을 요청했습니다. 오케스트레이터가 계획을 다시 씁니다."
+            elif decision == "timeout":
+                text = "계획 승인에 응답이 없어 턴을 멈춰 둡니다. 아무것도 실행되지 않았습니다."
+            else:
+                text = "계획 승인을 기다리던 중 정지가 요청되었습니다."
+            self.status_text = self._pending_prefix(text)
+            self.round_info = "Planning" if decision == "revise" else "Debating"
+
         elif etype == "context_window_exhausted":
             self.decision_request = {k: v for k, v in event.items() if k != "type"}
             self.busy = True
@@ -492,6 +552,7 @@ class TurnRun:
             self.streaming_ids.clear()
             self.decision_request = None
             self.approvals = []
+            self.plan_approval = None
             failed = event.get("failed_agents") or []
             if failed:
                 self.status_text = f"토론 완료 — 응답하지 못한 에이전트: {', '.join(failed)}"
@@ -536,6 +597,7 @@ class TurnRun:
             # 예전 이름. 스냅샷을 읽는 오래된 코드가 있어도 깨지지 않게 둡니다.
             "budget_request": dict(self.decision_request) if self.decision_request else None,
             "tool_approvals": [dict(a) for a in self.approvals],
+            "plan_approval": dict(self.plan_approval) if self.plan_approval else None,
             "context_dropped": self.context_dropped,
             "decision_ledger": self.decision_ledger,
             "graph": self.graph.to_state() if self.graph is not None else None,
@@ -645,6 +707,14 @@ class DebateRunner:
                 run.status = "cancelled"
                 run.error = "토론이 취소되었습니다."
                 raise
+            except PlanApprovalExpired as exc:
+                # 오류가 아니라 대기의 끝입니다 (ADR-028). 턴은 끊긴 턴과 같은 모양으로 남아
+                # 이어 가거나 버릴 수 있습니다. 실행은 끝났으므로 상태는 "failed" 로 두되,
+                # 화면이 오류로 알리지 않도록 표시를 따로 둡니다.
+                logger.info(f"Debate turn for session {session_id} is parked: {exc}")
+                run.status = "failed"
+                run.parked = True
+                run.error = str(exc)
             except BaseException as exc:  # noqa: BLE001 - 어떤 실패든 화면에 알려야 합니다
                 # `Exception` 이 아니라 `BaseException` 입니다. anyio 로 도구
                 # 서버를 다루는 경로는 `BaseExceptionGroup` 을 올리는데, 그건
@@ -661,7 +731,11 @@ class DebateRunner:
             finally:
                 run.busy = False
                 run.streaming_ids.clear()
-                if run.status == "failed":
+                run.plan_approval = None
+                if run.parked:
+                    run.status_text = str(run.error or "")
+                    run.round_info = "Waiting"
+                elif run.status == "failed":
                     run.status_text = f"오류로 중단됨: {run.error}"
                     run.round_info = "Error"
                 elif run.status == "cancelled":
@@ -672,6 +746,7 @@ class DebateRunner:
                         "type": "run_finished",
                         "status": run.status,
                         "error": run.error,
+                        "parked": run.parked,
                     })
                 except BaseException:  # noqa: BLE001 - 알리다 실패해도 태스크는 조용히 끝냅니다
                     logger.warning(
@@ -769,6 +844,19 @@ class DebateRunner:
             return False
         return run.resolve_tool_approval(
             request_id, decision, scope=scope, reason=reason, approver=approver,
+        )
+
+    def resolve_plan_approval(self, session_id: str, request_id: str, decision: str, *,
+                              tasks: Optional[List[Dict[str, Any]]] = None, comment: str = "",
+                              task_comments: Optional[Dict[str, str]] = None,
+                              approver: str = "") -> bool:
+        """계획 승인 카드에 답합니다 (`TurnRun.resolve_plan_approval`)."""
+        run = self._runs.get(session_id)
+        if run is None:
+            return False
+        return run.resolve_plan_approval(
+            request_id, decision, tasks=tasks, comment=comment,
+            task_comments=task_comments, approver=approver,
         )
 
     async def cancel(self, session_id: str) -> bool:

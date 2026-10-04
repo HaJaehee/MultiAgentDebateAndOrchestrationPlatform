@@ -157,6 +157,7 @@ class TrialSessionScreen:
                             on_interject=self.interject,
                             on_stop=self.stop,
                             on_decision=self.decide,
+                            on_plan_approval=self.approve_plan,
                             on_resume_turn=self.resume,
                         )
                         self.feed.build_ui()
@@ -167,6 +168,10 @@ class TrialSessionScreen:
                         self.feed.set_stop_pending(bool(run.control.stop_requested))
                         if run.decision_request:
                             self.feed.set_decision_request(dict(run.decision_request))
+                        # 계획 승인을 기다리는 중에 이 화면을 열었습니다 (ADR-028). 체험을 시작한
+                        # 화면에서 넘어오면 늘 이 경우입니다.
+                        if run.plan_approval:
+                            self.feed.set_plan_approval(dict(run.plan_approval))
                     else:
                         self.feed.set_unfinished_turn(unfinished)
 
@@ -184,7 +189,8 @@ class TrialSessionScreen:
                 ui.label(f"발언 {self.total_speeches}개").classes("text-xs text-slate-500")
             return
         steps = ["계획"] + [f"토론 {i}" for i in range(1, self.max_rounds + 1)] + ["정리"]
-        if self.phase == "planning":
+        if self.phase in ("planning", "parked"):
+            # "parked" 는 계획 승인에 답이 없어 멈춰 둔 요청입니다 (ADR-028). 아직 계획 단계입니다.
             now = 0
         elif self.phase == "debating":
             now = min(max(self.round, 1), self.max_rounds)
@@ -198,6 +204,7 @@ class TrialSessionScreen:
                 ui.label(name).classes(f"trial-step {css}")
             tail = {
                 "done": "완료", "failed": "오류 발생", "cancelled": "취소됨",
+                "parked": "승인 대기 종료",
             }.get(self.phase)
             if tail:
                 color = "text-emerald-300" if self.phase == "done" else "text-amber-300"
@@ -445,6 +452,25 @@ class TrialSessionScreen:
     async def decide(self, extra: int, request_id: str) -> None:
         self.runner.resolve_decision(self.session_id, extra, request_id)
 
+    async def approve_plan(
+        self, request_id: str, decision: str, tasks: List[Dict[str, Any]],
+        comment: str, task_comments: Dict[str, str],
+    ) -> bool:
+        """계획 승인 카드의 답을 토론에 전합니다 (ADR-028). 받아들여졌으면 True."""
+        try:
+            accepted = self.runner.resolve_plan_approval(
+                self.session_id, request_id, decision,
+                tasks=tasks, comment=comment, task_comments=task_comments, approver="remote",
+            )
+        except ValueError as exc:
+            ui.notify(str(exc), type="warning", multi_line=True)
+            return False
+        if not accepted:
+            if self.feed is not None:
+                self.feed.clear_plan_approval(request_id)
+            ui.notify("이미 처리된 요청입니다 (대기 시간이 끝났거나 토론이 종료되었습니다).", type="warning")
+        return accepted
+
     # ------------------------------------------------------------ 구독
 
     def attach(self, run: TurnRun) -> None:
@@ -528,6 +554,19 @@ class TrialSessionScreen:
             feed.set_busy(True, f"[{event.get('agent_name', '')}] 한도에 도달하여 사용자의 선택을 기다리는 중입니다.", "선택 대기")
         elif etype in ("tool_budget_resolved", "context_window_resolved"):
             feed.clear_budget_request(event.get("id"))
+        elif etype == "plan_tasks_started":
+            feed.set_busy(True, "승인받을 과업 분담표를 정리하는 중입니다...", "계획")
+        elif etype == "plan_approval_requested":
+            # 승인하기 전에는 아무도 발언하지 않습니다 (ADR-028).
+            feed.set_plan_approval({k: v for k, v in event.items() if k != "type"})
+            feed.set_busy(True, "계획 승인 대기 — 과업을 확인하고 승인하시거나, 의견을 적어 수정을 요청해 주십시오.", "승인 대기")
+            ui.notify("계획이 승인을 기다리고 있습니다. 승인하시기 전에는 토론이 시작되지 않습니다.", type="warning")
+        elif etype == "plan_approval_resolved":
+            feed.clear_plan_approval(event.get("id"))
+            if event.get("decision") == "approve":
+                feed.set_busy(True, "계획을 승인하였습니다. 토론을 시작합니다.", "진행 중")
+            elif event.get("decision") == "revise":
+                feed.set_busy(True, "계획 수정을 요청하였습니다. 오케스트레이터가 계획을 다시 작성합니다.", "계획")
         elif etype == "ledger_update_started":
             feed.set_busy(True, "합의 사항과 잔여 쟁점을 정리하는 중입니다...", "정리")
         elif etype == "context_summarizing":
@@ -546,7 +585,16 @@ class TrialSessionScreen:
                 feed.set_busy(False, "토론 완료", "완료")
         elif etype == "run_finished":
             status = event.get("status")
-            if status == "failed":
+            if event.get("parked"):
+                # 계획 승인에 답이 없어 멈춰 둔 것입니다 (ADR-028). 오류가 아니고, 아무것도 실행되지 않았습니다.
+                self.phase = "parked"
+                feed.set_busy(False, str(event.get("error") or ""), "대기 종료")
+                ui.notify(
+                    "계획 승인에 응답이 없어 요청을 멈춰 두었습니다. '이어서 진행'을 누르시면 승인 카드가 다시 열립니다.",
+                    type="warning",
+                )
+                feed.set_unfinished_turn(await self._unfinished())
+            elif status == "failed":
                 self.phase = "failed"
                 feed.set_busy(False, f"오류로 인해 중단되었습니다: {event.get('error') or '알 수 없는 오류'}", "오류")
                 ui.notify("토론이 오류로 중단되었습니다. 잠시 후 이어서 진행하거나 다시 요청해 주십시오.", type="negative")

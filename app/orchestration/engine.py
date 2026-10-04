@@ -26,7 +26,14 @@ from app.agents.personas import prepare_agents_for_turn
 from app.agents.skills import skill_tools_for, visible_skill_names, with_designated_skills
 from app.agents.pool import AgentPool, get_agent_pool
 from app.timestamps import report_completed_line, to_local
-from app.config import DATA_DIR, SKILL_NAME_PATTERN, TOOL_ITERATION_CEILING, resolve_workspace_dir
+from app.config import (
+    DATA_DIR,
+    SKILL_NAME_PATTERN,
+    TOOL_ITERATION_CEILING,
+    PlanApprovalConfig,
+    get_config,
+    resolve_workspace_dir,
+)
 from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
 from app.mermaid_lint import diagram_kind, format_issues, lint_mermaid
@@ -45,7 +52,7 @@ from app.database.models import (
 )
 from app.database.session import get_session_factory
 from app.orchestration import context_memory as memory
-from app.orchestration import turns
+from app.orchestration import plan_gate, turns
 from app.orchestration.graph import (
     CARRY_LABELS,
     Activation,
@@ -69,6 +76,20 @@ from app.orchestration.strategies import (
 logger = logging.getLogger(__name__)
 
 EventCallback = Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]
+
+
+def plan_approval_settings() -> PlanApprovalConfig:
+    """계획 승인 설정 (ADR-028). 도구 보안처럼 **지금의** conf.json 에서 읽습니다.
+
+    대화가 시작된 뒤에 켜거나 끈 것도 다음 계획부터 걸려야 합니다 (에이전트 설정처럼 대화에
+    고정되지 않습니다). 설정을 읽지 못하면 켠 것으로 봅니다 — 승인을 건너뛰는 쪽으로 틀리면
+    확인받지 않은 계획이 그대로 돕니다.
+    """
+    try:
+        return get_config().plan_approval
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Could not read plan_approval settings; keeping the gate on: {exc}")
+        return PlanApprovalConfig()
 
 
 @dataclass
@@ -1603,6 +1624,12 @@ class OrchestratorEngine:
             # 4. Phase 1: Master Orchestrator Goal Analysis & Planning
             plan_message = await self._plan(db, state, setup, on_event=on_event, control=control)
 
+            # 4-b. 계획 승인 (ADR-028). 사람이 계획을 확인하기 전에는 아무도 발언하지 않습니다.
+            # 수정을 요청하면 계획이 다시 쓰이므로, 토론은 여기서 돌려받은 계획에서 시작합니다.
+            plan_message = await self._approve_plan(
+                db, state, setup, plan_message, on_event=on_event, control=control,
+            )
+
             # 5. Phase 2: Multi-Round Specialist Debate Loop
             await self._set_turn(db, state, phase="debating")
             stopped_early = await self._debate(
@@ -1735,6 +1762,16 @@ class OrchestratorEngine:
                 plan_expected = setup.graph_spec is None or setup.graph_spec.start.plan
                 if plan_expected and not turns.count_kind(state.messages[start:], turns.KIND_PLAN):
                     await self._plan(db, state, setup, on_event=on_event, control=control)
+                # 승인을 받기 전에 끊긴 턴은 (답이 없어 멈춰 둔 턴도) 승인부터 다시 받습니다
+                # (ADR-028). 토론에 들어간 뒤에 끊긴 턴은 이미 승인됐거나 승인 없이 시작한 것입니다.
+                if (
+                    turn.phase in ("planning", "approval")
+                    and state.plan_index is not None and state.approval_index is None
+                ):
+                    await self._approve_plan(
+                        db, state, setup, state.messages[state.plan_index],
+                        on_event=on_event, control=control,
+                    )
                 await self._set_turn(db, state, phase="debating")
                 # 끊기기 전의 발언까지 장부에 접어 두고 이어 갑니다 (라운드 중간에 끊겼으면 장부가
                 # 그 라운드를 모릅니다). 새 발언이 없으면 부르지 않습니다.
@@ -1918,6 +1955,15 @@ class OrchestratorEngine:
         """끊긴 턴의 기록에서, 도는 동안 상태가 들고 있던 값을 다시 셉니다."""
         turn_messages = state.messages[state.turn_message_start:]
         state.plan_index = turns.plan_position(state.messages, state.turn_message_start)
+        # 승인은 그것이 가리키는 계획에만 유효합니다 (ADR-028). 승인 뒤에 계획이 바뀐 기록이면
+        # 승인받지 않은 것으로 봅니다.
+        state.plan_tasks, state.approval_index = [], None
+        approval = plan_gate.approval_record(state.messages, state.turn_message_start)
+        if approval is not None and state.plan_index is not None:
+            index, meta = approval
+            if meta.get("plan_id") == state.messages[state.plan_index].id:
+                state.plan_tasks = plan_gate.clean_tasks(meta.get("tasks"))
+                state.approval_index = index
         state.failed_agent_keys = turns.failed_agents(turn_messages)
         state.interjection_count = turns.count_kind(turn_messages, turns.KIND_INTERJECTION)
         state.current_round = max(
@@ -2042,7 +2088,11 @@ class OrchestratorEngine:
 
     async def _mark_turn_failed(self, turn_id: str, exc: BaseException) -> None:
         """예외로 멈춘 턴을 "실패" 로 적습니다. 새 DB 세션을 씁니다 — 멈춘 쪽 세션은 깨졌을 수 있습니다."""
-        reason = f"{type(exc).__name__}: {exc}".strip()
+        # 계획 승인을 기다리다 멈춘 턴은 오류가 아닙니다 (ADR-028). 사람이 읽을 문장만 적습니다.
+        reason = (
+            str(exc) if isinstance(exc, plan_gate.PlanApprovalExpired)
+            else f"{type(exc).__name__}: {exc}"
+        ).strip()
         try:
             async with self.session_factory() as db:
                 await db.execute(
@@ -2064,8 +2114,14 @@ class OrchestratorEngine:
         *,
         on_event: Optional[EventCallback],
         control: Optional[TurnControl],
+        revision: Optional[str] = None,
     ) -> Optional[DebateMessage]:
-        """오케스트레이터가 이번 턴의 목표와 분담을 정합니다. 계획을 건너뛰는 그래프면 None."""
+        """오케스트레이터가 이번 턴의 목표와 분담을 정합니다. 계획을 건너뛰는 그래프면 None.
+
+        `revision` 은 사람이 승인 화면에서 적은 수정 요청입니다 (ADR-028). 주어지면 앞의 계획과
+        그 요청을 함께 주고 계획을 처음부터 다시 쓰게 합니다. 다시 쓴 계획이 기록되면 그것이
+        이번 턴의 계획이 되고, 앞의 것은 맥락에서 빠집니다 (`context_memory.superseded_plans`).
+        """
         orchestrator_agent = setup.orchestrator
         user_prompt = state.user_prompt
         state.status = "planning"
@@ -2099,7 +2155,25 @@ class OrchestratorEngine:
         # 이번 턴을 연 요청 앞까지가 이전 대화입니다 (끊긴 턴을 이어 갈 때는 요청 뒤에
         # 개입이 있을 수 있어 "마지막 하나 빼기" 로는 가를 수 없습니다).
         earlier = state.messages[:state.turn_message_start]
-        if earlier:
+        if revision is not None:
+            previous = (
+                strip_reasoning_trace(state.messages[state.plan_index].content).strip()
+                if state.plan_index is not None else ""
+            )
+            orch_plan_prompt = [
+                {"role": "user", "content": (
+                    f"[User Request]: {user_prompt}\n\n"
+                    f"{plan_record_block}"
+                    f"{roster_block}"
+                    f"[이전 계획]\n{previous or '(기록 없음)'}\n\n"
+                    f"[유저의 계획 수정 요청]\n{revision}\n\n"
+                    "유저가 위 계획을 승인하지 않고 수정을 요청했습니다. 요청을 반영해 이번 토론의 "
+                    "핵심 목표, 접근 방향, 각 전문가에게 부여할 발언 지침을 처음부터 끝까지 다시 "
+                    "작성하세요. 요청이 언급하지 않은 부분은 이전 계획을 유지하세요. "
+                    f"{assign_rule}"
+                )}
+            ]
+        elif earlier:
             history_snippets = []
             for m in earlier:
                 if m.msg_type == "error":
@@ -2151,6 +2225,224 @@ class OrchestratorEngine:
             # 뒤쪽 발언자가 자기 몫을 잊지 않도록 목표 메시지에 고정합니다.
             state.plan_index = len(state.messages) - 1
         return plan_message
+
+    # ------------------------------------------------------------ 계획 승인 (ADR-028)
+
+    async def _approve_plan(
+        self,
+        db,
+        state: DebateState,
+        setup: "TurnSetup",
+        plan_message: Optional[DebateMessage],
+        *,
+        on_event: Optional[EventCallback],
+        control: Optional[TurnControl],
+    ) -> Optional[DebateMessage]:
+        """계획을 사람에게 보이고 승인을 받습니다. 토론이 시작할 계획 발언을 돌려줍니다.
+
+        planning harness 의 `계획 → 사람 승인 → 실행` 을 엔진의 단계로 옮긴 것입니다
+        (`app/orchestration/plan_gate.py`). 그쪽은 모델이 도구를 불러 주어야 승인이 열렸지만,
+        여기서는 계획이 기록되는 순간 엔진이 엽니다 — 모델이 건너뛸 수 없습니다.
+
+        * **승인** — 사람이 카드에서 고친 과업·완료 기준이 그대로 승인된 분담이 됩니다.
+          기록에 남고(`KIND_APPROVAL`), 이후 모든 발언자의 맥락과 합성의 완료 확인에 실립니다.
+        * **수정 요청** — 의견을 유저 발언으로 기록하고 계획을 다시 쓰게 한 뒤 다시 묻습니다.
+          횟수 상한은 없습니다. 한 번마다 사람이 눌러야 하므로 혼자 도는 일이 없습니다.
+        * **정지** — 승인 없이 넘어가고, 토론은 정지 요청을 보고 곧장 합성으로 갑니다.
+        * **무응답** — 아무것도 실행하지 않고 턴을 멈춰 둡니다 (`PlanApprovalExpired`).
+
+        묻지 않는 경우: 설정이 꺼져 있거나, 답할 사람이 없거나(`control` 없음 — 배치 실행·
+        테스트), 계획이 없거나 실패했거나, 과업을 받을 전문가가 없을 때. 계획 자체는 아무것도
+        실행하지 않고, 위험한 도구 호출은 도구 보안이 따로 막습니다.
+        """
+        settings = plan_approval_settings()
+        specialists = [a for a in setup.active_agents if a.key != "orchestrator"]
+        if (
+            not settings.enabled or control is None or not specialists
+            or plan_message is None or plan_message.msg_type == "error"
+        ):
+            return plan_message
+
+        orchestrator = setup.orchestrator
+        await self._set_turn(db, state, phase="approval")
+
+        async def _open(request) -> None:
+            if on_event:
+                await on_event({"type": "plan_approval_requested", **request.describe()})
+
+        notice = ""
+        # 수정 요청을 기록한 뒤 계획을 다시 쓰기 전에 끊긴 턴은 그 요청부터 반영합니다.
+        waiting = plan_gate.pending_revision(state.messages, state.turn_message_start)
+        while True:
+            if waiting is not None:
+                revised = await self._plan(
+                    db, state, setup, on_event=on_event, control=control, revision=waiting,
+                )
+                waiting = None
+                if revised is not None and revised.msg_type != "error":
+                    plan_message = revised
+                else:
+                    # 다시 쓰지 못했습니다. 앞의 계획이 여전히 유효하므로 그것을 다시 보입니다 —
+                    # 조용히 되묻지 않고, 무슨 일이 있었는지 카드에 적습니다.
+                    notice = (
+                        "오케스트레이터가 응답하지 못해 계획을 다시 쓰지 못했습니다. "
+                        "이전 계획을 그대로 다시 보여 드립니다."
+                    )
+            if control.stop_requested:
+                return plan_message
+
+            proposed = await self._plan_proposal(
+                db, state, setup, plan_message, specialists, on_event=on_event,
+            )
+            request = await control.ask_plan_approval(
+                agent_key=orchestrator.key,
+                agent_name=orchestrator.name,
+                payload={
+                    "plan_id": plan_message.id,
+                    # 카드가 떠 있는 동안 피드는 좁아집니다. 계획 본문을 카드에서도 읽을 수 있게 싣습니다.
+                    "plan": strip_reasoning_trace(plan_message.content).strip(),
+                    "tasks": proposed,
+                    "revision": plan_gate.revision_count(state.messages, state.turn_message_start),
+                    "notice": notice,
+                },
+                timeout=float(settings.timeout),
+                on_open=_open,
+            )
+            notice = ""
+            if on_event:
+                await on_event({
+                    "type": "plan_approval_resolved",
+                    "id": request.id,
+                    "agent_name": orchestrator.name,
+                    "decision": request.decision,
+                    "wait_seconds": float(settings.timeout),
+                })
+
+            if request.decision == plan_gate.DECISION_APPROVE:
+                tasks, changes = plan_gate.settle(proposed, request.tasks)
+                await self._record_note(
+                    db=db, state=state, on_event=on_event, agent=orchestrator,
+                    round_number=0, msg_type="orchestrator",
+                    content=plan_gate.approval_note(tasks, changes),
+                    kind=turns.KIND_APPROVAL,
+                    data={
+                        "plan_id": plan_message.id, "tasks": tasks,
+                        "changes": changes, "approver": request.approver,
+                    },
+                )
+                state.plan_tasks = tasks
+                state.approval_index = len(state.messages) - 1
+                logger.info(
+                    f"Plan for session {state.session_id} approved "
+                    f"({len(tasks)} task(s), {len(changes)} change(s) by the user)"
+                )
+                return plan_message
+
+            if request.decision == plan_gate.DECISION_REVISE:
+                text = plan_gate.revision_request(
+                    proposed, request.comment,
+                    plan_gate.clean_comments(proposed, request.task_comments), request.tasks,
+                )
+                await self._record_user_message(
+                    db=db, state=state, content=text, round_number=0,
+                    on_event=on_event, kind=turns.KIND_PLAN_REVISION,
+                )
+                waiting = plan_gate.revision_body(text)
+                continue
+
+            if request.decision == plan_gate.DECISION_STOPPED:
+                return plan_message
+
+            minutes = max(1, int(round(float(settings.timeout) / 60)))
+            raise plan_gate.PlanApprovalExpired(
+                f"계획 승인을 {minutes}분 동안 받지 못해 턴을 멈춰 두었습니다. 아무것도 실행되지 "
+                f"않았습니다. '이어서 진행' 을 누르면 같은 계획으로 승인 카드가 다시 열립니다."
+            )
+
+    async def _turn_config(self, db, state: DebateState) -> Optional[Dict[str, Any]]:
+        """턴 기록에 고정해 둔 구성의 **지금** 값. 읽지 못하면 None.
+
+        ORM 객체가 아니라 컬럼을 직접 읽습니다. `_set_turn` 은 행을 문장으로 고치므로, 세션이
+        들고 있는 객체는 그 사이의 변경(스킬 지정 등)을 모를 수 있습니다.
+        """
+        if not state.turn_id:
+            return None
+        try:
+            row = (await db.execute(
+                select(TurnModel.config).where(TurnModel.id == state.turn_id)
+            )).first()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 못 읽어도 턴은 계속됩니다
+            logger.warning(f"Could not read the config of turn {state.turn_id}: {exc}")
+            return None
+        return dict(row[0] or {}) if row is not None else None
+
+    async def _plan_proposal(
+        self,
+        db,
+        state: DebateState,
+        setup: "TurnSetup",
+        plan_message: DebateMessage,
+        specialists: List[Agent],
+        *,
+        on_event: Optional[EventCallback],
+    ) -> List[Dict[str, Any]]:
+        """이 계획의 분담표 (전문가별 과업). 이미 받아 둔 것이 있으면 다시 묻지 않습니다.
+
+        받은 분담표는 턴 기록에 적어 둡니다. 승인을 기다리다 멈춘 턴을 이어 갈 때 LLM 을 다시
+        부르지 않고, 사람이 같은 카드를 다시 봅니다. 분담표를 받지 못하면 전문가마다 빈 칸으로
+        카드를 띄웁니다 — 승인 자체를 건너뛰지는 않습니다.
+        """
+        config = await self._turn_config(db, state)
+        saved = (config or {}).get("plan_gate") or {}
+        if saved.get("plan_id") == plan_message.id:
+            known = {a.key for a in specialists}
+            tasks = [t for t in plan_gate.clean_tasks(saved.get("tasks")) if t["agent"] in known]
+            if tasks:
+                return tasks
+
+        if on_event:
+            await on_event({"type": "plan_tasks_started", "agent_name": setup.orchestrator.name})
+        try:
+            tasks = await self._ask_orchestrator_for_plan_tasks(
+                orchestrator=setup.orchestrator, specialists=specialists, state=state,
+                plan_message=plan_message, custom_instructions=setup.custom_instructions,
+            )
+        except LLMUnavailableError as exc:
+            logger.warning(f"Could not get the task list of the plan; showing blank rows: {exc}")
+            tasks = plan_gate.blank_tasks(specialists)
+
+        if config is not None:
+            config["plan_gate"] = {"plan_id": plan_message.id, "tasks": tasks}
+            await self._set_turn(db, state, config=config)
+        return tasks
+
+    async def _ask_orchestrator_for_plan_tasks(
+        self,
+        *,
+        orchestrator: Agent,
+        specialists: List[Agent],
+        state: DebateState,
+        plan_message: DebateMessage,
+        custom_instructions: str,
+    ) -> List[Dict[str, Any]]:
+        """계획 본문을 전문가별 과업으로 옮겨 받습니다.
+
+        발언자 지명(`_ask_orchestrator_for_speakers`)과 같은 이유로 도구와 단계적 사고를 끈
+        사본으로 부릅니다. 이건 JSON 을 받는 호출이지 발언이 아닙니다.
+        """
+        planner = self._tool_less(orchestrator)
+        prompt = [{"role": "user", "content": plan_gate.tasks_prompt(
+            state.user_prompt,
+            strip_reasoning_trace(plan_message.content).strip(),
+            format_roster(specialists, with_keys=True),
+        )}]
+        content, _ = await self.llm_caller.call_agent(
+            planner, prompt, custom_instructions, session_id=state.session_id,
+            mcp=self._mcp_for(state), tool_gate=self._gate_for(state), ledger=state.decision_ledger,
+        )
+        return plan_gate.parse_tasks(content, specialists)
 
     async def _debate(
         self,
@@ -3833,12 +4125,22 @@ class OrchestratorEngine:
         return text[:limit]
 
     def _routing_record(self, state: DebateState, agent: Agent) -> str:
-        """발언자 지명·과업 분배 프롬프트에 넣을 사용자 발언 기록 (짧은 몫)."""
+        """발언자 지명·과업 분배 프롬프트에 넣을 사용자 발언 기록 (짧은 몫).
+
+        유저가 승인한 과업 분담이 있으면 (ADR-028) 함께 싣습니다. 지명과 라운드별 분배는
+        오케스트레이터가 그때그때 정하는데, 승인된 분담을 모르고 정하면 사람이 확인한 것과
+        다른 일을 시키게 됩니다.
+        """
         record = memory.build_user_record(
             state, model=agent.model,
             token_cap=int(context_budget(agent) * memory.ROUTING_RECORD_SHARE),
         ).text
-        return f"{record}\n\n" if record else ""
+        parts = [record] if record else []
+        if state.plan_tasks:
+            parts.append(
+                f"{plan_gate.ROUTING_TASKS_HEADING}\n{plan_gate.tasks_block(state.plan_tasks)}"
+            )
+        return "".join(f"{part}\n\n" for part in parts)
 
     def _load_memory(self, state: DebateState, session_model: SessionModel) -> None:
         """저장된 장부·요약을 이번 턴 상태로 옮깁니다."""
@@ -4189,6 +4491,11 @@ class OrchestratorEngine:
         )
         if turn_instruction:
             turn_prompt += f"\n\n{turn_instruction}"
+        # 유저가 승인한 이 전문가의 과업 (ADR-028). 고정문에도 있지만, 마지막 메시지에 한 번 더
+        # 둡니다 — 긴 토론에서 자기 몫을 가장 덜 잊는 자리입니다.
+        own_task = plan_gate.own_task(state.plan_tasks, agent.key)
+        if own_task:
+            turn_prompt += f"\n\n{own_task}"
         turn_prompt += f"\n\n{memory.DIGEST_INSTRUCTION}"
 
         # 이 발언자가 마지막으로 말한 뒤에 나온 발언은 원문으로 (모듈 설명의 "발언을 얼마나
@@ -4466,20 +4773,35 @@ class OrchestratorEngine:
                 f"보고서에 누락 사실을 명시하세요.\n"
             )
 
+        # 유저가 승인한 과업의 완료 확인 (ADR-028). 누가 몇 번 말했고 누가 응답하지 못했는지는
+        # 엔진이 기록에서 센 값입니다 — 모델의 자기 보고에 맡기면 하지 않은 일이 완료로 적힙니다.
+        completion = ""
+        if state.plan_tasks:
+            speeches: Dict[str, int] = {}
+            for m in state.messages[state.turn_message_start:]:
+                if turns.kind_of(m) == turns.KIND_SPEECH and m.msg_type != "error":
+                    speeches[m.sender_key] = speeches.get(m.sender_key, 0) + 1
+            completion = "\n" + plan_gate.completion_block(
+                state.plan_tasks, speeches, state.failed_agent_keys
+            ) + "\n"
+
         pinned = "".join(f"{part}\n\n" for part in (record.text, summary) if part)
         prompt = (
             f"[User Goal]: {state.user_prompt}\n\n"
             f"{pinned}"
             f"[Full Multi-Agent Debate Transcript]:\n{full_transcript}\n"
             f"{early_stop}"
-            f"{missing}\n"
+            f"{missing}"
+            f"{completion}\n"
             f"수석 오케스트레이터로서 토론을 종합해 최종 합의 보고서를 작성하세요. "
             f"이 보고서가 맡는 것은 **결론과 종합 다이어그램까지**입니다.\n"
-            f"다음 두 가지만 쓰세요:\n"
+            f"다음 {'세' if completion else '두'} 가지만 쓰세요:\n"
             f"1. **최종 합의 결론** — 결정 사항과 그 근거, 채택하지 않은 대안과 이유, "
             f"남은 쟁점과 위험\n"
             f"2. **종합 Mermaid 다이어그램** 하나 (```mermaid 블록. 노드 라벨에 괄호를 쓸 때는 "
-            f'A["결제 서비스 (Payment)"] 처럼 반드시 큰따옴표로 감쌀 것)\n\n'
+            f'A["결제 서비스 (Payment)"] 처럼 반드시 큰따옴표로 감쌀 것)\n'
+            + (f"3. {plan_gate.COMPLETION_INSTRUCTION}\n" if completion else "") +
+            f"\n"
             f"[하지 말 것] 소스 코드를 다시 쓰거나 붙여 넣지 마세요. 코드는 전문가 발언과 작업 "
             f"공간 파일에 이미 있고, 산출물 탭에도 전문가 발언에서 따로 모읍니다. 코드가 필요한 "
             f"자리는 파일 경로·모듈·함수 이름으로만 가리키세요."

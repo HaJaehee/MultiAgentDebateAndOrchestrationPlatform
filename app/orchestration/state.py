@@ -93,6 +93,10 @@ class DebateState(BaseModel):
     # ---- 대화 기억 (`app/orchestration/context_memory.py`) ----
     # 이번 턴 오케스트레이터 계획 발언의 자리. 목표 메시지에 고정합니다.
     plan_index: Optional[int] = None
+    # 유저가 승인한 과업 분담과 그 승인 기록의 자리 (ADR-028, `app/orchestration/plan_gate.py`).
+    # 비어 있으면 승인을 거치지 않은 턴입니다 — 그때는 예전처럼 계획 발언만 고정됩니다.
+    plan_tasks: List[Dict[str, Any]] = Field(default_factory=list)
+    approval_index: Optional[int] = None
     # 결정 장부와, 장부에 반영된 발언의 수 (`messages[:ledger_through]`).
     decision_ledger: str = ""
     ledger_through: int = 0

@@ -1,6 +1,6 @@
 # ADR-027. 입력창에서 지정한 스킬은 그 턴에만 주고, 호스트가 미리 불러 둡니다
 
-> [ADR 목록](README.md) · 이전: [ADR-026](ADR-026-skills-as-host-tools.md)
+> [ADR 목록](README.md) · 이전: [ADR-026](ADR-026-skills-as-host-tools.md) · 다음: [ADR-028](ADR-028-plan-approval-gate.md)
 
 ## 상태 (Status)
 

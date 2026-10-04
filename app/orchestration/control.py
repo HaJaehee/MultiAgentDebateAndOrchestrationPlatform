@@ -19,6 +19,9 @@
 * **도구 승인 요청** — 도구 보안 판정이 "묻기" 인 호출. 답(이번만 / 이 대화에서 /
   항상 허용, 거부)이 올 때까지 그 발언만 기다리고, 답이 없으면 거부합니다
   (`app/orchestration/tool_gate.py`).
+* **계획 승인 요청** — 오케스트레이터의 계획이 나온 뒤, 토론이 시작되기 전 (ADR-028).
+  답(승인 / 수정 요청)이 올 때까지 턴 전체가 기다립니다. 답이 없으면 아무것도 실행하지
+  않고 턴을 멈춰 둡니다 (`app/orchestration/plan_gate.py`).
 
 경계를 넘어 공유되는 상태는 이 객체 하나뿐이고, 같은 이벤트 루프 안에서만
 읽고 쓰므로 락이 필요 없습니다. 엔진은 이 모듈만 알면 되고 UI 도 러너도
@@ -89,6 +92,11 @@ class TurnControl:
             request.resolve(0, "wrap_up")
         for approval in self.pending_approvals:
             approval.answer("deny", reason="유저가 토론 정지를 요청했습니다.")
+        # 계획 승인도 닫습니다. 정지는 "지금까지의 것으로 마무리하라" 이므로, 승인을 기다리던
+        # 턴은 토론 없이 곧장 합성으로 갑니다 (계획 전에 정지를 누른 턴과 같습니다).
+        plan = self.pending_plan_approval
+        if plan is not None:
+            plan.resolve(0, "wrap_up")
 
     # -------------------------------------------------- 개입
 
@@ -135,7 +143,7 @@ class TurnControl:
         """
         return [
             r for r in self._decisions.values()
-            if not r.resolved and not isinstance(r, ToolApprovalRequest)
+            if not r.resolved and not isinstance(r, (ToolApprovalRequest, PlanApprovalRequest))
         ]
 
     @property
@@ -145,6 +153,18 @@ class TurnControl:
             r for r in self._decisions.values()
             if not r.resolved and isinstance(r, ToolApprovalRequest)
         ]
+
+    @property
+    def pending_plan_approval(self) -> Optional["PlanApprovalRequest"]:
+        """답을 기다리는 계획 승인 쪽지. 한 턴에 많아야 하나입니다.
+
+        한도 쪽지·도구 승인과 따로 셉니다. 섞으면 "상한 확장" 버튼이나 도구 승인의 답이
+        계획을 승인하게 됩니다.
+        """
+        for request in self._decisions.values():
+            if not request.resolved and isinstance(request, PlanApprovalRequest):
+                return request
+        return None
 
     # 예전 이름. 러너와 테스트가 쓰고 있어 그대로 둡니다.
     @property
@@ -184,7 +204,7 @@ class TurnControl:
             request = self._decisions.get(request_id)
         else:
             request = self.pending_decision
-        if request is None or isinstance(request, ToolApprovalRequest):
+        if request is None or isinstance(request, (ToolApprovalRequest, PlanApprovalRequest)):
             return False
         return request.resolve(extra, "extended" if extra > 0 else "wrap_up")
 
@@ -339,6 +359,66 @@ class TurnControl:
             scope = cleaned
         return request.answer(decision, scope=scope, reason=reason, approver=approver)
 
+    # -------------------------------------------------- 계획 승인
+
+    async def ask_plan_approval(
+        self,
+        *,
+        agent_key: str,
+        agent_name: str,
+        payload: Dict[str, Any],
+        timeout: float,
+        on_open=None,
+    ) -> "PlanApprovalRequest":
+        """계획을 사람에게 보이고 답을 기다립니다 (ADR-028).
+
+        `payload` 는 화면이 그릴 내용입니다 (어느 계획인지, 전문가별 과업). 기다림이 끝나면
+        요청의 `decision` 이 채워져 있습니다 — `approve` · `revise` 는 사람의 답이고,
+        `timeout` 은 답이 없었던 것, `stopped` 는 사람이 정지를 누른 것입니다. 이미 정지를
+        요청한 턴에는 묻지 않습니다.
+        """
+        request = PlanApprovalRequest(
+            request_id=uuid.uuid4().hex,
+            agent_key=agent_key,
+            agent_name=agent_name,
+            payload=payload,
+        )
+        await self._ask(request, timeout, on_open)
+        return request
+
+    def resolve_plan_approval(
+        self,
+        request_id: str,
+        decision: str,
+        *,
+        tasks: Optional[List[Dict[str, Any]]] = None,
+        comment: str = "",
+        task_comments: Optional[Dict[str, str]] = None,
+        approver: str = "",
+    ) -> bool:
+        """계획 승인 쪽지에 답합니다. 이미 답이 났거나 없는 쪽지면 False.
+
+        쓸 수 없는 답이면 ValueError 로 알립니다 — 의견 없는 수정 요청은 오케스트레이터가
+        무엇을 고칠지 알 수 없고, 의견이 적힌 승인은 그 의견을 읽지 않고 버리게 됩니다.
+        화면은 그런 버튼을 보이지 않지만, 낡은 화면이나 다른 경로의 답도 같은 규칙을 지킵니다.
+        """
+        request = self._decisions.get(request_id)
+        if not isinstance(request, PlanApprovalRequest) or request.resolved:
+            return False
+        said = bool((comment or "").strip()) or any(
+            str(text or "").strip() for text in (task_comments or {}).values()
+        )
+        if decision == "revise" and not said:
+            raise ValueError("수정 요청에는 의견이 필요합니다. 무엇을 고칠지 적어 주십시오.")
+        if decision == "approve" and said:
+            raise ValueError(
+                "의견을 적은 채로는 승인할 수 없습니다. 의견을 반영하려면 '수정 요청' 을, "
+                "그대로 진행하려면 의견을 지우고 승인해 주십시오."
+            )
+        return request.answer(
+            decision, tasks=tasks, comment=comment, task_comments=task_comments, approver=approver,
+        )
+
 
 class DecisionRequest:
     """한도에 닿은 에이전트가 사람에게 내미는 쪽지.
@@ -483,6 +563,61 @@ class ToolApprovalRequest(DecisionRequest):
         if outcome == "timeout":
             return self.answer("timeout", reason="정해진 시간 안에 답이 없었습니다.")
         return self.answer("deny", reason="유저가 토론 정지를 요청했습니다.")
+
+    def describe(self) -> dict:
+        return {**super().describe(), "decision": self.decision}
+
+
+class PlanApprovalRequest(DecisionRequest):
+    """오케스트레이터의 계획에 대한 승인 쪽지 (ADR-028).
+
+    같은 우편함·같은 기다림을 쓰되, 답의 모양이 다릅니다 — **승인**(사람이 카드에서 고친
+    과업과 함께)이거나 **수정 요청**(의견과 함께)입니다. 답이 없으면 승인이 아닙니다. 사람이
+    자리에 없다고 확인받지 않은 계획으로 토론을 시작하지는 않습니다.
+    """
+
+    def __init__(self, *, request_id: str, agent_key: str, agent_name: str,
+                 payload: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(
+            request_id=request_id, kind="plan_approval", agent_key=agent_key,
+            agent_name=agent_name, limit=0, used=0, tool_calls=0, payload=payload,
+        )
+        # approve | revise | timeout | stopped
+        self.decision: str = "pending"
+        # 사람이 카드에서 돌려준 전문가별 과업·완료 기준 (승인이든 수정 요청이든 함께 옵니다).
+        self.tasks: List[Dict[str, Any]] = []
+        self.comment: str = ""                    # 계획 전체에 대한 의견
+        self.task_comments: Dict[str, str] = {}   # 전문가 키 → 그 과업에 대한 의견
+        self.approver: str = ""                   # local | remote
+
+    @property
+    def answerable(self) -> bool:
+        return True
+
+    @property
+    def approved(self) -> bool:
+        return self.decision == "approve"
+
+    def answer(self, decision: str, *, tasks: Optional[List[Dict[str, Any]]] = None,
+               comment: str = "", task_comments: Optional[Dict[str, str]] = None,
+               approver: str = "") -> bool:
+        """답을 채웁니다. 이미 답이 있거나 모르는 답이면 False."""
+        if self._decided.is_set() or decision not in ("approve", "revise", "timeout", "stopped"):
+            return False
+        self.decision = decision
+        self.tasks = [dict(t) for t in (tasks or []) if isinstance(t, dict)]
+        self.comment = (comment or "").strip()
+        self.task_comments = {
+            str(k): str(v).strip() for k, v in (task_comments or {}).items() if str(v or "").strip()
+        }
+        self.approver = approver
+        self.outcome = decision
+        self._decided.set()
+        return True
+
+    def resolve(self, extra: int, outcome: str) -> bool:
+        """한도 쪽지의 답 모양으로 들어온 것 (정지·시간 초과). 어느 쪽도 승인이 아닙니다."""
+        return self.answer("timeout" if outcome == "timeout" else "stopped")
 
     def describe(self) -> dict:
         return {**super().describe(), "decision": self.decision}

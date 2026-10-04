@@ -301,6 +301,36 @@ def create_ui() -> None:
                         type="warning",
                         position="bottom-right",
                     )
+            elif etype == "plan_tasks_started":
+                chat_feed.set_busy(
+                    True,
+                    f"[{event.get('agent_name', '')}] 승인받을 과업 분담표를 정리하는 중입니다...",
+                    "Plan",
+                )
+            elif etype == "plan_approval_requested":
+                # 턴 전체가 이 답을 기다리며 멈춰 있습니다 (ADR-028). 카드는 답하거나 대기
+                # 시간이 끝날 때까지 남습니다.
+                chat_feed.set_plan_approval({k: v for k, v in event.items() if k != "type"})
+                chat_feed.set_busy(
+                    True,
+                    "계획 승인 대기 — 과업을 확인하고 승인하시거나, 의견을 적어 수정을 요청해 주십시오.",
+                    "Plan approval",
+                )
+                ui.notify(
+                    f"{event.get('agent_name', '오케스트레이터')}의 계획이 승인을 기다리고 있습니다. "
+                    f"승인하시기 전에는 토론이 시작되지 않습니다.",
+                    type="warning",
+                    position="bottom-right",
+                )
+            elif etype == "plan_approval_resolved":
+                chat_feed.clear_plan_approval(event.get("id"))
+                decision = event.get("decision")
+                if decision == "approve":
+                    chat_feed.set_busy(True, "계획을 승인하였습니다. 토론을 시작합니다.", "Debating")
+                elif decision == "revise":
+                    chat_feed.set_busy(
+                        True, "계획 수정을 요청하였습니다. 오케스트레이터가 계획을 다시 작성합니다.", "Planning"
+                    )
             elif etype == "graph_gate_decided":
                 verdict = "예" if event.get("decision") == "yes" else "아니오"
                 ui.notify(
@@ -421,7 +451,17 @@ def create_ui() -> None:
                 # 확정되는 시점이 여기라, 잠금 해제도 여기서 알립니다.
                 roster_control.refresh_mcp_lock()
                 status = event.get("status")
-                if status == "failed":
+                if event.get("parked"):
+                    # 계획 승인에 답이 없어 턴을 멈춰 둔 것입니다 (ADR-028). 오류가 아니므로
+                    # 오류로 알리지 않고, 이어 갈 수 있다는 안내 줄을 띄웁니다.
+                    chat_feed.set_busy(False, str(event.get("error") or ""), "Waiting")
+                    ui.notify(
+                        "계획 승인에 응답이 없어 턴을 멈춰 두었습니다. 아무것도 실행되지 않았습니다. "
+                        "'이어서 진행'을 누르시면 같은 계획으로 승인 카드가 다시 열립니다.",
+                        type="warning", position="bottom-right", close_button="확인", timeout=0,
+                    )
+                    await refresh_unfinished_turn()
+                elif status == "failed":
                     error = event.get("error") or "알 수 없는 오류"
                     chat_feed.set_busy(False, f"오류로 인하여 중단되었습니다: {error}", "Error")
                     ui.notify(f"토론 실행 중 오류가 발생하였습니다: {error}", type="negative")
@@ -689,6 +729,32 @@ def create_ui() -> None:
                 )
             return accepted
 
+        async def on_plan_approval(
+            request_id: str, decision: str, tasks: List[Dict[str, Any]],
+            comment: str, task_comments: Dict[str, str],
+        ) -> bool:
+            """계획 승인 카드의 답을 토론에 전합니다 (ADR-028). 받아들여졌으면 True."""
+            if not current_session_id:
+                return False
+            try:
+                accepted = runner.resolve_plan_approval(
+                    current_session_id, request_id, decision,
+                    tasks=tasks, comment=comment, task_comments=task_comments,
+                    approver="local" if viewer_is_local() else "remote",
+                )
+            except ValueError as exc:
+                # 의견 없는 수정 요청이거나 의견이 적힌 승인입니다. 카드는 남겨 고칠 수 있게 합니다.
+                ui.notify(str(exc), type="warning", position="bottom-right", multi_line=True)
+                return False
+            if not accepted:
+                chat_feed.clear_plan_approval(request_id)
+                ui.notify(
+                    "이미 처리된 요청입니다 (대기 시간이 끝났거나 토론이 종료되었습니다).",
+                    type="warning",
+                    position="bottom-right",
+                )
+            return accepted
+
         async def on_tool_rules_changed(grants: List[str], denials: List[str]) -> None:
             """로스터의 규칙 창에서 지운 결과를 저장합니다.
 
@@ -873,6 +939,7 @@ def create_ui() -> None:
             on_send_message, on_interject=on_interject, on_stop=on_stop, on_abort=on_abort,
             on_decision=on_decision,
             on_tool_approval=on_tool_approval,
+            on_plan_approval=on_plan_approval,
             viewer_is_local=viewer_is_local,
             mention_provider=mention_provider,
             on_upload_file=on_upload_file,
@@ -1153,6 +1220,7 @@ def create_ui() -> None:
                 # 곳을 잃지 않습니다.
                 chat_feed.set_decision_request(snapshot.get("decision_request"))
                 chat_feed.set_approvals(snapshot.get("tool_approvals"))
+                chat_feed.set_plan_approval(snapshot.get("plan_approval"))
                 # 이번 턴에 갱신된 장부는 턴이 끝나야 DB 에 들어갑니다.
                 if snapshot.get("decision_ledger") is not None:
                     roster_control.set_decision_ledger(snapshot["decision_ledger"])

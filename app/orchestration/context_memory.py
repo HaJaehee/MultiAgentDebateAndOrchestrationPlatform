@@ -71,6 +71,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.agents.llm import estimate_tokens, is_file_writing_call, strip_reasoning_trace
+from app.orchestration import plan_gate, turns
 from app.orchestration.state import DebateMessage, DebateState
 
 # 토론 도중 들어온 사용자 발언의 머리표 (`OrchestratorEngine._apply_interjections`).
@@ -290,14 +291,21 @@ def opening_index(state: DebateState) -> Optional[int]:
 
 def _user_label(state: DebateState, index: int, msg: DebateMessage) -> str:
     when = "이전 턴" if index < state.turn_message_start else "이번 턴"
-    what = "토론 중 개입" if msg.content.startswith(INTERJECTION_PREFIX) else "요청"
+    if msg.content.startswith(INTERJECTION_PREFIX):
+        what = "토론 중 개입"
+    elif msg.content.startswith(plan_gate.PLAN_REVISION_PREFIX):
+        what = "계획 수정 요청"
+    else:
+        what = "요청"
     return f"{when} {what}"
 
 
 def _user_body(msg: DebateMessage) -> str:
     text = msg.content
-    if text.startswith(INTERJECTION_PREFIX):
-        text = text[len(INTERJECTION_PREFIX):]
+    for prefix in (INTERJECTION_PREFIX, plan_gate.PLAN_REVISION_PREFIX):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
     return text.strip()
 
 
@@ -347,7 +355,11 @@ def build_user_record(state: DebateState, *, model: str, token_cap: int) -> User
 
 
 def build_plan_pin(state: DebateState, *, model: str, token_cap: int) -> str:
-    """이번 턴 오케스트레이터 계획. 몫을 넘거나 계획이 없으면 빈 문자열."""
+    """이번 턴 오케스트레이터 계획. 몫을 넘거나 계획이 없으면 빈 문자열.
+
+    유저가 승인한 과업 분담이 있으면 (ADR-028) 계획 뒤에 함께 고정합니다. 사람이 승인 화면에서
+    고친 값은 계획 본문과 다를 수 있으므로, 어느 쪽이 우선하는지를 그 자리에 적습니다.
+    """
     i = state.plan_index
     if i is None or not (0 <= i < len(state.messages)):
         return ""
@@ -358,6 +370,8 @@ def build_plan_pin(state: DebateState, *, model: str, token_cap: int) -> str:
         "[이번 턴 오케스트레이터 계획] 턴을 시작할 때 세운 목표와 업무 분배입니다. "
         "앞선 기록이 생략돼도 남습니다.\n" + body
     )
+    if state.plan_tasks:
+        text += f"\n\n{plan_gate.PINNED_TASKS_HEADING}\n{plan_gate.tasks_block(state.plan_tasks)}"
     return text if text_tokens(model, text) <= token_cap else ""
 
 
@@ -367,6 +381,31 @@ def user_placeholder(number: int) -> str:
 
 OPENING_PLACEHOLDER = "(이번 턴 요청 — 위 [User Goal / Current Request]에 전문이 있습니다)"
 PLAN_PLACEHOLDER = "(이번 턴 계획 — 위 [이번 턴 오케스트레이터 계획]에 전문이 있습니다)"
+# 계획 승인 (ADR-028). 승인된 분담은 계획과 함께 고정되므로 기록 안의 승인 발언은 참조로 바꾸고,
+# 수정 요청으로 다시 쓰기 전의 계획은 싣지 않습니다 — 두 계획을 함께 읽으면 어느 쪽을 따를지 흔들립니다.
+APPROVAL_PLACEHOLDER = "(유저의 계획 승인 — 승인된 과업 분담은 위 [이번 턴 오케스트레이터 계획]에 있습니다)"
+SUPERSEDED_PLAN_PLACEHOLDER = (
+    "(유저의 수정 요청으로 다시 쓰기 전의 계획 — 싣지 않습니다. 유효한 계획은 그 뒤에 다시 쓴 것입니다)"
+)
+
+
+def superseded_plans(messages: Sequence[DebateMessage]) -> List[int]:
+    """같은 턴에서 뒤의 계획으로 대체된 계획 발언의 자리.
+
+    다시 쓰다 실패한 계획은 앞의 것을 대체하지 못합니다 (`turns.plan_position` 과 같은 기준).
+    기록의 자리(`turn_meta`)가 없는 옛 발언은 건드리지 않습니다.
+    """
+    out: List[int] = []
+    current: Optional[int] = None
+    for index, msg in enumerate(messages):
+        kind = turns.kind_of(msg)
+        if kind == turns.KIND_OPENING:
+            current = None
+        elif kind == turns.KIND_PLAN and msg.msg_type != "error":
+            if current is not None:
+                out.append(current)
+            current = index
+    return out
 
 
 # ---------------------------------------------------------------- 2. 결정 장부
@@ -545,7 +584,11 @@ def placeholders_for(
     opening = opening_index(state)
     if opening is not None:
         out[opening] = OPENING_PLACEHOLDER
+    for index in superseded_plans(state.messages):
+        out[index] = SUPERSEDED_PLAN_PLACEHOLDER
     if plan_pinned and state.plan_index is not None:
         out[state.plan_index] = PLAN_PLACEHOLDER
+        if state.approval_index is not None and state.plan_tasks:
+            out[state.approval_index] = APPROVAL_PLACEHOLDER
     return out
 

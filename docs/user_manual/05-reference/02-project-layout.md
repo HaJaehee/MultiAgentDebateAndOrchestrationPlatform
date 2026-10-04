@@ -79,6 +79,7 @@ app/
 │   ├── runner.py             615   백그라운드 태스크, 이벤트 팬아웃
 │   ├── strategies.py         281   토론 전략 4종
 │   ├── control.py            332   정지·개입·예산 승인 제어 채널
+│   ├── plan_gate.py          412   계획 승인 — 분담표·승인·수정 요청·완료 확인 (ADR-028)
 │   └── state.py               53   DebateState, DebateMessage, ArtifactItem
 │
 ├── database/

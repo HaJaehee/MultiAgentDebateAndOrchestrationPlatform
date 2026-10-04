@@ -67,6 +67,9 @@ KIND_NOTE = "note"                  # 그 밖의 안내 (지명 실패, 그래�
 KIND_FAILURE = "failure"            # 발언이 예외로 끝났다는 안내 (병렬·그래프)
 KIND_INTERRUPTED = "interrupted"    # 서버 중단으로 발언이 끊겼다는 안내 (재개할 때 남김)
 KIND_SYNTHESIS = "synthesis"        # 턴을 마무리한 합성
+# 계획 승인 (ADR-028). 계획 발언 뒤, 토론이 시작되기 전에만 나옵니다.
+KIND_PLAN_REVISION = "plan_revision"  # 사람의 계획 수정 요청. 뒤따르는 계획이 앞의 것을 대신합니다
+KIND_APPROVAL = "plan_approval"       # 사람의 계획 승인. 값: plan_id, tasks, changes, approver
 
 # 실패로 끝나면 "그 에이전트가 이번 턴에 말하지 못했다" 는 뜻이 되는 자리.
 _SPEAKING_KINDS = (KIND_PLAN, KIND_SPEECH, KIND_MERGE, KIND_SYNTHESIS)
@@ -76,8 +79,9 @@ def draft_key(agent_key: str, kind: str, round_number: int, graph_node_id: Optio
     """발언 초안(ADR-025)이 어느 발언의 것인지 맞추는 열쇠.
 
     이어 가는 턴에서 같은 자리의 발언이 다시 불릴 때 이 열쇠로 초안을 찾습니다 — 같은 에이전트,
-    같은 종류, 같은 라운드(그래프는 단계), 같은 노드. 계획과 합성은 턴에 하나뿐이라 라운드를 보지
-    않습니다 (합성의 라운드 번호는 합성 직전의 라운드에서 셉니다).
+    같은 종류, 같은 라운드(그래프는 단계), 같은 노드. 계획과 합성은 한 번에 하나만 쓰이므로
+    라운드를 보지 않습니다 (합성의 라운드 번호는 합성 직전의 라운드에서 셉니다). 수정 요청으로
+    계획을 다시 쓰는 턴에도 끝나지 못한 계획 발언은 많아야 하나입니다 (ADR-028).
     """
     if kind in (KIND_PLAN, KIND_SYNTHESIS):
         return f"{agent_key}|{kind}"
@@ -121,12 +125,17 @@ def failed_agents(messages: Iterable[Any]) -> List[str]:
 
 
 def plan_position(messages: Sequence[Any], start: int = 0) -> Optional[int]:
-    """이번 턴 계획 발언의 자리. 계획이 없거나 실패했으면 None."""
+    """이번 턴 계획 발언의 자리. 계획이 없거나 실패했으면 None.
+
+    사람이 수정을 요청해 계획을 다시 썼으면 (ADR-028) 계획 발언이 여럿입니다. 그때는
+    **마지막으로 성공한** 계획입니다 — 다시 쓰다 실패했으면 그 앞의 계획이 여전히 유효합니다.
+    """
+    found: Optional[int] = None
     for index in range(start, len(messages)):
         msg = messages[index]
-        if kind_of(msg) == KIND_PLAN:
-            return None if _get(msg, "msg_type") == "error" else index
-    return None
+        if kind_of(msg) == KIND_PLAN and _get(msg, "msg_type") != "error":
+            found = index
+    return found
 
 
 def count_kind(messages: Iterable[Any], kind: str) -> int:

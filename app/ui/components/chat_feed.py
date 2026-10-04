@@ -6,6 +6,7 @@ from nicegui import ui
 from app.agents.base import style_for_agent
 from app.mcp.policy import OUTCOME_LABELS, describe_verdict, tool_outcome
 from app.orchestration.graph_run import NodeBadges
+from app.orchestration.plan_gate import card_actions
 from app.timestamps import format_duration, speech_time_text, speech_timing, to_local
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.math_markdown import MathMarkdown
@@ -26,6 +27,11 @@ MentionProvider = Callable[[str], Coroutine[None, None, List[Dict[str, str]]]]
 UploadHandler = Callable[[str, bytes], Coroutine[None, None, str]]
 # 도구 승인 카드의 답을 받는 쪽. (요청 id, 결정, 허용 범위, 거부 사유) → 받아들여졌는가.
 ToolApprovalHandler = Callable[[str, str, List[str], str], Coroutine[None, None, bool]]
+# 계획 승인 카드의 답을 받는 쪽 (ADR-028).
+# (요청 id, 결정, 전문가별 과업, 계획 전체 의견, 과업별 의견) → 받아들여졌는가.
+PlanApprovalHandler = Callable[
+    [str, str, List[Dict[str, Any]], str, Dict[str, str]], Coroutine[None, None, bool]
+]
 
 # 스트리밍 중인 카드를 다시 그리는 간격(초).
 #
@@ -138,6 +144,11 @@ DECISION_STYLES = {
 APPROVAL_CARD_CLASSES = (
     "w-full gap-1.5 px-3 py-2 rounded-lg text-xs border bg-sky-950/50 border-sky-700/70"
 )
+# 계획 승인 카드 (ADR-028). 도구 승인(하늘색)·한도 쪽지(앰버·주황)와 다른 물음이라 초록으로 구분합니다.
+PLAN_CARD_CLASSES = (
+    "w-full gap-2 px-3 py-2 rounded-lg text-xs border bg-emerald-950/40 border-emerald-700/70"
+)
+PLAN_TASK_CLASSES = "w-full gap-1 pl-2 border-l-2 border-emerald-800/80"
 # 위험 등급별 배지 색 (`app/mcp/policy.py` 의 RISK_LABELS 와 같은 키).
 RISK_BADGE_COLORS = {
     "read": "blue-grey-7", "state": "blue-grey-7", "write": "amber-9", "exec": "amber-9",
@@ -168,7 +179,14 @@ def _all_decision_classes(slot: str) -> str:
 
 def unfinished_turn_text(info: Dict[str, Any]) -> str:
     """끊긴 턴 안내 줄의 문장. 무엇이 남았고 무엇을 고를 수 있는지."""
-    if info.get("status") == "failed":
+    if info.get("phase") == "approval":
+        # 계획 승인을 기다리다 멈춘 턴 (ADR-028). 답이 없었든 서버가 내려갔든 오류가 아니고,
+        # 아무것도 실행되지 않았습니다.
+        head = (
+            "계획 승인을 받지 못한 턴이 멈춰 있습니다 — '이어서 진행' 을 누르면 같은 계획으로 "
+            "승인 카드가 다시 열립니다"
+        )
+    elif info.get("status") == "failed":
         head = "이전 턴이 오류로 멈췄습니다"
         if info.get("error"):
             head += f" ({str(info['error']).splitlines()[0][:160]})"
@@ -245,6 +263,7 @@ class ChatFeed:
         on_decision: Optional[Callable[[int, str], Coroutine[None, None, None]]] = None,
         on_tool_budget: Optional[Callable[[int, str], Coroutine[None, None, None]]] = None,
         on_tool_approval: Optional[ToolApprovalHandler] = None,
+        on_plan_approval: Optional[PlanApprovalHandler] = None,
         viewer_is_local: Optional[Callable[[], bool]] = None,
         mention_provider: Optional[MentionProvider] = None,
         on_upload_file: Optional[UploadHandler] = None,
@@ -290,6 +309,10 @@ class ChatFeed:
         self.approval_column: Optional[ui.column] = None
         # 떠 있는 승인 카드 (요청 id → 카드와 그 안의 입력칸들).
         self._approval_cards: Dict[str, Dict[str, Any]] = {}
+        # 계획 승인 카드 (ADR-028). 한 턴에 많아야 한 장입니다. 주어지지 않으면 카드도 없습니다.
+        self.on_plan_approval = on_plan_approval
+        self.plan_column: Optional[ui.column] = None
+        self._plan_card: Optional[Dict[str, Any]] = None
         self.scroll_area: Optional[ui.scroll_area] = None
         self.message_container: Optional[ui.column] = None
         self.status_bar: Optional[ui.row] = None
@@ -487,6 +510,14 @@ class ChatFeed:
                     "w-full gap-1 max-h-[45vh] overflow-y-auto flex-nowrap"
                 )
                 self.approval_column.set_visibility(False)
+
+                # 계획 승인 카드 (ADR-028). 전문가 수만큼 칸이 있어 길어질 수 있으므로, 도구
+                # 승인 카드처럼 이 칸 안에서 스크롤합니다. 높이를 더 주면 작은 창에서 타임라인이
+                # 통째로 가려져, 승인하려는 계획 발언을 읽을 수 없게 됩니다.
+                self.plan_column = ui.column().classes(
+                    "w-full gap-1 max-h-[40vh] overflow-y-auto flex-nowrap"
+                )
+                self.plan_column.set_visibility(False)
 
                 # 쓸려 가는 막대. 글자가 한동안 오지 않아도 무언가 돌고 있다는
                 # 것을 한눈에 보여줍니다.
@@ -1107,6 +1138,206 @@ class ChatFeed:
             remaining = int(opened_at + wait_seconds - time.time())
             label.set_text("자동 거부" if remaining <= 0 else f"{remaining}초 후 자동 거부")
 
+    # ------------------------------------------------------------ 계획 승인 (ADR-028)
+
+    def set_plan_approval(self, info: Optional[Dict[str, Any]]) -> None:
+        """계획 승인 카드를 띄우거나(`info`) 걷습니다(None).
+
+        같은 요청의 카드가 이미 떠 있으면 **그대로 둡니다**. 스냅샷 복원이나 다시 붙기로 같은
+        카드가 한 번 더 들어오는 일이 흔한데, 그때마다 다시 그리면 사람이 고치던 과업과 적던
+        의견이 사라집니다.
+        """
+        request_id = str((info or {}).get("id") or "")
+        if self._plan_card is not None and request_id and self._plan_card.get("id") == request_id:
+            return
+        self.clear_plan_approval()
+        if not info or not request_id or self.on_plan_approval is None:
+            return
+        if not self.alive or self.plan_column is None or self.plan_column.is_deleted:
+            return
+
+        entry: Dict[str, Any] = {"id": request_id, "info": dict(info), "tasks": []}
+        revision = int(info.get("revision") or 0)
+        notice = str(info.get("notice") or "")
+
+        with self.plan_column:
+            with ui.column().classes(PLAN_CARD_CLASSES) as card:
+                with ui.row().classes("w-full items-center gap-2 flex-nowrap"):
+                    ui.icon("fact_check", size="sm").classes("text-emerald-300 flex-shrink-0")
+                    ui.label(
+                        f"계획 승인 — {info.get('agent_name', '오케스트레이터')}"
+                    ).classes("font-semibold text-emerald-100 min-w-0 truncate")
+                    if revision:
+                        ui.badge(f"수정 {revision}회", color="teal-8").props("dense")
+                    ui.space()
+                    entry["countdown"] = ui.label("").classes(
+                        f"{COUNTDOWN_CLASSES} text-emerald-300"
+                    )
+                ui.label(
+                    "승인하시기 전에는 어떤 전문가도 발언하지 않습니다. 과업과 완료 기준은 여기서 "
+                    "직접 고쳐 그대로 승인하실 수 있습니다."
+                ).classes("text-emerald-100")
+                if notice:
+                    ui.label(notice).classes("text-amber-300 font-semibold")
+                plan_body = str(info.get("plan") or "").strip()
+                if plan_body:
+                    # 피드의 오케스트레이터 발언과 같은 글입니다. 카드와 피드를 오가지 않고 읽습니다.
+                    with ui.expansion("계획 본문 보기", icon="article").classes(
+                        "w-full text-xs text-slate-300"
+                    ):
+                        MathMarkdown(plan_body).classes("text-xs text-slate-200")
+
+                for task in info.get("tasks") or []:
+                    if not isinstance(task, dict) or not task.get("agent"):
+                        continue
+                    row: Dict[str, Any] = {"agent": str(task["agent"])}
+                    who = str(task.get("name") or task["agent"])
+                    if task.get("role"):
+                        who += f" ({task['role']})"
+                    proposed = str(task.get("task") or "")
+                    alternatives = [str(a) for a in task.get("alternatives") or [] if str(a).strip()]
+                    with ui.column().classes(PLAN_TASK_CLASSES):
+                        ui.label(who).classes("font-semibold text-slate-100")
+                        row["task"] = ui.textarea(
+                            label="과업" if proposed else "과업 (비워 두면 계획 본문을 따릅니다)",
+                            value=proposed,
+                        ).props("outlined dense dark autogrow rows=1").classes("w-full text-xs")
+                        if alternatives:
+                            # 고른 글이 과업 칸에 들어갑니다. 그 뒤에 더 고쳐 쓸 수도 있습니다.
+                            choices = [proposed] + alternatives
+                            labels = {0: f"권장: {proposed}"}
+                            labels.update({i: f"대안 {i}: {text}" for i, text in enumerate(alternatives, 1)})
+                            ui.radio(
+                                labels, value=0,
+                                on_change=lambda e, box=row["task"], options=choices: box.set_value(
+                                    options[int(e.value or 0)]
+                                ),
+                            ).props("dense dark size=xs").classes("text-xs text-slate-300")
+                        row["done_when"] = ui.input(
+                            label="완료 기준 (선택 사항) — 끝났을 때 무엇이 있거나 참인지",
+                            value=str(task.get("done_when") or ""),
+                        ).props("outlined dense dark").classes("w-full text-xs")
+                        row["comment"] = ui.input(
+                            label="의견 — 적으시면 오케스트레이터가 계획을 다시 씁니다",
+                            on_change=lambda _e: self._refresh_plan_buttons(),
+                        ).props("outlined dense dark").classes("w-full text-xs")
+                    entry["tasks"].append(row)
+
+                entry["comment"] = ui.textarea(
+                    label="계획 전체에 대한 의견 — 적으시면 오케스트레이터가 계획을 다시 씁니다",
+                    on_change=lambda _e: self._refresh_plan_buttons(),
+                ).props("outlined dense dark autogrow rows=1").classes("w-full text-xs")
+
+                with ui.row().classes("w-full items-center gap-1 flex-wrap justify-end"):
+                    ui.label(
+                        "의견을 적으시면 [승인] 대신 [수정 요청] 버튼이 나타납니다."
+                    ).classes("text-slate-400 mr-auto")
+                    entry["approve"] = ui.button(
+                        "승인", icon="check",
+                        on_click=lambda _e: self._answer_plan("approve"),
+                    ).props("unelevated dense no-caps color=emerald-7 size=sm").tooltip(
+                        "위 과업과 완료 기준 그대로 토론을 시작합니다. 직접 고치신 내용이 그대로 반영됩니다."
+                    )
+                    entry["revise"] = ui.button(
+                        "수정 요청", icon="edit_note",
+                        on_click=lambda _e: self._answer_plan("revise"),
+                    ).props("unelevated dense no-caps color=amber-8 size=sm").tooltip(
+                        "적으신 의견과 고치신 내용을 오케스트레이터에게 전달하여 계획을 다시 쓰게 합니다. "
+                        "다시 쓴 계획으로 승인 카드가 한 번 더 열립니다."
+                    )
+                    if self.on_abort is not None:
+                        # 거부는 긴급 종료와 같은 일입니다. 받을 곳이 없는 화면(체험 서버)에는
+                        # 버튼을 두지 않습니다 — 그곳에서는 정지가 같은 자리를 맡습니다.
+                        ui.element("div").classes("w-3")
+                        ui.button(
+                            "거부", icon="undo", on_click=lambda _e: self._handle_abort(),
+                        ).props("flat dense no-caps color=red-4 size=sm").tooltip(
+                            "이 요청과 계획을 기록에서 지우고, 요청 내용을 입력창으로 되돌립니다."
+                        )
+
+        entry["card"] = card
+        self._plan_card = entry
+        self.plan_column.set_visibility(True)
+        self._refresh_plan_buttons()
+        self._tick_plan_countdown()
+
+    def clear_plan_approval(self, request_id: Optional[str] = None) -> None:
+        """계획 승인 카드를 걷습니다. `request_id` 를 주면 그 요청의 카드일 때만 걷습니다."""
+        entry = self._plan_card
+        if entry is None or (request_id and entry.get("id") != request_id):
+            return
+        self._plan_card = None
+        card = entry.get("card")
+        if card is not None and not card.is_deleted:
+            card.delete()
+        if self.plan_column is not None and not self.plan_column.is_deleted:
+            self.plan_column.set_visibility(False)
+
+    def _plan_comments(self) -> Tuple[str, Dict[str, str]]:
+        """카드에 적힌 의견 — (계획 전체, 전문가 키 → 과업별)."""
+        entry = self._plan_card or {}
+        overall_box = entry.get("comment")
+        overall = str(overall_box.value or "").strip() if overall_box is not None else ""
+        per_task = {
+            row["agent"]: str(row["comment"].value or "").strip()
+            for row in entry.get("tasks") or []
+            if str(row["comment"].value or "").strip()
+        }
+        return overall, per_task
+
+    def _refresh_plan_buttons(self) -> None:
+        """의견이 적혀 있으면 승인을 내리고 수정 요청을 올립니다 (`plan_gate.card_actions`)."""
+        entry = self._plan_card
+        if entry is None:
+            return
+        approve, revise = card_actions(*self._plan_comments())
+        for key, visible in (("approve", approve), ("revise", revise)):
+            button = entry.get(key)
+            if button is not None and not button.is_deleted:
+                button.set_visibility(visible)
+
+    async def _answer_plan(self, decision: str) -> None:
+        """답은 한 번뿐입니다. 받아들여지면 카드는 엔진이 보내는 이벤트로 걷힙니다."""
+        entry = self._plan_card
+        if entry is None or self.on_plan_approval is None:
+            return
+        tasks = [
+            {
+                "agent": row["agent"],
+                "task": str(row["task"].value or ""),
+                "done_when": str(row["done_when"].value or ""),
+            }
+            for row in entry.get("tasks") or []
+        ]
+        overall, per_task = self._plan_comments()
+        accepted = await self.on_plan_approval(entry["id"], decision, tasks, overall, per_task)
+        if accepted:
+            # 같은 답을 두 번 누르지 않게 버튼을 잠급니다. 카드는 곧 걷힙니다.
+            for key in ("approve", "revise"):
+                button = entry.get(key)
+                if button is not None and not button.is_deleted:
+                    button.disable()
+
+    def _tick_plan_countdown(self) -> None:
+        """답하지 않으면 턴이 멈춰 두어지기까지 남은 시간."""
+        entry = self._plan_card
+        label = (entry or {}).get("countdown")
+        if label is None or label.is_deleted:
+            return
+        info = entry.get("info") or {}
+        opened_at = float(info.get("opened_at") or 0.0)
+        wait_seconds = float(info.get("wait_seconds") or 0.0)
+        if not opened_at or wait_seconds <= 0:
+            label.set_text("")
+            return
+        remaining = int(opened_at + wait_seconds - time.time())
+        if remaining <= 0:
+            label.set_text("대기 종료")
+        elif remaining < 120:
+            label.set_text(f"{remaining}초 후 대기 종료")
+        else:
+            label.set_text(f"{remaining // 60}분 후 대기 종료")
+
     def set_busy(self, busy: bool, status_text: str = "", round_info: str = "") -> None:
         if not self.alive:
             return
@@ -1144,6 +1375,7 @@ class ChatFeed:
             # 남겨 두면 사람은 무언가 고장 났다고 생각합니다.
             self.set_budget_request(None)
             self.set_approvals([])
+            self.set_plan_approval(None)
         if self.status_spinner:
             self.status_spinner.set_visibility(busy)
         if self.status_label and status_text:
@@ -1197,6 +1429,7 @@ class ChatFeed:
             return
         self._tick_budget_countdown()
         self._tick_approval_countdowns()
+        self._tick_plan_countdown()
         if self._busy_since is None:
             text = ""
         else:
