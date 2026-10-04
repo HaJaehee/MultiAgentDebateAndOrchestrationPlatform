@@ -1,12 +1,12 @@
 # 🤖 MADO — Multi-Agent Debate & Orchestration Platform
 
-`v1.1.2` · `LGPL-3.0-or-later` · `Python 3.11+`
+`v1.2` · `LGPL-3.0-or-later` · `Python 3.11+`
 
 > **MCP 도구를 활용하는 반응형 멀티 에이전트 협업 & 토론 웹 애플리케이션**  
 > Dynamic Agent Profiling via `conf.json`, MCP Tool Integration, Multi-Model LLM Abstraction (LiteLLM), StateGraph Orchestration, and NiceGUI + FastAPI Reactive Web Interface.
 
 ```
-Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v1.1.2
+Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v1.2
 ```
 
 동일한 내용을 웹 UI 우측 상단의 **ⓘ** 버튼을 통해서도 확인하실 수 있습니다.
@@ -293,7 +293,7 @@ pytest -v tests/
 |------|-----|
 | Author | Ha, Jaehee |
 | Email | lovesm135@naver.com |
-| Version | **v1.1.2** |
+| Version | **v1.2** |
 | License | LGPL-3.0-or-later ([LICENSE.md](LICENSE.md)) |
 
 버전 문자열의 기준 위치(Single Source of Truth)는 [`app/about.py`](app/about.py) 파일 한 곳입니다. FastAPI 메타데이터, `GET /api/health` 응답, 웹 UI 헤더 뱃지, 정보 모달이 모두 이 값을 참조하므로, 버전을 올릴 때 한 곳만 수정하시면 됩니다.
@@ -305,7 +305,7 @@ curl -s localhost:8000/api/health | python -m json.tool
 ```json
 {
   "status": "healthy",
-  "version": "v1.1.2",
+  "version": "v1.2",
   "author": { "name": "Ha, Jaehee", "email": "lovesm135@naver.com" }
 }
 ```

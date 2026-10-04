@@ -219,7 +219,7 @@ _make_budget_arbiter()  ──▶ on_event: tool_budget_exhausted ──▶ UI �
 
 ---
 
-## 계획 승인 (Plan Approval, ADR-028)
+## 계획 승인 (Plan Approval, v1.2 · ADR-028)
 
 오케스트레이터의 계획(0라운드)이 기록되면 엔진은 토론 단계로 넘어가기 **전에** 승인 카드를 엽니다. 사람이 답하기 전에는 어떤 전문가도 발언하지 않습니다. 요청을 잘못 읽은 계획이 여러 라운드를 돈 뒤에야 드러나는 일을 막기 위한 단계이며, `plan_approval.enabled` 로 켜고 끕니다 (기본값: 켜짐).
 

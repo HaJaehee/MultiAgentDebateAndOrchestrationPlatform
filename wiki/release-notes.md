@@ -6,7 +6,7 @@ changed*, not a second copy of the documentation.
 
 ---
 
-## Unreleased
+## v1.2
 
 **Plan approval.** After the orchestrator's plan the engine opens an approval card and no specialist speaks
 until a human answers. The card lists one task per specialist (taken from the plan by one extra tool-less
