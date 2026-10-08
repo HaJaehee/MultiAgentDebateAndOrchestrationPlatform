@@ -29,6 +29,7 @@ from app.mcp.manager import get_mcp_manager
 from app.mcp.pool import get_runtime_pool
 from app.orchestration.runner import get_debate_runner
 from app.orchestration.turns import mark_interrupted_turns
+from app.easy import setup_easy
 from app.trial import setup_trial
 from app.ui.app import create_ui
 from app.ui.graph_page import create_graph_page
@@ -350,6 +351,8 @@ create_graph_page()
 # 체험 서버 (app/trial). 켜져 있지 않으면 화면은 "꺼져 있음" 만 보이고 방문자 통로는 닫혀 있습니다.
 # 로그인 폼이 FastAPI 경로라 `ui.run_with` 보다 먼저 붙입니다.
 trial_gate = setup_trial(server)
+# 비엔지니어 화면 (app/easy, `/trial/easy`). 체험 서버의 방문자 통로와 로그인을 그대로 씁니다.
+setup_easy()
 ui.run_with(
     server,
     title=APP_NAME,

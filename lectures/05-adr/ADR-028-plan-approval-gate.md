@@ -1,6 +1,6 @@
 # ADR-028. 계획이 나오면 토론을 시작하기 전에 사람의 승인을 받습니다
 
-> [ADR 목록](README.md) · 이전: [ADR-027](ADR-027-designate-skills-from-the-input-bar.md)
+> [ADR 목록](README.md) · 이전: [ADR-027](ADR-027-designate-skills-from-the-input-bar.md) · 다음: [ADR-029](ADR-029-beginner-pages.md)
 
 ## 상태 (Status)
 

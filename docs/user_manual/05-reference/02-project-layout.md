@@ -82,6 +82,14 @@ app/
 │   ├── plan_gate.py          412   계획 승인 — 분담표·승인·수정 요청·완료 확인 (ADR-028)
 │   └── state.py               53   DebateState, DebateMessage, ArtifactItem
 │
+├── easy/                           비엔지니어 화면 /trial/easy (ADR-029)
+│   ├── catalog.py            229   도구·스킬의 쉬운 말, 시연 에이전트·예시 과제, 예제 작업 폴더
+│   ├── builder.py            331   대화로 에이전트 만들기 — 도우미 프롬프트, 설계도 읽기·거르기, 저장
+│   ├── sessions.py           264   일 맡기는 잠긴 대화, 내 기록·내 에이전트
+│   ├── loop.py               196   이벤트를 생각 → 행동 → 관찰 단계로 나누기
+│   ├── examples/                   예제 파일 (판매 CSV·회의 메모·고객 문의)
+│   └── pages/                      웰컴·만들기·일 맡기기·일하는 과정 화면
+│
 ├── database/
 │   ├── models.py             144   SQLAlchemy ORM (5개 테이블)
 │   └── session.py             85   비동기 엔진·세션 팩토리, init_db, 컬럼 이관
@@ -119,6 +127,7 @@ app/
 | 발언 카드 모양 | `ui/components/chat_feed.py` |
 | 에이전트 카드 색·아이콘 | `agents/base.py` (해석·폴백) · `ui/components/agent_appearance.py` (편집기) |
 | 로스터 컨트롤 | `ui/components/roster.py` |
+| 비엔지니어 화면 (웰컴·대화로 만들기·생각/행동/관찰) | `easy/` — 도구의 쉬운 말은 `easy/catalog.py` |
 | 스킬 (스캔·도구·스크립트 복사) | `agents/skills.py` · 기본 스킬 디렉터리는 루트의 `skills/` |
 | 산출물 렌더링 | `ui/components/artifact_viewer.py` |
 | 내보내기 형식 | `export.py` |

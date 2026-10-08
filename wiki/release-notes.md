@@ -6,6 +6,22 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## Unreleased
+
+**Pages for non-engineers.** `/trial/easy` is a separate set of pages that shows what an agent is and lets
+a non-engineer build and run one. The welcome page compares a chatbot and an agent on the same question and
+explains the think → act → observe loop and the four things an agent is made of (persona, work instructions,
+tools, skills). A live run shows each speech as thought / action / observation steps, built from the
+`message_stream_chunk` and `tool_executed` events the engine already sends, in arrival order. The builder is
+an interview with a tool-less copy of the orchestrator that appends an `agent` blueprint block to every reply;
+the blueprint is filtered against the real tools and skills and stays editable. The owner's agents go into
+`conf.json` (`add_agent_to_conf_file`, inheriting `llm`); a trial visitor's stay in the `easy_agents` table and
+run read-only with `filesystem` only, in a copy of the bundled example files. The expert page, the trial pages
+and the engine are unchanged.
+→ [Beginner Pages](ui/beginner-pages.md) · ADR-029
+
+---
+
 ## v1.2
 
 **Plan approval.** After the orchestrator's plan the engine opens an approval card and no specialist speaks
