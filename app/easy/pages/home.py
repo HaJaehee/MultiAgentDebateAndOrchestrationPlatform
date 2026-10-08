@@ -20,39 +20,63 @@ from app.easy.pages.common import (
 from app.easy.sessions import delete_guest_agent, list_easy_sessions, list_guest_agents
 from app.trial.pages.common import disabled_page, footer_notice, local_time
 
+# 색. 생각·행동·관찰은 실행 화면의 단계 막대와 같은 색입니다 (common.py `.easy-step-*`).
+THOUGHT, ACTION, OBSERVE = "#6366f1", "#f59e0b", "#10b981"
+CHATBOT, AGENT = "#64748b", "#14b8a6"
+
+
+def _tint(color: str) -> str:
+    """색 카드에 줄 인라인 스타일 (`.easy-tint` · `.easy-badge` · `.easy-pill` 이 읽습니다)."""
+    r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+    return f"--c:{color};--rgb:{r},{g},{b}"
+
+
+# 다이어그램은 밝은 판 위에 그려지므로(`theme.py` `.nicegui-mermaid`) 연한 바탕에 진한 테두리로 칠합니다.
 LOOP_DIAGRAM = """flowchart LR
     goal(["🎯 목표"]) --> think["💭 생각<br/>무엇을 해야 하지?"]
     think --> act["🛠 행동<br/>도구를 쓴다"]
     act --> obs["👀 관찰<br/>결과를 본다"]
     obs --> think
     think -->|목표 달성| done(["✅ 완료"])
+    classDef cGoal fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px,color:#3b0764
+    classDef cThink fill:#e0e7ff,stroke:#6366f1,stroke-width:2px,color:#1e1b4b
+    classDef cAct fill:#fef3c7,stroke:#f59e0b,stroke-width:2px,color:#451a03
+    classDef cObs fill:#d1fae5,stroke:#10b981,stroke-width:2px,color:#022c22
+    classDef cDone fill:#dcfce7,stroke:#22c55e,stroke-width:2px,color:#052e16
+    class goal cGoal
+    class think cThink
+    class act cAct
+    class obs cObs
+    class done cDone
 """
 
 # 같은 질문에 대한 두 모습. 에이전트 쪽은 예제 폴더의 판매 기록(examples/sales_2026q3.csv)으로
 # 실제로 나오는 숫자입니다 — 수량은 보조 배터리, 매출액은 무선 이어폰이 1위입니다.
 _CHATBOT_STEPS = [
-    ("💬", "질문을 받습니다."),
-    ("📚", "학습해 둔 지식만으로 답을 만듭니다. 회사의 판매 파일은 볼 수 없습니다."),
+    ("💬", "질문을 받습니다.", "text-slate-300"),
+    ("📚", "학습해 둔 지식만으로 답을 만듭니다. 회사의 판매 파일은 볼 수 없습니다.", "text-slate-300"),
 ]
 _CHATBOT_ANSWER = "“판매 자료를 볼 수 없어 정확히는 알 수 없지만, 보통은 무선 이어폰이 많이 팔립니다.”"
+# 글자색은 단계의 종류를 따릅니다 (생각 인디고 · 행동 호박 · 관찰 에메랄드).
 _AGENT_STEPS = [
-    ("💭", "생각 — 판매 기록 파일이 있는지 먼저 봐야겠다."),
-    ("🛠", "행동 — 작업 폴더를 살펴본다."),
-    ("👀", "관찰 — sales_2026q3.csv 가 있다."),
-    ("🛠", "행동 — 파일을 열어 읽는다."),
-    ("👀", "관찰 — 제품별 판매 60줄. 수량과 단가가 있다."),
-    ("💭", "생각 — '많이 팔린' 은 수량일 수도, 매출액일 수도 있다. 둘 다 더해 보자."),
+    ("💭", "생각 — 판매 기록 파일이 있는지 먼저 봐야겠다.", "text-indigo-200"),
+    ("🛠", "행동 — 작업 폴더를 살펴본다.", "text-amber-200"),
+    ("👀", "관찰 — sales_2026q3.csv 가 있다.", "text-emerald-200"),
+    ("🛠", "행동 — 파일을 열어 읽는다.", "text-amber-200"),
+    ("👀", "관찰 — 제품별 판매 60줄. 수량과 단가가 있다.", "text-emerald-200"),
+    ("💭", "생각 — '많이 팔린' 은 수량일 수도, 매출액일 수도 있다. 둘 다 더해 보자.", "text-indigo-200"),
 ]
 _AGENT_ANSWER = "“수량으로는 보조 배터리(668개), 매출액으로는 무선 이어폰(약 5,705만 원)이 1위입니다. 근거: sales_2026q3.csv.”"
 
 _INGREDIENTS = [
-    ("badge", "페르소나", "누구인가", "이름과 한 줄 역할입니다. 사회자는 이 줄을 보고 누구에게 어떤 일을 맡길지 정합니다.",
+    ("#8b5cf6", "badge", "페르소나", "누구인가", "이름과 한 줄 역할입니다. 사회자는 이 줄을 보고 누구에게 어떤 일을 맡길지 정합니다.",
      "name · role"),
-    ("description", "업무 지시서", "어떻게 일하나", "목표, 일하는 순서, 결과물의 모양, 하지 말아야 할 것을 적은 글입니다. "
+    ("#0ea5e9", "description", "업무 지시서", "어떻게 일하나", "목표, 일하는 순서, 결과물의 모양, 하지 말아야 할 것을 적은 글입니다. "
      "에이전트는 일할 때마다 이 글을 맨 먼저 읽습니다.", "system_prompt"),
-    ("construction", "도구", "손과 발", "파일 열기, 계산, 웹 페이지 읽기처럼 실제로 무언가를 하는 능력입니다. "
+    # 도구는 행동과 같은 색입니다 — 도구를 쓰는 것이 곧 행동입니다.
+    (ACTION, "construction", "도구", "손과 발", "파일 열기, 계산, 웹 페이지 읽기처럼 실제로 무언가를 하는 능력입니다. "
      "도구가 없으면 말만 할 수 있습니다.", "allowed_mcp_servers (MCP)"),
-    ("menu_book", "스킬", "업무 매뉴얼", "특정한 일을 잘하는 요령을 적어 둔 문서입니다. 필요할 때 펼쳐 보고 그대로 따라 합니다.",
+    ("#ec4899", "menu_book", "스킬", "업무 매뉴얼", "특정한 일을 잘하는 요령을 적어 둔 문서입니다. 필요할 때 펼쳐 보고 그대로 따라 합니다.",
      "allowed_skills"),
 ]
 
@@ -63,7 +87,13 @@ def _hero() -> None:
         ui.label(
             "챗봇은 묻는 말에 아는 만큼 대답합니다. 에이전트는 목표를 받으면 스스로 계획을 세우고, 도구를 써서 "
             "자료를 직접 열어 보고, 계산하고, 확인하면서 일이 끝날 때까지 움직입니다."
-        ).classes("text-slate-300 leading-relaxed")
+        ).classes("text-slate-200 leading-relaxed")
+        with ui.row().classes("items-center gap-2 mt-1"):
+            for index, (label, color) in enumerate((("💭 생각", THOUGHT), ("🛠 행동", ACTION), ("👀 관찰", OBSERVE))):
+                if index:
+                    ui.icon("arrow_forward", size="xs").classes("text-slate-300")
+                ui.label(label).classes("easy-pill").style(_tint(color))
+            ui.label("— 일이 끝날 때까지 이 셋을 되풀이합니다").classes("text-sm text-slate-200")
 
 
 def _compare() -> None:
@@ -72,19 +102,22 @@ def _compare() -> None:
         ui.icon("help_outline", size="xs").classes("text-indigo-300")
         ui.label("“이번 분기에 가장 많이 팔린 제품은 무엇입니까?”")
     with ui.grid().classes("w-full gap-3 grid-cols-1 md:grid-cols-2"):
-        for title, subtitle, steps, answer, tone in (
-            ("챗봇", "아는 것으로 바로 답합니다", _CHATBOT_STEPS, _CHATBOT_ANSWER, "text-slate-400"),
-            ("에이전트", "확인하고 나서 답합니다", _AGENT_STEPS, _AGENT_ANSWER, "text-emerald-200"),
+        for color, icon_name, title, subtitle, steps, answer, tone in (
+            (CHATBOT, "chat_bubble_outline", "챗봇", "아는 것으로 바로 답합니다", _CHATBOT_STEPS, _CHATBOT_ANSWER,
+             "text-slate-400"),
+            (AGENT, "smart_toy", "에이전트", "확인하고 나서 답합니다", _AGENT_STEPS, _AGENT_ANSWER, "text-teal-200"),
         ):
-            with ui.card().classes("trial-card p-4 gap-2 w-full"):
-                with ui.row().classes("items-baseline gap-2"):
+            with ui.card().classes("trial-card easy-tint p-4 gap-2 w-full").style(_tint(color)):
+                with ui.row().classes("items-center gap-2"):
+                    with ui.element("div").classes("easy-badge"):
+                        ui.icon(icon_name, size="sm")
                     ui.label(title).classes("text-base font-semibold")
-                    ui.label(subtitle).classes("text-xs text-slate-500")
-                for icon, text in steps:
+                    ui.label(subtitle).classes("text-xs text-slate-400")
+                for icon, text, step_tone in steps:
                     with ui.row().classes("items-start gap-2 flex-nowrap"):
                         ui.label(icon).classes("flex-shrink-0")
-                        ui.label(text).classes("text-sm text-slate-300 leading-snug")
-                ui.label(answer).classes(f"text-sm {tone} mt-1 leading-snug")
+                        ui.label(text).classes(f"text-sm {step_tone} leading-snug")
+                ui.label(answer).classes(f"text-sm {tone} mt-1 leading-snug font-medium")
 
 
 def _loop() -> None:
@@ -103,12 +136,13 @@ def _loop() -> None:
 def _ingredients() -> None:
     ui.label("에이전트를 이루는 네 가지").classes("text-lg font-semibold")
     with ui.grid().classes("w-full gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"):
-        for icon, name, short, body, tech in _INGREDIENTS:
-            with ui.card().classes("trial-card p-4 gap-1 w-full"):
+        for color, icon, name, short, body, tech in _INGREDIENTS:
+            with ui.card().classes("trial-card easy-tint p-4 gap-1 w-full").style(_tint(color)):
                 with ui.row().classes("items-center gap-2"):
-                    ui.icon(icon, size="sm").classes("text-indigo-300")
+                    with ui.element("div").classes("easy-badge"):
+                        ui.icon(icon, size="sm")
                     ui.label(name).classes("font-semibold")
-                    ui.label(short).classes("text-xs text-slate-500")
+                    ui.label(short).classes("text-xs text-slate-400")
                 ui.label(body).classes("text-sm text-slate-300 leading-snug")
                 ui.label(f"설정 이름: {tech}").classes("easy-mono mt-1")
     ui.label("직접 만들 때는 이 네 가지를 도우미와 대화하며 정합니다. 설정 파일을 몰라도 됩니다.").classes(
@@ -119,23 +153,24 @@ def _ingredients() -> None:
 def _start_cards(viewer: Viewer) -> None:
     ui.label("시작하기").classes("text-lg font-semibold")
     cards = [
-        ("play_circle", "일하는 모습 보기",
+        (OBSERVE, "play_circle", "일하는 모습 보기",
          "예제 판매 기록으로 ‘자료 탐색가’ 에이전트가 생각·행동·관찰을 되풀이하는 모습을 실시간으로 봅니다 (1~3분).",
          f"{EASY_RUN}?demo=1"),
-        ("chat", "나만의 에이전트 만들기",
+        ("#8b5cf6", "chat", "나만의 에이전트 만들기",
          "맡기고 싶은 일을 말하면 도우미가 몇 가지를 묻고, 에이전트의 설정을 대신 써 줍니다.", EASY_BUILD),
-        ("assignment", "내 에이전트에게 일 맡기기",
+        ("#0ea5e9", "assignment", "내 에이전트에게 일 맡기기",
          "에이전트를 골라 과제를 주고, 일하는 과정과 결과를 받습니다.", EASY_RUN),
     ]
     with ui.grid().classes("w-full gap-3 grid-cols-1 md:grid-cols-3"):
-        for icon, title, body, target in cards:
-            with ui.card().classes("trial-card trial-card-link p-4 gap-2 w-full").on(
+        for color, icon, title, body, target in cards:
+            with ui.card().classes("trial-card easy-tint easy-tint-link p-4 gap-2 w-full").style(_tint(color)).on(
                 "click", lambda t=target: ui.navigate.to(t)
             ):
                 with ui.row().classes("items-center gap-2"):
-                    ui.icon(icon, size="sm").classes("text-indigo-300")
+                    with ui.element("div").classes("easy-badge"):
+                        ui.icon(icon, size="sm")
                     ui.label(title).classes("font-semibold")
-                ui.label(body).classes("text-sm text-slate-400 leading-snug")
+                ui.label(body).classes("text-sm text-slate-300 leading-snug")
     if viewer.owner:
         note = "만든 에이전트는 conf.json 에 저장되어 전문가 화면에서도 그대로 쓸 수 있습니다."
     else:

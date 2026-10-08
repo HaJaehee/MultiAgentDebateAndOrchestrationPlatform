@@ -26,7 +26,18 @@ EASY_RUN = f"{EASY_HOME}/run"
 EASY_TITLE = "AI 에이전트 알아보기"
 
 EASY_CSS = """
-.easy-hero { background: linear-gradient(135deg, #1e1b4b 0%, #0f172a 70%); border: 1px solid #312e81; border-radius: 16px; }
+.easy-hero { background: linear-gradient(120deg, #312e81 0%, #4c1d95 45%, #115e59 100%); border: 1px solid #4338ca;
+  border-radius: 16px; box-shadow: 0 10px 30px rgba(76, 29, 149, .25); }
+/* 색 카드. 카드에 --c(강조색)와 --rgb(같은 색의 r,g,b)를 인라인으로 줍니다. 사내망의 오래된 브라우저를
+   생각해 color-mix() 대신 rgba(var(--rgb), a) 만 씁니다. */
+.easy-tint { background: linear-gradient(160deg, rgba(var(--rgb), .16) 0%, #0f172a 75%);
+  border: 1px solid rgba(var(--rgb), .35); border-top: 3px solid var(--c); border-radius: 12px; }
+.easy-tint-link { cursor: pointer; transition: transform .15s ease, box-shadow .15s ease; }
+.easy-tint-link:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(var(--rgb), .28); }
+.easy-badge { width: 36px; height: 36px; border-radius: 10px; display: inline-flex; align-items: center;
+  justify-content: center; flex-shrink: 0; background: rgba(var(--rgb), .2); color: var(--c); }
+.easy-pill { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 9999px;
+  background: rgba(var(--rgb), .35); border: 1px solid rgba(var(--rgb), .7); color: #f8fafc; }
 .easy-bubble { background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; }
 .easy-bubble-me { background: #1e1b4b; border-color: #3730a3; }
 .easy-step { border-left: 3px solid #334155; padding-left: 12px; }
