@@ -945,7 +945,7 @@ class AgentRosterControl:
                 ui.icon("smart_toy", size="11px").classes("text-slate-500")
                 ui.label(agent.model).classes("text-[12px] text-slate-400 truncate max-w-[120px]")
                 if agent.sequential_thinking.enabled:
-                    ui.badge(f"ST·{agent.sequential_thinking.mode}", color="teal-9").props("dense").classes("text-[11px]")
+                    ui.badge(f"ST·{agent.sequential_thinking.mode}", color="teal-9").props("dense").classes("text-[12px]")
                 if not agent.is_live:
                     # 엔드포인트가 없으면 발언 차례에 "연결 끊김" 으로 기록됩니다.
                     ui.badge("미설정", color="red-9").props("dense").classes("text-[13px]")
