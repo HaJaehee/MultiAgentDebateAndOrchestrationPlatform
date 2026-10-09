@@ -6,7 +6,7 @@ changed*, not a second copy of the documentation.
 
 ---
 
-## Unreleased
+## v1.3
 
 **Select all / none in the roster.** `모두 선택` and `모두 선택 해제`, under the roster's `conf.json` hint, set
 every specialist's participation for this conversation in one click. The orchestrator stays in, and `conf.json`
@@ -26,8 +26,6 @@ run read-only with `filesystem` only, in a copy of the bundled example files. Th
 the owner (with a `체험 화면` button back), and the engine is unchanged. The expert add-agent dialog gains an
 `에이전트 만들기` button that runs the same interview and copies the blueprint into the form, which still saves.
 → [Beginner Pages](ui/beginner-pages.md) · ADR-029
-
----
 
 ## v1.2
 
