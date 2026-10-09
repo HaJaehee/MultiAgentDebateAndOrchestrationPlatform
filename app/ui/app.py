@@ -1030,7 +1030,7 @@ def create_ui() -> None:
             with ui.row().classes("items-center gap-2"):
                 # 비엔지니어 화면 (app/easy, ADR-029). 같은 탭에서 엽니다 — 토론은 러너가 굴리므로
                 # 이 화면을 떠나도 끊기지 않습니다.
-                ui.button("쉬운 화면", icon="school", on_click=lambda: ui.navigate.to(EASY_HOME)).props(
+                ui.button("쉬운 화면", icon="eco", on_click=lambda: ui.navigate.to(EASY_HOME)).props(
                     "flat dense no-caps color=teal-3"
                 ).tooltip("비엔지니어를 위한 화면 — AI 에이전트 알아보기, 대화로 에이전트 만들기")
                 ui.badge("FastAPI + NiceGUI", color="indigo-8").props("dense")
