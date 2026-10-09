@@ -114,3 +114,44 @@ def test_on_agent_toggle_updates_card_classes():
         "replace": None,
     }
 
+
+
+def _control_with_four_agents(monkeypatch) -> AgentRosterControl:
+    """conf.json 없이도 돌도록 풀을 직접 넣습니다."""
+    from app.agents.pool import AgentPool
+    from app.config import AgentConfig
+    from app.ui.components import roster
+
+    pool = AgentPool({
+        key: AgentConfig(name=key.title(), role=key, model="openai/gpt-4o-mini", api_key="sk-test") for key in FOUR
+    })
+    monkeypatch.setattr(roster, "get_agent_pool", lambda: pool)
+    return AgentRosterControl()
+
+
+def test_select_none_turns_every_specialist_off_but_keeps_the_orchestrator(monkeypatch):
+    control = _control_with_four_agents(monkeypatch)
+    control._on_select_all(False)
+    assert {k: v for k, v in control.selected_agents.items() if k != "orchestrator"} == {
+        "architect": False, "coder": False, "critic": False,
+    }
+    assert control.selected_agents["orchestrator"] is True
+    assert control.get_active_agent_keys() == ["orchestrator"]
+
+    control._on_select_all(True)
+    assert all(control.selected_agents[k] for k in FOUR)
+
+
+@pytest.mark.parametrize("lock", ["started", "graph"])
+def test_select_all_does_nothing_where_the_checkboxes_are_locked(lock, monkeypatch):
+    """체크박스가 잠기는 경우(이미 시작된 대화, 그래프 토론)에는 일괄 선택도 바꾸지 않습니다."""
+    control = _control_with_four_agents(monkeypatch)
+    control.selected_agents["coder"] = False
+    if lock == "started":
+        control.personas_locked = True
+    else:
+        control._graph_agent_keys = set()
+    control._on_select_all(True)
+    assert control.selected_agents["coder"] is False
+    control._on_select_all(False)
+    assert control.selected_agents["architect"] is True

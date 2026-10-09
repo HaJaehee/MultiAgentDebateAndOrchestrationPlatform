@@ -78,6 +78,12 @@ The web application workspace is organized into four primary UI components in [a
 > `The parent element this slot belongs to has been deleted.`
 
 - **Agent Toggle Cards**: Allows users to include or exclude specific specialists (e.g. toggling the Critic off for faster brainstorming). The Master Orchestrator is fixed and always enabled.
+- **Select all / none**: `모두 선택` and `모두 선택 해제`, under the `⚠️ 에이전트 추가·삭제와 …` hint
+  (`_on_select_all`). They set every specialist's participation for *this conversation*. The orchestrator
+  is left alone and `conf.json` is untouched. They follow the checkbox lock: both are disabled under Graph
+  Debate and in a started conversation. `_fill_cards_row` re-syncs them, because every lock change
+  redraws the cards. Afterwards they redraw the cards, the `N Agents Active` badge and the order preview,
+  and save the conversation, the same as a single toggle.
 - **Card anatomy**: drag handle · avatar on the top line, then name with `수정됨` / stance /
   `이 대화 전용` badges and role *below* it (v0.9.1: always stacked — side by side, the row wrapped only
   for long names, so cards disagreed in shape) · participation checkbox · ⋮ menu (stance, disable,

@@ -291,3 +291,13 @@ def test_the_expert_add_dialog_opens_the_builder_and_still_saves_through_its_own
     assert "FormBuilderChat(" in source and ".open(form_draft())" in source
     assert source.count("add_agent_to_conf_file(") == 1, "저장은 기존 '추가' 버튼 경로 하나뿐이어야 합니다"
     assert "save_owner_agent" not in source
+
+
+def test_the_expert_chat_points_its_fallback_note_at_its_own_summary():
+    import inspect
+
+    from app.easy.pages.build import BuilderScreen, FormBuilderChat
+
+    assert "오른쪽 카드" in BuilderScreen.UPDATED_NOTE, "쉬운 화면 문구는 그대로여야 합니다"
+    assert "아래 요약" in FormBuilderChat.UPDATED_NOTE and "오른쪽" not in FormBuilderChat.UPDATED_NOTE
+    assert "self.UPDATED_NOTE" in inspect.getsource(BuilderScreen.send)

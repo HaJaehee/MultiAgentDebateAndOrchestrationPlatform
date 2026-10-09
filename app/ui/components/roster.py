@@ -232,6 +232,9 @@ class AgentRosterControl:
         self.add_agent_btn: Optional[ui.button] = None
         self.add_agent_tooltip: Optional[ui.tooltip] = None
         self.agent_admin_hint: Optional[ui.label] = None
+        # 참여 체크박스를 한꺼번에 켜고 끄는 버튼. 체크박스가 잠길 때 함께 잠깁니다 (`_fill_cards_row`).
+        self.select_all_btn: Optional[ui.button] = None
+        self.select_none_btn: Optional[ui.button] = None
         # conf.json 에 있지만 꺼 둔 에이전트. 풀에는 등록되지 않아 카드로는 보이지
         # 않으므로, 여기서 따로 보여주지 않으면 다시 켤 방법이 없습니다.
         self.disabled_row: Optional[ui.row] = None
@@ -347,6 +350,23 @@ class AgentRosterControl:
                 self.agent_admin_hint = ui.label("").classes(
                     "text-[12px] text-slate-500 w-full leading-snug -mt-1"
                 )
+                with ui.row().classes("w-full items-center gap-1 -mt-1"):
+                    self.select_all_btn = (
+                        ui.button("모두 선택", icon="done_all", on_click=lambda: self._on_select_all(True))
+                        .props("flat dense no-caps color=indigo-4")
+                        .classes("text-[11px]")
+                    )
+                    self.select_all_btn.tooltip(
+                        "이 대화에 참여할 전문가 에이전트를 모두 켭니다 (오케스트레이터는 항상 참여 · conf.json 은 그대로)"
+                    )
+                    self.select_none_btn = (
+                        ui.button("모두 선택 해제", icon="remove_done", on_click=lambda: self._on_select_all(False))
+                        .props("flat dense no-caps color=grey-5")
+                        .classes("text-[11px]")
+                    )
+                    self.select_none_btn.tooltip(
+                        "이 대화에 참여할 전문가 에이전트를 모두 끕니다 (오케스트레이터는 항상 참여 · conf.json 은 그대로)"
+                    )
 
                 self.cards_row = ui.row().classes("w-full gap-2 flex-wrap")
                 self._fill_cards_row(self._roster_agents())
@@ -649,6 +669,11 @@ class AgentRosterControl:
                 ui.label(f"비활성 {hidden}개 숨김").classes(
                     "text-[12px] text-slate-500 self-center"
                 )
+        # 체크박스와 같은 규칙으로 잠급니다. 잠금이 바뀌는 곳은 모두 카드를 다시 그리므로 여기 한 곳이면 됩니다.
+        locked = self._graph_agent_keys is not None or self.personas_locked
+        for button in (self.select_all_btn, self.select_none_btn):
+            if button is not None and not button.is_deleted:
+                button.set_enabled(not locked)
 
     def _on_view_option(self, name: str, value: bool) -> None:
         """요약 보기 / 비활성 숨기기. 화면만 바뀌므로 카드와 꺼 둔 줄만 다시 그립니다."""
@@ -2599,6 +2624,24 @@ class AgentRosterControl:
                     remove="bg-slate-800/90 border-indigo-500/60",
                     add="bg-slate-900/60 border-slate-800 opacity-50",
                 )
+        self._update_summary_badge()
+        self._refresh_order_preview()
+        if self.on_config_changed:
+            ui.timer(0.01, self.on_config_changed, once=True)
+
+    def _on_select_all(self, value: bool) -> None:
+        """참여 체크박스를 한꺼번에 켜고 끕니다. 오케스트레이터는 늘 참여하므로 건드리지 않습니다.
+
+        체크박스가 잠기는 경우(그래프 토론, 이미 시작된 대화)에는 아무것도 하지 않습니다.
+        버튼도 그때 잠기지만, 화면이 낡았을 때를 위한 마지막 확인입니다.
+        """
+        if self._graph_agent_keys is not None or self.personas_locked:
+            return
+        for agent in self._roster_agents():
+            if agent.key != ORCHESTRATOR_KEY:
+                self.selected_agents[agent.key] = value
+        if self.cards_row is not None and not self.cards_row.is_deleted:
+            self._fill_cards_row(self._roster_agents())
         self._update_summary_badge()
         self._refresh_order_preview()
         if self.on_config_changed:

@@ -8,6 +8,11 @@ changed*, not a second copy of the documentation.
 
 ## Unreleased
 
+**Select all / none in the roster.** `모두 선택` and `모두 선택 해제`, under the roster's `conf.json` hint, set
+every specialist's participation for this conversation in one click. The orchestrator stays in, and `conf.json`
+is untouched. They are disabled wherever the checkboxes are: under Graph Debate and in a started conversation.
+→ [UI Components §1.2](ui/components.md)
+
 **Pages for non-engineers.** `/trial/easy` is a separate set of pages that shows what an agent is and lets
 a non-engineer build and run one. The welcome page compares a chatbot and an agent on the same question and
 explains the think → act → observe loop and the four things an agent is made of (persona, work instructions,

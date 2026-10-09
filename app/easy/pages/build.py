@@ -54,6 +54,9 @@ EXAMPLES = [
 
 
 class BuilderScreen:
+    # 도우미가 설명 없이 설계도만 보냈을 때 대신 보여 줄 말. 설계도가 놓인 자리를 가리킵니다.
+    UPDATED_NOTE = "설계도를 갱신했습니다. 오른쪽 카드를 확인해 주세요."
+
     def __init__(self, viewer: Viewer, servers: List[Option], skills: List[Option]):
         self.viewer = viewer
         self.guest = not viewer.owner
@@ -238,7 +241,7 @@ class BuilderScreen:
             self.send_button.enable()
 
         visible, data = split_reply(content)
-        reply.set_content(visible or "설계도를 갱신했습니다. 오른쪽 카드를 확인해 주세요.")
+        reply.set_content(visible or self.UPDATED_NOTE)
         self.history.append({"role": "assistant", "content": content})
         if data is not None:
             merged = merge_draft(self.read_card(), data)
@@ -285,6 +288,8 @@ class FormBuilderChat(BuilderScreen):
     대화 로직(`send`)은 `BuilderScreen` 그대로이고, 설계도 칸 대신 요약만 보여 줍니다. '양식에 채우기'는
     설계도를 `on_apply` 로 넘길 뿐이며, 저장은 추가 양식의 '추가' 버튼이 기존 경로로 합니다.
     """
+
+    UPDATED_NOTE = "설계도를 갱신했습니다. 아래 요약을 확인해 주세요."
 
     def __init__(self, servers: List[Option], skills: List[Option], on_apply: Callable[[AgentDraft], None]):
         super().__init__(Viewer("", "소유자", True), servers, skills)
