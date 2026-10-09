@@ -243,3 +243,51 @@ async def test_the_builder_borrows_the_orchestrator_connection_without_any_tools
     assert "에이전트 설계 도우미" in agent.system_prompt
     assert split_reply(content)[1] == {"name": "비서"}
     assert "".join(chunks) == content
+
+
+class _Recorder:
+    """다이얼로그·요약 칸 대역. NiceGUI 요소 없이 FormBuilderChat 의 동작만 봅니다."""
+
+    def __init__(self):
+        self.closed = False
+        self.content = ""
+
+    def close(self):
+        self.closed = True
+
+    def set_content(self, content):
+        self.content = content
+
+
+def test_the_expert_form_chat_hands_its_blueprint_to_the_add_form():
+    from app.easy.pages.build import FormBuilderChat
+
+    applied = []
+    chat = FormBuilderChat([Option("filesystem", "파일 열어 보기", "")], [], applied.append)
+    chat.dialog, chat.summary = _Recorder(), _Recorder()
+    draft = AgentDraft(name="판매 분석가", role="매출 분석", system_prompt="당신은 분석가입니다.\n1. 파일을 엽니다.",
+                       allowed_mcp_servers=["filesystem"])
+    chat.draft = draft
+
+    assert chat.read_card() is draft, "도우미에게 넘기는 설계도는 양식에서 받은 설계도 그대로여야 합니다"
+    chat.fill_card()
+    assert "판매 분석가 · 매출 분석" in chat.summary.content
+    assert "도구: 파일 열어 보기" in chat.summary.content, "도구는 알기 쉬운 이름으로 보여야 합니다"
+    assert "당신은 분석가입니다." in chat.summary.content and "1. 파일을 엽니다." not in chat.summary.content
+
+    chat._apply()
+    assert chat.dialog.closed and applied == [draft]
+
+
+def test_the_expert_add_dialog_opens_the_builder_and_still_saves_through_its_own_path():
+    import inspect
+
+    from app.ui.components.roster import AgentRosterControl
+
+    source = inspect.getsource(AgentRosterControl._open_agent_add_dialog)
+    button = source.find('ui.button("에이전트 만들기"')
+    assert button != -1, "에이전트 추가 다이얼로그에 '에이전트 만들기' 버튼이 있어야 합니다"
+    assert button < source.index('key_in = ui.input("에이전트 키"'), "버튼은 양식 위 제목 줄에 있어야 합니다"
+    assert "FormBuilderChat(" in source and ".open(form_draft())" in source
+    assert source.count("add_agent_to_conf_file(") == 1, "저장은 기존 '추가' 버튼 경로 하나뿐이어야 합니다"
+    assert "save_owner_agent" not in source

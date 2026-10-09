@@ -124,6 +124,20 @@ Two reasons this matters:
 The same dialog sets the persona (`system_prompt`), MCP tool assignment, sequential-thinking mode,
 and debate stance.
 
+**Building by talking.** The `에이전트 만들기` button in the dialog's title row opens the beginner-page
+interview (`FormBuilderChat` in [app/easy/pages/build.py](file:///d:/MultiAgentDebateOrchestration/app/easy/pages/build.py),
+a subclass of the `/trial/easy/build` screen that keeps its `send` and shows a summary instead of a card).
+**양식에 채우기** copies the blueprint into this form; the form's own **추가** button still does the saving,
+so the rules above apply unchanged.
+
+- Empty values never overwrite what is in the form, and the key is filled only while it is empty.
+- Checkboxes are set only for servers and skills the helper could offer (enabled ones). A disabled server
+  or a broken skill checked by hand stays checked.
+- An empty colour or icon keeps the form's value. `sanitize_draft` drops uploaded icon paths, so this keeps
+  an uploaded picture.
+- The chat lives as long as the dialog. Reopening it continues the conversation from the form's current
+  values, and the next message carries them as `[지금 설계도]`.
+
 ---
 
 ## 4. Disable versus delete

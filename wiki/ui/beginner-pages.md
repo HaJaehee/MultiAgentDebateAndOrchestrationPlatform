@@ -8,7 +8,7 @@ config form, and lets them hand it a task. Design record:
 Code: [app/easy/](file:///d:/MultiAgentDebateOrchestration/app/easy/__init__.py) — `catalog.py` (plain-language
 names for tools and skills, the demo agent, example tasks, example folder), `builder.py` (the interview and
 saving), `sessions.py` (locked sessions, history), `loop.py` (events → steps, pure logic) and `pages/`.
-There are three touch points outside the package:
+There are four touch points outside the package:
 
 - `setup_easy()` in [app/main.py](file:///d:/MultiAgentDebateOrchestration/app/main.py).
 - A `쉬운 화면` button in the expert page header
@@ -19,6 +19,9 @@ There are three touch points outside the package:
   [app/trial/pages/common.py](file:///d:/MultiAgentDebateOrchestration/app/trial/pages/common.py)), shown to
   visitors and the owner alike. `EASY_HOME` is imported inside `header()` too, because `app.easy.pages.common`
   imports that module. The way back is the `체험 화면` button in `easy_header`.
+- An `에이전트 만들기` button in the expert page's add-agent dialog
+  ([app/ui/components/roster.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster.py)), which
+  opens `FormBuilderChat` (§3).
 
 The trial pages gain only that header button; the engine is unchanged.
 
@@ -113,6 +116,11 @@ Tool names are rendered in plain words by `catalog.tool_label`, e.g. `filesystem
     5. Calls `reload_agent_pool()`. No restart is needed.
   - Visitor — `save_guest_agent` writes an `easy_agents` row, keeping only guest tools. A visitor can keep up
     to `MAX_GUEST_AGENTS` (20). `conf.json` is never touched.
+- **From the expert page.** `FormBuilderChat` subclasses `BuilderScreen` and keeps its `send`. Its
+  `read_card` returns the draft itself, and its `fill_card` draws a summary in place of the card. It opens
+  from the add-agent dialog with the form's current values. **양식에 채우기** hands the draft back to that
+  form, and the form's **추가** button saves it (`add_agent_to_conf_file`), not `save_owner_agent`. Details
+  are in [Roster Editing §3](../agents/roster-editing.md).
 
 ## 4. Runs
 

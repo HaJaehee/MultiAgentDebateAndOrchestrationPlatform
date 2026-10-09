@@ -27,6 +27,8 @@ from app.config import (
     set_skill_enabled_in_conf_file,
 )
 from app.agents.skills import Skill, scan_skills, skills_root
+from app.easy.builder import AgentDraft, agent_key_for
+from app.easy.catalog import server_options, skill_options
 from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
 from app.orchestration.runner import get_debate_runner
@@ -1548,7 +1550,11 @@ class AgentRosterControl:
         with ui.dialog() as dialog, ui.card().classes(
             "p-4 w-[660px] max-w-full bg-slate-900 text-white border border-slate-700"
         ):
-            ui.label("에이전트 추가").classes("text-lg font-bold")
+            with ui.row().classes("w-full items-center justify-between gap-2"):
+                ui.label("에이전트 추가").classes("text-lg font-bold")
+                ui.button("에이전트 만들기", icon="chat", on_click=lambda: open_chat()).props(
+                    "flat dense no-caps color=teal-3"
+                ).tooltip("도우미와 대화하여 아래 양식을 채웁니다 (쉬운 화면의 '나만의 에이전트 만들기')")
             ui.label(
                 "conf.json에 저장되어 향후 생성되는 모든 세션에 적용됩니다. "
                 "이미 토론이 시작된 세션은 시작 시점의 구성을 그대로 유지합니다."
@@ -1690,6 +1696,42 @@ class AgentRosterControl:
                             self._skill_state_badge(skill)
                             if skill.description:
                                 ui.tooltip(skill.description).classes("text-[12px] max-w-[320px]")
+
+            # '에이전트 만들기' — 도우미 대화로 만든 설계도를 이 양식에 옮깁니다. 저장은 아래 do_add 그대로입니다.
+            chat: Dict[str, Any] = {}
+
+            def form_draft() -> AgentDraft:
+                return AgentDraft(
+                    key=key_in.value, name=name_in.value, role=role_in.value, system_prompt=prompt_in.value,
+                    allowed_mcp_servers=[n for n, box in boxes.items() if box.value],
+                    allowed_skills=[n for n, box in skill_boxes.items() if box.value],
+                    card_color=appearance.card_color, icon=appearance.icon,
+                )
+
+            def apply_draft(draft: AgentDraft) -> None:
+                # 빈 값으로는 덮어쓰지 않습니다. 체크는 도우미가 고를 수 있었던 항목만 맞추므로, 꺼진 서버나
+                # 오류 스킬처럼 목록 밖에서 직접 체크한 것은 남습니다. 올린 그림 아이콘은 sanitize_draft 가
+                # 지우므로 비어 오면 지금 값을 둡니다.
+                screen = chat["screen"]
+                if not (key_in.value or "").strip():
+                    key_in.set_value(agent_key_for(draft, existing_keys))
+                for element, value in ((name_in, draft.name), (role_in, draft.role), (prompt_in, draft.system_prompt)):
+                    if value:
+                        element.set_value(value)
+                for name in (o.id for o in screen.servers if o.id in boxes):
+                    boxes[name].set_value(name in draft.allowed_mcp_servers)
+                for name in (o.id for o in screen.skills if o.id in skill_boxes):
+                    skill_boxes[name].set_value(name in draft.allowed_skills)
+                appearance.set_values(draft.card_color or appearance.card_color, draft.icon or appearance.icon)
+
+            def open_chat() -> None:
+                # 여기서 가져옵니다. `app.easy.pages` 는 체험 화면을 거쳐 `app.ui` 를 부르므로 맨 위에 두면
+                # 순환 import 가 됩니다 (`app/ui/app.py` 의 EASY_HOME 과 같은 이유).
+                from app.easy.pages.build import FormBuilderChat
+
+                if "screen" not in chat:
+                    chat["screen"] = FormBuilderChat(server_options(cfg, guest=False), skill_options(), apply_draft)
+                chat["screen"].open(form_draft())
 
             async def do_add() -> None:
                 key = (key_in.value or "").strip()
