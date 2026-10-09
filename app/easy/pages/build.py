@@ -109,7 +109,7 @@ class BuilderScreen:
 
     def _bubble(self, text: str, *, me: bool) -> MathMarkdown:
         with ui.column().classes(f"easy-bubble {'easy-bubble-me self-end' if me else ''} p-3 gap-1 max-w-full"):
-            ui.label("나" if me else "도우미").classes("easy-tag text-slate-400")
+            ui.label("User" if me else "도우미").classes("easy-tag text-slate-400")
             return MathMarkdown(text).classes("text-sm")
 
     def _card(self) -> None:
@@ -337,7 +337,7 @@ class FormBuilderChat(BuilderScreen):
     def _bubble(self, text: str, *, me: bool) -> MathMarkdown:
         tone = "self-end bg-indigo-950 border-indigo-800" if me else "bg-slate-800/60 border-slate-700"
         with ui.column().classes(f"rounded-lg border {tone} p-3 gap-1 max-w-full"):
-            ui.label("나" if me else "도우미").classes("text-[11px] font-semibold text-slate-400")
+            ui.label("User" if me else "도우미").classes("text-[11px] font-semibold text-slate-400")
             return MathMarkdown(text).classes("text-sm")
 
     def read_card(self) -> AgentDraft:
