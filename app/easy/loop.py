@@ -1,18 +1,18 @@
-"""토론 이벤트를 생각 → 행동 → 관찰 단계로 나눕니다. 화면을 모르는 순수 로직입니다.
+"""토론 스트리밍 이벤트를 '생각 → 행동 → 관찰' 단계로 구조화하는 모듈. UI와 독립적인 순수 도메인 로직입니다.
 
-엔진은 발언 글을 조각(`message_stream_chunk`)으로, 실행한 도구를 그 즉시(`tool_executed`)
-보냅니다. 두 이벤트가 오는 순서가 곧 에이전트가 일한 순서입니다 — 도구를 부르기 전까지의 글이
-생각, 도구 호출이 행동, 그 결과가 관찰, 그 뒤의 글이 다음 생각입니다. 이 모듈은 그 순서대로
-단계를 쌓습니다. 엔진은 고치지 않습니다.
+엔진은 발언 텍스트를 청크 단위(`message_stream_chunk`)로, 실행된 도구 결과를 즉시(`tool_executed`)
+발행합니다. 두 이벤트의 수신 순서는 곧 에이전트의 실제 작업 순서와 같습니다. 즉, 도구를 호출하기 전까지 생성된 텍스트는
+'생각', 도구 호출은 '행동', 도구 실행 결과는 '관찰', 그 뒤에 이어지는 텍스트는 '다음 생각'이 됩니다.
+이 모듈은 엔진 코드를 변경하지 않고 이벤트 수신 순서대로 타임라인 단계를 구성합니다.
 
-두 가지를 알고 씁니다.
+동작 원리 및 주의 사항:
 
-* **조각 묶음.** 엔진은 글 조각을 짧게(`STREAM_EVENT_INTERVAL`, 0.1초) 모았다가 보내고, 도구 결과는
-  바로 보냅니다. 보통은 도구 인자가 흘러나오고 도구가 도는 사이에 앞 글이 먼저 도착합니다. 도구가 그보다
-  빨리 끝나면 앞 생각의 마지막 몇 글자가 다음 생각으로 넘어갈 수 있는데, 그것은 감수합니다. 시간으로
-  추측해 붙이면 다음 생각을 빨리 쓰는 LLM 에서 다음 생각 전체가 앞 생각에 붙습니다 (실제로 확인했습니다).
-* **다시 연 기록.** DB 에는 발언 본문과 그 발언의 도구 기록만 있고 둘 사이의 순서는 없습니다. 다시
-  불러온 발언은 행동을 먼저 모으고 본문을 결론으로 보이며, `restored` 로 그 사실을 알립니다.
+* **청크 버퍼링(Chunk Batching)**: 엔진은 텍스트 청크를 짧은 주기(`STREAM_EVENT_INTERVAL`, 0.1초)로 버퍼링하여 전송하고, 도구 결과는
+  즉시 전송합니다. 일반적으로 도구 인자 스트리밍 및 실행 시간 덕분에 이전 텍스트가 먼저 도착합니다. 만약 도구 실행이 그보다
+  빠르게 완료되면 이전 생각의 마지막 몇 글자가 다음 생각 단계로 넘어갈 수 있으나, 이는 정상적인 동작으로 처리합니다. 시간차 추정
+  방식으로 결합할 경우 빠른 모델에서 다음 생각 전체가 이전 생각에 잘못 병합되는 현상이 발생하기 때문입니다.
+* **저장된 세션 복원(Restored Session)**: 데이터베이스에는 발언 본문과 도구 호출 기록만 저장되며 이벤트 순서는 별도로 보존되지 않습니다.
+  따라서 다시 불러온 발언은 도구 행동을 먼저 나열하고 발언 본문을 최종 결론으로 표시하며, `restored` 플래그로 복원된 상태임을 안내합니다.
 """
 
 from __future__ import annotations
@@ -21,11 +21,11 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 THOUGHT, ACTION = "thought", "action"
-# 발언의 종류. 화면이 모양을 고릅니다.
+# 발언 종류. UI에서 표시 형태를 결정합니다.
 USER, PLAN, SYNTHESIS, AGENT, ERROR, NOTE = "user", "plan", "synthesis", "agent", "error", "note"
-APPROVAL = "approval"  # 사람이 계획을 승인한 기록 (ADR-028). 사회자 이름으로 남지만 발언이 아닙니다.
+APPROVAL = "approval"  # 사용자 계획 승인 기록 (ADR-028). 오케스트레이터 명의로 저장되지만 일반 발언이 아닙니다.
 
-# 발언이 아니라 엔진이 남긴 기록 (`app/orchestration/turns.py` 의 KIND_*). 사회자 이름으로 남아도 계획이 아닙니다.
+# 발언이 아닌 엔진 시스템 기록 (`app/orchestration/turns.py`의 KIND_*). 오케스트레이터 명의로 남아도 계획 발언이 아닙니다.
 _NOTE_KINDS = {"note", "nomination", "assignment", "failure", "interrupted"}
 
 
@@ -54,7 +54,7 @@ class Speech:
 
     @property
     def text(self) -> str:
-        """화면에 보일 본문. 끝난 발언은 기록된 본문, 진행 중이면 지금까지의 생각."""
+        """화면에 표시할 발언 본문. 완료된 발언은 최종 본문, 진행 중인 발언은 현재까지 누적된 생각 텍스트를 반환합니다."""
         if self.done and self.content:
             return self.content
         return "\n\n".join(s.text for s in self.steps if s.kind == THOUGHT and s.text)
@@ -62,7 +62,7 @@ class Speech:
 
 @dataclass
 class Change:
-    """방금 바뀐 발언과, 마지막 생각에 글만 붙었는지 (화면은 그때 글만 고칩니다)."""
+    """타임라인 변경 상태. 변경된 발언 객체와 마지막 생각 텍스트의 단순 갱신 여부를 담습니다."""
 
     speech: Speech
     tail_only: bool = False
@@ -83,7 +83,7 @@ def _kind_of(msg: Dict[str, Any], phase: str) -> str:
     if msg_type == "system":
         return NOTE
     if msg_type == "orchestrator":
-        # 합성 발언은 턴 시작 시각을 들고 기록됩니다. 흐르는 중에는 엔진이 알린 단계로 압니다.
+        # 최종 종합 발언은 턴 시작 시각 필드를 포함합니다. 스트리밍 중에는 엔진의 현재 상태(phase)로 판별합니다.
         return SYNTHESIS if msg.get("turn_started_at") or phase == "synthesizing" else PLAN
     return AGENT
 
@@ -92,11 +92,11 @@ class LoopTimeline:
     def __init__(self) -> None:
         self.speeches: List[Speech] = []
         self._by_id: Dict[str, Speech] = {}
-        # 지금 말하고 있는 발언 (에이전트 키 → 발언). 도구 결과에는 발언 id 가 없어 이것으로 찾습니다.
+        # 현재 발언 중인 상태 (에이전트 키 → 발언 매핑). 도구 실행 결과에는 발언 ID가 포함되지 않으므로 키로 발언을 매핑합니다.
         self._live: Dict[str, Speech] = {}
         self.phase = ""
 
-    # ------------------------------------------------------------ 기록에서
+    # ------------------------------------------------------------ DB 기록 복원
 
     @classmethod
     def from_messages(
@@ -110,7 +110,7 @@ class LoopTimeline:
             speech.steps = [Step(ACTION, tool=dict(tc)) for tc in tools]
             speech.restored = bool(tools)
             if msg.get("id") in streaming:
-                # 진행 중인 발언에 다시 붙었습니다. 지금까지의 글은 생각 하나로 둡니다.
+                # 진행 중인 발언을 재연결했습니다. 현재까지 수신된 텍스트를 단일 생각 단계로 설정합니다.
                 speech.steps.append(Step(THOUGHT, text=msg.get("content") or ""))
                 speech.restored = True
                 timeline._live[speech.agent_key] = speech
@@ -132,7 +132,7 @@ class LoopTimeline:
             self._by_id[speech.message_id] = speech
         return speech
 
-    # ------------------------------------------------------------ 이벤트에서
+    # ------------------------------------------------------------ 실시간 이벤트 처리
 
     def apply(self, event: Dict[str, Any]) -> Optional[Change]:
         etype = event.get("type")
@@ -143,7 +143,7 @@ class LoopTimeline:
             msg = event.get("message") or {}
             speech = self._by_id.get(str(msg.get("id") or "")) or self._add(msg, self.phase)
             if msg.get("content"):
-                # 끊겼다가 이어 가는 발언은 앞서 흐른 글을 들고 시작합니다.
+                # 중단 후 재개된 발언은 이전에 수신된 텍스트를 포함하여 시작합니다.
                 speech.steps.append(Step(THOUGHT, text=msg["content"]))
             self._live[speech.agent_key] = speech
             return Change(speech)
@@ -174,14 +174,14 @@ class LoopTimeline:
 
     @staticmethod
     def _add_text(speech: Speech, delta: str) -> bool:
-        """글 조각을 붙입니다. 마지막 생각 끝에 붙었으면 True, 도구 뒤의 새 생각을 열었으면 False."""
+        """텍스트 청크를 추가합니다. 기존 생각 단계 끝에 추가되었으면 True, 도구 실행 후 새로운 생각 단계를 시작했으면 False를 반환합니다."""
         if speech.steps and speech.steps[-1].kind == THOUGHT:
             speech.steps[-1].text += delta
             return True
         speech.steps.append(Step(THOUGHT, text=delta))
         return False
 
-    # ------------------------------------------------------------ 세기
+    # ------------------------------------------------------------ 단계별 통계 집계
 
     def counts(self) -> Dict[str, int]:
         thoughts = actions = 0
@@ -192,5 +192,5 @@ class LoopTimeline:
             thoughts += sum(1 for s in speech.steps if s.kind == THOUGHT and s.text.strip())
             if speech.restored and speech.done and speech.content.strip():
                 thoughts += 1
-        # 관찰은 행동마다 하나입니다 — 실패나 거부도 에이전트가 읽는 결과입니다.
+        # 관찰 횟수는 행동 횟수와 동일합니다 — 도구 실패나 실행 거부 역시 에이전트가 확인하는 관찰 결과입니다.
         return {"thought": thoughts, "action": actions, "observation": actions}

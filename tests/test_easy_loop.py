@@ -1,11 +1,10 @@
-"""생각 → 행동 → 관찰 나누기 (app/easy/loop.py) 와 도구 이름의 쉬운 말 (app/easy/catalog.py).
+"""생각 → 행동 → 관찰 단계 분해(app/easy/loop.py) 및 도구 친화적 레이블 변환(app/easy/catalog.py) 단위 테스트.
 
-지키려는 것:
-
-1. 글 조각과 도구 결과가 온 순서대로 생각 · 행동 · 다음 생각이 쌓인다. 도구 바로 뒤에 온 글도
-   다음 생각이다 — 시간으로 추측해 앞 생각에 붙이지 않는다 (빠른 LLM 에서 다음 생각 전체가 붙었습니다).
-2. 다시 연 기록은 순서를 모른다는 표시(`restored`)와 함께 행동을 먼저, 본문을 결론으로 둔다.
-3. 사회자의 발언은 단계에 따라 계획과 최종 정리로 나뉘고, 계획 승인 기록은 계획이 아니다.
+테스트 검증 목표:
+1. 스트리밍 텍스트 청크와 도구 실행 결과가 수신된 순서대로 생각 · 행동 · 다음 생각 단계로 순차 적재된다.
+   도구 직후의 텍스트는 새로운 생각 단계로 분리하며, 시간 기반 추측 병합을 배제한다.
+2. 재조회된 영구 보존 기록은 시계열 복원 불가 플래그(`restored`)와 함께 행동들을 우선 배치하고 본문 텍스트를 결론으로 처리한다.
+3. 오케스트레이터의 발언은 실행 상태에 따라 계획(PLAN)과 최종 정리(SYNTHESIS)로 정확히 구분되며, 계획 승인 메타데이터는 별도 승인(APPROVAL) 단계로 취급한다.
 """
 
 from app.easy.catalog import tool_label
@@ -34,9 +33,9 @@ def test_text_and_tools_become_thought_action_thought_in_arrival_order():
     timeline = LoopTimeline()
     _start(timeline)
     assert _chunk(timeline, "먼저 판매 파일을 ").tail_only is False
-    assert _chunk(timeline, "열어 보겠습니다.").tail_only is True, "마지막 생각에 붙은 글은 글만 고칩니다"
+    assert _chunk(timeline, "열어 보겠습니다.").tail_only is True, "기존 생각 블록에 덧붙는 텍스트는 해당 블록 내용만 갱신합니다"
     _tool(timeline, READ)
-    assert _chunk(timeline, "제품별로 더해 보니 ").tail_only is False, "도구 뒤의 글은 새 생각입니다"
+    assert _chunk(timeline, "제품별로 더해 보니 ").tail_only is False, "도구 호출 이후의 텍스트는 새로운 생각 단계로 생성됩니다"
     _chunk(timeline, "보조 배터리가 1위입니다.")
     timeline.apply({"type": "message_added", "message": {"id": "m1", "sender_key": "easy_demo", "msg_type": "agent",
                                                           "content": "전문"}})
@@ -93,7 +92,7 @@ def test_an_orchestrator_speech_streamed_while_synthesizing_is_the_final_summary
     timeline = LoopTimeline()
     timeline.apply({"type": "status_changed", "status": "planning"})
     _start(timeline, mid="p", key="orchestrator", msg_type="orchestrator")
-    # 계획 승인 기록은 사회자 이름으로 흐르지 않고 바로 기록됩니다 (`_record_note`).
+    # 계획 승인 기록은 오케스트레이터의 일반 발언으로 스트리밍되지 않고 즉시 기록됩니다 (_record_note).
     timeline.apply({"type": "message_added", "message": {
         "id": "ok", "sender_key": "orchestrator", "msg_type": "orchestrator", "content": "[계획 승인] ...",
         "turn_meta": {"kind": "plan_approval"},

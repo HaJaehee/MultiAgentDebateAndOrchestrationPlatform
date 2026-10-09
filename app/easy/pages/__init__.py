@@ -1,4 +1,4 @@
-"""쉬운 화면들 (`/trial/easy/...`)."""
+"""비엔지니어 화면 라우트 정의 (`/trial/easy/...`)."""
 
 from app.easy.pages.build import build_builder
 from app.easy.pages.home import build_home

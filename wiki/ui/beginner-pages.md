@@ -21,7 +21,7 @@ engine are unchanged.
 | `/trial/easy` | Welcome: chatbot vs. agent on the same question, the loop diagram, the four ingredients (persona · work instructions · tools · skills), start cards, my history and my agents |
 | `/trial/easy/build` | Interview chat on the left, an editable blueprint on the right |
 | `/trial/easy/run` | Pick agents (up to 4) and write a task. `?demo=1` preselects the demo agent and task; `?agent=<ref>` preselects one agent |
-| `/trial/easy/s/{id}` | The run: tab "일하는 과정" (steps) and tab "전체 기록" (the usual `ChatFeed`) |
+| `/trial/easy/s/{id}` | The run: tab "작업 진행 과정" (steps) and tab "전체 기록" (the usual `ChatFeed`) |
 
 The pages live under `/trial/` so that trial visitors can reach them through the existing guest gate
 (`app/trial/gate.py`) and log in with the existing name + PIN form (`next=` already accepts `/trial/...`).
@@ -91,7 +91,7 @@ Tool names are rendered in plain words by `catalog.tool_label`, e.g. `filesystem
     `ICON_CHOICES`.
 - **Human edits win.** After the user edits the card, the next message carries the card as `[지금 설계도]`
   (`with_draft`), so the helper continues from it instead of overwriting it.
-- **Owner preview.** The card shows the exact block that will be written ("conf.json 에 이렇게 적힙니다").
+- **Owner preview.** The card shows the exact block that will be written ("conf.json 설정 미리보기").
   Model and key are left out so they inherit `llm`.
 - **Saving.**
   - Owner — `save_owner_agent` runs these steps in order:

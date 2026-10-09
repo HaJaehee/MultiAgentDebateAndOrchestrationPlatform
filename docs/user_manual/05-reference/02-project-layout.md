@@ -82,13 +82,13 @@ app/
 │   ├── plan_gate.py          412   계획 승인 — 분담표·승인·수정 요청·완료 확인 (ADR-028)
 │   └── state.py               53   DebateState, DebateMessage, ArtifactItem
 │
-├── easy/                           비엔지니어 화면 /trial/easy (ADR-029)
-│   ├── catalog.py            229   도구·스킬의 쉬운 말, 시연 에이전트·예시 과제, 예제 작업 폴더
-│   ├── builder.py            331   대화로 에이전트 만들기 — 도우미 프롬프트, 설계도 읽기·거르기, 저장
-│   ├── sessions.py           264   일 맡기는 잠긴 대화, 내 기록·내 에이전트
-│   ├── loop.py               196   이벤트를 생각 → 행동 → 관찰 단계로 나누기
-│   ├── examples/                   예제 파일 (판매 CSV·회의 메모·고객 문의)
-│   └── pages/                      웰컴·만들기·일 맡기기·일하는 과정 화면
+├── easy/                           비엔지니어 친화적 화면 /trial/easy (ADR-029)
+│   ├── catalog.py            229   도구·스킬 친화적 레이블 및 설명, 시연 에이전트·예시 과제, 예제 파일 관리
+│   ├── builder.py            331   대화형 에이전트 빌더 — 도우미 시스템 프롬프트, 설계도 파싱·필터링, 저장
+│   ├── sessions.py           264   비엔지니어 전용 세션 생성·스냅샷 격리, 내 기록·내 에이전트 관리
+│   ├── loop.py               196   스트리밍 이벤트를 생각 → 행동 → 관찰 단계로 파싱
+│   ├── examples/                   예제 파일 (매출 CSV·회의록·고객 문의)
+│   └── pages/                      홈(웰컴)·빌더·과제 실행·작업 진행 화면
 │
 ├── database/
 │   ├── models.py             144   SQLAlchemy ORM (5개 테이블)
@@ -127,7 +127,7 @@ app/
 | 발언 카드 모양 | `ui/components/chat_feed.py` |
 | 에이전트 카드 색·아이콘 | `agents/base.py` (해석·폴백) · `ui/components/agent_appearance.py` (편집기) |
 | 로스터 컨트롤 | `ui/components/roster.py` |
-| 비엔지니어 화면 (웰컴·대화로 만들기·생각/행동/관찰) | `easy/` — 도구의 쉬운 말은 `easy/catalog.py` |
+| 비엔지니어 화면 (홈·대화형 빌더·생각/행동/관찰 단계) | `easy/` — 도구 레이블/안내 문구는 `easy/catalog.py` |
 | 스킬 (스캔·도구·스크립트 복사) | `agents/skills.py` · 기본 스킬 디렉터리는 루트의 `skills/` |
 | 산출물 렌더링 | `ui/components/artifact_viewer.py` |
 | 내보내기 형식 | `export.py` |

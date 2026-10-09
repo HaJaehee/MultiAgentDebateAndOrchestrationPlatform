@@ -1,7 +1,7 @@
-"""일 맡기기 — 에이전트를 고르고 과제를 적어 시작합니다.
+"""과제 실행 — 에이전트를 선택하고 수행할 과제를 입력하여 작업을 시작합니다.
 
-`?demo=1` 은 웰컴 화면의 "일하는 모습 보기" 입니다. 시연 에이전트와 시연 과제를 골라 둔 채 엽니다.
-`?agent=<ref>` 는 방금 만든 에이전트를 골라 둔 채 엽니다.
+`?demo=1`: 홈 화면의 '에이전트 동작 예시 보기' 링크입니다. 시연용 에이전트와 예시 과제가 미리 선택된 상태로 열립니다.
+`?agent=<ref>`: 새로 생성한 에이전트가 미리 선택된 상태로 열립니다.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 def _tool_text(choice: Choice) -> str:
     labels = [SERVER_GUIDE.get(s, (s, ""))[0] for s in choice.draft.allowed_mcp_servers]
-    tools = ", ".join(labels) if labels else "도구 없음 (말만 합니다)"
+    tools = ", ".join(labels) if labels else "도구 없음 (대화만 수행)"
     skills = f" · 스킬 {len(choice.draft.allowed_skills)}개" if choice.draft.allowed_skills else ""
     return f"도구: {tools}{skills}"
 
@@ -45,12 +45,12 @@ def _render(viewer: Viewer, choices: List[Choice], preselected: List[str], missi
 
     with ui.column().classes("trial-page px-4 pb-6 gap-4 max-w-3xl"):
         ui.link("← 처음으로", EASY_HOME).classes("text-sm text-slate-400")
-        ui.label("에이전트에게 일 맡기기").classes("text-2xl font-semibold")
-        ui.label("사회자(오케스트레이터)가 계획을 세워 일을 나누고, 고른 에이전트가 차례로 일한 뒤, 사회자가 결과를 정리합니다.").classes(
+        ui.label("에이전트에게 과제 맡기기").classes("text-2xl font-semibold")
+        ui.label("오케스트레이터(사회자)가 계획을 수립하여 작업을 분배하고, 선택된 에이전트들이 순서대로 작업을 수행한 뒤 최종 결과를 정리합니다.").classes(
             "text-sm text-slate-400"
         )
 
-        ui.label(f"누구에게 맡길까요? (최대 {MAX_RUN_AGENTS}명)").classes("text-sm font-semibold text-slate-300")
+        ui.label(f"어떤 에이전트에게 맡길까요? (최대 {MAX_RUN_AGENTS}명)").classes("text-sm font-semibold text-slate-300")
         with ui.grid().classes("w-full gap-2 grid-cols-1 sm:grid-cols-2"):
             for choice in choices:
                 with ui.card().classes("trial-card p-3 gap-1 w-full"):
@@ -64,11 +64,11 @@ def _render(viewer: Viewer, choices: List[Choice], preselected: List[str], missi
                     ui.label(_tool_text(choice)).classes("easy-why")
         if not viewer.owner and len(choices) == 1:
             with ui.row().classes("items-center gap-1 text-xs text-slate-500"):
-                ui.label("아직 만든 에이전트가 없습니다.")
+                ui.label("아직 생성된 에이전트가 없습니다.")
                 ui.link("나만의 에이전트 만들기", f"{EASY_HOME}/build").classes("text-indigo-300")
 
-        ui.label("무엇을 맡길까요?").classes("text-sm font-semibold text-slate-300 mt-2")
-        task = ui.textarea(value=mission, placeholder="예: 판매 기록에서 가장 많이 팔린 제품을 찾아 주세요").props(
+        ui.label("어떤 과제를 맡길까요?").classes("text-sm font-semibold text-slate-300 mt-2")
+        task = ui.textarea(value=mission, placeholder="예: 매출 데이터에서 가장 판매량이 높은 제품을 분석해 주세요").props(
             "outlined dark autogrow rows=3"
         ).classes("w-full")
         missions = list(EXAMPLE_MISSIONS) + (list(OWNER_MISSIONS) if viewer.owner else [])
@@ -79,9 +79,9 @@ def _render(viewer: Viewer, choices: List[Choice], preselected: List[str], missi
                 ).classes("text-xs").tooltip(text)
         files = ", ".join(example_files())
         hint = (
-            f"작업 폴더에는 예제 파일이 들어 있습니다: {files}."
-            + (" 체험에서는 읽기만 할 수 있습니다." if not viewer.owner else
-               " 에이전트가 쓴 파일은 작업 공간의 easy 폴더에 남습니다.")
+            f"작업 디렉터리에 예제 파일이 준비되어 있습니다: {files}."
+            + (" 체험 모드에서는 안전을 위해 읽기 전용으로만 접근할 수 있습니다." if not viewer.owner else
+               " 에이전트가 생성한 파일은 작업 공간의 easy 폴더에 저장됩니다.")
         )
         ui.label(hint).classes("text-xs text-slate-500")
 
@@ -89,16 +89,16 @@ def _render(viewer: Viewer, choices: List[Choice], preselected: List[str], missi
             refs = [ref for ref, box in boxes.items() if box.value]
             text = (task.value or "").strip()
             if not refs:
-                ui.notify("일을 맡길 에이전트를 한 명 이상 골라 주십시오.", type="warning")
+                ui.notify("과제를 맡길 에이전트를 한 명 이상 선택해 주세요.", type="warning")
                 return
             if len(refs) > MAX_RUN_AGENTS:
-                ui.notify(f"한 번에 {MAX_RUN_AGENTS}명까지 고를 수 있습니다.", type="warning")
+                ui.notify(f"에이전트는 한 번에 최대 {MAX_RUN_AGENTS}명까지 선택할 수 있습니다.", type="warning")
                 return
             if not text:
-                ui.notify("맡길 일을 적어 주십시오.", type="warning")
+                ui.notify("수행할 과제 내용을 입력해 주세요.", type="warning")
                 return
             if len(text) > cfg.trial.max_input_chars:
-                ui.notify(f"맡길 일은 {cfg.trial.max_input_chars}자까지 적을 수 있습니다.", type="warning")
+                ui.notify(f"과제 내용은 최대 {cfg.trial.max_input_chars}자까지 입력할 수 있습니다.", type="warning")
                 return
             start_button.disable()
             chosen = [c for c in choices if c.ref in refs]
@@ -109,15 +109,15 @@ def _render(viewer: Viewer, choices: List[Choice], preselected: List[str], missi
                         title=text.splitlines()[0][:60], choices=chosen, pool=get_agent_pool(),
                     )
                 get_debate_runner().start(sid, text, workspace=workspace)
-            except Exception as exc:  # noqa: BLE001 - 시작하지 못한 이유는 사람에게 보여야 합니다
+            except Exception as exc:  # noqa: BLE001 - 세션 시작 실패 원인을 사용자에게 안내합니다
                 logger.error("Could not start an easy session: %s", exc, exc_info=True)
-                ui.notify(f"시작하지 못했습니다: {exc}", type="negative", multi_line=True)
+                ui.notify(f"작업을 시작하지 못했습니다: {exc}", type="negative", multi_line=True)
                 start_button.enable()
                 return
             ui.navigate.to(f"{EASY_HOME}/s/{sid}")
 
         with ui.row().classes("w-full justify-end"):
-            start_button = ui.button("일 시작", icon="play_arrow", on_click=start).props(
+            start_button = ui.button("과제 시작", icon="play_arrow", on_click=start).props(
                 "unelevated no-caps color=indigo-6 size=md"
             )
 
@@ -141,7 +141,7 @@ def build_run() -> None:
         elif demo or len(choices) == 1:
             preselected = [DEMO_REF]
 
-        easy_setup("일 맡기기")
+        easy_setup("과제 맡기기")
         easy_header(viewer)
         _render(viewer, choices, preselected or [], DEMO_MISSION if demo else "")
         if not viewer.owner:

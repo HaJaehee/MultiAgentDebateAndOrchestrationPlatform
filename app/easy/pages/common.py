@@ -1,7 +1,7 @@
-"""쉬운 화면들이 함께 쓰는 접근 확인·머리·스타일.
+"""비엔지니어 화면 공통 유틸리티 — 접근 권한 확인, 상단 헤더 내비게이션, 공통 스타일 정의.
 
-체험 화면의 바탕(`page_setup` 의 스타일, 꼬리 안내, 빈 화면 표시)을 그대로 빌려 씁니다. 머리만 따로
-둡니다 — 제목 링크가 체험 첫 화면이 아니라 이 화면들의 첫 화면을 가리켜야 합니다.
+체험 화면의 기본 레이아웃(`page_setup` 스타일, 푸터 안내, 빈 상태 뷰)을 재활용합니다. 헤더는 독립적으로 구성하여
+로고 및 제목 링크가 비엔지니어 홈 화면(`/trial/easy`)을 가리키도록 합니다.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ EASY_CSS = """
 
 @dataclass(frozen=True)
 class Viewer:
-    """이 화면을 보는 사람. 주인은 `user_id` 가 비어 있습니다."""
+    """현재 접속 사용자 정보. 소유자는 `user_id`가 빈 문자열입니다."""
 
     user_id: str
     name: str
@@ -63,13 +63,13 @@ class Viewer:
 
 
 async def resolve_viewer(request: Request, next_path: str) -> Tuple[Optional[Viewer], Optional[RedirectResponse]]:
-    """(보는 사람, 로그인으로 보낼 응답). 둘 다 None 이면 체험이 꺼져 있어 방문자가 쓸 수 없습니다.
+    """(접속자 정보, 로그인 리다이렉트 응답). 둘 다 None이면 체험 기능이 비활성화되어 방문자 접근이 제한된 상태입니다.
 
-    주인(서버 PC 또는 접속 토큰)은 로그인 없이 들어옵니다. 방문자는 체험 로그인을 거칩니다 — 로그인
-    뒤 돌아올 곳은 체험 화면 안쪽만 받으므로(`app/trial/web.py` `_safe_next`) 이 주소들은 그대로 됩니다.
+    소유자(서버 로컬 또는 인증 토큰 사용자)는 로그인 절차 없이 즉시 접근합니다. 방문자는 체험 로그인을 거치며,
+    로그인 후 복귀 경로 검증(`app/trial/web.py`의 `_safe_next`)을 통과하므로 정상적으로 리다이렉트됩니다.
     """
     if is_owner(request):
-        return Viewer("", "주인", True), None
+        return Viewer("", "소유자", True), None
     if not get_config().trial.enabled:
         return None, None
     visitor = await current_visitor(request)
@@ -103,7 +103,7 @@ def easy_header(viewer: Viewer) -> None:
 
 
 def agent_avatar(key: str, name: str, card_color: str = "", icon: str = "", size: str = "md") -> None:
-    """에이전트 카드와 같은 색·아이콘의 동그라미."""
+    """에이전트 카드 색상 및 아이콘이 적용된 원형 아바타를 렌더링합니다."""
     style = style_for_agent(key, card_color or None, icon or None)
     avatar = style.get("avatar") or "smart_toy"
     with ui.element("div").classes("rounded-full flex items-center justify-center flex-shrink-0").style(

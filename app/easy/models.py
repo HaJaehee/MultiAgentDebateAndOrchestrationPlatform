@@ -1,13 +1,13 @@
-"""비엔지니어 화면의 테이블.
+"""비엔지니어 화면 전용 데이터베이스 모델.
 
-체험 서버와 같은 원칙입니다. 코어 테이블(`sessions` 등)에는 칸을 하나도 더하지 않고, 누가 어느
-대화를 가졌는지와 방문자가 만든 에이전트만 따로 적습니다. 대화 자체는 보통 대화와 같은 테이블에
-있어 주인 화면에도 보입니다 (체험 대화와 같습니다).
+체험 서버와 동일한 격리 원칙을 적용합니다. 코어 테이블(`sessions` 등)에는 추가 컬럼을 두지 않고,
+세션 소유자 매핑 정보와 방문자가 생성한 에이전트만 별도 테이블로 분리하여 관리합니다. 대화 세션
+자체는 기존 공용 세션 테이블(`sessions`)에 저장되므로 관리자(소유자) 화면에서도 확인할 수 있습니다 (체험 세션과 동일).
 """
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, List
 
 from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -21,20 +21,20 @@ def _uuid() -> str:
 
 
 class EasySessionModel(Base):
-    """쉬운 화면에서 시작한 대화 하나와 그 주인."""
+    """비엔지니어 화면에서 생성된 대화 세션과 소유자 매핑 모델."""
 
     __tablename__ = "easy_sessions"
 
     session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id"), primary_key=True)
-    # 방문자 id (`trial_users.id`). 비어 있으면 주인(서버 PC 또는 접속 토큰)이 만든 대화입니다.
+    # 방문자 ID (`trial_users.id`). 비어 있으면 소유자(로컬 접속 또는 인증 토큰 사용자)가 생성한 세션입니다.
     user_id: Mapped[str] = mapped_column(String(36), default="", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class EasyAgentModel(Base):
-    """방문자가 대화로 만든 에이전트. 본인의 대화에만 쓰고, conf.json 에는 들어가지 않습니다.
+    """방문자가 대화형 빌더로 생성한 에이전트 모델. 생성자 본인의 세션에서만 사용할 수 있으며, conf.json에는 반영되지 않습니다.
 
-    주인이 만든 에이전트는 여기가 아니라 conf.json 에 바로 적힙니다 (`builder.save_owner_agent`).
+    소유자가 생성한 에이전트는 DB가 아닌 conf.json 파일에 직접 저장됩니다 (`builder.save_owner_agent`).
     """
 
     __tablename__ = "easy_agents"

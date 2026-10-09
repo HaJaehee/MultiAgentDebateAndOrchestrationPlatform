@@ -1,14 +1,12 @@
-"""대화로 에이전트 만들기 (app/easy/builder.py).
+"""대화형 에이전트 빌더 단위 테스트 (app/easy/builder.py).
 
-지키려는 것:
-
-1. 도우미 답의 설계도 블록을 떼어 읽고, 사람에게 보일 글에서는 지운다. 깨진 블록은 무시한다.
-2. 없는 도구·스킬, 팔레트 밖의 색·아이콘은 걸러지고, 쓸 수 없는 키는 쓸 수 있는 키로 바뀐다.
-3. 주인이 저장하면 conf.json 에 블록이 더해지고 (`//` 설명은 그대로), 다시 읽어도 검증을 통과하며,
-   돌고 있는 풀에 바로 들어간다. 모델·키는 적지 않아 llm 을 물려받는다.
-4. 진행 중인 대화가 있으면 conf.json 을 건드리지 않고 거절한다.
-5. 방문자가 저장하면 conf.json 은 한 바이트도 바뀌지 않고, 도구는 방문자 허용분만 남는다.
-6. 도우미는 오케스트레이터의 연결로 돌되 도구·스킬·단계적 사고가 없다.
+테스트 검증 목표:
+1. 도우미 응답에서 설계도(blueprint) 블록을 파싱하고, 사용자 노출 텍스트에서는 분리·제거한다. 구문 오류가 있는 블록은 무시한다.
+2. 미등록 도구·스킬 및 유효하지 않은 색상·아이콘을 필터링하고, 키 충돌을 방지하여 고유한 식별자로 변환한다.
+3. 시스템 소유자 저장 시 conf.json에 새 에이전트 블록이 추가되고(`//` 주석 보존), 즉시 런타임 풀에 반영된다. 모델과 API 키는 llm 기본 설정을 상속한다.
+4. 진행 중인 세션이 존재하면 conf.json 설정을 수정하지 않고 저장을 거절한다.
+5. 체험 방문자 저장 시 conf.json은 전혀 변경되지 않고, 도구는 게스트 허용 도구로 제한되어 DB에만 저장된다.
+6. 도우미 에이전트는 오케스트레이터의 LLM 연결 설정을 활용하되 도구·스킬·추론 모드가 비활성화된 상태로 동작한다.
 """
 
 from pathlib import Path
@@ -67,7 +65,7 @@ DRAFT = AgentDraft(
 
 @pytest.fixture()
 def live_conf(tmp_path: Path):
-    """임시 conf.json 을 지금 앱이 쓰는 설정으로 둡니다. 끝나면 원래 전역 설정과 풀로 되돌립니다."""
+    """임시 conf.json 파일을 애플리케이션 활성 설정으로 지정하고, 테스트 완료 후 원래 설정과 풀로 복구합니다."""
     path = tmp_path / "conf.json"
     write_conf_file(path, SAMPLE)
     saved = (config_module._config, config_module._config_path, pool_module._agent_pool)  # noqa: SLF001
@@ -110,7 +108,7 @@ def test_the_block_is_hidden_while_it_streams():
 def test_unreadable_fields_keep_the_current_value():
     merged = merge_draft(DRAFT, {"allowed_mcp_servers": "filesystem", "unknown": 1, "name": None})
     assert merged.allowed_mcp_servers == ["filesystem"]
-    assert merged.name == ""  # 비운 칸은 비운 것입니다
+    assert merged.name == ""  # 빈 칸은 빈 값으로 유지됩니다
 
 
 # ------------------------------------------------------------------ 2. 거르기와 키
@@ -164,17 +162,18 @@ def test_an_owner_save_adds_the_agent_to_conf_json_and_the_live_pool(live_conf: 
     assert key == "meeting_secretary"
 
     raw = read_conf_file(live_conf)
-    assert raw["agents"]["// orchestrator"] == "1. 필수 오케스트레이터", "설명 키가 살아남아야 합니다"
+    assert raw["agents"]["// orchestrator"] == "1. 필수 오케스트레이터", "설명 주석 키가 온전히 보존되어야 합니다"
     assert raw["mcp_servers"]["// filesystem"] == "파일 서버"
     block = raw["agents"][key]
-    assert block == conf_block(DRAFT), "화면의 미리보기와 실제로 적힌 것이 같아야 합니다"
+    assert block == conf_block(DRAFT), "UI 미리보기 내용과 파일에 실제로 기록된 내용이 일치해야 합니다"
     assert "model" not in block and "api_key" not in block
 
     reread = load_config(live_conf).agents[key]
-    assert reread.model == "openai/gpt-4o" and reread.temperature == 0.4, "llm 을 물려받습니다"
-    assert pool_module.get_agent_pool().get(key) is not None, "재시작 없이 풀에 들어갑니다"
+    expected_model = load_config(live_conf).llm.model
+    assert reread.model == expected_model and reread.temperature == 0.4, "llm 설정을 상속받습니다"
+    assert pool_module.get_agent_pool().get(key) is not None, "재시작 없이 풀에 즉시 반영됩니다"
 
-    assert save_owner_agent(DRAFT) == "meeting_secretary_2", "같은 키는 번호를 붙여 따로 둡니다"
+    assert save_owner_agent(DRAFT) == "meeting_secretary_2", "동일한 키가 존재하면 번호 접미사를 부여하여 고유 키를 생성합니다"
 
 
 def test_an_owner_save_is_refused_while_any_debate_runs(live_conf: Path):
@@ -196,7 +195,7 @@ async def test_a_guest_save_stays_in_the_database_and_keeps_only_guest_tools(liv
     async with factory() as db:
         row = await save_guest_agent(db, "guest-1", draft)
     assert row.allowed_mcp_servers == ["filesystem"]
-    assert live_conf.read_bytes() == before, "방문자는 conf.json 을 바꾸지 않습니다"
+    assert live_conf.read_bytes() == before, "체험 방문자 저장 시 conf.json 파일을 수정하지 않아야 합니다"
     assert "meeting_secretary" not in get_config().agents
 
 

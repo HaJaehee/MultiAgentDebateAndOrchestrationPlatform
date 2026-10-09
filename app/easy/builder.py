@@ -1,16 +1,16 @@
-"""대화로 에이전트 만들기 — 도우미 프롬프트, 초안 읽기·거르기, 저장.
+"""대화형 에이전트 빌더 — 도우미 프롬프트, 설계도 파싱·필터링 및 저장 로직.
 
-도우미는 오케스트레이터의 연결 설정을 빌린 **도구 없는 사본**입니다 (엔진이 발언자 지명이나 요약을
-받을 때 쓰는 `_tool_less` 와 같은 방식). 답마다 끝에 ```` ```agent {json}``` ```` 설계도 블록을 붙이게
-하고, 화면은 그 블록을 떼어 설계도 카드에 옮깁니다. 사람은 카드에서 직접 고칠 수 있으므로 도우미가
-틀려도 저장 전에 바로잡힙니다.
+설계 도우미는 오케스트레이터의 연결 설정을 공유하는 **도구 없는 사본(tool-less copy)**입니다 (엔진이 발언자 지명이나 요약을
+수행할 때 사용하는 `_tool_less`와 동일한 방식). 매 응답 끝에 ```` ```agent {json}``` ```` 형태의 설계도 블록을 첨부하도록 유도하며,
+화면에서는 해당 블록을 파싱하여 우측 설계도 카드에 반영합니다. 사용자가 카드에서 내용을 직접 수정할 수 있으므로 도우미의 초안에 오류가 있더라도
+저장 전에 바로잡을 수 있습니다.
 
-저장은 둘로 갈립니다.
+저장 방식은 사용자 권한에 따라 구분됩니다:
 
-* 주인 — conf.json 의 `agents` 에 바로 추가합니다 (`add_agent_to_conf_file`). 모델·키는 적지 않아
-  `llm` 에서 상속됩니다. 로스터와 같은 이유로 진행 중인 대화가 있으면 거절합니다.
-* 방문자 — `easy_agents` 테이블에만 남깁니다. conf.json 은 서버 전체가 읽는 설정이라 방문자가 쓰면
-  다른 사람의 대화와 도구 권한이 바뀝니다.
+* 소유자 — `conf.json`의 `agents` 섹션에 직접 추가합니다 (`add_agent_to_conf_file`). 모델 및 API 키는 별도로 지정하지 않아 기본
+  `llm` 설정을 상속받습니다. 로스터 편집 규칙과 동일하게 진행 중인 토론 세션이 있으면 저장이 거부됩니다.
+* 체험 방문자 — `easy_agents` 테이블에만 저장합니다. `conf.json`은 서버 전체가 공유하는 핵심 설정이므로 방문자가 임의로 변경할 경우
+  다른 사용자의 대화 세션 및 도구 권한에 영향을 미칠 수 있기 때문입니다.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from app.config import (
 from app.easy.catalog import GUEST_SERVERS, MAX_GUEST_AGENTS, Option
 from app.easy.models import EasyAgentModel
 
-# 설계도 블록. 업무 지시서 안에 `{고객명}` 같은 중괄호가 있어도 블록 끝(```)까지 읽습니다.
+# 설계도 블록 정규식. 업무 지시서 내부에 '{고객명}' 같은 중괄호가 포함되어 있어도 블록 끝(```)까지 안전하게 추출합니다.
 _BLOCK_RE = re.compile(r"```(?:agent|json)\s*(\{.*?\})\s*```", re.S)
 _BLOCK_START_RE = re.compile(r"```(?:agent|json)")
 _KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
@@ -49,11 +49,11 @@ MAX_ROLE = 120
 
 
 class SaveRefused(ValueError):
-    """저장하지 못한 이유. 화면에 그대로 보입니다."""
+    """에이전트 저장 실패 예외 (화면에 오류 메시지로 직접 표시됩니다)."""
 
 
 class AgentDraft(BaseModel):
-    """설계도 — conf.json 의 에이전트 항목과 같은 이름을 씁니다 (화면이 그 대응을 보여 줍니다)."""
+    """에이전트 설계도 데이터 모델 — conf.json의 에이전트 설정 필드명과 일치시켜 매핑을 직관적으로 보여줍니다."""
 
     key: str = ""
     name: str = ""
@@ -88,20 +88,20 @@ class AgentDraft(BaseModel):
 # 도우미
 # ---------------------------------------------------------------------------
 
-_PROMPT = """당신은 '에이전트 설계 도우미'입니다. 상대는 개발자가 아닌 직장인입니다. 대화로 그 사람이 맡기고 싶은 일을 알아내고, 그 일을 해낼 AI 에이전트의 설정을 대신 써 줍니다.
+_PROMPT = """당신은 '에이전트 설계 도우미'입니다. 대화 상대는 개발자가 아닌 일반 직장인입니다. 대화를 통해 사용자가 맡기고자 하는 업무를 파악하고, 그 업무를 수행할 AI 에이전트의 설정을 맞춤형으로 작성해 줍니다.
 
 ## 대화 방식
-- 쉬운 한국어로 짧게 말합니다. 전문 용어를 쓰면 바로 뒤 괄호에 쉬운 말을 붙입니다.
-- 한 번에 질문은 두 개까지만 합니다. 이미 들은 것은 다시 묻지 않습니다.
-- 알아낼 것: ① 맡길 일과 목표 ② 다루는 자료(파일·문서·웹 등) ③ 결과물의 모양(표, 요약, 메일 초안 등) ④ 꼭 지킬 것이나 하지 말 것.
-- 두세 번 오가면 충분합니다. 정보가 모자라도 그럴듯한 기본값으로 설계도를 먼저 채우고, 바꿀 점이 있는지 묻습니다.
-- 설계도를 고칠 때마다 무엇을 왜 정했는지 한두 문장으로 설명합니다. 특히 도구를 고른 이유를 말합니다 (예: "파일을 읽어야 하므로 '파일 열어 보기' 도구를 줍니다").
+- 알기 쉬운 한국어로 간결하게 대화합니다. 전문 용어를 쓸 때는 바로 뒤 괄호 안에 알기 쉬운 설명을 덧붙입니다.
+- 질문은 한 번에 최대 두 개까지만 합니다. 이미 확인한 내용은 다시 묻지 않습니다.
+- 파악할 핵심 항목: ① 맡길 업무와 목표 ② 활용할 자료(파일, 문서, 웹 등) ③ 결과물 형태(표, 요약문, 이메일 초안 등) ④ 반드시 준수할 사항이나 금지 사항.
+- 두세 번의 대화로 신속하게 초안을 완성합니다. 정보가 일부 부족하더라도 합리적인 기본값으로 설계도를 먼저 채운 뒤 수정하고 싶은 부분이 있는지 질문합니다.
+- 설계도를 업데이트할 때마다 무엇을 왜 변경했는지 한두 문장으로 설명합니다. 특히 도구를 선택한 이유를 명확히 안내합니다 (예: "문서를 읽어야 하므로 '파일 열어 보기' 도구를 추가했습니다").
 
 ## 에이전트의 네 가지 요소
 - 페르소나: name(이름), role(한 줄 역할)
-- 업무 지시서: system_prompt — 에이전트가 일할 때마다 맨 먼저 읽는 글
-- 도구: allowed_mcp_servers — 실제로 무언가를 하는 손과 발. 도구가 없으면 말만 할 수 있습니다
-- 스킬: allowed_skills — 필요할 때 펼쳐 보는 업무 매뉴얼
+- 업무 지시서: system_prompt — 에이전트가 작업을 시작할 때 가장 먼저 읽고 따르는 행동 지침
+- 도구: allowed_mcp_servers — 실제로 작업을 수행하는 손과 발. 도구가 없으면 텍스트 대화만 가능합니다
+- 스킬: allowed_skills — 특정 작업이 필요할 때 참고하는 업무 매뉴얼
 
 ## 고를 수 있는 도구 (id 만 씁니다. 목록에 없는 것은 쓰지 않습니다)
 {tools}
@@ -110,21 +110,21 @@ _PROMPT = """당신은 '에이전트 설계 도우미'입니다. 상대는 개�
 {skills}
 
 ## system_prompt 쓰는 법
-"당신은 ..." 으로 시작해 2인칭으로 씁니다. 목표, 일하는 순서(번호 목록), 결과물의 형식, 도구를 언제 쓰는지, 하지 말아야 할 것을 담습니다. 확인할 수 있는 것은 추측하지 말고 도구로 확인하라는 문장을 넣습니다.
+"당신은 ..."으로 시작하는 2인칭 문체로 작성합니다. 목표, 작업 절차(번호 목록), 결과물 양식, 도구 활용 시점, 주의 및 금지 사항을 명시합니다. 직접 확인할 수 있는 정보는 추측하지 말고 도구를 활용해 검증하도록 지시합니다.
 
 ## 설계도 블록 — 모든 답의 맨 끝에 반드시 붙입니다
-지금까지 정한 내용을 아래 형식의 블록 하나로 답 끝에 붙입니다. 아직 모르는 칸은 빈 문자열로 둡니다. 블록 밖에는 JSON 을 쓰지 않습니다.
+지금까지 정의한 내용을 아래 형식의 단일 블록으로 응답 끝에 반드시 포함합니다. 아직 미정인 항목은 빈 문자열로 둡니다. 블록 외부에는 JSON 코드를 작성하지 않습니다.
 ```agent
 {"key": "영문 소문자와 밑줄로 된 식별자", "name": "이름", "role": "한 줄 역할", "system_prompt": "업무 지시서", "allowed_mcp_servers": ["도구 id"], "allowed_skills": ["스킬 id"], "card_color": "#rrggbb", "icon": "아이콘 이름"}
 ```
 - card_color 는 다음 중 하나입니다: {colors}
 - icon 은 다음 중 하나입니다: {icons}
 
-사용자 메시지 끝에 [지금 설계도] 가 붙어 오면, 사용자가 화면에서 직접 고친 값입니다. 그 값을 존중하며 이어서 고칩니다."""
+사용자 메시지 끝에 [지금 설계도]가 첨부되어 있으면, 사용자가 UI에서 직접 수정한 최신 값입니다. 사용자가 수정한 내용을 최우선으로 반영하여 설계를 이어갑니다."""
 
 _GUEST_NOTE = (
-    "\n체험 방문자와 대화하고 있습니다. 체험에서는 도구가 읽기 전용으로 돕니다 — 파일을 쓰거나 코드를 "
-    "실행하는 일은 거부됩니다. 대화 중에 이 점을 한 번 알려 주세요.\n"
+    "\n현재 체험 방문자와 대화 중입니다. 체험 환경에서는 도구가 읽기 전용으로 동작하여 파일 생성/수정이나 코드 "
+    "실행 작업은 제한됩니다. 대화 중에 이 점을 자연스럽게 안내해 주세요.\n"
 )
 
 
@@ -144,7 +144,7 @@ def builder_prompt(servers: Sequence[Option], skills: Sequence[Option], *, guest
 
 
 def builder_agent(pool: AgentPool, prompt: str) -> Agent:
-    """오케스트레이터의 연결 설정으로 도는 도구 없는 도우미."""
+    """오케스트레이터의 연결 설정을 기반으로 동작하는 도구 없는 설계 도우미 에이전트를 생성합니다."""
     orchestrator = pool.get_orchestrator()
     return orchestrator.model_copy(update={
         "system_prompt": prompt,
@@ -155,7 +155,7 @@ def builder_agent(pool: AgentPool, prompt: str) -> Agent:
 
 
 def with_draft(text: str, draft: AgentDraft) -> str:
-    """사용자의 말에 화면의 설계도를 붙입니다. 사람이 직접 고친 값을 도우미가 덮어쓰지 않게 합니다."""
+    """사용자 메시지에 현재 UI의 설계도 상태를 첨부합니다. 사용자가 직접 수정한 값을 도우미가 임의로 덮어쓰지 않도록 보장합니다."""
     if not (draft.name or draft.role or draft.system_prompt):
         return text
     return f"{text}\n\n[지금 설계도]\n```json\n{json.dumps(draft.model_dump(), ensure_ascii=False)}\n```"
@@ -171,7 +171,7 @@ async def ask_builder(
     llm: Optional[Any] = None,
     pool: Optional[AgentPool] = None,
 ) -> str:
-    """도우미에게 대화를 넘기고 답 전문을 받습니다. 연결이 없으면 `LLMUnavailableError`."""
+    """도우미 에이전트와 대화를 수행하고 전체 응답 텍스트를 반환합니다. LLM 연결이 불가능하면 `LLMUnavailableError`가 발생합니다."""
     agent = builder_agent(pool or get_agent_pool(), builder_prompt(servers, skills, guest=guest))
     content, _ = await (llm or LLMCaller()).call_agent(agent, history, on_chunk=on_chunk)
     return content
@@ -183,7 +183,7 @@ async def ask_builder(
 
 
 def split_reply(content: str) -> Tuple[str, Optional[Dict[str, Any]]]:
-    """도우미의 답을 (사람에게 보일 글, 설계도 dict) 로 나눕니다. 블록이 없거나 깨졌으면 설계도는 None."""
+    """도우미의 응답을 (사용자에게 표시할 대화 텍스트, 파싱된 설계도 dict) 튜플로 분리합니다. 블록이 없거나 JSON 파싱에 실패하면 설계도는 None을 반환합니다."""
     text = strip_reasoning_trace(content or "")
     matches = list(_BLOCK_RE.finditer(text))
     if not matches:
@@ -198,13 +198,13 @@ def split_reply(content: str) -> Tuple[str, Optional[Dict[str, Any]]]:
 
 
 def streaming_text(text: str) -> str:
-    """스트리밍 중인 답에서 설계도 블록이 시작된 뒤를 감춥니다."""
+    """스트리밍 응답 도중 설계도 코드 블록이 시작되는 지점 이후의 내용을 화면에서 가립니다."""
     match = _BLOCK_START_RE.search(text or "")
     return (text[:match.start()] if match else text or "").strip()
 
 
 def merge_draft(current: AgentDraft, data: Optional[Dict[str, Any]]) -> AgentDraft:
-    """도우미가 준 설계도로 고칩니다. 읽을 수 없는 값이면 지금 것을 그대로 둡니다."""
+    """도우미가 제안한 설계도 데이터로 기존 초안을 갱신합니다. 파싱할 수 없는 필드는 기존 값을 그대로 유지합니다."""
     if not data:
         return current
     fields = {k: v for k, v in data.items() if k in AgentDraft.model_fields}
@@ -215,7 +215,7 @@ def merge_draft(current: AgentDraft, data: Optional[Dict[str, Any]]) -> AgentDra
 
 
 def sanitize_draft(draft: AgentDraft, servers: Iterable[str], skills: Iterable[str]) -> AgentDraft:
-    """없는 도구·스킬, 팔레트 밖의 색과 아이콘을 걸러 냅니다."""
+    """유효하지 않은 도구·스킬, 지원하지 않는 카드 색상 및 아이콘을 검증하여 필터링합니다."""
     server_ids, skill_ids = set(servers), set(skills)
     color = draft.card_color.lower()
     return draft.model_copy(update={
@@ -229,7 +229,7 @@ def sanitize_draft(draft: AgentDraft, servers: Iterable[str], skills: Iterable[s
 
 
 def agent_key_for(draft: AgentDraft, taken: Iterable[str]) -> str:
-    """conf.json 에 쓸 키. 도우미가 준 키가 쓸 수 없거나 이미 있으면 뒤에 번호를 붙입니다."""
+    """conf.json에 등록할 에이전트 고유 키를 생성합니다. 제안된 키가 유효하지 않거나 이미 존재하면 뒤에 숫자를 붙여 중복을 피합니다."""
     used = set(taken) | {"orchestrator"}
     candidate = draft.key.lower().replace("-", "_").replace(" ", "_")
     base = candidate if _KEY_RE.fullmatch(candidate) else "agent"
@@ -242,7 +242,7 @@ def agent_key_for(draft: AgentDraft, taken: Iterable[str]) -> str:
 
 
 def conf_block(draft: AgentDraft) -> Dict[str, Any]:
-    """conf.json 에 적힐 모양 (`add_agent_to_conf_file` 이 쓰는 순서). 화면의 미리보기에 씁니다."""
+    """conf.json에 저장될 딕셔너리 구조를 생성합니다 (`add_agent_to_conf_file` 저장 포맷). UI 미리보기에 활용됩니다."""
     block: Dict[str, Any] = {"name": draft.name, "role": draft.role}
     if draft.card_color:
         block["card_color"] = draft.card_color
@@ -257,16 +257,16 @@ def conf_block(draft: AgentDraft) -> Dict[str, Any]:
 
 
 def require_complete(draft: AgentDraft) -> None:
-    """저장할 수 있는 설계도인지. 아니면 `SaveRefused`."""
+    """설계도의 필수 필드가 모두 채워져 있고 유효한지 검증합니다. 누락이나 오류가 있으면 `SaveRefused`를 발생시킵니다."""
     missing = [label for value, label in (
         (draft.name, "이름"), (draft.role, "한 줄 역할"), (draft.system_prompt, "업무 지시서"),
     ) if not value]
     if missing:
-        raise SaveRefused(f"{', '.join(missing)} 칸을 채워 주십시오.")
+        raise SaveRefused(f"{', '.join(missing)} 항목을 입력해 주세요.")
     try:
         AgentConfig.model_validate(conf_block(draft))
     except ValidationError as exc:
-        raise SaveRefused(f"설계도를 설정으로 읽을 수 없습니다: {exc.errors()[0].get('msg', exc)}") from exc
+        raise SaveRefused(f"설계도 설정 형식이 올바르지 않습니다: {exc.errors()[0].get('msg', exc)}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -280,15 +280,15 @@ def save_owner_agent(
     running: Sequence[str] = (),
     config_path: Optional[str | Path] = None,
 ) -> str:
-    """conf.json 에 에이전트를 추가하고 풀을 다시 채웁니다. 쓴 키를 돌려줍니다.
+    """conf.json에 에이전트를 영구 추가하고 실행 풀을 즉시 갱신합니다. 저장된 고유 키를 반환합니다.
 
-    `running` 은 지금 토론 중인 대화들입니다. 로스터(`_agent_admin_lock_reason`)와 같은 규칙으로,
-    에이전트 풀은 프로세스 전체가 하나를 쓰므로 어느 대화든 돌고 있으면 바꾸지 않습니다.
+    `running`은 현재 실행 중인 토론 세션 목록입니다. 로스터 관리 규칙(`_agent_admin_lock_reason`)과 동일하게,
+    프로세스 전역에서 단일 에이전트 풀을 공유하므로 실행 중인 세션이 하나라도 있으면 설정을 변경하지 않습니다.
     """
     if running:
         raise SaveRefused(
-            "진행 중인 대화가 있어 지금은 conf.json 을 바꿀 수 없습니다. "
-            "모든 대화가 끝난 뒤 다시 저장해 주십시오."
+            "진행 중인 대화가 있어 지금은 conf.json 설정을 변경할 수 없습니다. "
+            "모든 대화가 종료된 후 다시 시도해 주세요."
         )
     require_complete(draft)
     key = agent_key_for(draft, get_config().agents.keys())
@@ -309,13 +309,13 @@ def save_owner_agent(
 
 
 async def save_guest_agent(db: AsyncSession, user_id: str, draft: AgentDraft) -> EasyAgentModel:
-    """방문자의 '내 에이전트' 로 저장합니다. 도구는 방문자가 쓸 수 있는 것만 남깁니다."""
+    """방문자 전용 '내 에이전트'로 데이터베이스에 저장합니다. 도구는 방문자에게 허용된 것만 보관합니다."""
     require_complete(draft)
     count = (await db.execute(
         select(func.count()).select_from(EasyAgentModel).where(EasyAgentModel.user_id == user_id)
     )).scalar_one()
     if count >= MAX_GUEST_AGENTS:
-        raise SaveRefused(f"내 에이전트는 {MAX_GUEST_AGENTS}개까지 만들 수 있습니다. 쓰지 않는 것을 지운 뒤 저장해 주십시오.")
+        raise SaveRefused(f"내 에이전트는 최대 {MAX_GUEST_AGENTS}개까지 생성할 수 있습니다. 사용하지 않는 에이전트를 삭제한 후 다시 시도해 주세요.")
     row = EasyAgentModel(
         user_id=user_id,
         name=draft.name,
