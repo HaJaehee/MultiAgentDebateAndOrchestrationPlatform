@@ -93,9 +93,13 @@ def easy_header(viewer: Viewer) -> None:
             if viewer.owner:
                 ui.link("전문가 화면", "/").classes("text-indigo-300")
                 if get_config().trial.enabled:
-                    ui.link("체험 화면", TRIAL_HOME).classes("text-slate-400")
+                    ui.button("체험 화면", icon="forum", on_click=lambda: ui.navigate.to(TRIAL_HOME)).props(
+                        "flat dense no-caps color=indigo-3"
+                    )
             else:
-                ui.link("체험 화면", TRIAL_HOME).classes("text-slate-400")
+                ui.button("체험 화면", icon="forum", on_click=lambda: ui.navigate.to(TRIAL_HOME)).props(
+                    "flat dense no-caps color=indigo-3"
+                )
                 with ui.row().classes("items-center gap-1 text-slate-300"):
                     ui.icon("person", size="xs")
                     ui.label(viewer.name)

@@ -8,15 +8,19 @@ config form, and lets them hand it a task. Design record:
 Code: [app/easy/](file:///d:/MultiAgentDebateOrchestration/app/easy/__init__.py) — `catalog.py` (plain-language
 names for tools and skills, the demo agent, example tasks, example folder), `builder.py` (the interview and
 saving), `sessions.py` (locked sessions, history), `loop.py` (events → steps, pure logic) and `pages/`.
-There are two touch points outside the package:
+There are three touch points outside the package:
 
 - `setup_easy()` in [app/main.py](file:///d:/MultiAgentDebateOrchestration/app/main.py).
 - A `쉬운 화면` button in the expert page header
   ([app/ui/app.py](file:///d:/MultiAgentDebateOrchestration/app/ui/app.py)), left of the `FastAPI + NiceGUI`
   badge. `EASY_HOME` is imported inside `create_ui()`: `app/ui/__init__.py` imports `app.ui.app`, so a top-level
   import would close a cycle through the trial pages.
+- A `쉬운 화면` button in the trial header (`header()` in
+  [app/trial/pages/common.py](file:///d:/MultiAgentDebateOrchestration/app/trial/pages/common.py)), shown to
+  visitors and the owner alike. `EASY_HOME` is imported inside `header()` too, because `app.easy.pages.common`
+  imports that module. The way back is the `체험 화면` button in `easy_header`.
 
-The trial pages and the engine are unchanged.
+The trial pages gain only that header button; the engine is unchanged.
 
 ---
 

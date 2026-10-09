@@ -48,6 +48,9 @@ def page_setup(title: str = "") -> None:
 
 
 def header(visitor: Optional[Visitor], *, owner: bool = False) -> None:
+    # 함수 안에서 가져옵니다. `app.easy.pages.common` 이 이 모듈을 부르므로 맨 위에 두면 순환 import 가 됩니다.
+    from app.easy.pages.common import EASY_HOME
+
     cfg = get_config().trial
     with ui.row().classes("trial-page items-center justify-between px-4 pt-4 pb-2 gap-2"):
         with ui.link(target=TRIAL_HOME).classes("no-underline text-slate-100"):
@@ -55,6 +58,9 @@ def header(visitor: Optional[Visitor], *, owner: bool = False) -> None:
                 ui.icon("forum", size="sm").classes("text-indigo-400")
                 ui.label(cfg.title).classes("text-lg font-semibold")
         with ui.row().classes("items-center gap-3 text-sm"):
+            ui.button("쉬운 화면", icon="eco", on_click=lambda: ui.navigate.to(EASY_HOME)).props(
+                "flat dense no-caps color=teal-3"
+            ).tooltip("비엔지니어를 위한 화면 — AI 에이전트 알아보기, 대화로 에이전트 만들기")
             if owner:
                 ui.link("관리자 화면", "/trial/admin").classes("text-indigo-300")
             if visitor is not None:

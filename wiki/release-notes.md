@@ -17,7 +17,8 @@ an interview with a tool-less copy of the orchestrator that appends an `agent` b
 the blueprint is filtered against the real tools and skills and stays editable. The owner's agents go into
 `conf.json` (`add_agent_to_conf_file`, inheriting `llm`); a trial visitor's stay in the `easy_agents` table and
 run read-only with `filesystem` only, in a copy of the bundled example files. The expert page only gains a
-`쉬운 화면` header button (left of the `FastAPI + NiceGUI` badge); the trial pages and the engine are unchanged.
+`쉬운 화면` header button (left of the `FastAPI + NiceGUI` badge), the trial header gains one for visitors and
+the owner (with a `체험 화면` button back), and the engine is unchanged.
 → [Beginner Pages](ui/beginner-pages.md) · ADR-029
 
 ---

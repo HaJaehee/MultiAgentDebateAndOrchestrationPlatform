@@ -212,3 +212,27 @@ def test_the_expert_header_links_to_the_easy_pages_left_of_the_stack_badge():
     assert link != -1, "전문가 화면 머리말에 '쉬운 화면' 버튼이 있어야 합니다"
     assert "ui.navigate.to(EASY_HOME)" in source[link:link + 200], "버튼은 /trial/easy 로 이동해야 합니다"
     assert link < source.index('ui.badge("FastAPI + NiceGUI"'), "버튼은 FastAPI + NiceGUI 배지 왼쪽에 놓여야 합니다"
+
+
+def test_the_trial_header_links_to_the_easy_pages_for_everyone():
+    import inspect
+
+    from app.trial.pages.common import header
+
+    source = inspect.getsource(header)
+    link = source.find('ui.button("쉬운 화면"')
+    assert link != -1, "체험 화면 머리말에 '쉬운 화면' 버튼이 있어야 합니다"
+    assert "ui.navigate.to(EASY_HOME)" in source[link:link + 200], "버튼은 /trial/easy 로 이동해야 합니다"
+    assert link < source.index("if owner:") and link < source.index("if visitor"), "방문자에게도 보이도록 분기 밖에 있어야 합니다"
+
+
+def test_the_easy_header_links_back_to_the_trial_pages_for_visitors():
+    import inspect
+
+    from app.easy.pages.common import easy_header
+
+    source = inspect.getsource(easy_header)
+    assert 'ui.link("체험 화면"' not in source, "글자 링크는 버튼으로 바뀌어야 합니다"
+    visitor_branch = source[source.index("else:"):]
+    assert 'ui.button("체험 화면"' in visitor_branch, "방문자 분기에 '체험 화면' 버튼이 있어야 합니다"
+    assert "ui.navigate.to(TRIAL_HOME)" in visitor_branch
