@@ -31,8 +31,11 @@ def _tint(color: str) -> str:
     return f"--c:{color};--rgb:{r},{g},{b}"
 
 
-# 다이어그램은 밝은 판 위에 그려지므로(`theme.py` `.nicegui-mermaid`) 연한 바탕에 진한 테두리로 칠합니다.
-LOOP_DIAGRAM = """flowchart LR
+# 다이어그램은 어두운 카드 위에 그려집니다. Mermaid 기본 선 색(진회색)은 그 위에서 보이지 않으므로
+# 선·화살촉(`lineColor`)은 밝게, 선 위 글자("목표 달성")는 어두운 바탕에 밝은 글씨로 칠합니다.
+# 노드는 연한 바탕에 진한 테두리라 어두운 카드에서도 읽힙니다.
+LOOP_DIAGRAM = """%%{init: {"themeVariables": {"lineColor": "#cbd5e1", "edgeLabelBackground": "#334155", "textColor": "#e2e8f0"}}}%%
+flowchart LR
     goal(["🎯 목표"]) --> think["💭 생각<br/>무엇을 해야 하지?"]
     think --> act["🛠 행동<br/>도구를 쓴다"]
     act --> obs["👀 관찰<br/>결과를 본다"]

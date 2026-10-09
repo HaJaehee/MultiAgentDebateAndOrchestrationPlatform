@@ -7,6 +7,7 @@
 4. 오케스트레이션 엔진이 세션을 끝까지 완주했을 때, 발생 이벤트들이 생각 → 행동 → 생각 단계로 정확히 파싱된다.
 5. 재조회된 메시지 기록에는 발언별로 실행된 도구 호출 내역이 온전히 보존된다.
 6. 게스트 게이트웨이가 `/trial/easy` 하위 경로를 정상 허용하며, 라우트는 `ui.run_with` 이전에 안전하게 마운트된다.
+7. 전문가 화면 상단 머리말에 '쉬운 화면' 링크가 있고, `FastAPI + NiceGUI` 배지 왼쪽에 놓인다.
 """
 
 import asyncio
@@ -203,3 +204,11 @@ def test_the_easy_pages_are_mounted_before_nicegui():
     source = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
     assert re.search(r"^setup_easy\(\)", source, re.M), "app/main.py에 setup_easy() 호출문이 존재해야 합니다"
     assert source.index("setup_easy()") < source.index("ui.run_with(")
+
+
+def test_the_expert_header_links_to_the_easy_pages_left_of_the_stack_badge():
+    source = (ROOT / "app" / "ui" / "app.py").read_text(encoding="utf-8")
+    link = source.find('ui.button("쉬운 화면"')
+    assert link != -1, "전문가 화면 머리말에 '쉬운 화면' 버튼이 있어야 합니다"
+    assert "ui.navigate.to(EASY_HOME)" in source[link:link + 200], "버튼은 /trial/easy 로 이동해야 합니다"
+    assert link < source.index('ui.badge("FastAPI + NiceGUI"'), "버튼은 FastAPI + NiceGUI 배지 왼쪽에 놓여야 합니다"

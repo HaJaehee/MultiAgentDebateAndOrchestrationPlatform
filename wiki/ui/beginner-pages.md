@@ -8,9 +8,15 @@ config form, and lets them hand it a task. Design record:
 Code: [app/easy/](file:///d:/MultiAgentDebateOrchestration/app/easy/__init__.py) — `catalog.py` (plain-language
 names for tools and skills, the demo agent, example tasks, example folder), `builder.py` (the interview and
 saving), `sessions.py` (locked sessions, history), `loop.py` (events → steps, pure logic) and `pages/`.
-The only touch point outside the package is `setup_easy()` in
-[app/main.py](file:///d:/MultiAgentDebateOrchestration/app/main.py). The expert page, the trial pages and the
-engine are unchanged.
+There are two touch points outside the package:
+
+- `setup_easy()` in [app/main.py](file:///d:/MultiAgentDebateOrchestration/app/main.py).
+- A `쉬운 화면` button in the expert page header
+  ([app/ui/app.py](file:///d:/MultiAgentDebateOrchestration/app/ui/app.py)), left of the `FastAPI + NiceGUI`
+  badge. `EASY_HOME` is imported inside `create_ui()`: `app/ui/__init__.py` imports `app.ui.app`, so a top-level
+  import would close a cycle through the trial pages.
+
+The trial pages and the engine are unchanged.
 
 ---
 

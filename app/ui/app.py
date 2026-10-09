@@ -56,6 +56,9 @@ logger = logging.getLogger(__name__)
 
 def create_ui() -> None:
     """Configures the main NiceGUI web application page and event bindings."""
+    # 모듈 맨 위가 아니라 여기서 가져옵니다. `app.easy.pages` 는 체험 화면을 거쳐 `app.ui.mermaid_export`
+    # 를 부르고, 그 꾸러미의 `app/ui/__init__.py` 가 이 모듈을 부르므로 맨 위에 두면 순환 import 가 됩니다.
+    from app.easy.pages.common import EASY_HOME
 
     @ui.page("/", title="MADO: Multi-Agent Debate & Orchestration Platform", favicon=FAVICON_SVG)
     async def index_page():
@@ -1025,6 +1028,11 @@ def create_ui() -> None:
                     ui.label(APP_TAGLINE).classes("text-[11px] text-slate-400")
 
             with ui.row().classes("items-center gap-2"):
+                # 비엔지니어 화면 (app/easy, ADR-029). 같은 탭에서 엽니다 — 토론은 러너가 굴리므로
+                # 이 화면을 떠나도 끊기지 않습니다.
+                ui.button("쉬운 화면", icon="school", on_click=lambda: ui.navigate.to(EASY_HOME)).props(
+                    "flat dense no-caps color=teal-3"
+                ).tooltip("비엔지니어를 위한 화면 — AI 에이전트 알아보기, 대화로 에이전트 만들기")
                 ui.badge("FastAPI + NiceGUI", color="indigo-8").props("dense")
                 ui.badge("MCP Host", color="teal-8").props("dense")
                 ui.badge("LiteLLM Multi-Model", color="purple-8").props("dense")
