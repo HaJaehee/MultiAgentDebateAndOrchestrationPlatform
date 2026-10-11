@@ -134,6 +134,7 @@ MultiAgentDebateOrchestration/
 │   │   ├── skills.py         # 스킬 디렉터리 스캔 및 에이전트별 스킬 도구 (skills__load_skill 등)
 │   │   ├── llm.py            # LiteLLM 호출기, Tool 루프, LLMUnavailableError
 │   │   ├── llm_gate.py       # 서버 전역 LLM 동시 요청 상한 제어 및 대기열 관리 (app.llm_concurrency)
+│   │   ├── model_status.py   # 모델 연결 상태 확인 (연결 묶기·가벼운 확인 요청·실패 분류·결과판)
 │   │   └── pool.py           # 동적 에이전트 풀 레지스트리
 │   ├── orchestration/        # 멀티 에이전트 토론 상태 머신
 │   │   ├── state.py          # DebateState, DebateMessage, ArtifactItem
@@ -156,6 +157,7 @@ MultiAgentDebateOrchestration/
 │           ├── roster.py     # 에이전트 로스터 및 토론 제어판
 │           ├── chat_feed.py  # 대화 타임라인 & MCP 도구 아코디언
 │           ├── agent_appearance.py # 카드 색상·아이콘 편집기 (추가 모달 / 페르소나 편집 공용)
+│           ├── model_status.py # `모델 연결 상태` 버튼과 창 (전문가·체험·쉬운 화면 상단 공용)
 │           └── artifact_viewer.py # 탭형 산출물 뷰어 (Code, Markdown, Mermaid)
 ├── mcp_servers/              # 자체 내장 MCP 서버
 │   └── memory_scoped/        # 공식 memory 서버 포크 (세션별 지식 그래프 격리)
@@ -177,6 +179,7 @@ MultiAgentDebateOrchestration/
     ├── test_tool_security_gate.py   # 승인 카드·게이트·도구 루프·매니저·러너·설정 기록
     ├── test_llm_settings.py   # llm 상속, 엔드포인트/단계적 사고 설정
     ├── test_llm_gate.py       # 서버 전역 LLM 동시 요청 상한 제어 (요청 순서·대기열 순위·취소 처리)
+    ├── test_model_status.py   # 모델 연결 상태 (연결 묶기·실패 분류·동시 요청 상한 준수·결과 재사용·방문자 비노출)
     ├── test_trial_gate.py     # 체험 방문자 접근 제어 (허용 경로·차단 경로·관리자 권한 유지 검증)
     ├── test_trial_auth.py     # 이름 + PIN 인증, 서명 쿠키, 계정 잠금, PIN 초기화
     ├── test_trial_templates.py # 템플릿 포맷 검증·스키마 검사·스냅샷, 템플릿 대화 완주 테스트
@@ -419,6 +422,20 @@ python docs/render_user_manual.py
 > **호출 모드 판정 기준**: `api_base` 또는 `api_key` 중 하나라도 지정되어 있거나(또는 모델명이 `ollama/`, `ollama_chat/`, `lm_studio/`로 시작하는 경우) 실제 LLM 엔드포인트를 호출합니다.  
 > 두 항목이 모두 누락된 경우 해당 에이전트는 발언 차례에 응답하지 못하며, 토론 기록에 연결 실패 사유가 기록됩니다.  
 > 별도의 API 키가 필요 없는 로컬 LLM 서버의 경우 `api_base`만 지정하시면 즉시 사용하실 수 있습니다.
+
+**연결 확인 — `모델 연결 상태` 버튼.** 위 기준은 연결 정보가 *적혀 있는지*만 봅니다. 키가 맞는지, 모델 이름이 맞는지, 주소에 닿는지는 전문가·체험·쉬운 화면 상단의 `모델 연결 상태` 버튼으로 확인합니다. 누르면 `.env`와 `conf.json`에서 풀린 설정을 훑어 **모델·주소·키가 같은 것을 한 줄로 묶고**(에이전트가 개별 모델을 쓰면 그 에이전트는 따로 한 줄), 줄마다 아주 짧은 요청(`ping`, 출력 최대 16토큰)을 한 번 보내 결과를 보여 줍니다.
+
+| 표시 | 뜻 |
+| --- | --- |
+| 연결됨 | 모델이 응답했습니다 (응답 시간 표시) |
+| 연결 정보 없음 | `api_base`도 `api_key`도 없습니다. 요청을 보내지 않습니다 |
+| 인증 실패 · 모델 이름 확인 | 키가 틀렸거나 권한이 없음 · 모델을 찾지 못했거나 Provider 접두사(`openai/`, `gemini/` 등)가 틀림 |
+| 연결 실패 · 응답 없음 · 서버 오류 | 주소에 닿지 못함 · 30초 안에 응답 없음 · LLM 서버가 오류를 돌려줌 |
+| 한도 초과 · 요청 거절 | 연결은 되지만 요청 한도에 걸림 · 서버가 요청을 받아들이지 않음 |
+| 확인 보류 | `app.llm_concurrency` 상한이 차 있어 끼어들지 않았습니다 (토론이 도는 중) |
+
+- 확인은 서버 전체에서 한 판만 돌고 결과는 60초 동안 다시 씁니다. `다시 확인`도 10초 안에는 새로 보내지 않습니다.
+- 주소와 Provider가 돌려준 오류 원문은 **소유자에게만** 보입니다. 체험 방문자에게는 모델 이름·쓰는 에이전트·상태만 보이고, API 키는 누구에게도 표시되지 않습니다 (오류 원문에 섞여 온 키도 가립니다).
 
 ### Sequential Thinking (단계적 사고)
 

@@ -19,6 +19,7 @@ from app.config import get_config
 from app.trial.gate import TRIAL_HOME
 from app.trial.pages.common import page_setup
 from app.trial.web import TRIAL_LOGIN_PATH, TRIAL_LOGOUT_PATH, current_visitor, is_owner
+from app.ui.components.model_status import build_model_status_button
 
 EASY_HOME = "/trial/easy"
 EASY_BUILD = f"{EASY_HOME}/build"
@@ -90,6 +91,8 @@ def easy_header(viewer: Viewer) -> None:
                 ui.icon("smart_toy", size="sm").classes("text-indigo-400")
                 ui.label(EASY_TITLE).classes("text-lg font-semibold")
         with ui.row().classes("items-center gap-3 text-sm"):
+            # 방문자에게는 모델 이름과 상태만, 주인에게는 주소와 오류 원문까지 보여 줍니다.
+            build_model_status_button(detail=viewer.owner)
             if viewer.owner:
                 ui.link("전문가 화면", "/").classes("text-indigo-300")
                 if get_config().trial.enabled:

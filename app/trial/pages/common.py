@@ -9,6 +9,7 @@ from nicegui import ui
 
 from app.agents.base import style_for_agent
 from app.config import get_config
+from app.ui.components.model_status import build_model_status_button
 from app.ui.mermaid_export import MERMAID_EXPORT_JS, MERMAID_IMAGE_JS
 from app.ui.theme import CUSTOM_CSS
 from app.trial.gate import TRIAL_HOME
@@ -61,6 +62,8 @@ def header(visitor: Optional[Visitor], *, owner: bool = False) -> None:
             ui.button("쉬운 화면", icon="eco", on_click=lambda: ui.navigate.to(EASY_HOME)).props(
                 "flat dense no-caps color=teal-3"
             ).tooltip("비엔지니어를 위한 화면 — AI 에이전트 알아보기, 대화로 에이전트 만들기")
+            # 방문자에게는 모델 이름과 상태만, 주인에게는 주소와 오류 원문까지 보여 줍니다.
+            build_model_status_button(detail=owner)
             if owner:
                 ui.link("관리자 화면", "/trial/admin").classes("text-indigo-300")
             if visitor is not None:

@@ -303,6 +303,35 @@ LLM call failed for System Architect
 
 ---
 
+## 모델 연결 상태 확인
+
+`is_live`는 연결 정보가 *적혀 있는지*만 판정합니다. 키가 틀렸거나 모델 이름이 잘못된 경우는 토론 도중 `LLMUnavailableError`로 처음 드러나는데, 그 시점에는 어느 모델이 왜 실패했는지 파악하기 어렵습니다. `app/agents/model_status.py`는 설정에 있는 연결마다 아주 짧은 요청을 보내 미리 확인하며, 전문가·체험·쉬운 화면 상단의 `모델 연결 상태` 버튼(`app/ui/components/model_status.py`)이 그 결과를 보여 줍니다.
+
+**연결 묶기.** `collect_targets()`는 전역 기본값(`llm`)과 활성화된 에이전트를 훑어 모델·`api_base`·`api_key`·`api_version`·`provider`·`extra_headers`·`extra_body`가 모두 같은 것을 연결 하나(`ModelTarget`)로 묶습니다. 에이전트 다섯이 같은 모델을 쓰면 요청은 한 번이고, 한 에이전트만 개별 모델을 쓰면 그 에이전트가 따로 한 줄이 됩니다. 환경 변수가 치환된 뒤의 값을 쓰므로 `.env`로 준 값과 `conf.json`에 적은 값을 구분하지 않습니다.
+
+**확인 요청.** `probe()`는 실제 호출과 같은 연결 정보(키·주소·버전·Provider·추가 헤더와 본문)로 `ping` 한 마디에 `max_tokens=16`인 요청을 한 번 보냅니다. 도구·스트리밍·재시도는 없고, 모델마다 허용 값이 다른 `temperature`와 사고 옵션은 넣지 않습니다. LiteLLM 예외는 사람이 조치할 수 있는 갈래로 분류됩니다.
+
+| 상태 | 화면 표기 | 판정 근거 |
+| --- | --- | --- |
+| `ok` | 연결됨 | 응답 수신 (응답 시간 기록) |
+| `not_configured` | 연결 정보 없음 | `is_live`가 False — 요청을 보내지 않음 |
+| `auth` | 인증 실패 | `AuthenticationError`·`PermissionDeniedError`, HTTP 401/403, "API key" 문구 |
+| `model` | 모델 이름 확인 | `NotFoundError`, HTTP 404, "LLM Provider NOT provided"(접두사 오류) |
+| `rate_limited` | 한도 초과 | `RateLimitError`, HTTP 429 |
+| `unreachable` | 연결 실패 | `APIConnectionError`, "Connection error" 문구(서버가 꺼진 경우 LiteLLM이 `InternalServerError`로 올림) |
+| `timeout` | 응답 없음 | `Timeout`, 30초 초과 |
+| `rejected` | 요청 거절 | `BadRequestError` 등 HTTP 400/422 |
+| `server_error` | 서버 오류 | HTTP 5xx |
+| `busy` | 확인 보류 | 동시 요청 상한이 차서 3초 안에 자리를 얻지 못함 |
+
+**동시 요청 상한 준수.** 확인 요청도 `LLMGate`의 자리를 하나 쥐고 나갑니다. 자리가 곧 나지 않으면 줄을 서지 않고 `busy`로 돌려주며(토론이 도는 중이면 그 모델은 일하고 있는 것입니다), 상한이 설정된 서버에서는 확인끼리 자리를 다투지 않도록 한 번에 하나씩 확인합니다.
+
+**결과판.** `ModelStatusBoard`는 프로세스 전역 싱글턴입니다. 확인은 한 번에 한 판만 돌고(여러 화면이 동시에 열어도 같은 판을 공유), 결과는 60초 동안 재사용하며, `다시 확인`도 10초 안에는 새로 보내지 않습니다. 설정이 바뀌어 처음 보는 연결이 생기면 시간과 무관하게 확인하고, 설정에서 사라진 연결의 결과는 버립니다.
+
+**노출 범위.** 화면은 `describe_row(row, detail=...)`가 만든 값만 그립니다. `detail`은 소유자의 화면에서만 켜지며, 꺼져 있으면 주소와 오류 원문이 화면으로 가는 자료에 아예 담기지 않습니다. API 키는 어느 경우에도 내보내지 않고, Provider가 오류 문구에 되돌려 보낸 키와 `extra_headers` 값도 `safe_detail()`이 가립니다.
+
+---
+
 ## 관련 문서
 
 - [MCP 호스트](04-mcp-host.md) — 도구가 실제로 실행되는 런타임 환경

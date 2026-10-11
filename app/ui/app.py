@@ -30,6 +30,7 @@ from app.orchestration.turns import unfinished_turn
 from app.security import is_loopback
 from app.session_ops import discard_turn
 from app.ui.components.access_token import build_access_buttons
+from app.ui.components.model_status import build_model_status_button
 from app.ui.components.artifact_viewer import ArtifactViewer, merge_artifacts
 from app.ui.components.chat_feed import ChatFeed, clip_tool_output
 from app.ui.components.quiet_splitter import SPLITTER_FREEZE_JS, QuietSplitter
@@ -1033,6 +1034,9 @@ def create_ui() -> None:
                 ui.button("쉬운 화면", icon="eco", on_click=lambda: ui.navigate.to(EASY_HOME)).props(
                     "flat dense no-caps color=teal-3"
                 ).tooltip("비엔지니어를 위한 화면 — AI 에이전트 알아보기, 대화로 에이전트 만들기")
+                # 설정에 있는 모델이 지금 응답하는지 (app/agents/model_status.py). 이 화면은 주인만
+                # 열므로 주소와 오류 원문까지 보여 줍니다.
+                build_model_status_button(detail=True)
                 ui.badge("FastAPI + NiceGUI", color="indigo-8").props("dense")
                 ui.badge("MCP Host", color="teal-8").props("dense")
                 ui.badge("LiteLLM Multi-Model", color="purple-8").props("dense")

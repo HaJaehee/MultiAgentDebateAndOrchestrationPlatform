@@ -6,6 +6,18 @@ changed*, not a second copy of the documentation.
 
 ---
 
+## Unreleased
+
+**Model connection status.** A `모델 연결 상태` button in the header of the expert page, the trial pages and the
+beginner pages opens a dialog that sends one tiny request (`ping`, at most 16 output tokens) to every model in
+the resolved configuration and shows whether it answers: connected with latency, wrong key, unknown model name,
+unreachable, timed out, rate-limited, or not configured. Agents sharing a model, address and key are one row;
+an agent with its own model gets its own. Probes take a slot in the `app.llm_concurrency` gate and step aside
+(`확인 보류`) when it is full, one round runs for all viewers, and results are reused for 60 seconds. The address
+and the provider's error text are shown to the owner only; trial visitors see model names and states, and the
+key is never shown.
+→ [UI Components §1.3.8](ui/components.md)
+
 ## v1.3
 
 **Select all / none in the roster.** `모두 선택` and `모두 선택 해제`, under the roster's `conf.json` hint, set

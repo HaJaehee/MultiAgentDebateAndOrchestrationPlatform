@@ -676,6 +676,56 @@ text instead (`\frac{n(n+1)}{2} \le x^2` → `(n(n+1))/(2) ≤ x²`). `latex2mat
 browser's DOMPurify. Formulas are cached by source, so a streaming card does not convert the same formula again
 on every redraw.
 
+### 1.3.8. Model connection status
+
+[app/agents/model_status.py](file:///d:/MultiAgentDebateOrchestration/app/agents/model_status.py) and
+[app/ui/components/model_status.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/model_status.py).
+`is_live` only says that connection details are *written down*. A wrong key, a misspelt model name or an
+unreachable address first shows up in the middle of a debate as "the agent could not respond". The
+`모델 연결 상태` button in the header of the expert page, the trial pages and the beginner pages opens a dialog
+that checks every configured model now.
+
+**One row per connection.** `collect_targets()` walks the global `llm` defaults and every enabled agent and
+groups those whose model, `api_base`, `api_key`, `api_version`, `provider`, `extra_headers` and `extra_body`
+are all equal. Five agents on one model cost one request; an agent with its own model gets its own row. The
+values are the ones left after `${ENV}` substitution, so `.env` and `conf.json` are treated alike.
+
+**The probe.** One `ping` with `max_tokens=16`, the same credentials, headers and body fields as a real call,
+no tools, no streaming, no retries, no `temperature` or thinking options (models differ in what they accept).
+LiteLLM's exceptions are sorted into states a person can act on:
+
+| State | Label | From |
+| :--- | :--- | :--- |
+| `ok` | 연결됨 | a response (latency shown) |
+| `not_configured` | 연결 정보 없음 | `is_live` is false — nothing is sent |
+| `auth` | 인증 실패 | 401/403, or an "API key" message (some providers answer a bad key with 400) |
+| `model` | 모델 이름 확인 | 404, or `LLM Provider NOT provided` (an unknown prefix such as `google/`) |
+| `rate_limited` | 한도 초과 | 429 — connected, but throttled |
+| `unreachable` | 연결 실패 | connection errors; LiteLLM raises `InternalServerError: Connection error.` for a server that is down, so the message is checked too |
+| `timeout` | 응답 없음 | no answer in 30 s |
+| `rejected` · `server_error` | 요청 거절 · 서버 오류 | 400/422 · 5xx |
+| `busy` | 확인 보류 | the concurrency gate is full |
+
+The mapping is tested against real LiteLLM calling a local fake server, not against assumed class names.
+
+**It obeys `app.llm_concurrency`.** A probe takes a slot in `LLMGate` like any other call. If no slot frees up
+within 3 s it does not queue and reports `busy` — a debate is using the model, which is an answer in itself.
+With a limit set, probes run one at a time so they never wait on each other.
+
+**One round for everyone.** `ModelStatusBoard` is a process-wide singleton. A second viewer joins the round
+already running; results are reused for 60 s; `다시 확인` does not send again within 10 s (a trial visitor can
+press it too). A connection the board has not seen (an edited `conf.json`) is checked regardless of the cache,
+and results for connections that left the configuration are dropped.
+
+**Who sees what.** The dialog draws only what `describe_row(row, detail=...)` returns. `detail` is true on the
+expert page (owner only) and, on the trial and beginner pages, only when the viewer is the owner. Without it
+the address and the provider's error text are not in the data sent to the browser at all; a visitor sees the
+model name, the agents using it and the state. The key is never sent, and `safe_detail()` masks keys and
+header values that a provider echoes back in its error message.
+
+**The dialog.** Built once per page (like the about dialog). While a round runs, a 0.5 s timer redraws the rows
+so each one flips from `확인 중` as its answer arrives; the timer stops when the round ends or the dialog closes.
+
 ### 1.4. Artifact Viewer ([app/ui/components/artifact_viewer.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/artifact_viewer.py))
 - **Tabs accumulate across turns.** `add_artifacts()` appends a finished turn's artifacts (skipping ids
   already shown) and opens that turn's report; `render_artifacts()` is only for rebuilding from a full
