@@ -168,6 +168,8 @@ class Agent(BaseModel):
     debate_priority: int = DEFAULT_DEBATE_PRIORITY
     debate_stance: Literal["proponent", "critic", "neutral"] = "neutral"
     sequential_thinking: SequentialThinkingConfig = Field(default_factory=SequentialThinkingConfig)
+    # 자기 연결이 실패했을 때 전역 기본 모델이 대신 답해도 되는지 (`llm.fallback`, ADR-030).
+    allow_fallback: bool = True
     system_prompt: str = ""
     # conf.json 에 적힌 그대로의 겉모습. 되쓰거나 스냅샷에 담을 때 이 값을 씁니다.
     card_color: Optional[str] = None

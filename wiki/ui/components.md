@@ -713,7 +713,7 @@ within 3 s it does not queue and reports `busy` — a debate is using the model,
 With a limit set, probes run one at a time so they never wait on each other.
 
 **One round for everyone.** `ModelStatusBoard` is a process-wide singleton. A second viewer joins the round
-already running; results are reused for 60 s; `다시 확인` does not send again within 10 s (a trial visitor can
+already running; results are reused for 180 s; `다시 확인` does not send again within 10 s (a trial visitor can
 press it too). A connection the board has not seen (an edited `conf.json`) is checked regardless of the cache,
 and results for connections that left the configuration are dropped.
 

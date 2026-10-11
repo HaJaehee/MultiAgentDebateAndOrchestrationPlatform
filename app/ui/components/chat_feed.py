@@ -7,6 +7,7 @@ from app.agents.base import style_for_agent
 from app.mcp.policy import OUTCOME_LABELS, describe_verdict, tool_outcome
 from app.orchestration.graph_run import NodeBadges
 from app.orchestration.plan_gate import card_actions
+from app.orchestration.state import FALLBACK_BADGE, fallback_sentence
 from app.timestamps import format_duration, speech_time_text, speech_timing, to_local
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.math_markdown import MathMarkdown
@@ -1721,6 +1722,8 @@ class ChatFeed:
             failed_badge = info.get("failed_badge")
             if failed_badge is not None and not failed_badge.is_deleted:
                 failed_badge.set_visibility(msg_type == "error")
+        # 확정본의 기록을 따릅니다. 기본 모델까지 실패한 발언은 배지를 거둡니다 (답한 모델이 없습니다).
+        self._set_fallback(info, msg.get("llm_meta"))
 
         tool_calls = msg.get("tool_calls", [])
         if tool_calls and info.get("tool_container") is not None:
@@ -1898,6 +1901,13 @@ class ChatFeed:
                                 ui.badge(sender_role, color=style["color"]).props("dense text-[12px]")
                             failed_badge = ui.badge("응답 없음", color="red-9").props("dense text-[12px]")
                             failed_badge.set_visibility(msg_type == "error")
+                            # 이 에이전트의 모델이 아니라 전역 기본 모델이 대신 답한 발언 (ADR-030).
+                            # 숨겨 둔 채로 만들어 두고, 스트리밍 중에 전환되면 그때 보입니다.
+                            fallback_badge = ui.badge(FALLBACK_BADGE, color="amber-9").props(
+                                "dense text-[12px]"
+                            )
+                            with fallback_badge:
+                                fallback_tip = ui.tooltip("")
                         # 발언 시작·종료 시각. 이름 밑에 작게 둡니다 — 오른쪽 버튼 줄에
                         # 넣으면 좁은 화면에서 라운드 배지와 버튼을 밀어냅니다.
                         time_text, time_full = card_time_text(msg)
@@ -1955,14 +1965,37 @@ class ChatFeed:
             "expand_tip": expand_tip,
             "tool_container": tool_container,
             "failed_badge": failed_badge,
+            "fallback_badge": fallback_badge,
+            "fallback_tip": fallback_tip,
             "time_label": time_label,
             "time_tip": time_tip,
             "started_at": msg.get("started_at"),
             "msg_type": msg_type,
             "collapsed": False,
         })
+        self._set_fallback(info, msg.get("llm_meta"))
         self._apply_clamp(info, collapsed=not streaming)
         return info
+
+    @staticmethod
+    def _set_fallback(info: Dict[str, Any], llm_meta: Any) -> None:
+        """카드의 '기본 모델로 응답' 배지를 기록에 맞춥니다. 어느 모델이 왜 대신 답했는지는 툴팁에 둡니다."""
+        badge = info.get("fallback_badge")
+        if badge is None or badge.is_deleted:
+            return
+        sentence = fallback_sentence(llm_meta).replace("`", "")
+        tip = info.get("fallback_tip")
+        if tip is not None and not tip.is_deleted:
+            tip.set_text(sentence)
+        badge.set_visibility(bool(sentence))
+
+    def mark_fallback(self, msg_id: str, llm_meta: Any) -> None:
+        """흘러나오는 발언에 '기본 모델로 응답' 을 붙입니다 (`llm_fallback` 이벤트)."""
+        if not self.alive:
+            return
+        info = self._active_streams.get(msg_id)
+        if info:
+            self._set_fallback(info, llm_meta)
 
     # ------------------------------------------------------------ 접기 / 복사
 

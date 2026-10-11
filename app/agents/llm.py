@@ -1,9 +1,11 @@
 import asyncio
+import contextvars
 import json
 import logging
 import math
 import re
 import uuid
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 import litellm
@@ -1465,10 +1467,32 @@ def request_fingerprint(
 
 
 
+@dataclass
+class _SpeechProgress:
+    """이번 `call_agent` 에서 모델이 무엇을 내놓았는지.
+
+    전역 기본 모델로 물러서는 것(`llm.fallback`)은 모델이 **아무것도 내놓기 전**에만 합니다. 그 판단에
+    쓰는 표시이고, 도구 루프 곳곳에 인자를 늘리지 않으려고 컨텍스트 변수로 둡니다 (`LLM_HOLDER` 와 같은
+    방식). 병렬 발언은 태스크마다 컨텍스트가 따로라 서로 섞이지 않습니다.
+    """
+
+    rounds: int = 0            # 끝까지 받은 LLM 판 수 — 0 이 아니면 모델이 만든 도구 호출이 기록에 있습니다
+    streamed: bool = False     # 화면으로 흘려보낸 글이 있는지
+    llm_failed: bool = False   # 실패가 LLM 호출에서 났는지 (도구 루프의 다른 곳에서 난 예외와 가릅니다)
+    can_switch: bool = True    # 실패하면 물러설 수 있는 발언인지 (끊긴 발언을 이어 가는 중이면 아닙니다)
+
+
+_SPEECH_PROGRESS: "contextvars.ContextVar[Optional[_SpeechProgress]]" = contextvars.ContextVar(
+    "mado_speech_progress", default=None
+)
+
+
 class LLMCaller:
     """Executes LLM completions with an MCP tool-calling loop.
 
     호출이 실패하면 `LLMUnavailableError` 를 올립니다. 대체 응답을 만들어 내지 않습니다.
+    `llm.fallback` 을 켠 배치에서는 개별 모델의 연결 실패에 한해 전역 기본 모델이 대신 답하고,
+    그 사실을 걸어 둔 곳에 알립니다 (`app/agents/llm_fallback.py`).
     """
 
     def __init__(self, mcp_manager: Optional[MCPManager] = None):
@@ -1576,10 +1600,158 @@ class LLMCaller:
         `ledger` 는 이 대화의 결정 장부입니다. 마지막 사용자 메시지 앞에 붙습니다
         (`place_ledger_last`) — 시스템 프롬프트에 두면 갱신될 때마다 캐시가 깨집니다.
 
+        `llm.fallback` 이 켜져 있으면, 이 에이전트의 연결이 실패했을 때 전역 기본 모델이 대신 답합니다
+        (ADR-030). 물러서는 것은 모델이 아무것도 내놓기 전(첫 판이 실패했을 때)뿐이고, 끊긴 발언을 이어
+        가는 중(`resume_state`)에는 물러서지 않습니다. 전환은 `llm_fallback.listening(...)` 으로 걸어 둔
+        곳에 `FallbackNotice` 로 알립니다. 기본 모델을 부르기 **전에** 알리므로, 화면은 흘러나오는 글 위에
+        "누가 답하고 있는지" 를 먼저 붙일 수 있습니다.
+
         `tool_gate` 는 도구 보안 문지기입니다 (`app/orchestration/tool_gate.py`). 늘 거부될
         도구를 목록에서 빼고, 호출마다 허용·묻기·거부를 판정합니다. 주지 않으면 판정 없이
         실행하고, 매니저의 고정 보호만 걸립니다.
         """
+        # 순환 import: 폴백 → 모델 연결 상태 → 이 모듈.
+        from app.agents import llm_fallback
+
+        async def run(
+            target: Agent,
+            tool_call_callback: Optional[Callable[[Dict[str, Any]], Any]],
+            trim_callback: Optional[Callable[[int], Any]],
+        ) -> Tuple[str, List[Dict[str, Any]]]:
+            return await self._call_agent_once(
+                target, messages, custom_instructions,
+                on_tool_call=tool_call_callback, on_chunk=on_chunk, session_id=session_id,
+                budget_arbiter=budget_arbiter, context_arbiter=context_arbiter,
+                on_context_trim=trim_callback, mcp=mcp, ledger=ledger, tool_gate=tool_gate,
+                checkpoint=checkpoint, resume_state=resume_state, preload_skills=preload_skills,
+            )
+
+        route = llm_fallback.route_for(agent)
+        if route is None:
+            return await run(agent, on_tool_call, on_context_trim)
+
+        # 끊긴 발언을 이어 가는 중이면 앞서 모델이 만든 도구 호출이 메시지에 들어 있습니다. 그것을 다른
+        # 모델에게 넘기지 않습니다 (Provider 에 따라 거절합니다).
+        can_switch = resume_state is None
+        if can_switch:
+            known = route.known_failure()
+            if known is not None:
+                # 조금 전에 실패한 연결입니다. 발언마다 타임아웃을 다시 치르지 않고 곧바로 기본 모델로 갑니다.
+                return await self._answer_on_fallback(
+                    route, run, on_tool_call, on_context_trim, state=known, skipped=True,
+                )
+
+        # 첫 판이 실패하면 처음부터 다시 부릅니다. 그때 두 번 알리지 않도록, 지정 스킬을 미리 부른 기록은
+        # 몇 건을 알렸는지 세어 두고, 컨텍스트 생략은 이 시도가 끝까지 갔을 때만 알립니다.
+        announced = 0
+        trims: List[int] = []
+
+        async def counting_tool_call(call_log: Dict[str, Any]) -> None:
+            nonlocal announced
+            announced += 1
+            await self._notify_tool_call(agent, on_tool_call, call_log)
+
+        progress = _SpeechProgress(can_switch=can_switch)
+        token = _SPEECH_PROGRESS.set(progress)
+        try:
+            result = await run(agent, counting_tool_call, trims.append)
+        except LLMUnavailableError as exc:
+            # LLM 호출이 연결 문제로 실패한 경우만 봅니다. 도구 루프의 다른 곳에서 난 예외나, 상한에 닿아
+            # 올린 `LLMUnavailableError` 는 이 연결의 문제가 아닙니다.
+            cause = exc.__cause__ if progress.llm_failed else None
+            state = llm_fallback.classify(cause) if cause is not None else None
+            if state not in llm_fallback.FALLBACK_STATES:
+                raise
+            # 물러서지 못하는 판이어도, 이 연결이 안 된다는 것은 다음 발언이 알아야 합니다.
+            route.trip(state)
+            if not can_switch or progress.rounds or progress.streamed:
+                raise
+            primary_error = exc
+        else:
+            if on_context_trim:
+                for dropped in trims:
+                    on_context_trim(dropped)
+            return result
+        finally:
+            _SPEECH_PROGRESS.reset(token)
+
+        return await self._answer_on_fallback(
+            route, run, on_tool_call, on_context_trim,
+            state=state, skipped=False, primary_error=primary_error, already_announced=announced,
+        )
+
+    async def _answer_on_fallback(
+        self,
+        route: Any,
+        run: Callable[..., Awaitable[Tuple[str, List[Dict[str, Any]]]]],
+        on_tool_call: Optional[Callable[[Dict[str, Any]], Any]],
+        on_context_trim: Optional[Callable[[int], Any]],
+        *,
+        state: str,
+        skipped: bool,
+        primary_error: Optional[LLMUnavailableError] = None,
+        already_announced: int = 0,
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        """전역 기본 모델로 같은 발언을 처음부터 받습니다. 그것도 실패하면 두 이유를 함께 올립니다."""
+        agent, substitute = route.primary, route.substitute
+        notice = route.notice(state, skipped=skipped)
+        logger.warning(
+            f"Falling back for {agent.name}: {agent.model} is unavailable ({state}"
+            f"{', skipped without calling' if skipped else ''}); answering with the global model {substitute.model}"
+        )
+        from app.agents import llm_fallback
+
+        on_fallback = llm_fallback.current_listener()
+        if on_fallback is not None:
+            try:
+                outcome = on_fallback(notice)
+                if asyncio.iscoroutine(outcome):
+                    await outcome
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001 - 알리다 실패해도 발언은 받습니다
+                logger.warning(f"Fallback notification failed for {agent.name}: {type(exc).__name__}: {exc}")
+
+        remaining = already_announced
+
+        async def tool_call_once(call_log: Dict[str, Any]) -> None:
+            # 앞선 시도가 이미 알린 것(지정 스킬을 미리 부른 기록)은 다시 알리지 않습니다.
+            nonlocal remaining
+            if remaining > 0:
+                remaining -= 1
+                return
+            await self._notify_tool_call(agent, on_tool_call, call_log)
+
+        try:
+            return await run(substitute, tool_call_once, on_context_trim)
+        except LLMUnavailableError as exc:
+            first = primary_error.reason if primary_error is not None else (
+                f"{notice.label} (조금 전에 실패한 연결이라 다시 부르지 않았습니다)"
+            )
+            raise LLMUnavailableError(
+                agent,
+                f"{first} — 기본 모델 `{substitute.model}` 로도 응답을 받지 못했습니다: {exc.reason}",
+            ) from exc
+
+    async def _call_agent_once(
+        self,
+        agent: Agent,
+        messages: List[Dict[str, Any]],
+        custom_instructions: str = "",
+        on_tool_call: Optional[Callable[[Dict[str, Any]], Any]] = None,
+        on_chunk: Optional[Callable[[str], Any]] = None,
+        session_id: Optional[str] = None,
+        budget_arbiter: Optional[BudgetArbiter] = None,
+        context_arbiter: Optional[ContextArbiter] = None,
+        on_context_trim: Optional[Callable[[int], Any]] = None,
+        mcp: Optional[MCPManager] = None,
+        ledger: str = "",
+        tool_gate: Optional[Any] = None,
+        checkpoint: Optional[SpeechCheckpoint] = None,
+        resume_state: Optional[Dict[str, Any]] = None,
+        preload_skills: Sequence[str] = (),
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        """`agent` 의 연결 그대로 한 번 부릅니다 (`call_agent` 가 물러설지 말지를 정합니다)."""
         # Retrieve available tools for this agent
         #
         # 시스템 프롬프트보다 먼저 구합니다. 파일 쓰기 지침이 이 에이전트가 실제로
@@ -1771,8 +1943,17 @@ class LLMCaller:
         서버 전체의 동시 요청 상한(`app.llm_concurrency`)이 있으면 자리가 날 때까지
         여기서 기다립니다. 스트리밍이 끝날 때까지 자리를 쥡니다 (`app/agents/llm_gate.py`).
         """
-        async with get_llm_gate().slot():
-            return await self._complete_unthrottled(agent, messages, tools, on_chunk, tool_choice)
+        progress = _SPEECH_PROGRESS.get()
+        try:
+            async with get_llm_gate().slot():
+                result = await self._complete_unthrottled(agent, messages, tools, on_chunk, tool_choice)
+        except Exception:
+            if progress is not None:
+                progress.llm_failed = True
+            raise
+        if progress is not None:
+            progress.rounds += 1
+        return result
 
     async def _complete_unthrottled(
         self,
@@ -1796,6 +1977,9 @@ class LLMCaller:
                 )
                 if content_delta and on_chunk:
                     streamed_any = True
+                    progress = _SPEECH_PROGRESS.get()
+                    if progress is not None:
+                        progress.streamed = True
                     await self._emit_chunk(on_chunk, content_delta)
             complete_response = litellm.stream_chunk_builder(chunks, messages=messages)
             return complete_response.choices[0].message, self._finish_reason(complete_response)
@@ -1805,6 +1989,10 @@ class LLMCaller:
             # 발언자에게 그대로 전달되어야 합니다 (LLMUnavailableError).
             if streamed_any:
                 logger.error(request_fingerprint(agent, messages, tools, tool_choice))
+                raise
+            if self._will_fall_back(exc):
+                # 연결 자체가 안 됩니다. 같은 연결로 스트리밍 없이 다시 물어도 같은 답이고, 그만큼
+                # 기본 모델로 넘어가는 것만 늦어집니다 (`call_agent`).
                 raise
             logger.warning(
                 f"Streaming completion failed or not supported for {agent.name} ({exc}); "
@@ -1822,6 +2010,22 @@ class LLMCaller:
             if message.content and on_chunk:
                 await self._emit_chunk(on_chunk, message.content)
             return message, self._finish_reason(response)
+
+    @staticmethod
+    def _will_fall_back(exc: BaseException) -> bool:
+        """이 실패로 `call_agent` 가 곧 전역 기본 모델로 물러설 것인지 (첫 판이고, 연결이 안 될 때).
+
+        서버 오류는 여기서 빼 둡니다. 스트리밍을 받지 않는 엔드포인트가 5xx 로 답하는 경우가 있어,
+        그때는 지금처럼 스트리밍 없이 한 번 더 물어본 뒤에 판단합니다.
+        """
+        progress = _SPEECH_PROGRESS.get()
+        if progress is None or not progress.can_switch or progress.rounds or progress.streamed:
+            return False
+        from app.agents import llm_fallback
+        from app.agents.model_status import SERVER_ERROR
+
+        state = llm_fallback.classify(exc)
+        return state in llm_fallback.FALLBACK_STATES and state != SERVER_ERROR
 
     @staticmethod
     def _finish_reason(response: Any) -> str:

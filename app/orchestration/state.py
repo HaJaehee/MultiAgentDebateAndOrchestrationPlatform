@@ -12,6 +12,22 @@ class ArtifactItem(BaseModel):
     language: str = "markdown"
 
 
+FALLBACK_BADGE = "기본 모델로 응답"
+
+
+def fallback_sentence(llm_meta: Any) -> str:
+    """전역 기본 모델이 대신 답한 발언이면 그 사실을 한 문장으로. 아니면 빈 문자열.
+
+    발언 카드의 툴팁과 저장 문서가 같은 문장을 씁니다 (`MessageModel.llm_meta`, ADR-030).
+    """
+    if not isinstance(llm_meta, dict) or not llm_meta.get("fallback"):
+        return ""
+    intended = llm_meta.get("intended_model") or "정해 둔 모델"
+    model = llm_meta.get("model") or "기본 모델"
+    reason = llm_meta.get("reason_label") or "연결 실패"
+    return f"`{intended}` 에 연결하지 못해({reason}) 기본 모델 `{model}` 이 대신 답했습니다."
+
+
 class DebateMessage(BaseModel):
     id: Optional[str] = None
     sender_key: str
@@ -33,6 +49,8 @@ class DebateMessage(BaseModel):
     graph_port: Optional[str] = None
     # 이 기록이 턴의 흐름에서 맡은 자리 (`MessageModel.turn_meta`, `app/orchestration/turns.py`).
     turn_meta: Optional[Dict[str, Any]] = None
+    # 전역 기본 모델이 대신 답한 발언이면 그 사실 (`MessageModel.llm_meta`). 그 밖에는 None.
+    llm_meta: Optional[Dict[str, Any]] = None
 
     @property
     def speaker(self) -> str:
@@ -90,6 +108,10 @@ class DebateState(BaseModel):
     # LLM 응답을 받지 못해 이번 턴에서 발언하지 못한 에이전트. 합성 프롬프트와
     # 요약 아티팩트가 "없는 의견"을 있는 것처럼 다루지 않도록 여기에 남깁니다.
     failed_agent_keys: List[str] = Field(default_factory=list)
+    # 이번 턴에 자기 모델이 아니라 전역 기본 모델로 발언한 에이전트 (`llm.fallback`, ADR-030).
+    # 실패가 아닙니다 — 발언은 받았습니다. 다만 여러 모델을 섞어 얻으려던 다양성이 그만큼 줄었으므로
+    # 턴이 끝날 때 사람에게 알립니다.
+    fallback_agent_keys: List[str] = Field(default_factory=list)
     # ---- 대화 기억 (`app/orchestration/context_memory.py`) ----
     # 이번 턴 오케스트레이터 계획 발언의 자리. 목표 메시지에 고정합니다.
     plan_index: Optional[int] = None

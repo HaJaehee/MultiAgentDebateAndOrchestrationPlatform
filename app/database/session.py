@@ -28,6 +28,8 @@ _ADDED_COLUMNS = {
         # 턴 기록 (ADR-024). 이 컬럼 이전의 기록은 NULL.
         "turn_id": "VARCHAR(36)",
         "turn_meta": "JSON",
+        # 전역 기본 모델이 대신 답한 발언 (ADR-030). 그 밖의 발언은 NULL.
+        "llm_meta": "JSON",
     },
     "sessions": {
         "personas_locked": "BOOLEAN NOT NULL DEFAULT 0",

@@ -319,6 +319,12 @@ class TurnRun:
             if idx is not None:
                 self.messages[idx]["content"] += event.get("delta", "")
 
+        elif etype == "llm_fallback":
+            # 흘러나오는 발언을 전역 기본 모델이 대신 쓰고 있습니다 (ADR-030). 도중에 붙는 화면도 알게 합니다.
+            idx = self._message_index.get(event.get("message_id", ""))
+            if idx is not None:
+                self.messages[idx]["llm_meta"] = event.get("llm_meta")
+
         elif etype == "message_added":
             msg = dict(event.get("message", {}))
             msg_id = msg.get("id", "")
@@ -554,9 +560,13 @@ class TurnRun:
             self.approvals = []
             self.plan_approval = None
             failed = event.get("failed_agents") or []
+            fallback = event.get("fallback_agents") or []
             if failed:
                 self.status_text = f"토론 완료 — 응답하지 못한 에이전트: {', '.join(failed)}"
                 self.round_info = "Incomplete"
+            elif fallback and not event.get("stopped_early"):
+                self.status_text = f"토론 완료 — 기본 모델이 대신 답한 에이전트: {', '.join(fallback)}"
+                self.round_info = "Done"
             elif event.get("stopped_early"):
                 rounds = event.get("rounds_completed", 0)
                 max_rounds = event.get("max_rounds", 0)

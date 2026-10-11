@@ -13,10 +13,22 @@ beginner pages opens a dialog that sends one tiny request (`ping`, at most 16 ou
 the resolved configuration and shows whether it answers: connected with latency, wrong key, unknown model name,
 unreachable, timed out, rate-limited, or not configured. Agents sharing a model, address and key are one row;
 an agent with its own model gets its own. Probes take a slot in the `app.llm_concurrency` gate and step aside
-(`확인 보류`) when it is full, one round runs for all viewers, and results are reused for 60 seconds. The address
+(`확인 보류`) when it is full, one round runs for all viewers, and results are reused for 180 seconds. The address
 and the provider's error text are shown to the owner only; trial visitors see model names and states, and the
 key is never shown.
 → [UI Components §1.3.8](ui/components.md)
+
+**Fallback to the global model (opt-in).** With `llm.fallback.enabled`, an agent that runs on its own model and
+fails with a connection-class error (bad key, unknown model, unreachable, timeout, 5xx) is answered by the global
+`llm` connection with the same persona, tools and skills. It only switches before the model has produced anything
+— not after text has streamed, not after a tool round, not while resuming a cut speech — and never on a rate limit
+or a rejected request. A failed connection is skipped for `retry_after` seconds instead of paying the timeout on
+every speech, and a good probe in the status dialog ends that at once. The switch is never silent: the speech card
+gets a `기본 모델로 응답` badge, `messages.llm_meta` records the model that actually answered, the exported document
+says so above the speech, and `turn_completed` lists `fallback_agents`. `allow_fallback: false` keeps an agent on
+its own model (an in-house model whose prompts must not reach an external API). If the global model fails too,
+nothing is made up: the speech fails with both reasons.
+→ [LLM Integration §4.1](agents/llm-integration.md) · ADR-030
 
 ## v1.3
 

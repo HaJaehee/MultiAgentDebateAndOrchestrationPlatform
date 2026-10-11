@@ -66,6 +66,10 @@ def _row(view: Dict[str, Any]) -> None:
         if "endpoint" in view:
             key_note = "키 있음" if view["has_key"] else "키 없음"
             ui.label(f"주소: {view['endpoint']} · {key_note}").classes("text-[11px] text-slate-500 break-all")
+        if view.get("fallback"):
+            with ui.row().classes("items-start gap-1.5 flex-nowrap"):
+                ui.icon("swap_horiz", size="16px").style("color:#fcd34d")
+                ui.label(view["fallback"]).classes("text-xs leading-snug").style("color:#fcd34d")
         if view["tone"] in ("warn", "bad") or view["state"] == "not_configured":
             ui.label(view["hint"]).classes("text-xs text-slate-300 leading-snug")
         if view.get("error"):

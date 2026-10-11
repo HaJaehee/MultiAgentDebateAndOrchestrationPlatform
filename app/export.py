@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from app.mcp.policy import OUTCOME_LABELS, describe_verdict, tool_outcome
 from app.orchestration.graph_run import NodeBadges, node_labels
+from app.orchestration.state import FALLBACK_BADGE, fallback_sentence
 from app.orchestration.strategies import get_strategy
 # 시각 규칙은 `app.timestamps` 가 정본입니다. 여기서도 이름을 내보내 기존 호출자
 # (`from app.export import to_local` 등)가 그대로 동작하게 합니다.
@@ -184,6 +185,10 @@ def build_session_markdown(
         out.append(header)
         if stamp:
             out += ["", f"*{stamp}*"]
+        # 이 에이전트의 모델이 아니라 전역 기본 모델이 대신 쓴 발언이면 그 사실을 본문 앞에 적습니다 (ADR-030).
+        answered_by = fallback_sentence(msg.get("llm_meta"))
+        if answered_by:
+            out += ["", f"> ⚠️ **{FALLBACK_BADGE}** — {answered_by}"]
         out += ["", (msg.get("content") or "").strip(), ""]
 
         for call in msg.get("tool_calls") or []:

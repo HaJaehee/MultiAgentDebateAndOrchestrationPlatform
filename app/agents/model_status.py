@@ -20,6 +20,13 @@
 - 결과는 `CACHE_SECONDS` 동안 다시 씁니다. 여러 화면이 동시에 열어도 확인은 한 판만 돕니다.
   다시 확인을 눌러도 `MIN_INTERVAL_SECONDS` 안에는 새로 보내지 않습니다 (체험 방문자도 누를 수 있습니다).
 
+## 폴백과 닿는 곳
+
+`llm.fallback` 이 켜져 있으면 실제 호출에서 실패한 개별 연결은 잠깐 전역 기본 모델이 대신 답합니다
+(`app/agents/llm_fallback.py`). 그런 줄에는 그 사실과 다시 불러 볼 때까지 남은 시간을 함께 보여 주고,
+여기서 그 연결이 응답하는 것을 확인하면 곧바로 원래 모델로 돌아가게 합니다. 연결의 이름표
+(`connection_id`)와 실패 갈래(`classify`)는 두 모듈이 함께 씁니다.
+
 ## 누가 무엇을 보는가
 
 상태와 모델 이름, 쓰는 에이전트는 누구에게나 같습니다. 주소와 오류 원문은 주인에게만 보여 줍니다
@@ -138,18 +145,27 @@ class ModelRow:
     latency_ms: Optional[int] = None
     detail: str = ""
     age_seconds: Optional[float] = None
+    # 이 연결이 조금 전 실제 호출에서 실패해, 전역 기본 모델이 대신 답하고 있으면 다시 불러 볼 때까지
+    # 남은 시간(초) (`llm.fallback`, `app/agents/llm_fallback.py`). 아니면 None.
+    skip_seconds: Optional[float] = None
 
 
 # ---------------------------------------------------------------- 설정에서 연결 뽑기
 
 
-def _global_entry(llm: LLMConfig) -> AgentConfig:
-    """전역 기본값을, 아무것도 덮어쓰지 않은 에이전트 하나로 봅니다 (새 에이전트가 갖게 될 연결)."""
-    values = {name: getattr(llm, name) for name in _CONNECTION_FIELDS if not _blank(getattr(llm, name))}
+def global_entry(llm: LLMConfig, extra_fields: Sequence[str] = ()) -> AgentConfig:
+    """전역 기본값을, 아무것도 덮어쓰지 않은 에이전트 하나로 봅니다 (새 에이전트가 갖게 될 연결).
+
+    `extra_fields` 는 연결 말고도 전역에서 가져올 항목입니다 (폴백이 모델 용량을 함께 옮길 때 씁니다).
+    전역에 비어 있는 값은 `AgentConfig` 의 기본값이 됩니다.
+    """
+    names = (*_CONNECTION_FIELDS, *extra_fields)
+    values = {name: getattr(llm, name) for name in names if not _blank(getattr(llm, name))}
     return AgentConfig(name=GLOBAL_USER, role="", **values)
 
 
-def _signature(cfg: AgentConfig) -> Tuple[Any, ...]:
+def connection_signature(cfg: Any) -> Tuple[Any, ...]:
+    """연결을 가르는 값 전부. `AgentConfig` 와 `Agent` 어느 쪽을 넣어도 같은 값이 나옵니다."""
     return (
         cfg.model, cfg.api_base or "", cfg.api_key or "", cfg.api_version or "", cfg.provider or "",
         tuple(sorted((str(k), str(v)) for k, v in (cfg.extra_headers or {}).items())),
@@ -157,20 +173,25 @@ def _signature(cfg: AgentConfig) -> Tuple[Any, ...]:
     )
 
 
+def connection_id(cfg: Any) -> str:
+    """연결의 이름표. 키 값을 되짚을 수 없는 해시이고, 화면의 줄과 폴백 차단기가 함께 씁니다."""
+    return hashlib.sha256(repr(connection_signature(cfg)).encode("utf-8")).hexdigest()[:12]
+
+
 def collect_targets(config: Optional[RootConfig] = None) -> List[ModelTarget]:
     """확인할 연결 목록. 전역 기본값이 맨 앞이고, 그 뒤는 설정에 적힌 에이전트 순서입니다."""
     config = config or get_config()
-    entries: List[Tuple[str, AgentConfig]] = [(GLOBAL_USER, _global_entry(config.llm))]
+    entries: List[Tuple[str, AgentConfig]] = [(GLOBAL_USER, global_entry(config.llm))]
     entries += [(cfg.name or key, cfg) for key, cfg in config.agents.items() if cfg.enabled]
 
     grouped: Dict[Tuple[Any, ...], Tuple[AgentConfig, List[str]]] = {}
     for user, cfg in entries:
-        grouped.setdefault(_signature(cfg), (cfg, []))[1].append(user)
+        grouped.setdefault(connection_signature(cfg), (cfg, []))[1].append(user)
 
     targets: List[ModelTarget] = []
     for signature, (cfg, users) in grouped.items():
         targets.append(ModelTarget(
-            id=hashlib.sha256(repr(signature).encode("utf-8")).hexdigest()[:12],
+            id=connection_id(cfg),
             model=cfg.model, api_base=cfg.api_base, api_key=cfg.api_key, api_version=cfg.api_version,
             provider=cfg.provider, extra_headers=signature[5], extra_body=signature[6],
             users=tuple(users), is_live=cfg.is_live,
@@ -382,6 +403,12 @@ class ModelStatusBoard:
                 self._checking.discard(target.id)
             self._results[target.id] = result
             self._result_times[target.id] = self._clock()
+            if result.state == OK:
+                # 다시 된다는 것을 방금 확인했습니다. 기본 모델로 돌려 보내던 것을 그만둡니다.
+                from app.agents import llm_fallback  # 순환 import: 폴백이 이 모듈을 가져옵니다
+
+                if llm_fallback.get_fallback_breaker().close(target.id):
+                    logger.info("Model %s answers again; fallback for it is over", target.model)
 
         try:
             if get_llm_gate().limit > 0:
@@ -400,19 +427,22 @@ class ModelStatusBoard:
 
     def rows(self, config: Optional[RootConfig] = None) -> List[ModelRow]:
         """지금 설정의 연결마다 한 줄. 확인 중인 줄은 앞선 결과가 있어도 '확인 중' 입니다."""
+        from app.agents import llm_fallback  # 순환 import: 폴백이 이 모듈을 가져옵니다
+
         now = self._clock()
         rows: List[ModelRow] = []
         for target in collect_targets(config):
+            skip = llm_fallback.skip_remaining(target.id, config)
             if target.id in self._checking:
-                rows.append(ModelRow(target, CHECKING))
+                rows.append(ModelRow(target, CHECKING, skip_seconds=skip))
                 continue
             result = self._results.get(target.id)
             if result is None:
-                rows.append(ModelRow(target, UNKNOWN if target.is_live else NOT_CONFIGURED))
+                rows.append(ModelRow(target, UNKNOWN if target.is_live else NOT_CONFIGURED, skip_seconds=skip))
                 continue
             rows.append(ModelRow(
                 target, result.state, result.latency_ms, result.detail,
-                max(0.0, now - self._result_times.get(target.id, now)),
+                max(0.0, now - self._result_times.get(target.id, now)), skip,
             ))
         return rows
 
@@ -460,6 +490,11 @@ def describe_row(row: ModelRow, *, detail: bool) -> Dict[str, Any]:
         "latency": _latency_text(row.latency_ms),
         "age": _age_text(row.age_seconds),
     }
+    if row.skip_seconds is not None:
+        view["fallback"] = (
+            f"실제 호출에서 연결에 실패해 기본 모델이 대신 답하고 있습니다. "
+            f"{max(1, int(round(row.skip_seconds)))}초 뒤 이 모델을 다시 불러 봅니다."
+        )
     if detail:
         view["endpoint"] = row.target.endpoint
         view["has_key"] = bool((row.target.api_key or "").strip())

@@ -21,6 +21,7 @@ from app.agents.llm import (
     memory_search_tool,
     strip_reasoning_trace,
 )
+from app.agents import llm_fallback
 from app.agents.llm_gate import LLM_HOLDER
 from app.agents.personas import prepare_agents_for_turn
 from app.agents.skills import skill_tools_for, visible_skill_names, with_designated_skills
@@ -914,6 +915,21 @@ class OrchestratorEngine:
             trimmed_here.append(dropped)
 
         trimmed_here: List[int] = []
+
+        # 이 에이전트의 연결이 실패해 전역 기본 모델이 대신 답하게 됐다는 알림 (`llm.fallback`, ADR-030).
+        # 기본 모델을 부르기 전에 오므로, 흘러나오는 카드에 "누가 답하고 있는지" 를 먼저 붙입니다.
+        fallback_notices: List[Any] = []
+
+        async def _on_fallback(notice: Any) -> None:
+            fallback_notices.append(notice)
+            if on_event:
+                await on_event({
+                    "type": "llm_fallback",
+                    "message_id": msg_id,
+                    "agent_key": agent.key,
+                    "agent_name": agent.name,
+                    "llm_meta": notice.as_meta(),
+                })
         streamed: List[str] = [f"{prior_text}\n\n"] if prior_text else []
 
         # 도구 루프가 한 판을 마칠 때마다 이어 갈 수 있는 상태를 초안으로 남깁니다 (ADR-025).
@@ -1004,19 +1020,20 @@ class OrchestratorEngine:
                 flush_task = asyncio.create_task(_flush_later())
 
         try:
-            content, tool_logs = await self.llm_caller.call_agent(
-                agent, prompt_messages, custom_instructions,
-                on_tool_call=_on_tool_call, on_chunk=_on_chunk,
-                session_id=state.session_id,
-                budget_arbiter=self._make_budget_arbiter(control, on_event),
-                context_arbiter=self._make_context_arbiter(state, agent, control, on_event),
-                on_context_trim=_on_context_trim,
-                mcp=self._mcp_for(state), tool_gate=self._gate_for(state),
-                ledger=state.decision_ledger,
-                checkpoint=_checkpoint if state.turn_id else None,
-                resume_state=draft_state,
-                preload_skills=designated,
-            )
+            with llm_fallback.listening(_on_fallback):
+                content, tool_logs = await self.llm_caller.call_agent(
+                    agent, prompt_messages, custom_instructions,
+                    on_tool_call=_on_tool_call, on_chunk=_on_chunk,
+                    session_id=state.session_id,
+                    budget_arbiter=self._make_budget_arbiter(control, on_event),
+                    context_arbiter=self._make_context_arbiter(state, agent, control, on_event),
+                    on_context_trim=_on_context_trim,
+                    mcp=self._mcp_for(state), tool_gate=self._gate_for(state),
+                    ledger=state.decision_ledger,
+                    checkpoint=_checkpoint if state.turn_id else None,
+                    resume_state=draft_state,
+                    preload_skills=designated,
+                )
             # 다이어그램 교정 같은 후처리는 시간이 걸립니다. 그동안 카드가 마지막 조각
             # 직전에서 멈춰 보이지 않게, 흘러온 글을 먼저 다 내보냅니다.
             await _drain_chunks()
@@ -1068,6 +1085,14 @@ class OrchestratorEngine:
         # 실패로 끝났어도 예약된 조각이 확정본 뒤에 도착하면 안 됩니다.
         await _drain_chunks()
 
+        # 기본 모델이 대신 답한 발언이면 그 사실을 기록에 남깁니다. 기본 모델까지 실패한 발언에는
+        # 남기지 않습니다 — 답한 모델이 없고, 두 이유는 실패 안내 본문에 적혀 있습니다.
+        llm_meta: Optional[Dict[str, Any]] = None
+        if fallback_notices and final_type != "error":
+            llm_meta = fallback_notices[-1].as_meta()
+            if agent.key not in state.fallback_agent_keys:
+                state.fallback_agent_keys.append(agent.key)
+
         # 응답이 끝난 시각. 실패로 끝난 발언도 여기서 잽니다 — 언제 포기했는지는
         # 그 자체로 쓸모 있는 기록입니다 (엔드포인트가 몇 초 만에 끊었는지, 한도까지
         # 버텼는지). 기록 락을 기다린 시간이 섞이지 않도록 락 **밖에서** 잽니다.
@@ -1090,6 +1115,7 @@ class OrchestratorEngine:
                 graph_port=graph_port,
                 turn_id=state.turn_id,
                 turn_meta=turns.meta(kind),
+                llm_meta=llm_meta,
                 **({"created_at": created_at} if created_at is not None else {}),
             )]
             for call_log in executed_tools:
@@ -1153,6 +1179,7 @@ class OrchestratorEngine:
             graph_node_id=graph_node_id,
             graph_port=graph_port,
             turn_meta=turns.meta(kind),
+            llm_meta=llm_meta,
         )
         state.messages.append(message)
 
@@ -1947,6 +1974,7 @@ class OrchestratorEngine:
                 graph_node_id=pm.graph_node_id,
                 graph_port=pm.graph_port,
                 turn_meta=pm.turn_meta if isinstance(pm.turn_meta, dict) else None,
+                llm_meta=pm.llm_meta if isinstance(pm.llm_meta, dict) else None,
             ))
         return history
 
@@ -1965,6 +1993,7 @@ class OrchestratorEngine:
                 state.plan_tasks = plan_gate.clean_tasks(meta.get("tasks"))
                 state.approval_index = index
         state.failed_agent_keys = turns.failed_agents(turn_messages)
+        state.fallback_agent_keys = turns.fallback_agents(turn_messages)
         state.interjection_count = turns.count_kind(turn_messages, turns.KIND_INTERJECTION)
         state.current_round = max(
             (m.round_number for m in turn_messages if m.sender_key != "user"), default=0
@@ -2796,6 +2825,7 @@ class OrchestratorEngine:
                 "status": "completed",
                 "turn_id": state.turn_id,
                 "failed_agents": list(state.failed_agent_keys),
+                "fallback_agents": list(state.fallback_agent_keys),
                 "error_message": state.error_message,
                 "stopped_early": state.stopped_early,
                 "interrupted": state.interrupted,
@@ -5176,6 +5206,7 @@ class OrchestratorEngine:
             "total_rounds": state.current_round,
             "participating_agents": state.active_agent_keys,
             "failed_agents": list(state.failed_agent_keys),
+            "fallback_agents": list(state.fallback_agent_keys),
             "synthesis_failed": synthesis_failed,
             "total_messages": len(state.messages),
             # 정지(사람이든 서버 중단이든)로 덜 논의된 턴은 합의가 아닙니다 — 화면의 판정

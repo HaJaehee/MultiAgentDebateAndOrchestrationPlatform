@@ -72,7 +72,8 @@ async def load_feed_messages(db: AsyncSession, session_id: str) -> List[Dict[str
             "sender_role": m.sender_role, "content": m.content, "round_number": m.round_number,
             "msg_type": m.msg_type, "created_at": m.created_at, "started_at": m.started_at,
             "finished_at": m.finished_at, "turn_started_at": m.turn_started_at,
-            "graph_node_id": m.graph_node_id, "graph_port": m.graph_port, "tool_calls": [],
+            "graph_node_id": m.graph_node_id, "graph_port": m.graph_port, "llm_meta": m.llm_meta,
+            "tool_calls": [],
         }
         for m in rows
     ]
@@ -539,6 +540,8 @@ class TrialSessionScreen:
             feed.start_streaming_message(event.get("message", {}))
         elif etype == "message_stream_chunk":
             feed.append_stream_chunk(event.get("message_id", ""), event.get("delta", ""))
+        elif etype == "llm_fallback":
+            feed.mark_fallback(event.get("message_id", ""), event.get("llm_meta"))
         elif etype == "message_added":
             message = event.get("message", {})
             feed.append_message(message)

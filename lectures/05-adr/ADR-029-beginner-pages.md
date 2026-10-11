@@ -1,6 +1,6 @@
 # ADR-029. 비엔지니어 화면을 체험 서버 경로 하위에 분리 배치하고, 에이전트의 작업 과정을 실제 도구 실행과 함께 시각화합니다
 
-> [ADR 목록](README.md) · 이전: [ADR-028](ADR-028-plan-approval-gate.md)
+> [ADR 목록](README.md) · 이전: [ADR-028](ADR-028-plan-approval-gate.md) · 다음: [ADR-030](ADR-030-fallback-to-the-global-model.md)
 
 ## 상태 (Status)
 

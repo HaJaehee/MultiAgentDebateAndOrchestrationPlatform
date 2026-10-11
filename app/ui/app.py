@@ -129,6 +129,8 @@ def create_ui() -> None:
                 chat_feed.start_streaming_message(event.get("message", {}))
             elif etype == "message_stream_chunk":
                 chat_feed.append_stream_chunk(event.get("message_id", ""), event.get("delta", ""))
+            elif etype == "llm_fallback":
+                chat_feed.mark_fallback(event.get("message_id", ""), event.get("llm_meta"))
             elif etype == "message_added":
                 chat_feed.append_message(event.get("message", {}))
             elif etype == "mermaid_repair_started":
@@ -415,6 +417,16 @@ def create_ui() -> None:
                 )
             elif etype == "turn_completed":
                 failed = event.get("failed_agents") or []
+                fallback = event.get("fallback_agents") or []
+                if fallback:
+                    # 실패가 아니라 사후 통지입니다. 발언은 받았지만, 정해 둔 모델이 쓴 것이 아닙니다.
+                    ui.notify(
+                        f"연결에 실패한 모델 대신 기본 모델이 답한 에이전트가 있습니다: {', '.join(fallback)}. "
+                        "발언 카드의 '기본 모델로 응답' 배지와 상단의 '모델 연결 상태' 를 확인해 주십시오.",
+                        type="warning",
+                        position="bottom-right",
+                        multi_line=True,
+                    )
                 if failed:
                     chat_feed.set_busy(False, f"토론 완료 — 응답하지 못한 에이전트: {', '.join(failed)}", "Incomplete")
                     ui.notify(
@@ -1154,6 +1166,7 @@ def create_ui() -> None:
                         "turn_started_at": m.turn_started_at,
                         "graph_node_id": m.graph_node_id,
                         "graph_port": m.graph_port,
+                        "llm_meta": m.llm_meta,
                         "tool_calls": [
                             {
                                 "tool_name": tc.tool_name,

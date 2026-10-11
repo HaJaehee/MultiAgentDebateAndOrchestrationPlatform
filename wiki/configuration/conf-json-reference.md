@@ -32,9 +32,11 @@ The configuration file is loaded, validated, and normalized by [app/config.py](f
 | `app` | Application network and storage settings |
 | `llm` | Global LLM settings inherited by all agents |
 | `llm.sequential_thinking` | Global default for step-by-step reasoning |
+| `llm.fallback` | `{enabled: false, retry_after: 60}` — answer for an agent whose own connection fails (ADR-030). Not inherited by agents |
 | `mcp_servers.<name>` | External/local MCP server processes (stdio) |
 | `agents.<key>` | Specialist agent definitions (override `llm`) |
 | `agents.<key>.sequential_thinking` | Optional per-agent reasoning overrides |
+| `agents.<key>.allow_fallback` | `true` by default; `false` keeps this agent on its own model even when `llm.fallback` is on |
 | `tool_security` | Allow / ask / deny for MCP tool calls |
 | `skills` | Where skill folders live and which are turned off |
 

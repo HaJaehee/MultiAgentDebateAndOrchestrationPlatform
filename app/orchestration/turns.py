@@ -104,6 +104,17 @@ def kind_of(msg: Any) -> Optional[str]:
     return value.get("kind") if isinstance(value, Mapping) else None
 
 
+def fallback_agents(messages: Iterable[Any]) -> List[str]:
+    """이번 턴에 전역 기본 모델로 발언한 에이전트 (기록 순서, `MessageModel.llm_meta`)."""
+    keys: List[str] = []
+    for msg in messages:
+        meta = _get(msg, "llm_meta")
+        key = _get(msg, "sender_key")
+        if isinstance(meta, dict) and meta.get("fallback") and key and key not in keys:
+            keys.append(key)
+    return keys
+
+
 def failed_agents(messages: Iterable[Any]) -> List[str]:
     """이번 턴에 응답을 받지 못한 에이전트 (기록 순서).
 

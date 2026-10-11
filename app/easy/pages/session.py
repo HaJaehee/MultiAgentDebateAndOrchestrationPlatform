@@ -491,6 +491,8 @@ class EasySessionScreen:
             feed.start_streaming_message(event.get("message", {}))
         elif etype == "message_stream_chunk":
             feed.append_stream_chunk(event.get("message_id", ""), event.get("delta", ""))
+        elif etype == "llm_fallback":
+            feed.mark_fallback(event.get("message_id", ""), event.get("llm_meta"))
         elif etype == "message_added":
             feed.append_message(event.get("message", {}))
         elif etype == "stop_requested":

@@ -591,6 +591,20 @@ class PlanApprovalConfig(BaseModel):
     )
 
 
+class LLMFallbackConfig(BaseModel):
+    """개별 모델의 연결이 실패하면 전역 기본 연결로 물러서는 설정 (`llm.fallback`, ADR-030).
+
+    기본은 꺼져 있습니다. 조용히 다른 모델이 답하는 일이 기본이 되어서는 안 되고, 개별 모델이
+    사내 모델이고 전역이 외부 API 인 배치에서는 폴백이 곧 대화 내용이 밖으로 나가는 길이기 때문입니다.
+    """
+
+    enabled: bool = Field(default=False, description="Fall back to the global llm connection on a connection failure")
+    retry_after: float = Field(
+        default=60.0, ge=0,
+        description="Seconds a failed connection is skipped before it is tried again (0 = try it every time)",
+    )
+
+
 class LLMConfig(BaseModel):
     """Global LLM defaults (the "llm" object). Every agent inherits these unless it overrides them."""
 
@@ -623,6 +637,8 @@ class LLMConfig(BaseModel):
     max_tool_iterations: Optional[int] = Field(default=None, ge=1, le=TOOL_ITERATION_CEILING)
     max_continuations: Optional[int] = Field(default=None, ge=0, le=CONTINUATION_CEILING)
     sequential_thinking: SequentialThinkingConfig = Field(default_factory=SequentialThinkingConfig)
+    # 에이전트가 물려받는 값이 아닙니다 (`INHERITABLE_LLM_FIELDS` 에 없습니다). 전역 연결 그 자체에 딸린 설정입니다.
+    fallback: LLMFallbackConfig = Field(default_factory=LLMFallbackConfig)
 
 class AgentConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
@@ -688,6 +704,11 @@ class AgentConfig(BaseModel):
         ),
     )
     sequential_thinking: SequentialThinkingConfig = Field(default_factory=SequentialThinkingConfig)
+    # `llm.fallback` 이 켜져 있어도 이 에이전트만은 전역 기본 모델로 물러서지 않게 합니다. 이 에이전트의
+    # 프롬프트는 정해 둔 모델로만 보내야 할 때 씁니다 (사내 모델 전용 자료, 미세조정 모델의 역할 등).
+    allow_fallback: bool = Field(
+        default=True, description="Allow llm.fallback to answer for this agent when its own connection fails"
+    )
     system_prompt: str = Field(default="", description="Base system instructions")
     # 화면에서 고르는 겉모습. 비어 있으면 에이전트 키에서 색과 아이콘을 정하던
     # 예전 규칙 (`style_for_agent`) 이 그대로 적용됩니다.

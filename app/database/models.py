@@ -221,6 +221,11 @@ class MessageModel(Base):
     # 세울 때 기록을 문장이 아니라 이것으로 읽습니다 — 지명·분배는 누가 불렸고 무엇을 맡았는지를
     # 값으로 함께 적습니다. 화면에 보이는 문장은 `content` 에 그대로 있습니다.
     turn_meta: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    # 이 발언을 **실제로 쓴 모델**이 에이전트에 정해 둔 모델과 다를 때만 채웁니다 (`llm.fallback`, ADR-030):
+    # `{"fallback": true, "model": 답한 모델, "intended_model": 정해 둔 모델, "reason": 실패 갈래, …}`.
+    # 대화의 스냅샷에는 정해 둔 모델만 있으므로, 누가 답했는지는 발언마다 여기에 적습니다. 주소와 키는
+    # 담지 않습니다. 그 밖의 발언은 NULL.
+    llm_meta: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
 
     session: Mapped["SessionModel"] = relationship("SessionModel", back_populates="messages")
     tool_calls: Mapped[List["ToolCallRecordModel"]] = relationship(

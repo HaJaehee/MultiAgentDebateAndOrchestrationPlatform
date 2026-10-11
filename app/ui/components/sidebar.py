@@ -582,6 +582,7 @@ class SessionSidebar:
                         "turn_started_at": m.turn_started_at,
                         "graph_node_id": m.graph_node_id,
                         "graph_port": m.graph_port,
+                        "llm_meta": m.llm_meta,
                         "tool_calls": [
                             {
                                 "tool_name": tc.tool_name,

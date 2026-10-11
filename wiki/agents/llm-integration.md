@@ -499,6 +499,50 @@ A 500 from the endpoint used to look like a successful debate, and the invented 
 then fed the next agent's prompt and the final synthesis report. Whatever partial text
 arrived before the connection dropped is kept above the failure notice.
 
+### 4.1. Falling back to the global model (opt-in, ADR-030)
+
+[app/agents/llm_fallback.py](file:///d:/MultiAgentDebateOrchestration/app/agents/llm_fallback.py).
+Agents can run on different models. When one of those connections dies, `llm.fallback.enabled` lets the
+global `llm` connection answer in its place. That is a real model answering, not an invented turn — but *who
+answered changed*, and that must be as visible as a failure. So it is off by default, an agent can refuse it
+(`allow_fallback: false`), and every switch is recorded.
+
+**Where.** `call_agent()` now wraps `_call_agent_once()` (the former body). Every LLM call passes through it,
+so the engine's six `except LLMUnavailableError` sites are untouched.
+
+| Situation | Result |
+| :--- | :--- |
+| Off, agent opted out, agent already on the global connection, or no global connection | unchanged; callbacks are not even wrapped |
+| First request fails with `auth` / `model` / `unreachable` / `timeout` / `server_error` (`model_status.classify`) | the same speech is asked again from scratch on the global connection |
+| `rate_limited` or `rejected` | no fallback — transient, or the request itself is the problem |
+| Text already streamed, or at least one round completed | no fallback — the answer would appear twice, and tool-call history made by one model can be rejected by another |
+| Resuming a cut speech (`resume_state`) | no fallback, same reason |
+| The global connection fails too | `LLMUnavailableError` for the original agent, carrying both reasons |
+
+"Before the model produced anything" is tracked by `_SpeechProgress` in a context variable: `_complete_once()`
+counts completed rounds, the stream loop marks the first chunk, and a failure is only considered when it came
+from the LLM call itself (`llm_failed`) — not from elsewhere in the tool loop. When the first request fails on a
+connection-class error, the non-streaming retry on the same connection is skipped too, except for a server
+error: an endpoint that does not accept streaming may answer 5xx, so that one is asked once more first.
+
+**What changes.** `substitute_for()` copies the agent with the *current* global connection and that model's
+capacity (`max_tokens`, `max_context_window`, `timeout`, `num_retries`, `drop_params`). Persona, tools, skills,
+temperature and the tool-loop limit stay. Provider-bound thinking options (`native`) follow the global setting.
+Because the speech restarts, the system prompt and context trimming are redone for the substitute's window.
+A locked conversation's snapshot holds only the intended model, so the model that actually answered is
+recorded per message, not in the snapshot.
+
+**Breaker.** `FallbackBreaker` skips a failed connection (`connection_id`, the same id as a row in the status
+dialog) for `retry_after` seconds, then lets one call try it again. Without it every speech would pay
+`timeout × (num_retries + 1)` first. A successful probe in the status dialog closes it immediately.
+
+**Telling.** The switch is announced through `llm_fallback.listening(...)` (a context variable, like
+`LLM_HOLDER`, so `call_agent`'s signature — and every caller shaped like it — stays as is). `_speak()` listens
+and (1) emits `llm_fallback` so the streaming card shows the badge before the substitute starts, (2) writes
+`MessageModel.llm_meta` when the speech succeeds, (3) adds the agent to `DebateState.fallback_agent_keys`,
+which reaches `turn_completed` and the summary JSON. A fallback speech is not a failed one. What the first
+attempt already announced (preloaded skills, context trims) is not announced twice.
+
 
 ---
 
