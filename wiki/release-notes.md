@@ -6,7 +6,7 @@ changed*, not a second copy of the documentation.
 
 ---
 
-## Unreleased
+## v1.3.1
 
 **Model connection status.** A `모델 연결 상태` button in the header of the expert page, the trial pages and the
 beginner pages opens a dialog that sends one tiny request (`ping`, at most 16 output tokens) to every model in
