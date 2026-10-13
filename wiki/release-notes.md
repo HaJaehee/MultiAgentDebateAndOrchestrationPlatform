@@ -37,6 +37,11 @@ at once. Under Graph Debate the participants are the agents placed on the graph,
 and the roster's `N Agents Active` badge both count the orchestrator plus the graph's agents.
 → [UI Components §1.1](ui/components.md)
 
+**Larger text in the conclusion report.** The Markdown report in the artifact viewer (`최종 결론`) was drawn at
+12px, small for a long conclusion. Body text is now 14px and every heading is 2px larger than before (h1 18.2px,
+h2 16.4px, h3 14.96px, h4 14px, h5/h6 13.4px). Speech cards in the feed are unchanged.
+→ [UI Components §1.4](ui/components.md)
+
 ## v1.3
 
 **Select all / none in the roster.** `모두 선택` and `모두 선택 해제`, under the roster's `conf.json` hint, set

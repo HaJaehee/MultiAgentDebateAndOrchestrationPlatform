@@ -740,7 +740,10 @@ so each one flips from `확인 중` as its answer arrives; the timer stops when 
   list. See [Artifact Synthesis §5](../orchestration/artifact-generation.md).
 - **Tabbed Interface**:
   - **Final Conclusion Tab**: Markdown rendering of the orchestrator's conclusion, or — if the
-    synthesis was empty or failed — each specialist's latest speech.
+    synthesis was empty or failed — each specialist's latest speech. Body text is 14px (`text-sm`),
+    the same as a speech card; headings are set in `theme.py` under `.artifact-report` as the old
+    12px size plus 2px (h1 18.2px, h2 16.4px, h3 14.96px, h4 14px, h5/h6 13.4px) rather than left to
+    the `em` ratios, which would have grown h1 by 2.7px. Pinned in `tests/test_report_font_size.py`.
   - **Source Code Tab**: Language-highlighted code from this turn's specialist speeches.
   - **Architecture Diagram Tab**: Interactive SVG rendering of Mermaid diagrams. If Mermaid rejects
     the source, the panel shows the parse error and the raw diagram text rather than going blank.

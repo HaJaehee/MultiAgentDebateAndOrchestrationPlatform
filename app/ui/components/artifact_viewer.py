@@ -231,7 +231,8 @@ class ArtifactViewer:
                     ui.code(content, language="json").classes("w-full text-xs")
                 else:
                     # `artifact-report`: 문단·섹션 단위로 화면 밖 것을 건너뜁니다 (theme.py).
-                    with ui.column().classes("prose prose-invert max-w-none text-xs text-slate-200 artifact-report"):
+                    # 본문 14px. 12px(text-xs)은 긴 결론을 읽기에 작았습니다. 제목 크기는 theme.py.
+                    with ui.column().classes("prose prose-invert max-w-none text-sm text-slate-200 artifact-report"):
                         MathMarkdown(content)
                     if self.on_open_workspace_files is not None:
                         # 긴 보고서를 끝까지 읽은 자리에서도 바로 받게 합니다.

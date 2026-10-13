@@ -59,7 +59,8 @@ body {
    NiceGUI 에는 Tailwind typography(prose) 가 실려 있지 않아, 마크다운 제목이
    브라우저 기본값으로 나옵니다 (본문 14px 인 카드 안에서 h1 32px, h3 30px).
    제목 한 줄이 카드를 다 차지하므로 본문에 비례하는 크기로 다시 잡습니다.
-   em 단위라 채팅 카드(14px)와 산출물 뷰어(12px) 양쪽에서 함께 줄어듭니다. */
+   em 단위라 본문 크기가 다른 곳(채팅 카드 14px, 계획 본문 12px)에서 함께 줄어듭니다.
+   산출물 뷰어의 보고서만 아래 "보고서의 글자 크기" 에서 따로 정합니다. */
 .nicegui-markdown h1,
 .nicegui-markdown h2,
 .nicegui-markdown h3,
@@ -249,6 +250,18 @@ div.mado-math-fallback {
     max-width: 100%;
     overflow-x: auto;
 }
+
+/* --- 보고서의 글자 크기 -------------------------------------------------------
+   최종 결론 보고서는 본문 12px 로 그렸는데, 긴 결론을 읽기에는 작았습니다. 본문을 14px 로
+   올리고(artifact_viewer.py 의 `text-sm`), 제목도 같은 만큼 — 각각 2px 씩 — 키웁니다.
+   위의 em 비율에 그대로 맡기면 본문이 커진 만큼 제목이 더 불어납니다(h1 은 2.7px). 그래서
+   보고서 안에서는 예전 크기(12px × 비율)에 2px 를 더한 값으로 적습니다. */
+.artifact-report .nicegui-markdown h1 { font-size: calc(12px * 1.35 + 2px); }
+.artifact-report .nicegui-markdown h2 { font-size: calc(12px * 1.2 + 2px); }
+.artifact-report .nicegui-markdown h3 { font-size: calc(12px * 1.08 + 2px); }
+.artifact-report .nicegui-markdown h4 { font-size: calc(12px * 1 + 2px); }
+.artifact-report .nicegui-markdown h5,
+.artifact-report .nicegui-markdown h6 { font-size: calc(12px * 0.95 + 2px); }
 
 /* --- 스플리터를 끄는 동안 창 내용 고정 -----------------------------------------
    quiet_splitter.py 의 SPLITTER_FREEZE_JS 가 잡는 순간 창 안 요소의 폭을 묶습니다. 묶은
