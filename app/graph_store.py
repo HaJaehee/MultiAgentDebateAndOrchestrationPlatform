@@ -60,6 +60,20 @@ def load_graph(graph_id: str, directory: Optional[Path] = None) -> GraphSpec:
     return spec
 
 
+def graph_agent_keys(graph_id: str, directory: Optional[Path] = None) -> List[str]:
+    """이 그래프로 토론하면 참여하는 에이전트 (`GraphSpec.agent_keys`).
+
+    그래프를 고르지 않았거나 읽지 못하면 빈 목록입니다 — 그런 그래프로는 토론이 시작되지 않으니
+    참여자도 없습니다. 화면이 카드를 켜고 수를 세는 데 쓰는 값이라 예외를 던지지 않습니다.
+    """
+    if not graph_id:
+        return []
+    try:
+        return load_graph(graph_id, directory).agent_keys()
+    except (OSError, ValueError):
+        return []
+
+
 def save_graph(spec: GraphSpec, directory: Optional[Path] = None) -> Path:
     """임시 파일에 다 쓴 뒤 바꿔 끼웁니다. 쓰는 도중에 멈춰도 반쯤 쓴 그래프가 남지 않습니다."""
     path = _path(spec.id, directory)

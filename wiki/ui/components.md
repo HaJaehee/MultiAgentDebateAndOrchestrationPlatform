@@ -61,7 +61,15 @@ The web application workspace is organized into four primary UI components in [a
     `storage_secret`, so NiceGUI's per-user storage is not available.
   - Pure logic in `sort_sessions()` / `title_sort_key()` / `last_completion_times()`, tested in
     `tests/test_session_sort.py`.
-- **Badges & Metadata**: Displays the first user message time and colored chips for participating agents.
+- **Badges & Metadata**: Displays the first user message time and an `N Agents` badge.
+  - `N` is the number of agents that take part in *that* conversation (`active_agent_count()`): the
+    agents left checked in its roster, or — under Graph Debate, where the graph decides who speaks —
+    the orchestrator plus the agents placed on the selected graph (`1` when no graph is selected or
+    the file cannot be read). The roster's `N Agents Active` badge counts the same way.
+  - Saving the roster (`on_config_changed`) redraws the list when that number changes: a participation
+    toggle, `모두 선택` / `모두 선택 해제`, a different strategy or a different graph. It is called on every
+    keystroke in the instructions box too, so it does not redraw otherwise. Graphs shared by several
+    conversations are read once per redraw. Tested in `tests/test_sidebar_agent_count.py`.
 - **Per-card actions**: ✏️ rename · 💾 export the whole conversation as Markdown ·
   **⑂ continue in a fresh session** · 🗑 delete.
 - **⑂ Continue** (v0.5.0): creates a new conversation that inherits the workspace, the

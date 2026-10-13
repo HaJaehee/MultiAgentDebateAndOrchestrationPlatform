@@ -30,6 +30,13 @@ its own model (an in-house model whose prompts must not reach an external API). 
 nothing is made up: the speech fails with both reasons.
 → [LLM Integration §4.1](agents/llm-integration.md) · ADR-030
 
+**Session cards count who actually takes part.** The `N Agents` badge on a session card kept the number from
+when the session was created (everyone on) until the first message, because saving the roster did not redraw
+the list. It now follows a participation toggle, `모두 선택` / `모두 선택 해제`, and a change of strategy or graph
+at once. Under Graph Debate the participants are the agents placed on the graph, not the checkboxes, so the card
+and the roster's `N Agents Active` badge both count the orchestrator plus the graph's agents.
+→ [UI Components §1.1](ui/components.md)
+
 ## v1.3
 
 **Select all / none in the roster.** `모두 선택` and `모두 선택 해제`, under the roster's `conf.json` hint, set

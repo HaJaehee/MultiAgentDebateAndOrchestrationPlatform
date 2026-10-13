@@ -2648,7 +2648,12 @@ class AgentRosterControl:
             ui.timer(0.01, self.on_config_changed, once=True)
 
     def _update_summary_badge(self) -> None:
-        active_count = len([k for k, v in self.selected_agents.items() if v])
+        if self._graph_agent_keys is not None:
+            # 그래프 토론은 체크박스가 아니라 그래프에 놓인 에이전트가 참여합니다. 세션 목록
+            # 카드의 'N Agents' 와 같은 수여야 합니다 (`sidebar.active_agent_count`).
+            active_count = len({ORCHESTRATOR_KEY, *self._graph_agent_keys})
+        else:
+            active_count = len([k for k, v in self.selected_agents.items() if v])
         if self.summary_badge:
             self.summary_badge.set_text(f"{active_count} Agents Active")
 
@@ -2696,11 +2701,12 @@ class AgentRosterControl:
         if self.graph_edit_btn is not None:
             self.graph_edit_btn.set_enabled(bool(self.graph_id))
         if not visible:
+            self._update_summary_badge()
             if previous_keys is not None:
                 self.refresh_agent_cards()
             return
 
-        from app.graph_store import list_graphs, load_graph
+        from app.graph_store import graph_agent_keys, list_graphs, load_graph
         from app.orchestration.graph import validate_graph
 
         options = {graph_id: name for graph_id, name in list_graphs()}
@@ -2709,13 +2715,8 @@ class AgentRosterControl:
         if self.graph_select is not None:
             self.graph_select.set_options(options, value=self.graph_id or None)
 
-        if self.graph_id:
-            try:
-                self._graph_agent_keys = set(load_graph(self.graph_id).agent_keys())
-            except (FileNotFoundError, ValueError):
-                self._graph_agent_keys = set()
-        else:
-            self._graph_agent_keys = set()
+        self._graph_agent_keys = set(graph_agent_keys(self.graph_id))
+        self._update_summary_badge()
         if self._graph_agent_keys != previous_keys:
             self.refresh_agent_cards()
 

@@ -35,7 +35,11 @@ from app.ui.components.artifact_viewer import ArtifactViewer, merge_artifacts
 from app.ui.components.chat_feed import ChatFeed, clip_tool_output
 from app.ui.components.quiet_splitter import SPLITTER_FREEZE_JS, QuietSplitter
 from app.ui.components.roster import AgentRosterControl
-from app.ui.components.sidebar import SessionSidebar, event_changes_session_list
+from app.ui.components.sidebar import (
+    SessionSidebar,
+    active_agent_count,
+    event_changes_session_list,
+)
 from app.ui.components.workspace_download import WorkspaceDownloadDialog
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.diagnostics_script import CLIENT_DIAGNOSTICS_JS
@@ -560,11 +564,14 @@ def create_ui() -> None:
             nonlocal current_session_id
             if not current_session_id:
                 return
+            agent_count_changed = False
             async with session_factory() as db:
                 stmt = select(SessionModel).where(SessionModel.id == current_session_id)
                 res = await db.execute(stmt)
                 curr = res.scalar_one_or_none()
                 if curr:
+                    graph_keys: Dict[str, List[str]] = {}
+                    count_before = active_agent_count(curr, graph_keys)
                     curr.active_agents = roster_control.get_active_agent_keys()
                     # 지금 무엇이 있었는지 함께 남깁니다. 나중에 에이전트가 추가되면
                     # 이 목록과 비교해 "새로 생긴 것" 만 켜진 채로 보여줍니다.
@@ -576,9 +583,16 @@ def create_ui() -> None:
                     curr.custom_instructions = roster_control.custom_instructions
                     curr.workspace_dir = roster_control.workspace_dir
                     curr.graph_id = roster_control.graph_id
+                    agent_count_changed = active_agent_count(curr, graph_keys) != count_before
                     await db.commit()
             # 도구 보안 모드는 진행 중인 턴에도 바로 걸립니다 (다음 도구 호출부터).
             runner.set_tool_mode(current_session_id, roster_control.tool_mode)
+            # 카드의 'N Agents' 는 이 대화에 참여하는 에이전트 수입니다 — 켜 둔 에이전트, 그래프
+            # 토론이면 그래프에 놓인 에이전트. 목록을 다시 그리지 않으면 세션을 만들 때의
+            # 값(전부 켜짐)이 첫 발언까지 남아, 참여를 끄거나 그래프를 골라도 전체 수로
+            # 보였습니다. 이 함수는 지침을 한 글자 고칠 때도 불리므로 수가 바뀐 때에만 그립니다.
+            if agent_count_changed:
+                await sidebar.refresh_list()
 
         async def on_resync_agents() -> None:
             """잠긴 대화가 고정해 둔 에이전트 구성을 지금 conf.json 값으로 다시 맞춥니다.

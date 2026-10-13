@@ -19,7 +19,9 @@ from app.database.models import (
 )
 from app.database.session import get_session_factory
 from app.export import build_session_markdown, safe_filename, to_local
+from app.graph_store import graph_agent_keys
 from app.orchestration.runner import get_debate_runner
+from app.orchestration.strategies import ORCHESTRATOR_KEY, get_strategy
 from app.session_ops import continue_session
 
 logger = logging.getLogger(__name__)
@@ -72,6 +74,28 @@ async def last_completion_times(db) -> Dict[str, datetime]:
         if when and sid not in times:
             times[sid] = when
     return times
+
+
+def active_agent_count(
+    session: SessionModel, graph_keys: Optional[Dict[str, List[str]]] = None
+) -> int:
+    """카드의 'N Agents' — 이 대화에 실제로 참여하는 에이전트 수.
+
+    그래프 토론은 로스터 체크박스가 아니라 **그래프에 놓인 에이전트**가 참여자입니다
+    (엔진의 `_run_turn`, 로스터 카드의 켜짐 표시와 같은 기준). 그런 대화에서
+    `active_agents` 를 세면 그래프에 두 명만 놓았어도 체크해 둔 전체 수가 나옵니다.
+    오케스트레이터는 그래프에 놓지 않아도 늘 참여하므로 함께 셉니다.
+
+    `graph_keys` 는 목록을 한 번 그리는 동안 읽은 그래프를 담아 둡니다. 같은 그래프를
+    쓰는 대화가 여럿이어도 파일은 한 번만 읽습니다.
+    """
+    if not get_strategy(session.strategy).runs_graph:
+        return len(session.active_agents or [])
+    graph_id = (session.graph_id or "").strip()
+    cache = graph_keys if graph_keys is not None else {}
+    if graph_id not in cache:
+        cache[graph_id] = graph_agent_keys(graph_id)
+    return len({ORCHESTRATOR_KEY, *cache[graph_id]})
 
 
 # ---------------------------------------------------------------------------- 정렬
@@ -388,6 +412,7 @@ class SessionSidebar:
             return
 
         runner = get_debate_runner()
+        graph_keys: Dict[str, List[str]] = {}
 
         with self.container:
             for s in sessions:
@@ -448,7 +473,7 @@ class SessionSidebar:
                                 )
                             ui.label(date_str).classes("text-[12px]")
 
-                            agents_count = len(s.active_agents) if s.active_agents else 0
+                            agents_count = active_agent_count(s, graph_keys)
                             ui.badge(f"{agents_count} Agents", color="slate-700").props("dense text-[11px] text-color=grey-3")
 
                         # Action Buttons (Edit / Save / Delete) - Isolated from card click
