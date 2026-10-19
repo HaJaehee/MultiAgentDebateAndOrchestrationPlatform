@@ -61,7 +61,15 @@ The web application workspace is organized into four primary UI components in [a
     `storage_secret`, so NiceGUI's per-user storage is not available.
   - Pure logic in `sort_sessions()` / `title_sort_key()` / `last_completion_times()`, tested in
     `tests/test_session_sort.py`.
-- **Badges & Metadata**: Displays the first user message time and colored chips for participating agents.
+- **Badges & Metadata**: Displays the first user message time and an `N Agents` badge.
+  - `N` is the number of agents that take part in *that* conversation (`active_agent_count()`): the
+    agents left checked in its roster, or — under Graph Debate, where the graph decides who speaks —
+    the orchestrator plus the agents placed on the selected graph (`1` when no graph is selected or
+    the file cannot be read). The roster's `N Agents Active` badge counts the same way.
+  - Saving the roster (`on_config_changed`) redraws the list when that number changes: a participation
+    toggle, `모두 선택` / `모두 선택 해제`, a different strategy or a different graph. It is called on every
+    keystroke in the instructions box too, so it does not redraw otherwise. Graphs shared by several
+    conversations are read once per redraw. Tested in `tests/test_sidebar_agent_count.py`.
 - **Per-card actions**: ✏️ rename · 💾 export the whole conversation as Markdown ·
   **⑂ continue in a fresh session** · 🗑 delete.
 - **⑂ Continue** (v0.5.0): creates a new conversation that inherits the workspace, the
@@ -732,7 +740,10 @@ so each one flips from `확인 중` as its answer arrives; the timer stops when 
   list. See [Artifact Synthesis §5](../orchestration/artifact-generation.md).
 - **Tabbed Interface**:
   - **Final Conclusion Tab**: Markdown rendering of the orchestrator's conclusion, or — if the
-    synthesis was empty or failed — each specialist's latest speech.
+    synthesis was empty or failed — each specialist's latest speech. Body text is 14px (`text-sm`),
+    the same as a speech card; headings are set in `theme.py` under `.artifact-report` as the old
+    12px size plus 2px (h1 18.2px, h2 16.4px, h3 14.96px, h4 14px, h5/h6 13.4px) rather than left to
+    the `em` ratios, which would have grown h1 by 2.7px. Pinned in `tests/test_report_font_size.py`.
   - **Source Code Tab**: Language-highlighted code from this turn's specialist speeches.
   - **Architecture Diagram Tab**: Interactive SVG rendering of Mermaid diagrams. If Mermaid rejects
     the source, the panel shows the parse error and the raw diagram text rather than going blank.

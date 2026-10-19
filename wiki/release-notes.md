@@ -12,6 +12,8 @@ changed*, not a second copy of the documentation.
 
 **TaskWorkerPool and EventBus decoupling.** Background asynchronous execution and event broadcasting in `DebateRunner` are decoupled via `TaskWorkerPool` (bounded worker concurrency, task lifecycle tracking, and graceful draining) and `InMemoryEventBus` (non-blocking publisher with slow-consumer protection and topic filtering).
 
+## v1.3.1
+
 **Model connection status.** A `모델 연결 상태` button in the header of the expert page, the trial pages and the
 beginner pages opens a dialog that sends one tiny request (`ping`, at most 16 output tokens) to every model in
 the resolved configuration and shows whether it answers: connected with latency, wrong key, unknown model name,
@@ -33,6 +35,18 @@ says so above the speech, and `turn_completed` lists `fallback_agents`. `allow_f
 its own model (an in-house model whose prompts must not reach an external API). If the global model fails too,
 nothing is made up: the speech fails with both reasons.
 → [LLM Integration §4.1](agents/llm-integration.md) · ADR-030
+
+**Session cards count who actually takes part.** The `N Agents` badge on a session card kept the number from
+when the session was created (everyone on) until the first message, because saving the roster did not redraw
+the list. It now follows a participation toggle, `모두 선택` / `모두 선택 해제`, and a change of strategy or graph
+at once. Under Graph Debate the participants are the agents placed on the graph, not the checkboxes, so the card
+and the roster's `N Agents Active` badge both count the orchestrator plus the graph's agents.
+→ [UI Components §1.1](ui/components.md)
+
+**Larger text in the conclusion report.** The Markdown report in the artifact viewer (`최종 결론`) was drawn at
+12px, small for a long conclusion. Body text is now 14px and every heading is 2px larger than before (h1 18.2px,
+h2 16.4px, h3 14.96px, h4 14px, h5/h6 13.4px). Speech cards in the feed are unchanged.
+→ [UI Components §1.4](ui/components.md)
 
 ## v1.3
 
