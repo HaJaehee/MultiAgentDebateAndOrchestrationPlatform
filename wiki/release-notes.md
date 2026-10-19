@@ -30,6 +30,14 @@ cannot hang. A turn cancelled before its task got to run ends cleanly instead of
 as running. Screens subscribe through `InMemoryEventBus`, one channel per conversation; a screen whose queue
 fills up is dropped and catches up from the snapshot, as before.
 
+**Source package carries the git MCP server.** `package_source.py` now packs, by default, the
+`mcp-server-git` wheel with its dependencies into `wheels/` (install command in
+`wheels/INSTALL.txt`), so an update also refreshes the git server or brings it to a target that
+lacked it. The package grows to about 16 MB; `--skip-git-mcp` packs source only. A run that ends up
+without an `mcp_server_git` wheel aborts. The runtimes, the `git` executable and the Node MCP
+servers are still left out.
+→ [Air-gap Packaging §4](operations/airgap-packaging.md)
+
 ## v1.3.1
 
 **Model connection status.** A `모델 연결 상태` button in the header of the expert page, the trial pages and the

@@ -1,5 +1,6 @@
 # MADO: Multi-Agent Debate & Orchestration Platform - Source & Config Only Packaging Script
-# 런타임(포터블 파이썬 / node / wheel / MCP 서버)은 빼고 소스와 설정만 dist/ 에 압축합니다.
+# 런타임(포터블 파이썬 / node / MCP 서버)은 빼고 소스와 설정, git MCP 서버(mcp-server-git)의 wheel 을
+# dist/ 에 압축합니다. wheel 없이 소스만 묶으려면 --skip-git-mcp 를 붙입니다.
 $ErrorActionPreference = "Stop"
 
 try {

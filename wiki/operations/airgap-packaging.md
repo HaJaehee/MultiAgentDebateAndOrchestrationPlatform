@@ -142,12 +142,13 @@ The full bundle is hundreds of megabytes because it carries a portable CPython, 
 the pip wheel archive, and the installed MCP servers. None of that changes when you fix a
 bug in `app/`. Re-transferring it means re-doing the transfer review from scratch every time.
 
-[`package_source.py`](file:///d:/MultiAgentDebateOrchestration/package_source.py) packages **only
-source and configuration** — roughly 600 KB — to be applied on top of an already-transferred
-bundle.
+[`package_source.py`](file:///d:/MultiAgentDebateOrchestration/package_source.py) packages **source
+and configuration plus the git MCP server's wheels** — about 16 MB zipped (roughly 1 MB with
+`--skip-git-mcp`) — to be applied on top of an already-transferred bundle.
 
 ```powershell
-python package_source.py   # dist\MultiAgentDebateOrchestration_source_YYYYMMDD.zip
+python package_source.py                 # dist\MultiAgentDebateOrchestration_source_YYYYMMDD.zip
+python package_source.py --skip-git-mcp  # source and configuration only
 ```
 
 ### What goes in
@@ -156,8 +157,9 @@ Only what a running installation needs in order to be updated.
 
 | Included | Excluded |
 | :--- | :--- |
-| `app/`, `mcp_servers/` | `python_runtime/`, `node_runtime/`, `wheels/`, `mcp_sandbox/` |
+| `app/`, `mcp_servers/` | `python_runtime/`, `node_runtime/`, `mcp_sandbox/` |
 | `mcp_node/memory-scoped.mjs` (the forked server's runnable copy) | `workspace/`, `multiagent.db`, `conf.json` |
+| `wheels/` — `mcp-server-git` and its dependencies, plus any `--with-wheels` packages | `mcp_node/node_modules/` and the other MCP servers' packages |
 | `conf.example.json`, `.env.example`, `requirements.txt` | `tests/`, `wiki/`, `CLAUDE.md` |
 | `docs/user_manual/` and `docs/user_manual_html/` (rendered at packaging time) | the working tree's own `docs/user_manual_html/` |
 | `setup_mcp.py`, `open_browser.py`, `README.md` | the packaging scripts themselves |
@@ -174,6 +176,14 @@ module that imports nothing but `vue`, which NiceGUI already puts in the page's 
 editor loads with no network access. The folder is deliberately **not** named `vendor`: that name is
 in `FORBIDDEN_NAMES` to keep runtimes out, and the files would have been dropped.
 
+**The git MCP server.** The git server is the Python package `mcp-server-git`
+(`-m mcp_server_git`), installed on the target rather than shipped as source. A source-only update
+left it as it was, and a target that lacked it kept showing `연결 안 됨`. So the script now
+`pip download`s `mcp-server-git` with its dependencies (constrained by `requirements.txt`) into
+`wheels/` by default, with the install command in `wheels/INSTALL.txt`; the packaging PC needs
+internet. If no `mcp_server_git-*.whl` ends up in the package, the run aborts. The `git` executable
+itself is not a pip dependency and is not included, and the Node MCP servers are not either.
+
 ### Three things the script refuses to do
 
 1. **Overwrite the target's `conf.json`.** The local file is not shipped at all. The
@@ -181,7 +191,7 @@ in `FORBIDDEN_NAMES` to keep runtimes out, and the files would have been dropped
    at nothing. New settings are carried over by hand from `conf.example.json`.
 2. **Ship an oversized file.** Anything above `--max-file-mb` (default 2 MB) aborts the run.
    A source package has no business containing a megabyte-scale file — if one appears, a
-   runtime artifact leaked into the tree.
+   runtime artifact leaked into the tree. (The wheels are exempt.)
 3. **Ship something that looks like a credential.** API keys, tokens, and private-key headers
    are scanned for and abort the run (`--allow-secrets` to override). `conf.json` is
    gitignored, so nothing stops someone from pasting a real key into it, and a transfer
@@ -189,7 +199,7 @@ in `FORBIDDEN_NAMES` to keep runtimes out, and the files would have been dropped
 
 ### Applying on the target
 
-Overwrite the installation with the extracted files (replace `app/` wholesale rather than file by file, so modules deleted in this update do not linger and keep getting imported). `conf.json` is not in the package, so the target's own endpoints survive:
+Overwrite the installation with the extracted files (replace `app/` wholesale rather than file by file, so modules deleted in this update do not linger and keep getting imported), then install the git MCP server with the command in `wheels/INSTALL.txt`. `conf.json` is not in the package, so the target's own endpoints survive:
 
 Back up `app/` and `conf.json` first. `MANIFEST.txt` lists SHA-256 per file, for the
 transfer record and for verifying the extracted tree on the far side:

@@ -5,7 +5,12 @@
 없어 기동만 못 하고, 화면에는 "연결 안 됨" 한 줄로 보입니다.
 """
 
+import json
+import sys
+import zipfile
 from pathlib import Path
+
+import pytest
 
 import package_source
 
@@ -47,7 +52,7 @@ def test_runtime_directories_stay_out():
 
 
 def test_wheels_never_arrive_by_accident():
-    """`--with-wheels` 로 이름을 적었을 때만 wheel 이 담깁니다.
+    """wheel 은 이름으로 지정한 것(git MCP 서버, `--with-wheels`)만 담깁니다.
 
     디렉터리를 훑다가 런타임이 딸려 들어가는 길은 그대로 막혀 있어야 합니다 —
     그러면 이 패키지가 사실상 오프라인 번들이 되어 존재 이유가 없어집니다.
@@ -55,3 +60,63 @@ def test_wheels_never_arrive_by_accident():
     assert "wheels" in package_source.FORBIDDEN_NAMES
     assert "wheels" not in package_source.SOURCE_DIRS
     assert not any(dest.startswith("wheels/") for _src, dest in package_source.PACKAGE_FILES)
+
+
+# --------------------------------------------------------------- git MCP 서버
+
+
+def test_git_mcp_package_is_the_one_conf_example_runs():
+    """conf.example.json 의 git 서버가 실행하는 모듈과 담는 패키지·확인하는 wheel 이 같아야 합니다."""
+    conf = json.loads((ROOT / "conf.example.json").read_text(encoding="utf-8"))
+    args = conf["mcp_servers"]["git"]["args"]
+    module = args[args.index("-m") + 1]
+
+    assert module == "mcp_server_git"
+    assert package_source.GIT_MCP_PACKAGES == ["mcp-server-git"]
+    assert package_source.GIT_MCP_WHEEL_PATTERN == f"wheels/{module}-*.whl"
+
+
+def _run_main(monkeypatch, tmp_path, *flags, wheel_name="mcp_server_git-2026.1.14-py3-none-any.whl"):
+    """패키징을 실제로 돌리되 wheel 내려받기만 대역으로 바꿉니다 (네트워크 없이)."""
+    requested = []
+
+    def fake_collect_wheels(packages, build_dir):
+        requested.append(list(packages))
+        build_dir.mkdir(parents=True, exist_ok=True)
+        wheel = build_dir / wheel_name
+        wheel.write_bytes(b"wheel")
+        return [(wheel, f"wheels/{wheel_name}")]
+
+    monkeypatch.setattr(package_source, "collect_wheels", fake_collect_wheels)
+    monkeypatch.setattr(sys, "argv", ["package_source.py", "--skip-manual-html",
+                                      "--out-dir", str(tmp_path), *flags])
+    package_source.main()
+    return requested
+
+
+def _zip_names(tmp_path) -> set:
+    (archive,) = tmp_path.glob(f"{package_source.PACKAGE_NAME}_*.zip")
+    with zipfile.ZipFile(archive) as zf:
+        return set(zf.namelist())
+
+
+def test_git_mcp_wheel_is_packed_by_default(monkeypatch, tmp_path):
+    requested = _run_main(monkeypatch, tmp_path)
+
+    assert requested == [["mcp-server-git"]]
+    assert f"{package_source.PACKAGE_NAME}/wheels/mcp_server_git-2026.1.14-py3-none-any.whl" in _zip_names(tmp_path)
+
+
+def test_packaging_stops_when_the_git_wheel_is_missing(monkeypatch, tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        _run_main(monkeypatch, tmp_path, wheel_name="gitpython-3.1.45-py3-none-any.whl")
+
+    assert package_source.GIT_MCP_WHEEL_PATTERN in capsys.readouterr().out
+    assert not list(tmp_path.glob("*.zip"))
+
+
+def test_skip_git_mcp_packs_source_only(monkeypatch, tmp_path):
+    requested = _run_main(monkeypatch, tmp_path, "--skip-git-mcp")
+
+    assert requested == []
+    assert not any("/wheels/" in name for name in _zip_names(tmp_path))

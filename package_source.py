@@ -5,7 +5,7 @@ MCP 서버 설치본까지 들고 있어 수백 MB 입니다. 그 런타임은 �
 버전을 올릴 때까지 그대로 쓰면 됩니다. 코드만 고쳤을 때 그걸 매번 다시
 반입하는 것은 용량도 용량이지만, 반입 심사를 매번 처음부터 다시 받는 일입니다.
 
-이 스크립트는 **런타임을 제외한** 소스와 설정만 묶습니다.
+이 스크립트는 **런타임을 제외한** 소스와 설정, 그리고 git MCP 서버의 의존성만 묶습니다.
 
     dist/MultiAgentDebateOrchestration_source_YYYYMMDD.zip
     └── MultiAgentDebateOrchestration_source/
@@ -15,7 +15,7 @@ MCP 서버 설치본까지 들고 있어 수백 MB 입니다. 그 런타임은 �
         ├── mcp_node/memory-scoped.mjs  그 실행 사본 (설치본의 것을 바로 갈아끼움)
         ├── trial_templates/          체험 서버의 공식 템플릿 (trial.templates_dir)
         ├── skills/                   기본 스킬 디렉터리 (skills.dir)
-        ├── wheels/                   --with-wheels 로 지정했을 때만 (아래 참고)
+        ├── wheels/                   git MCP 서버(mcp-server-git)와 그 의존성 + --with-wheels 로 지정한 것
         ├── docs/
         │   ├── user_manual/          사용 설명서 마크다운 원본
         │   ├── user_manual_html/     그것을 패키징 시점에 렌더링한 HTML (바로 열람)
@@ -31,11 +31,21 @@ MCP 서버 설치본까지 들고 있어 수백 MB 입니다. 그 런타임은 �
 
 사용법:
     python package_source.py [--out-dir dist] [--max-file-mb 2] [--allow-secrets]
-                             [--skip-manual-html] [--with-wheels PKG [PKG ...]]
+                             [--skip-manual-html] [--skip-git-mcp]
+                             [--with-wheels PKG [PKG ...]]
 
 포함 목록은 **허용 목록(allow-list)** 입니다. 제외 목록으로 짜면 새 디렉터리가
 생겼을 때 조용히 딸려 들어갑니다. 여기서는 새 디렉터리가 생기면 그냥 빠지고,
 빠진 것은 눈에 띕니다.
+
+## git MCP 서버의 의존성
+
+`conf.json` 의 git 서버는 파이썬 패키지 `mcp-server-git` 을 실행합니다(`-m mcp_server_git`).
+소스가 아니라 설치본에 깔린 의존성이라, 소스만 보내면 대상의 서버는 갱신되지 않고 빠져 있던
+서버는 계속 "연결 안 됨" 입니다. 그래서 `mcp-server-git` 과 그 의존성을 **기본으로** wheel 로
+받아 `wheels/` 에 담습니다 (패키징 PC 에 인터넷이 필요합니다). 대상에서는 `wheels/INSTALL.txt`
+의 명령으로 설치합니다. `git` 실행 파일 자체는 pip 의존성이 아니라 담지 않습니다.
+소스만 묶으려면 `--skip-git-mcp` 를 씁니다.
 
 ## 새 pip 의존성이 생겼을 때 (`--with-wheels`)
 
@@ -144,6 +154,11 @@ REQUIRED_PACKAGE_PATHS: list[str] = [
     "skills/csv-profile/scripts/profile_csv.py",
 ]
 
+# git MCP 서버 (모듈 docstring 참고). 담았을 때 이 이름의 wheel 이 없으면 패키징을 멈춥니다 —
+# conf.example.json 이 `-m mcp_server_git` 을 그대로 실행하므로, 빠지면 서버만 조용히 죽습니다.
+GIT_MCP_PACKAGES = ["mcp-server-git"]
+GIT_MCP_WHEEL_PATTERN = "wheels/mcp_server_git-*.whl"
+
 # 디렉터리를 복사할 때 건너뛸 것들. 소스 트리 안에 런타임 부스러기가 섞이는 것을 막습니다.
 IGNORE_PATTERNS = [
     "__pycache__", "*.pyc", "*.pyo", "*.egg-info",
@@ -245,12 +260,12 @@ def render_manual_html(build_dir: Path) -> list[tuple[Path, str]]:
 
 
 def collect_wheels(packages: list[str], build_dir: Path) -> list[tuple[Path, str]]:
-    """이번 갱신이 새로 요구하는 패키지만 wheel 로 받아 담습니다.
+    """지정한 패키지만 wheel 로 받아 담습니다 (git MCP 서버 + `--with-wheels`).
 
     `FORBIDDEN_NAMES` 에 `wheels` 가 있는 것과 모순처럼 보이지만 그렇지 않습니다.
     그 규칙은 "소스 트리를 훑다가 런타임이 **실수로** 딸려 들어가는 것" 을 막습니다.
-    여기 들어오는 wheel 은 명령줄에 이름을 적어야만 생기는, 의도한 예외입니다.
-    그래서 `collect_dir` 을 거치지 않고 따로 모읍니다.
+    여기 들어오는 wheel 은 이 스크립트가 이름으로 지정한 것(git MCP 서버)과 명령줄에
+    적은 것뿐인, 의도한 예외입니다. 그래서 `collect_dir` 을 거치지 않고 따로 모읍니다.
 
     담는 범위를 `requirements.txt` 전체가 아니라 **지정한 패키지** 로 좁힌 것도
     같은 이유입니다. 전체를 담으면 이 패키지가 사실상 오프라인 번들이 되어,
@@ -279,14 +294,14 @@ def collect_wheels(packages: list[str], build_dir: Path) -> list[tuple[Path, str
             log(f"  {detail.splitlines()[-1]}")
         sys.exit(
             "인터넷이 되는 PC 에서 실행해야 합니다. wheel 없이 소스만 보내려면 "
-            "--with-wheels 를 빼고 다시 실행하세요."
+            "--skip-git-mcp 를 붙이고 --with-wheels 를 빼고 다시 실행하세요."
         )
 
     if not any(build_dir.glob("*.whl")):
         sys.exit("wheel 이 하나도 받아지지 않았습니다. 패키지 이름을 확인하세요.")
 
     (build_dir / "INSTALL.txt").write_text(
-        "이 폴더의 wheel 은 이번 갱신이 새로 요구하는 패키지입니다.\n"
+        f"이 폴더의 wheel 은 {', '.join(packages)} 와 그 의존성입니다.\n"
         "설치본 루트에서 아래를 실행한 뒤 앱을 다시 띄우세요.\n"
         "\n"
         f"  python_runtime\\python.exe -m pip install --no-index --find-links wheels "
@@ -343,7 +358,7 @@ def build_manifest(items: list[tuple[Path, str]]) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="런타임을 뺀 소스·설정만 dist/ 에 압축합니다."
+        description="런타임을 뺀 소스·설정과 git MCP 서버의 의존성을 dist/ 에 압축합니다."
     )
     parser.add_argument("--out-dir", default="dist", help="산출물 위치 (기본: dist)")
     parser.add_argument("--max-file-mb", type=float, default=2.0,
@@ -352,6 +367,8 @@ def main() -> None:
                         help="키처럼 보이는 값이 있어도 강행")
     parser.add_argument("--skip-manual-html", action="store_true",
                         help="설명서 HTML 렌더링을 건너뜁니다 (마크다운 원본은 그대로 담깁니다)")
+    parser.add_argument("--skip-git-mcp", action="store_true",
+                        help="git MCP 서버(mcp-server-git)의 wheel 을 담지 않고 소스만 묶습니다")
     parser.add_argument("--with-wheels", nargs="+", metavar="PKG", default=[],
                         help="이번 갱신이 새로 요구하는 pip 패키지를 wheel 로 함께 담습니다 "
                              "(예: --with-wheels mcp-server-fetch). 인터넷 필요")
@@ -397,9 +414,14 @@ def main() -> None:
     # 그대로 거치지만, 크기 상한만 면제됩니다 (2MB 를 넘는 것이 정상입니다).
     wheel_build = dist_dir / f".{PACKAGE_NAME}_wheels"
     wheel_items: list[tuple[Path, str]] = []
-    if args.with_wheels:
+    if args.skip_git_mcp:
+        log("  [건너뜀] --skip-git-mcp (git MCP 서버의 wheel 을 담지 않습니다)")
+    wheel_packages = list(dict.fromkeys(
+        ([] if args.skip_git_mcp else GIT_MCP_PACKAGES) + list(args.with_wheels)
+    ))
+    if wheel_packages:
         dist_dir.mkdir(parents=True, exist_ok=True)
-        wheel_items = collect_wheels(list(args.with_wheels), wheel_build)
+        wheel_items = collect_wheels(wheel_packages, wheel_build)
         items.extend(wheel_items)
 
     if not items:
@@ -407,6 +429,8 @@ def main() -> None:
 
     packed = {rel for _src, rel in items}
     missing = [path for path in REQUIRED_PACKAGE_PATHS if path not in packed]
+    if not args.skip_git_mcp and not any(fnmatch.fnmatch(rel, GIT_MCP_WHEEL_PATTERN) for rel in packed):
+        missing.append(GIT_MCP_WHEEL_PATTERN)
     if missing:
         log("\n[중단] 반드시 담겨야 할 파일이 빠졌습니다:")
         for path in missing:
@@ -468,11 +492,11 @@ def main() -> None:
     log(f"  원본 크기: {total / 1024:.0f} KB  ->  압축 {zip_path.stat().st_size / 1024:.0f} KB")
     log("")
     if wheel_items:
-        log(f"  wheel     : {len(wheel_items)}개 — 대상에서 wheels/INSTALL.txt 를 먼저 보세요.")
+        log(f"  wheel     : {len(wheel_items)}개 — 대상에서 wheels/INSTALL.txt 의 명령으로 설치하세요.")
         log("")
     log("  런타임(python_runtime, node_runtime, mcp_sandbox)과")
     log("  운영 데이터(workspace, multiagent.db, conf.json)는 들어 있지 않습니다.")
-    if not wheel_items:
+    if not args.with_wheels:
         log("  requirements.txt 에 패키지를 새로 넣었다면 이 패키지만으로는 설치되지")
         log("  않습니다 (폐쇄망은 pip 가 레지스트리에 닿지 못합니다).")
         log("  --with-wheels <패키지…> 로 다시 묶으면 wheel 을 함께 담습니다.")

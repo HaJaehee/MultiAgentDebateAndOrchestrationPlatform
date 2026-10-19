@@ -14,8 +14,8 @@
 | | `package_offline.py` | `package_source.py` |
 | :--- | :--- | :--- |
 | 언제 | 최초 반입, 런타임 버전 업 | 코드만 고쳤을 때 |
-| 크기 | 수백 MB | 수백 KB |
-| 포함 | 런타임 전부 + 소스 + 설명서 | 소스 + 설명서 |
+| 크기 | 수백 MB | 약 16 MB (`--skip-git-mcp` 면 약 1 MB) |
+| 포함 | 런타임 전부 + 소스 + 설명서 | 소스 + 설명서 + git MCP 서버의 wheel |
 | 심사 | 전체를 처음부터 | 바뀐 것만 |
 
 런타임 및 의존성 패키지는 한 번 반입하면 런타임 자체의 버전을 업그레이드하기 전까지 그대로 유지됩니다. 소스 코드만 수정한 경우
@@ -131,7 +131,8 @@ mcp 2.x 를 끌어옵니다. mcp 2.x 는 `mcp.server.fastmcp` 를 제거했으�
 
 ```bash
 python package_source.py [--out-dir dist] [--max-file-mb 2] [--allow-secrets]
-                         [--skip-manual-html]
+                         [--skip-manual-html] [--skip-git-mcp]
+                         [--with-wheels PKG ...]
 ```
 
 ```text
@@ -139,6 +140,7 @@ MultiAgentDebateOrchestration_source/
 ├── app/                          애플리케이션 소스 (디렉터리 전체 교체)
 ├── mcp_servers/                  포크한 MCP 서버 원본
 ├── mcp_node/memory-scoped.mjs    그 실행 사본
+├── wheels/                       mcp-server-git 과 그 의존성 (+ INSTALL.txt)
 ├── docs/                         사용 설명서 (마크다운 원본 + 렌더러)
 ├── conf.example.json             설정 템플릿
 ├── .env.example
@@ -149,6 +151,18 @@ MultiAgentDebateOrchestration_source/
 ├── LICENSE.md                    라이선스 (LGPL-3.0 전문 + 제3자 고지)
 └── MANIFEST.txt                  파일별 SHA-256
 ```
+
+### git MCP 서버
+
+git 서버는 파이썬 패키지 `mcp-server-git` 을 실행합니다(`-m mcp_server_git`). 소스가 아니라
+설치본에 깔린 의존성이라, 소스만 보내면 서버는 갱신되지 않고 대상에 없던 서버는 계속
+"연결 안 됨" 으로 남습니다. 그래서 `mcp-server-git` 과 그 의존성을 **기본으로** wheel 로 받아
+`wheels/` 에 담습니다. 패키징하는 PC 에 인터넷이 필요합니다.
+
+- 대상에서는 `wheels/INSTALL.txt` 의 명령으로 설치합니다 (`--no-index` 라 네트워크에 닿지 않음).
+- `mcp_server_git` wheel 이 빠지면 패키징을 멈춥니다.
+- `git` 실행 파일 자체는 pip 의존성이 아니라 담기지 않습니다. Node MCP 서버도 담지 않습니다.
+- 소스만 묶으려면 `--skip-git-mcp` 를 씁니다.
 
 ### 설명서는 어떻게 담기는가
 
@@ -192,7 +206,7 @@ python docs/render_user_manual.py
 | 조건 | 이유 |
 | :--- | :--- |
 | `conf.json` 을 담지 않음 | 배포 환경에 해당 폐쇄망의 실제 엔드포인트가 설정되어 있으므로, 덮어쓰면 모든 에이전트 동작이 중단됨 |
-| 2MB 초과 파일이 있으면 중단 | 소스 패키지에 메가바이트급 파일이 있다면 런타임 산출물이 샌 것 |
+| 2MB 초과 파일이 있으면 중단 | 소스 패키지에 메가바이트급 파일이 있다면 런타임 산출물이 샌 것 (wheel 은 면제) |
 | 키처럼 보이는 값이 있으면 중단 | `conf.json` 은 gitignore 대상이라 누군가 실제 키를 적어 두었을 수 있음 |
 
 세 번째 검사는 필요 시 `--allow-secrets` 옵션으로 우회할 수 있으나, **보안 반입 심사 단계에서 비밀 자격증명이 적발되는 것은 심각한 보안 결격 사유**가 되므로 사전 차단을 강력히 권장합니다.
@@ -206,8 +220,9 @@ GitHub(`ghp_`), Slack(`xox*-`), 개인 키 헤더.
 1. app/ 디렉터리 전체 교체       ← 파일 단위로 덮으면 이번 갱신에서 삭제된 모듈이
                                남아 계속 import 되는 부작용 방지
 2. 나머지 파일 덮어쓰기
-3. conf.json 은 손대지 않음  ← 패키지에 없으므로 자동으로 살아남음
-4. MANIFEST.txt 로 무결성 확인
+3. wheels/INSTALL.txt 의 명령으로 git MCP 서버 설치
+4. conf.json 은 손대지 않음  ← 패키지에 없으므로 자동으로 살아남음
+5. MANIFEST.txt 로 무결성 확인
 ```
 
 새 설정 항목은 `conf.example.json` 을 보고 손으로 옮깁니다.
