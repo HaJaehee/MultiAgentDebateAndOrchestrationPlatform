@@ -704,11 +704,41 @@ class DebateRunner:
         """실행을 태스크로 띄웁니다. 끝나는 방식(완료·취소·실패)을 스냅샷과 화면에 알립니다."""
         session_id = run.session_id
 
+        started = False
+
         async def on_event(event: Dict[str, Any]) -> None:
             run.apply(event)
             run._fanout(event)  # noqa: SLF001 - 같은 모듈 안의 협력 객체입니다
 
+        def announce_end() -> None:
+            run.busy = False
+            run.streaming_ids.clear()
+            run.plan_approval = None
+            if run.parked:
+                run.status_text = str(run.error or "")
+                run.round_info = "Waiting"
+            elif run.status == "failed":
+                run.status_text = f"오류로 중단됨: {run.error}"
+                run.round_info = "Error"
+            elif run.status == "cancelled":
+                run.status_text = "토론이 취소되었습니다."
+                run.round_info = "Cancelled"
+            try:
+                run._fanout({  # noqa: SLF001
+                    "type": "run_finished",
+                    "status": run.status,
+                    "error": run.error,
+                    "parked": run.parked,
+                })
+            except BaseException:  # noqa: BLE001
+                logger.warning(
+                    "Could not announce the end of the debate for session %s",
+                    session_id, exc_info=True,
+                )
+
         async def driver() -> None:
+            nonlocal started
+            started = True
             try:
                 await body(on_event)
                 run.status = "completed"
@@ -730,33 +760,27 @@ class DebateRunner:
                 run.status = "failed"
                 run.error = f"{type(exc).__name__}: {exc}"
             finally:
-                run.busy = False
-                run.streaming_ids.clear()
-                run.plan_approval = None
-                if run.parked:
-                    run.status_text = str(run.error or "")
-                    run.round_info = "Waiting"
-                elif run.status == "failed":
-                    run.status_text = f"오류로 중단됨: {run.error}"
-                    run.round_info = "Error"
-                elif run.status == "cancelled":
-                    run.status_text = "토론이 취소되었습니다."
-                    run.round_info = "Cancelled"
-                try:
-                    run._fanout({  # noqa: SLF001
-                        "type": "run_finished",
-                        "status": run.status,
-                        "error": run.error,
-                        "parked": run.parked,
-                    })
-                except BaseException:  # noqa: BLE001
-                    logger.warning(
-                        "Could not announce the end of the debate for session %s",
-                        session_id, exc_info=True,
-                    )
+                announce_end()
+
+        def settle_unstarted(task: "asyncio.Task[Any]") -> None:
+            # 드라이버가 한 번도 돌지 못하고 끝난 실행을 정리합니다. 워커 풀의 자리를 기다리는
+            # 중이거나 띄운 직후에 취소되면 드라이버의 `except`·`finally` 가 돌지 않습니다.
+            # 그대로 두면 실행은 "running" 으로 남아, 화면은 끝을 모르고 `start` 는 이 죽은
+            # 실행을 돌려주어 그 대화를 서버를 다시 띄울 때까지 쓸 수 없습니다.
+            if started:
+                return
+            if task.cancelled():
+                run.status = "cancelled"
+                run.error = "토론이 취소되었습니다."
+            else:
+                exc = task.exception()
+                run.status = "failed"
+                run.error = f"{type(exc).__name__}: {exc}" if exc else "토론을 시작하지 못했습니다."
+            announce_end()
 
         job = self.worker_pool.submit(f"debate:{session_id}", driver)
         run.task = job.task
+        run.task.add_done_callback(settle_unstarted)
         return run
 
     def request_stop(self, session_id: str) -> bool:
@@ -866,14 +890,23 @@ class DebateRunner:
             return False
         task = run.task
         task.cancel()
+        # `await task` 가 아니라 `asyncio.wait` 입니다. 전자는 취소된 태스크의
+        # CancelledError 를 이 코루틴 쪽으로 다시 올려서, 정작 취소되지 않은
+        # 호출자(서버 종료 경로)까지 취소된 것처럼 보이게 만듭니다. 후자는
+        # 무엇으로 끝났든 예외를 올리지 않습니다.
         done, _pending = await asyncio.wait({task}, timeout=CANCEL_TIMEOUT)
         if not done:
+            # 취소를 흡수하고 놓아주지 않는 코드가 어딘가 있다는 뜻입니다.
+            # 여기서 계속 기다리면 서버 종료(lifespan)가 그 자리에서 멈추고,
+            # uvicorn 이 강제로 내려가면서 "백엔드가 죽었다" 로 보입니다.
             logger.warning(
                 "Debate task for session %s did not stop within %.0fs; leaving it behind",
                 session_id, CANCEL_TIMEOUT,
             )
             return True
         if not task.cancelled():
+            # 예외를 한 번은 읽어 두어야 "Task exception was never retrieved" 가
+            # 로그를 어지럽히지 않습니다.
             exc = task.exception()
             if exc is not None:
                 logger.debug(
@@ -883,8 +916,13 @@ class DebateRunner:
         return True
 
     async def shutdown(self) -> None:
-        """서버 종료 시 남은 토론 태스크를 정리합니다."""
-        await self.worker_pool.drain(timeout=CANCEL_TIMEOUT)
+        """서버 종료 시 남은 토론 태스크를 정리합니다.
+
+        끝나기를 기다리지 않고 바로 취소합니다 (`worker_pool.drain` 을 먼저 부르지 않습니다).
+        토론 턴은 몇 분씩 돌거나 사람의 승인을 기다리므로 기다려도 끝나지 않고, 그동안 서버는
+        내려가지 못한 채 토론이 LLM·도구를 계속 부릅니다. 취소에 반응하지 않는 태스크는
+        `cancel` 이 `CANCEL_TIMEOUT` 뒤에 남겨 두고 넘어갑니다.
+        """
         for session_id in list(self._runs):
             await self.cancel(session_id)
 
