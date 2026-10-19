@@ -96,7 +96,7 @@ MultiAgentDebateOrchestration/
 ├── conf.example.json         # 설정 템플릿 (저장소에 커밋되는 원본)
 ├── setup_mcp.py              # 개발 PC용 MCP 서버 일괄 설치 스크립트
 ├── package_offline.py        # 폐쇄망 배포 번들 패키징 스크립트 (런타임 + MCP 서버 동봉)
-├── package_source.py         # 소스·설정 + git MCP wheel 패키징 스크립트 (런타임 제외, 갱신 반입용)
+├── package_source.py         # 소스·설정 패키징 스크립트 (런타임 제외, 갱신 반입용)
 ├── conf.json                 # 시스템 설정 파일 (로컬 전용, .gitignore 대상)
 ├── .env.example              # 환경 변수 템플릿
 ├── requirements.txt          # 파이썬 의존성 패키지 목록
@@ -899,19 +899,15 @@ MADO에서 사용하는 `memory` MCP 서버는 공식 구현체가 아닌 자체
 포터블 파이썬, Node.js 런타임, wheel 파일 모음, 외부 MCP 서버가 포함된 전체 배포 번들은 초기 1회 반입 이후 버전 업그레이드 전까지 계속해서 재사용할 수 있습니다. 애플리케이션 소스 코드만 수정한 경우 수백 MB에 달하는 전체 런타임을 매번 다시 반입하는 것은 대역폭 낭비일 뿐만 아니라, **매 배포마다 까다로운 보안 반입 심사를 처음부터 다시 거쳐야 하는 심각한 비효율**을 초래합니다.
 
 ```bash
-python package_source.py                 # dist/MultiAgentDebateOrchestration_source_YYYYMMDD.zip (약 16MB)
-python package_source.py --skip-git-mcp  # 소스·설정만 (약 1MB)
+python package_source.py   # dist/MultiAgentDebateOrchestration_source_YYYYMMDD.zip (약 600KB)
 ```
 
-기본으로 **git MCP 서버의 wheel** 도 함께 담습니다 — `wheels/` 에 `mcp-server-git` 과 그 의존성. git 서버는 소스가 아니라 설치본에 깔린 파이썬 패키지여서, 소스만 보내면 대상의 서버는 갱신되지 않고 빠져 있던 서버는 계속 "연결 안 됨" 으로 남기 때문입니다. 패키징 PC 에 인터넷이 필요하며, `git` 실행 파일과 Node MCP 서버는 담지 않습니다.
-
-패키징 산출물에는 **운영 중인 애플리케이션을 갱신하는 데 필요한 핵심 소스 코드와 git MCP 서버의 wheel 만** 선별되어 포함됩니다.
+패키징 산출물에는 **운영 중인 애플리케이션을 갱신하는 데 필요한 핵심 소스 코드만** 선별되어 포함됩니다.
 
 | 포함 대상 항목 | 제외 대상 항목 |
 |---|---|
-| `app/`, `mcp_servers/` | `python_runtime/`, `node_runtime/`, `mcp_sandbox/` |
+| `app/`, `mcp_servers/` | `python_runtime/`, `node_runtime/`, `wheels/`, `mcp_sandbox/` |
 | `mcp_node/memory-scoped.mjs` (포크 서버 실행 사본) | `workspace/`, `multiagent.db`, `conf.json` |
-| `wheels/` (`mcp-server-git` 과 그 의존성, `INSTALL.txt`) | `mcp_node/node_modules/`, 다른 MCP 서버 패키지 |
 | `conf.example.json`, `.env.example`, `requirements.txt` | `tests/`, `wiki/`, `CLAUDE.md` |
 | `docs/` (사용 설명서 원본 마크다운 + 렌더러) | `docs/user_manual_html/` (렌더링 산출물) |
 | `LICENSE.md` | |
@@ -922,10 +918,10 @@ python package_source.py --skip-git-mcp  # 소스·설정만 (약 1MB)
 스크립트가 자동으로 검증 및 거부하는 3대 정책은 다음과 같습니다:
 
 1. **기존 `conf.json` 덮어쓰기 방지:** 로컬의 `conf.json` 파일은 패키지에 일체 포함되지 않습니다. 실제 배포 환경의 `conf.json`에는 해당 망 전용 엔드포인트와 인증 정보가 설정되어 있으므로, 신규 설정 항목은 `conf.example.json`과 대조하여 수동으로 이관하도록 설계되었습니다.
-2. **대용량 파일 포함 차단:** `--max-file-mb` (기본값 2MB)를 초과하는 파일이 감지되면 패키징을 즉각 중단합니다. 소스 코드 패키지에 메가바이트 단위의 파일이 포함되어 있다면 빌드 산출물이나 런타임 데이터가 잘못 유입되었을 가능성이 높기 때문입니다. (git MCP 서버의 wheel 은 면제됩니다.)
+2. **대용량 파일 포함 차단:** `--max-file-mb` (기본값 2MB)를 초과하는 파일이 감지되면 패키징을 즉각 중단합니다. 소스 코드 패키지에 메가바이트 단위의 파일이 포함되어 있다면 빌드 산출물이나 런타임 데이터가 잘못 유입되었을 가능성이 높기 때문입니다.
 3. **비밀 키 및 토큰 유출 방지:** API 키, 인증 토큰, 개인키(Private Key) 헤더 패턴을 검사하여 민감 정보가 포함되어 있을 경우 작업을 중단합니다 (필요 시 `--allow-secrets` 옵션으로 강제 가능). `conf.json`은 `.gitignore` 대상이므로 개발자가 실제 키를 입력해 두었을 위험이 있으며, 이것이 반입 심사 과정에서 적발되는 문제를 사전에 방지합니다.
 
-반입 대상 시스템에서는 압축을 해제한 소스 코드를 기존 설치 디렉터리에 덮어씁니다. 이때 `app/` 디렉터리는 파일 단위로 개별 병합하지 마시고 **디렉터리 전체를 교체**하십시오. 이번 업데이트에서 삭제되거나 리팩토링된 구형 모듈이 대상 환경에 남아 있을 경우 의도치 않게 계속 import되는 문제를 방지하기 위함입니다. git MCP 서버는 `wheels/INSTALL.txt` 의 명령으로 설치하십시오. `conf.json`은 패키지에 포함되어 있지 않으므로 기존 설정이 안전하게 보존됩니다. 동봉된 `MANIFEST.txt` 파일에 수록된 파일별 SHA-256 체크섬을 활용하여 반입 심사 및 무결성 검증을 수행하실 수 있습니다.
+반입 대상 시스템에서는 압축을 해제한 소스 코드를 기존 설치 디렉터리에 덮어씁니다. 이때 `app/` 디렉터리는 파일 단위로 개별 병합하지 마시고 **디렉터리 전체를 교체**하십시오. 이번 업데이트에서 삭제되거나 리팩토링된 구형 모듈이 대상 환경에 남아 있을 경우 의도치 않게 계속 import되는 문제를 방지하기 위함입니다. `conf.json`은 패키지에 포함되어 있지 않으므로 기존 설정이 안전하게 보존됩니다. 동봉된 `MANIFEST.txt` 파일에 수록된 파일별 SHA-256 체크섬을 활용하여 반입 심사 및 무결성 검증을 수행하실 수 있습니다.
 
 ```powershell
 Get-Content MANIFEST.txt | Where-Object { $_ -notmatch '^#' } | ForEach-Object {

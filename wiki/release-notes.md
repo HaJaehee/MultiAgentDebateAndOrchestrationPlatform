@@ -30,14 +30,6 @@ cannot hang. A turn cancelled before its task got to run ends cleanly instead of
 as running. Screens subscribe through `InMemoryEventBus`, one channel per conversation; a screen whose queue
 fills up is dropped and catches up from the snapshot, as before.
 
-**Source package carries the git MCP server.** `package_source.py` now packs, by default, the
-`mcp-server-git` wheel with its dependencies into `wheels/` (install command in
-`wheels/INSTALL.txt`), so an update also refreshes the git server or brings it to a target that
-lacked it. The package grows to about 16 MB; `--skip-git-mcp` packs source only. A run that ends up
-without an `mcp_server_git` wheel aborts. The runtimes, the `git` executable and the Node MCP
-servers are still left out.
-→ [Air-gap Packaging §4](operations/airgap-packaging.md)
-
 **Node MCP servers held below 2.0.** The filesystem, memory and sequential-thinking servers are now
 installed at `^2026.8.31` by `setup_mcp.py` and `package_offline.py` (one list, in `setup_mcp.py`).
 2.0.0, released 2026-10-19, no longer installs `@modelcontextprotocol/sdk`, so the memory fork did
