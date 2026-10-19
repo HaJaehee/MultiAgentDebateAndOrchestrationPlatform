@@ -38,6 +38,15 @@ without an `mcp_server_git` wheel aborts. The runtimes, the `git` executable and
 servers are still left out.
 → [Air-gap Packaging §4](operations/airgap-packaging.md)
 
+**Node MCP servers held below 2.0.** The filesystem, memory and sequential-thinking servers are now
+installed at `^2026.8.31` by `setup_mcp.py` and `package_offline.py` (one list, in `setup_mcp.py`).
+2.0.0, released 2026-10-19, no longer installs `@modelcontextprotocol/sdk`, so the memory fork did
+not start on a fresh install. `<2.0.0` is not the answer — the packages use calendar versions, and
+npm resolves it to 1.0.0. The ranges are written into `package.json` instead of the `npm` command
+line (cmd.exe strips `^`), and an `mcp_node` installed before the pin is reinstalled rather than
+kept.
+→ [Air-gap Packaging §2.3](operations/airgap-packaging.md)
+
 ## v1.3.1
 
 **Model connection status.** A `모델 연결 상태` button in the header of the expert page, the trial pages and the

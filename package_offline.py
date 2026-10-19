@@ -42,6 +42,8 @@ import zipfile
 from pathlib import Path
 from typing import Optional
 
+from setup_mcp import node_packages_label, node_servers_installed, write_node_manifest
+
 # 콘솔/파이프의 인코딩이 UTF-8 이 아니면(윈도우 기본 cp949) 아래 로그에 쓰인
 # em-dash 나 이모지가 UnicodeEncodeError 로 스크립트를 끝냅니다. 산출물을 다
 # 만들어 놓고 마지막 안내 문구에서 죽으므로, 성공한 실행이 실패로 보입니다.
@@ -64,12 +66,8 @@ DEFAULT_NODE_VERSION = "22.22.2"
 NODE_DIST_URL = "https://nodejs.org/dist/v{ver}/node-v{ver}-win-x64.zip"
 
 # 공식 레퍼런스 MCP 서버 (TypeScript 구현). 네이티브 애드온이 없어 어느 OS 에서
-# 설치해도 그대로 재배치됩니다.
-NODE_MCP_PACKAGES = [
-    "@modelcontextprotocol/server-filesystem",
-    "@modelcontextprotocol/server-memory",
-    "@modelcontextprotocol/server-sequential-thinking",
-]
+# 설치해도 그대로 재배치됩니다. 목록과 버전 범위(2.0 계열 제외)는 `setup_mcp.py` 에 있습니다 —
+# 그 파일은 설치본에 실려 가고 이 파일은 그렇지 않으므로, 이쪽이 가져다 씁니다.
 
 # 공식 레퍼런스 MCP 서버 중 Python 구현. 기존 wheel 파이프라인에 그대로 얹힙니다.
 PYTHON_MCP_PACKAGES = [
@@ -531,7 +529,8 @@ def stage_node_mcp_servers() -> bool:
     staging_mcp = STAGING_DIR / "mcp_node"
     staging_mcp.mkdir(parents=True, exist_ok=True)
 
-    if (staging_mcp / "node_modules" / "@modelcontextprotocol").exists():
+    # 같은 목록·범위로 깔린 것만 다시 씁니다. 범위를 고정하기 전의 스테이징(2.0.0)은 새로 깝니다.
+    if node_servers_installed(staging_mcp):
         print("      기존 설치 확인 완료.")
         return True
 
@@ -541,11 +540,11 @@ def stage_node_mcp_servers() -> bool:
         print("             filesystem / memory MCP 없이 번들이 만들어집니다.")
         return False
 
-    print(f"      설치 중: {', '.join(p.rsplit('/', 1)[-1] for p in NODE_MCP_PACKAGES)}")
+    write_node_manifest(staging_mcp)
+    print(f"      설치 중: {node_packages_label()}")
     try:
         subprocess.run(
-            [npm, "install", "--omit=dev", "--no-audit", "--no-fund",
-             "--prefix", str(staging_mcp), *NODE_MCP_PACKAGES],
+            [npm, "install", "--omit=dev", "--no-audit", "--no-fund", "--prefix", str(staging_mcp)],
             check=True,
         )
     except subprocess.CalledProcessError as exc:

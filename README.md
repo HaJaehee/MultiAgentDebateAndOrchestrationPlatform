@@ -794,12 +794,14 @@ python setup_mcp.py               # workspace(git init) + mcp_node + mcp_sandbox
 `setup_mcp.py` 스크립트가 수행하는 작업을 수동으로 진행하고자 하실 때는 다음 명령을 실행하십시오:
 ```bash
 npm install --omit=dev --prefix ./mcp_node \
-  @modelcontextprotocol/server-filesystem \
-  @modelcontextprotocol/server-memory \
-  @modelcontextprotocol/server-sequential-thinking
+  "@modelcontextprotocol/server-filesystem@^2026.8.31" \
+  "@modelcontextprotocol/server-memory@^2026.8.31" \
+  "@modelcontextprotocol/server-sequential-thinking@^2026.8.31"
 git clone --depth 1 https://github.com/HaJaehee/AirgappedPySandbox ./mcp_sandbox
 git init ./workspace              # git MCP 서버는 유효한 git 저장소를 요구합니다
 ```
+
+> **Node MCP 서버의 버전 범위:** `^2026.8.31`(2026.8.31 이상 2027 미만)로 설치하십시오. 2026-10-19 에 나온 2.0.0 은 `@modelcontextprotocol/sdk` 를 설치하지 않아 memory 포크가 기동하지 못합니다. 이 패키지들은 날짜형 버전을 써서 `<2.0.0` 으로 적으면 오히려 1.0.0 이 설치됩니다. 범위는 따옴표로 감싸십시오 — cmd.exe 는 따옴표 밖의 `^` 를 지웁니다. 목록은 `setup_mcp.py` 의 `NODE_MCP_PACKAGES` 에 있습니다.
 
 > **파이썬 MCP 서버의 인터프리터 호환성:** 파이썬 기반 MCP 서버는 기본적으로 애플리케이션 본체와 동일한 파이썬 인터프리터로 실행됩니다. `PYTHON_BIN` 환경 변수를 별도로 지정하지 않으면 `sys.executable`이 기본값으로 사용됩니다. 시스템 PATH에 등록된 `python` 명령을 사용할 경우, 가상환경 내에서 애플리케이션을 구동할 때 필수 의존성이 없는 시스템 기본 인터프리터가 호출되어 서버 기동에 실패할 수 있으므로 주의하십시오.
 

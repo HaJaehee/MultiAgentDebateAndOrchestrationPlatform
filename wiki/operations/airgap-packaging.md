@@ -53,6 +53,16 @@ This guarantees that all installed MCP components maintain full API compatibilit
 ### 2.3. Zero-Dependency Node Runtime
 The official Node MCP servers (`filesystem`, `memory`, `sequential-thinking`) are compiled into pure JavaScript (`dist/index.js`) without native C++ addons.
 
+They are held at `^2026.8.31` (2026.8.31 up to, not including, 2027). Version 2.0.0 (2026-10-19)
+moved to SDK v2 (`@modelcontextprotocol/server`) and no longer installs `@modelcontextprotocol/sdk`,
+which the memory fork imports from `node_modules` — it would not start. The packages switched to
+calendar versions in 2025, so 2026.8.31 is *greater* than 2.0.0 in semver: `<2.0.0` would resolve
+to 1.0.0. The list lives in `setup_mcp.py` (`NODE_MCP_PACKAGES`), which ships with the installation;
+`package_offline.py` imports it. Both write the ranges into the prefix's `package.json` and run
+`npm install` without package arguments, because on Windows `npm` is `npm.cmd`, cmd.exe strips `^`,
+and `<`/`>` are redirections. An existing `mcp_node` (or staging folder) is reused only when its
+`package.json` already carries the same ranges, so one installed with 2.0.0 is reinstalled.
+
 ### 2.4. Sandbox Kernel Library Packaging
 The Python code execution sandbox (`AirgappedPySandbox`) runs user and agent scripts within an IPython kernel. In an air-gapped environment without internet access, attempting to import common data science packages inside the sandbox would fail.
 `package_offline.py` inspects `mcp_sandbox/requirements-kernel.txt` and downloads wheels for:

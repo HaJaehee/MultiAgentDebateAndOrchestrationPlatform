@@ -42,7 +42,7 @@ python setup_mcp.py
 
 **Actions Performed by `setup_mcp.py`**:
 1. Creates `./workspace` and initializes it as a Git repository (`git init -q ./workspace`).
-2. Installs official Node MCP servers into `./mcp_node` (`server-filesystem`, `server-memory`, `server-sequential-thinking`).
+2. Installs official Node MCP servers into `./mcp_node` (`server-filesystem`, `server-memory`, `server-sequential-thinking`), held at `^2026.8.31` — 2.0.0 no longer installs `@modelcontextprotocol/sdk`, which the memory fork needs. The ranges go into `mcp_node/package.json` rather than onto the `npm` command line (cmd.exe strips `^`), and an existing install is kept only when its `package.json` already carries the same ranges.
 3. Clones [AirgappedPySandbox](https://github.com/HaJaehee/AirgappedPySandbox) into `./mcp_sandbox`.
 
 > **Custom Options**:

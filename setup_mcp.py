@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -27,11 +28,63 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent
 
-NODE_MCP_PACKAGES = [
-    "@modelcontextprotocol/server-filesystem",
-    "@modelcontextprotocol/server-memory",
-    "@modelcontextprotocol/server-sequential-thinking",
-]
+# 공식 Node MCP 서버와 버전 범위. 전체 번들(`package_offline.py`)도 이 목록을 가져다 씁니다.
+#
+# 2.0 계열은 받지 않습니다. 2026-10-19 에 나온 2.0.0 은 SDK 를 v2(`@modelcontextprotocol/server`)로
+# 바꿔 `@modelcontextprotocol/sdk` 를 깔지 않으므로, sdk 1.x 를 node_modules 에서 찾는 memory
+# 포크(mcp_servers/memory_scoped)가 기동하지 못합니다. 이 패키지들은 2025 년부터 날짜형 버전을
+# 써서 2026.8.31 이 semver 로는 2.0.0 보다 큽니다 — `<2.0.0` 이라고 적으면 npm 은 1.0.0 을 고릅니다.
+# `^2026.8.31` 은 2026.8.31 이상 2027 미만입니다. 올릴 때는 포크와 함께 확인하세요.
+NODE_MCP_PACKAGES = {
+    "@modelcontextprotocol/server-filesystem": "^2026.8.31",
+    "@modelcontextprotocol/server-memory": "^2026.8.31",
+    "@modelcontextprotocol/server-sequential-thinking": "^2026.8.31",
+}
+
+
+def node_packages_label() -> str:
+    return ", ".join(f"{name.rsplit('/', 1)[-1]}@{spec}" for name, spec in NODE_MCP_PACKAGES.items())
+
+
+def write_node_manifest(prefix: Path) -> None:
+    """설치할 서버와 버전 범위를 `prefix` 의 package.json 에 적습니다.
+
+    범위를 명령줄 인자(`이름@^2026.8.31`)로 넘기지 않습니다. 윈도우의 npm 은 npm.cmd 라
+    cmd.exe 를 거치는데, 거기서 `^` 는 이스케이프 문자라 지워지고(범위가 정확한 버전이 됩니다)
+    `<`·`>` 는 리다이렉션입니다. package.json 에 적고 인자 없이 `npm install` 하면 셸을
+    거치지 않습니다.
+    """
+    prefix.mkdir(parents=True, exist_ok=True)
+    path = prefix / "package.json"
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        manifest = {}
+    if not isinstance(manifest, dict):
+        manifest = {}
+    dependencies = manifest.get("dependencies")
+    if not isinstance(dependencies, dict):
+        dependencies = manifest["dependencies"] = {}
+    dependencies.update(NODE_MCP_PACKAGES)
+    path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def node_servers_installed(prefix: Path) -> bool:
+    """`prefix` 에 이 목록·범위 그대로 깔린 Node MCP 서버가 있는가.
+
+    `node_modules` 가 있다는 것만 보면 범위를 고정하기 전에 깔린 것(2.0.0 등)도 그대로 두게
+    됩니다. package.json 의 범위가 지금 목록과 같을 때만 건너뜁니다.
+    """
+    try:
+        manifest = json.loads((prefix / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    dependencies = manifest.get("dependencies") if isinstance(manifest, dict) else None
+    if not isinstance(dependencies, dict):
+        return False
+    return (prefix / "node_modules" / "@modelcontextprotocol").is_dir() and all(
+        dependencies.get(name) == spec for name, spec in NODE_MCP_PACKAGES.items()
+    )
 SANDBOX_REPO_URL = "https://github.com/HaJaehee/AirgappedPySandbox"
 
 
@@ -75,7 +128,7 @@ def setup_workspace() -> bool:
 def setup_node_servers() -> bool:
     """공식 Node MCP 서버를 ./mcp_node 에 설치합니다."""
     target = ROOT_DIR / "mcp_node"
-    if (target / "node_modules" / "@modelcontextprotocol").exists():
+    if node_servers_installed(target):
         print("      이미 설치되어 있습니다.")
         return True
 
@@ -85,10 +138,9 @@ def setup_node_servers() -> bool:
         print("             filesystem / memory MCP 서버 없이 동작하게 됩니다.")
         return False
 
-    target.mkdir(exist_ok=True)
-    print(f"      설치 중: {', '.join(p.rsplit('/', 1)[-1] for p in NODE_MCP_PACKAGES)}")
-    ok = _run([npm, "install", "--omit=dev", "--no-audit", "--no-fund",
-               "--prefix", str(target), *NODE_MCP_PACKAGES])
+    write_node_manifest(target)
+    print(f"      설치 중: {node_packages_label()}")
+    ok = _run([npm, "install", "--omit=dev", "--no-audit", "--no-fund", "--prefix", str(target)])
     if ok:
         bin_dir = target / "node_modules" / ".bin"
         if bin_dir.exists():
