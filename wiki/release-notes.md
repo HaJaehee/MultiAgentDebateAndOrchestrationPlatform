@@ -4,9 +4,13 @@ Change history for the MADO: Multi-Agent Debate & Orchestration Platform, newest
 entry links to the topic page carrying the full explanation — this file is an index of *what
 changed*, not a second copy of the documentation.
 
----
+## v1.4
 
-## Unreleased
+**Modular orchestration phase executors.** The monolithic `app/orchestration/engine.py` is decomposed into isolated phase executors under `app/orchestration/phases/` (`PlanningPhaseExecutor`, `DebatePhaseExecutor`, `SynthesisPhaseExecutor`) and a dedicated artifact extractor (`ArtifactExtractor` in `artifacts.py`), clarifying responsibility boundaries while retaining full backward compatibility.
+
+**Direct peer consultation (Agent-as-a-Tool).** Specialist and orchestrator agents can now directly query active peers during their turn using the injected `peers__consult_agent` tool. Safe execution is enforced through depth limits (`max_depth=2`), cycle prevention, timeout boundaries, and scoped contextual isolation.
+
+**TaskWorkerPool and EventBus decoupling.** Background asynchronous execution and event broadcasting in `DebateRunner` are decoupled via `TaskWorkerPool` (bounded worker concurrency, task lifecycle tracking, and graceful draining) and `InMemoryEventBus` (non-blocking publisher with slow-consumer protection and topic filtering).
 
 **Model connection status.** A `모델 연결 상태` button in the header of the expert page, the trial pages and the
 beginner pages opens a dialog that sends one tiny request (`ping`, at most 16 output tokens) to every model in
