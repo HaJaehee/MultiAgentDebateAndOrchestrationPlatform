@@ -6,11 +6,29 @@ changed*, not a second copy of the documentation.
 
 ## v1.4
 
-**Modular orchestration phase executors.** The monolithic `app/orchestration/engine.py` is decomposed into isolated phase executors under `app/orchestration/phases/` (`PlanningPhaseExecutor`, `DebatePhaseExecutor`, `SynthesisPhaseExecutor`) and a dedicated artifact extractor (`ArtifactExtractor` in `artifacts.py`), clarifying responsibility boundaries while retaining full backward compatibility.
+**Orchestration engine split into phase executors.** The planning, debate and synthesis phases moved out of
+`app/orchestration/engine.py` into `app/orchestration/phases/` (`PlanningPhaseExecutor`, `DebatePhaseExecutor`,
+`SynthesisPhaseExecutor`), and the code-block and Mermaid helpers (`normalize_mermaid`, `find_mermaid_blocks`,
+`extract_code_blocks`, `format_roster`, …) into plain functions in `app/orchestration/artifacts.py`. Behaviour is
+unchanged: `OrchestratorEngine` keeps every method name and hands the work to the executors.
 
-**Direct peer consultation (Agent-as-a-Tool).** Specialist and orchestrator agents can now directly query active peers during their turn using the injected `peers__consult_agent` tool. Safe execution is enforced through depth limits (`max_depth=2`), cycle prevention, timeout boundaries, and scoped contextual isolation.
+**Specialists can consult a peer mid-speech (Agent-as-a-Tool).** A specialist with `"peers"` in its
+`allowed_mcp_servers` gets a `peers__consult_agent` tool during the debate: it sends one question (and optional
+context) to another specialist taking part in this turn and folds the answer into its speech. It is off unless
+`"peers"` is listed — there is no other switch — and the roster card shows `peers` among the tool servers. The
+orchestrator never gets the tool. A consultation goes one level deep (the consulted agent cannot consult in turn),
+never back to an agent already in the chain, and the consulted agent answers with at most 3 tool rounds. There is
+no separate time limit; the turn's stop and cancel apply as usual. The consultation call itself is not a
+tool-security decision, but the consulted agent's own tool calls are.
 
-**TaskWorkerPool and EventBus decoupling.** Background asynchronous execution and event broadcasting in `DebateRunner` are decoupled via `TaskWorkerPool` (bounded worker concurrency, task lifecycle tracking, and graceful draining) and `InMemoryEventBus` (non-blocking publisher with slow-consumer protection and topic filtering).
+**Debate runner: worker pool and event bus.** Each turn now runs as a `TaskWorkerPool` job, which records its
+status, start and end times and error. The pool does not limit how many conversations run at once — a turn
+waiting for plan or tool approval would otherwise hold a slot while looking merely busy; server-wide load is
+still capped by `app.llm_concurrency`. Server shutdown cancels running turns at once rather than waiting for
+them to finish, and a task that ignores the cancel is left behind after `CANCEL_TIMEOUT` (20 s) so shutdown
+cannot hang. A turn cancelled before its task got to run ends cleanly instead of leaving the conversation stuck
+as running. Screens subscribe through `InMemoryEventBus`, one channel per conversation; a screen whose queue
+fills up is dropped and catches up from the snapshot, as before.
 
 ## v1.3.1
 
