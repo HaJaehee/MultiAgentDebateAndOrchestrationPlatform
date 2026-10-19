@@ -25,6 +25,7 @@ from app.agents import llm_fallback
 from app.agents.llm_gate import LLM_HOLDER
 from app.agents.personas import prepare_agents_for_turn
 from app.agents.skills import skill_tools_for, visible_skill_names, with_designated_skills
+from app.agents.consultation import consultation_scope, consultation_tools_for
 from app.agents.pool import AgentPool, get_agent_pool
 from app.timestamps import report_completed_line, to_local
 from app.config import (
@@ -145,393 +146,36 @@ def clean_skill_designations(
     return out
 
 
-class GraphTurnError(RuntimeError):
-    """그래프 토론을 시작할 수 없을 때 (그래프 없음 · 파일 없음 · 검증 오류). 사람이 읽을 문장입니다."""
-
-
-def parse_gate_decision(content: str) -> Optional[Tuple[str, str]]:
-    """판정 응답에서 (yes|no, 사유). 읽지 못하면 None.
-
-    JSON 이 온전하면 그것을 쓰고, 아니면 첫 줄의 예/아니오·yes/no 를 봅니다. 둘 다 없으면 None —
-    본문 어딘가의 "no" 를 긁으면 "no problem" 이 거부가 됩니다.
-    """
-    text = strip_reasoning_trace(content or "").strip()
-    block = re.search(r"\{.*\}", text, re.DOTALL)
-    if block:
-        try:
-            data = json.loads(block.group(0))
-        except (ValueError, TypeError):
-            data = None
-        if isinstance(data, dict):
-            raw = str(data.get("decision", "")).strip().lower()
-            reason = str(data.get("reason") or "").strip()
-            if raw in ("yes", "y", "예", "true"):
-                return "yes", reason
-            if raw in ("no", "n", "아니오", "아니요", "false"):
-                return "no", reason
-    first = text.splitlines()[0].strip().strip("*#:. ").lower() if text else ""
-    if first in ("yes", "예"):
-        return "yes", ""
-    if first in ("no", "아니오", "아니요"):
-        return "no", ""
-    return None
-
-# 코드 펜스를 여는 줄. 줄 머리(들여쓰기 허용)의 ``` 또는 ~~~ 세 개 이상, 언어, 그리고
-# 뒤따르는 정보 문자열(```` ```mermaid title="흐름" ````). 백틱 펜스의 정보에는 백틱이
-# 올 수 없습니다 — 그래야 본문 속 "``` 가" 같은 인라인 표기를 여는 펜스로 잘못 읽지 않습니다.
-_FENCE_OPEN_RE = re.compile(r"^[ \t]*(?P<fence>`{3,}|~{3,})(?P<lang>[A-Za-z0-9_+\-]*)(?P<info>[^\n]*)$")
-# 줄 중간에서 여는 펜스 ("다음과 같습니다: ```mermaid"). 예전 정규식이 받던 모양이라, 언어가
-# 붙고 줄이 거기서 끝날 때만 받습니다.
-_FENCE_MIDLINE_OPEN_RE = re.compile(r"(?P<fence>```)(?P<lang>[A-Za-z0-9_+\-]+)[ \t]*$")
-
-
-def _iter_code_fences(text: str) -> List[Dict[str, Any]]:
-    """본문의 코드 블록을 줄 단위로 찾습니다: [{lang, start, end}] (`text[start:end]` 가 코드).
-
-    예전에는 정규식 한 줄(```` ```lang\\n(.*?)``` ````)이었고, 세 가지를 놓쳤습니다.
-
-    * 정보 문자열이 붙은 펜스(```` ```mermaid title="흐름" ````) — 여는 펜스로 못 읽고, 그 블록의
-      **닫는** 펜스를 여는 펜스로 읽어 짝이 한 칸씩 밀렸습니다. 뒤따르던 python 블록까지 사라졌습니다.
-    * `~~~` 펜스.
-    * 바깥 펜스가 더 긴 경우(```` ```` ```` 안의 ```` ``` ````) — 안쪽 줄에서 닫혔습니다.
-
-    닫는 펜스가 없으면(응답 한도로 잘린 답변) 끝까지를 코드로 봅니다. 닫는 줄 뒤에 글이
-    붙어 있거나(```` ``` 끝 ````) 코드 줄 끝에 펜스가 붙은 경우(```` A-->B``` ````)도 닫힌 것으로
-    봅니다 — 모델이 흔히 그렇게 씁니다.
-    """
-    text = text or ""
-    blocks: List[Dict[str, Any]] = []
-    lines = text.splitlines(keepends=True)
-    offsets, pos = [], 0
-    for line in lines:
-        offsets.append(pos)
-        pos += len(line)
-
-    i = 0
-    while i < len(lines):
-        body = lines[i].rstrip("\r\n")
-        m = _FENCE_OPEN_RE.match(body)
-        if m and not (m.group("fence")[0] == "`" and "`" in m.group("info")):
-            fence, lang = m.group("fence"), m.group("lang")
-        else:
-            mid = _FENCE_MIDLINE_OPEN_RE.search(body)
-            if not mid:
-                i += 1
-                continue
-            fence, lang = mid.group("fence"), mid.group("lang")
-
-        start = offsets[i] + len(lines[i])
-        end = len(text)
-        j = i + 1
-        next_i = len(lines)
-        while j < len(lines):
-            line_body = lines[j].rstrip("\r\n")
-            stripped = line_body.lstrip(" \t")
-            run = len(stripped) - len(stripped.lstrip(fence[0]))
-            if run >= len(fence):
-                end = offsets[j]
-                next_i = j + 1
-                break
-            tail = line_body.rstrip()
-            if fence[0] == "`" and tail.endswith(fence) and not tail.endswith(fence[0] * (len(fence) + 1)):
-                end = offsets[j] + len(tail) - len(fence)
-                next_i = j + 1
-                break
-            j += 1
-        blocks.append({"lang": lang, "start": start, "end": end})
-        i = next_i
-    return blocks
-
-
-def _is_untagged_mermaid(code: str) -> bool:
-    """언어 태그 없이 열린 블록이 Mermaid 인가. 선언을 `diagram_kind` 로 읽습니다.
-
-    YAML 머리말·`%%{init}%%`·주석 뒤의 선언도 읽고, `kanban`·`packet-beta` 같은 새 종류도 압니다.
-    """
-    return diagram_kind(code) is not None
-
-CODE_LANGUAGES = ("python", "py", "typescript", "javascript", "bash", "shell", "json", "toml", "sql")
-
-# 다이어그램 문법이 틀렸을 때 오케스트레이터에게 다시 물어보는 횟수.
-#
-# 두 번이면 충분합니다. 오류 메시지를 정확히 받은 모델은 대개 한 번에 고치고,
-# 두 번째에도 못 고치면 세 번째라고 달라지지 않습니다 — 그때는 사람이 볼 수
-# 있도록 원문을 그대로 두고 무엇이 틀렸는지 알리는 편이 낫습니다.
-MERMAID_REPAIR_ATTEMPTS = 2
-
-# `A[결제 서비스 (Payment)]` 처럼 대괄호 라벨 안에 괄호가 들어간 형태. LLM 이 가장 자주
-# 만드는 Mermaid 파싱 오류이고, 따옴표로 감싸면 그대로 통과합니다.
-_PAREN_LABEL_RE = re.compile(r"\[([^\[\]{}\"|]*[()][^\[\]{}\"|]*)\]")
-# 여는 문자 -> 닫는 문자. 이 쌍으로 감싸인 것은 라벨이 아니라 노드 모양입니다.
-_SHAPE_PAIRS = {"(": ")", "[": "]", "/": "/", "\\": "\\", "{": "}"}
-
-
-# flowchart 에 섞여 들어온 시퀀스 다이어그램의 노트. `Note right of A: 글`, `Note over A,B: 글`.
-_FLOWCHART_NOTE_RE = re.compile(
-    r"^(?P<indent>\s*)note\s+(?:right\s+of|left\s+of|over)\s+(?P<targets>[^:]+?)\s*(?::\s*(?P<text>.*))?$",
-    re.IGNORECASE,
+from app.orchestration.artifacts import (
+    CODE_LANGUAGES,
+    MAX_DEBATE_CODE_ARTIFACTS,
+    MERMAID_REPAIR_ATTEMPTS,
+    _convert_flowchart_notes,
+    _is_untagged_mermaid,
+    _iter_code_fences,
+    _normalize_flowchart_line,
+    _quote_bracket_label,
+    _rgb_to_hex,
+    extract_code_blocks,
+    find_mermaid_blocks,
+    format_roster,
+    normalize_mermaid,
+    synthesis_has_content,
 )
-_SIMPLE_NODE_ID_RE = re.compile(r"^[A-Za-z0-9_]+$")
-# 변환한 노트에 입히는 모양. 파서로 확인했습니다 (`classDef` + `class`).
-_NOTE_CLASS_DEF = "classDef madoNote fill:#fef9c3,stroke:#ca8a04,color:#713f12"
-
-
-def _convert_flowchart_notes(lines: List[str]) -> List[str]:
-    """flowchart 안의 `Note right of A: 글` 을 `A -.- mado_note_1["글"]` 로 바꿉니다.
-
-    모델이 순서도에 시퀀스 다이어그램의 노트를 끼워 넣으면 렌더러가 다이어그램을 통째로
-    거부합니다. 노트는 "이 노드에 붙은 설명" 이라 점선으로 붙인 노드와 뜻이 같아, LLM 을
-    다시 부르지 않고 기계적으로 바꿀 수 있습니다. `loop`·`alt`·`participant` 는 구조를 바꿔야
-    해서 여기서 손대지 않고 수선 요청(`sequence-syntax-in-flowchart`)으로 남깁니다.
-
-    대상 노드 이름이 단순한 식별자(영숫자·밑줄)가 아니면 건드리지 않습니다 — 공백이 든
-    이름은 어느 노드를 뜻하는지 확신할 수 없습니다. 글이 없는 노트는 전할 것이 없어 지웁니다.
-    """
-    out: List[str] = []
-    converted: List[str] = []
-    joined = "\n".join(lines)
-    # 이미 있는 이름과 겹치지 않게 번호를 고릅니다. 수선 결과를 다시 정규화하거나 모델이
-    # 앞서 변환된 노드를 베껴 오면, 1번부터 다시 세는 순간 남의 노트에 붙어 버립니다.
-    next_index = 1
-    for line in lines:
-        m = _FLOWCHART_NOTE_RE.match(line)
-        if not m:
-            out.append(line)
-            continue
-        targets = [t.strip() for t in m.group("targets").split(",") if t.strip()]
-        if not targets or not all(_SIMPLE_NODE_ID_RE.match(t) for t in targets):
-            out.append(line)
-            continue
-        # 큰따옴표는 라벨을 닫고, 백틱은 마크다운 문자열로 읽혀 라벨을 깨뜨립니다 (파서 확인).
-        text = (m.group("text") or "").strip().replace('"', "'").replace("`", "'")
-        if not text:
-            continue
-        while re.search(rf"\bmado_note_{next_index}\b", joined):
-            next_index += 1
-        node = f"mado_note_{next_index}"
-        next_index += 1
-        converted.append(node)
-        indent = m.group("indent")
-        out.append(f'{indent}{targets[0]} -.- {node}["{text}"]')
-        for extra in targets[1:]:
-            out.append(f"{indent}{extra} -.- {node}")
-    if converted:
-        # 같은 classDef 가 두 번 있어도 파서는 받지만, 이미 있으면 덧붙이지 않습니다.
-        if not re.search(r"^\s*classDef\s+madoNote\b", joined, re.M):
-            out.append(f"  {_NOTE_CLASS_DEF}")
-        out.append(f"  class {','.join(converted)} madoNote")
-    return out
-
-
-# `style`·`classDef`·`linkStyle` 의 `rgb(…)`·`rgba(…)`. 이 문장들은 쉼표로 속성을 나누므로
-# 괄호 안의 쉼표 때문에 렌더러가 거부합니다 (파서 확인: `fill:rgb(255,0,0)` 오류,
-# `fill:#ff0000`·`#00000080` 정상). 숫자로 된 것만 16진수로 바꿉니다.
-_STYLE_LINE_RE = re.compile(r"^\s*(?:style|classDef|linkStyle)\b", re.IGNORECASE)
-_RGB_RE = re.compile(
-    r"rgba?\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*(?:[,/]\s*([\d.]+%?)\s*)?\)",
-    re.IGNORECASE,
+from app.orchestration.phases import (
+    DebatePhaseExecutor,
+    GraphTurnError,
+    PlanningPhaseExecutor,
+    SynthesisPhaseExecutor,
+    parse_gate_decision,
 )
-# `subgraph 그룹 (A)` — 따옴표·대괄호 없는 제목에 괄호. `subgraph "그룹 (A)"` 는 정상.
-_BARE_SUBGRAPH_PAREN_RE = re.compile(r'^(?P<head>\s*subgraph\s+)(?P<title>[^"\[\]\n]*[()][^"\[\]\n]*?)\s*$', re.IGNORECASE)
-# `A>결제 (PG)]` — 비대칭 모양 라벨에 괄호. `A>"결제 (PG)"]` 는 정상. 앞 글자가 단어
-# 문자여야 `-->` 같은 화살표의 `>` 와 헷갈리지 않습니다.
-_ASYMMETRIC_PAREN_RE = re.compile(r'(?<=[\w])>(?P<inner>[^"\[\]\n>]*[()][^"\[\]\n>]*)\]')
-# `A[/입력 (x)/]` 평행사변형·사다리꼴(`/` `\` 조합) 안의 괄호. `[/"입력 (x)"/]` 는 정상 (파서 확인).
-_SLANT_PAREN_RE = re.compile(r'\[(?P<o>[/\\])(?P<inner>[^"\[\]/\\\n]*[()][^"\[\]/\\\n]*)(?P<c>[/\\])\]')
-# `A((원 (x)))` 이중 원 안의 괄호 한 겹. `(("원 (x)"))` 는 정상 (파서 확인).
-_DOUBLE_CIRCLE_PAREN_RE = re.compile(r'(?<=[\w])\(\((?P<inner>[^()"\n]*\([^()"\n]*\)[^()"\n]*)\)\)')
-# `subgraph pay "결제"` — 아이디 뒤 따옴표 제목은 거부됩니다. `subgraph pay["결제"]` 는 정상 (파서 확인).
-_SUBGRAPH_ID_QUOTED_RE = re.compile(r'^(?P<head>\s*subgraph\s+)(?P<id>[A-Za-z0-9_]+)\s+"(?P<title>[^"\n]*)"\s*$', re.IGNORECASE)
-
-
-def _rgb_to_hex(m: re.Match) -> str:
-    r, g, b, alpha = m.group(1), m.group(2), m.group(3), m.group(4)
-    channels = [int(r), int(g), int(b)]
-    if any(c > 255 for c in channels):
-        return m.group(0)
-    hex_value = "#" + "".join(f"{c:02x}" for c in channels)
-    if alpha is not None:
-        try:
-            a = float(alpha[:-1]) / 100 if alpha.endswith("%") else float(alpha)
-        except ValueError:
-            return m.group(0)
-        if not 0 <= a <= 1:
-            return m.group(0)
-        if a < 1:
-            hex_value += f"{round(a * 255):02x}"
-    return hex_value
-
-
-def _quote_bracket_label(m: re.Match) -> str:
-    """`[라벨 (괄호)]` → `["라벨 (괄호)"]`. 모양 감싸개는 그대로 두되, 원통 `[(…)]` 안의 괄호는 감쌉니다."""
-    inner = m.group(1)
-    if not inner:
-        return m.group(0)
-    if _SHAPE_PAIRS.get(inner[0]) == inner[-1]:
-        # `[(DB (주))]` 는 거부되고 `[("DB (주)")]` 는 정상입니다 (파서 확인). 다른 모양
-        # (`[/…/]`, `[\…\]`)은 확인하지 않았으므로 건드리지 않습니다.
-        body = inner[1:-1]
-        if inner[0] == "(" and ("(" in body or ")" in body) and body.strip():
-            return f'[("{body.strip()}")]'
-        return m.group(0)
-    return f'["{inner.strip()}"]'
-
-
-def _normalize_flowchart_line(line: str) -> str:
-    if _STYLE_LINE_RE.match(line):
-        return _RGB_RE.sub(_rgb_to_hex, line)
-    sub = _SUBGRAPH_ID_QUOTED_RE.match(line)
-    if sub:
-        return f'{sub.group("head")}{sub.group("id")}["{sub.group("title")}"]'
-    sub = _BARE_SUBGRAPH_PAREN_RE.match(line)
-    if sub:
-        return f'{sub.group("head")}"{sub.group("title").strip()}"'
-    line = _ASYMMETRIC_PAREN_RE.sub(lambda m: f'>"{m.group("inner").strip()}"]', line)
-    line = _SLANT_PAREN_RE.sub(lambda m: f'[{m.group("o")}"{m.group("inner").strip()}"{m.group("c")}]', line)
-    line = _DOUBLE_CIRCLE_PAREN_RE.sub(lambda m: f'(("{m.group("inner").strip()}"))', line)
-    return _PAREN_LABEL_RE.sub(_quote_bracket_label, line)
-
-
-def normalize_mermaid(content: str) -> str:
-    """LLM 이 흔히 내는 Mermaid 문법 오류를 최소한만 손봅니다.
-
-    다이어그램을 다시 써 주는 것이 아니라, 렌더러가 통째로 거부해서 화면이 비는
-    경우만 막습니다: 잘못된 줄바꿈, 따옴표 없는 괄호 라벨, flowchart 에 섞인 시퀀스
-    다이어그램 노트 (v0.8.1), 스타일의 `rgb()`, 괄호가 든 원통·비대칭 모양과 subgraph 제목.
-
-    **라벨 손질은 flowchart 와 mindmap 에서만 합니다.** 시퀀스·상태·간트·클래스·ER·여정·
-    타임라인에서는 `[결제 (PG)]` 가 원래 정상이라(파서 확인), 따옴표를 씌우면 화면에 보이는
-    글자에 따옴표가 덧붙을 뿐입니다. 여러 번 적용해도 결과가 같습니다.
-    """
-    text = (content or "").replace("﻿", "").replace("\r\n", "\n").replace("\r", "\n").strip()
-    if not text:
-        return text
-
-    # ```mermaid 를 잘라낸 뒤 남은 "mermaid" 머리글
-    lines = text.split("\n")
-    if lines[0].strip().lower() == "mermaid":
-        lines = lines[1:]
-
-    kind = diagram_kind("\n".join(lines))
-    if kind in ("graph", "flowchart"):
-        lines = [_normalize_flowchart_line(line) for line in _convert_flowchart_notes(lines)]
-    elif kind == "mindmap":
-        # `가지[항목 (A)]` 는 거부되고 `가지["항목 (A)"]` 는 정상입니다 (파서 확인).
-        lines = [_PAREN_LABEL_RE.sub(_quote_bracket_label, line) for line in lines]
-    return "\n".join(lines).strip()
-
-
-def find_mermaid_blocks(text: str) -> List[Dict[str, Any]]:
-    """본문 속 Mermaid 코드 블록을 **위치와 함께** 찾습니다.
-
-    `extract_code_blocks()` 는 코드만 돌려주는데, 고친 다이어그램을 제자리에
-    끼워 넣으려면 원문의 어디였는지를 알아야 합니다. 문자열 치환으로 하면
-    같은 코드가 두 번 나올 때 엉뚱한 곳을 바꿉니다.
-    """
-    blocks: List[Dict[str, Any]] = []
-    source = text or ""
-    for fence in _iter_code_fences(source):
-        lang = fence["lang"].strip().lower() or "text"
-        raw = source[fence["start"]:fence["end"]]
-        code = raw.strip()
-        if not code:
-            continue
-        if lang == "text":
-            if not _is_untagged_mermaid(code):
-                continue
-        elif lang != "mermaid":
-            continue
-        # 범위는 **다듬은 코드**의 것이어야 합니다. 원본 그대로의 범위를 쓰면
-        # 끝의 줄바꿈까지 포함되고, 그 자리를 줄바꿈 없는 코드로 갈아 끼우는
-        # 순간 닫는 ``` 가 마지막 코드 줄에 붙어 펜스가 깨집니다.
-        start = fence["start"] + (len(raw) - len(raw.lstrip()))
-        blocks.append({"code": code, "start": start, "end": start + len(code)})
-    return blocks
-
-
-def extract_code_blocks(text: str) -> List[Dict[str, str]]:
-    """Extracts markdown code blocks from text."""
-    matches = []
-    source = text or ""
-    for fence in _iter_code_fences(source):
-        lang = fence["lang"].strip().lower() or "text"
-        code = source[fence["start"]:fence["end"]].strip()
-        if not code:
-            continue
-        if lang == "text" and _is_untagged_mermaid(code):
-            lang = "mermaid"
-        matches.append({"language": lang, "code": code})
-    return matches
-
-
-# ---------------------------------------------------------------- 기록 실패
 
 # 커밋이 실패했을 때 다시 시도하기 전에 기다리는 시간(초). 시도는 이것보다 한 번 많습니다.
-#
-# SQLite 자체가 이미 잠금을 `SQLITE_BUSY_TIMEOUT_MS` 까지 기다리므로, 여기까지 왔다면
-# 바깥 프로그램이 파일을 오래 잡고 있는 것입니다. 조금 간격을 두고 다시 두드립니다.
 PERSIST_RETRY_DELAYS = (2.0, 5.0)
 
-# ---------------------------------------------------------------- 스트리밍 조각
-
 # 스트리밍 조각 이벤트를 모아 보내는 간격(초).
-#
-# 예전에는 LLM 토큰 하나마다 이벤트를 한 통씩 보냈습니다. 초당 수십 통이 러너를 거쳐
-# 모든 화면의 구독 큐로 퍼지고, 화면이 잠깐만 느려도 큐(`MAX_QUEUED_EVENTS`)가 차서
-# 그 화면이 조용히 구독에서 빠졌습니다 — 카드가 스트리밍 도중 멈춘 채 남았습니다.
-# 0.1초는 사람 눈에 끊겨 보이지 않을 만큼 짧고, 이벤트 수는 10분의 1 아래로 줄입니다.
 STREAM_EVENT_INTERVAL = 0.1
 
-# ---------------------------------------------------------------- 합성 결과
-
-# 합성 결론으로 보지 않는 줄 — 응답 한도·빈 답변 등을 알리는 꼬리표(`> ⚠️ ...`).
-_NOTICE_LINE = re.compile(r"^\s*>\s*⚠️")
-
-# 이번 턴 전문가 발언에서 모아 산출물로 올릴 코드의 최대 개수. 초안과 수정본이 여러 번
-# 오가는 토론에서 탭이 끝없이 늘지 않게 합니다.
-MAX_DEBATE_CODE_ARTIFACTS = 12
-
-
-def format_roster(agents: List[Agent], *, with_keys: bool = False) -> str:
-    """오케스트레이터에게 제공할 전문가 목록입니다. 계획 수립·발언자 지명·태스크 분배 단계에서 공통으로 활용합니다.
-
-    이름과 역할, 사용 가능한 도구 서버 및 스킬 명칭만 간결하게 기재합니다. 시스템 프롬프트 전체는 포함하지
-    않습니다 — 역할 분담을 결정하기에는 이 정보만으로 충분하며, 시스템 프롬프트 전문을 매번 포함하면
-    수천 토큰의 불필요한 비용이 발생하기 때문입니다. 도구 서버는 파일 쓰기 권한 보유자를, 스킬은 보고서 양식 등
-    특화 지침 준수자를 판별하기 위해 명칭만 표시합니다 (스키마 및 세부 설명은 제외합니다). 스킬은 현재 활성화된
-    항목만 기재합니다. 단계적 사고 서버는 실제 작업을 수행하는 도구가 아니므로 제외합니다.
-
-    `with_keys` 는 JSON 으로 에이전트 키를 돌려받는 호출(지명·분배)용입니다. 계획 발언은
-    전문가들이 전사에서 자기 이름을 찾아 읽으므로 이름으로 부르게 합니다.
-    """
-    lines = []
-    for agent in agents:
-        thinking_server = agent.sequential_thinking.mcp_server
-        servers = [s for s in agent.allowed_mcp_servers if s != thinking_server]
-        head = f"{agent.key}: {agent.name}" if with_keys else agent.name
-        tools = f" · 도구: {', '.join(servers)}" if servers else " · 도구: 없음"
-        skills = visible_skill_names(agent)
-        if skills:
-            tools += f" · 스킬: {', '.join(skills)}"
-        lines.append(f"- {head} ({agent.role}){tools}")
-    return "\n".join(lines)
-
-
-def synthesis_has_content(text: str) -> bool:
-    """합성 발언이 실제로 결론을 담았는가.
-
-    오케스트레이터가 빈 답을 내면 예전에는 **빈 보고서가 정상 결론의 제목으로** 저장됐고,
-    화면은 그 턴의 산출물로 뷰어를 통째로 바꿔 이전 결론까지 사라져 보였습니다. 꼬리표만
-    붙은 답(응답 한도, 답이 사고 안에만 있음 등)도 결론이 아닙니다.
-    """
-    lines = (text or "").strip().splitlines()
-    # native 모드의 사고 인용 블록만 있고 답이 없는 경우. `strip_reasoning_trace` 는 이때
-    # 사고라도 넘기려고 원문을 지키므로, 여기서 따로 걷어냅니다.
-    if lines and lines[0].startswith(NATIVE_REASONING_HEADER):
-        while lines and (lines[0].startswith(">") or not lines[0].strip()):
-            lines.pop(0)
-    body = "\n".join(line for line in lines if not _NOTICE_LINE.match(line))
-    return bool(strip_reasoning_trace(body).strip())
 
 
 # DB 에 끝내 기록하지 못한 발언·산출물을 남기는 폴더.
@@ -588,6 +232,34 @@ class OrchestratorEngine:
         # 치웁니다 (`run_turn`). 발언뿐 아니라 지명·계획·요약 같은 보조 호출도 에이전트의
         # 도구를 들고 나가므로, 모든 `call_agent` 가 같은 게이트를 거칩니다.
         self._tool_gates: Dict[str, ToolGate] = {}
+        self._planning_phase = PlanningPhaseExecutor(self)
+        self._debate_phase = DebatePhaseExecutor(self)
+        self._synthesis_phase = SynthesisPhaseExecutor(self)
+
+    @property
+    def planning_phase(self) -> PlanningPhaseExecutor:
+        phase = getattr(self, "_planning_phase", None)
+        if phase is None:
+            phase = PlanningPhaseExecutor(self)
+            self._planning_phase = phase
+        return phase
+
+    @property
+    def debate_phase(self) -> DebatePhaseExecutor:
+        phase = getattr(self, "_debate_phase", None)
+        if phase is None:
+            phase = DebatePhaseExecutor(self)
+            self._debate_phase = phase
+        return phase
+
+    @property
+    def synthesis_phase(self) -> SynthesisPhaseExecutor:
+        phase = getattr(self, "_synthesis_phase", None)
+        if phase is None:
+            phase = SynthesisPhaseExecutor(self)
+            self._synthesis_phase = phase
+        return phase
+
 
     # ------------------------------------------------------------------ 작업 공간
 
@@ -1659,14 +1331,23 @@ class OrchestratorEngine:
 
             # 5. Phase 2: Multi-Round Specialist Debate Loop
             await self._set_turn(db, state, phase="debating")
-            stopped_early = await self._debate(
-                db, state, setup, control=control, on_event=on_event,
-                start_value=[
-                    plan_message.id
-                    if plan_message is not None and plan_message.msg_type != "error"
-                    else opening.id
-                ],
-            )
+            with consultation_scope(
+                setup.active_agents,
+                llm_caller=self.llm_caller,
+                custom_instructions=setup.custom_instructions,
+                session_id=session_id,
+                mcp=self._mcp_for(state),
+                tool_gate=self._gate_for(state),
+                on_event=on_event,
+            ):
+                stopped_early = await self._debate(
+                    db, state, setup, control=control, on_event=on_event,
+                    start_value=[
+                        plan_message.id
+                        if plan_message is not None and plan_message.msg_type != "error"
+                        else opening.id
+                    ],
+                )
 
             # 6. Phase 3: Final Consensus & Artifact Synthesis
             await self._conclude(
@@ -1805,14 +1486,23 @@ class OrchestratorEngine:
                 await self._update_ledger(
                     state=state, orchestrator=setup.orchestrator, on_event=on_event, reason="재개",
                 )
-                stopped_early = await self._debate(
-                    db, state, setup, control=control, on_event=on_event,
-                    start_value=[
-                        state.messages[state.plan_index].id
-                        if state.plan_index is not None else opening.id
-                    ],
-                    resume=True, redo=redo,
-                )
+                with consultation_scope(
+                    setup.active_agents,
+                    llm_caller=self.llm_caller,
+                    custom_instructions=setup.custom_instructions,
+                    session_id=session_id,
+                    mcp=self._mcp_for(state),
+                    tool_gate=self._gate_for(state),
+                    on_event=on_event,
+                ):
+                    stopped_early = await self._debate(
+                        db, state, setup, control=control, on_event=on_event,
+                        start_value=[
+                            state.messages[state.plan_index].id
+                            if state.plan_index is not None else opening.id
+                        ],
+                        resume=True, redo=redo,
+                    )
                 # 정지 등으로 다시 불리지 않은 발언의 초안은, 그 도구 기록을 "끊김" 안내로 돌립니다.
                 # 합성의 초안은 바로 아래 합성이 씁니다.
                 await self._settle_drafts(db, state, setup, on_event=on_event, keep=(turns.KIND_SYNTHESIS,))
@@ -2145,117 +1835,10 @@ class OrchestratorEngine:
         control: Optional[TurnControl],
         revision: Optional[str] = None,
     ) -> Optional[DebateMessage]:
-        """오케스트레이터가 이번 턴의 목표와 분담을 정합니다. 계획을 건너뛰는 그래프면 None.
-
-        `revision` 은 사람이 승인 화면에서 적은 수정 요청입니다 (ADR-028). 주어지면 앞의 계획과
-        그 요청을 함께 주고 계획을 처음부터 다시 쓰게 합니다. 다시 쓴 계획이 기록되면 그것이
-        이번 턴의 계획이 되고, 앞의 것은 맥락에서 빠집니다 (`context_memory.superseded_plans`).
-        """
-        orchestrator_agent = setup.orchestrator
-        user_prompt = state.user_prompt
-        state.status = "planning"
-        state.current_speaker = orchestrator_agent.name
-        if on_event:
-            await on_event({"type": "status_changed", "status": "planning", "speaker": orchestrator_agent.name})
-
-        # 0라운드에서 업무를 나누려면 누가 있는지 알아야 합니다. 예전에는 첫 턴 프롬프트에
-        # "(Architect, Coder, Critic)" 이 박혀 있어 로스터가 다른 세션에서 없는 사람에게
-        # 일을 나눴고, 이후 턴에는 목록 자체가 없었습니다.
-        specialists = [a for a in setup.active_agents if a.key != "orchestrator"]
-        roster_block = (
-            f"[이번 토론 참여 전문가]\n{format_roster(specialists)}\n\n"
-            if specialists else ""
+        """오케스트레이터가 이번 턴의 목표와 분담을 정합니다. (`PlanningPhaseExecutor.plan` 위임)"""
+        return await self.planning_phase.plan(
+            db, state, setup, on_event=on_event, control=control, revision=revision
         )
-        assign_rule = (
-            "위 전문가 각각에게, 목록의 이름 그대로 불러 이번 턴에 맡을 일과 산출물을 "
-            "한두 문장으로 지시하세요. 도구가 필요한 일(파일 쓰기 등)은 그 도구를 가진 "
-            "전문가에게 맡기고, 목록에 없는 역할에는 일을 주지 마세요."
-            if specialists else ""
-        )
-
-        # 이전 턴의 사용자 발언은 250자 요약으로 넘기지 않고 전문을 고정합니다.
-        # 계획이 1턴의 제약을 모르면 그 턴 전체가 제약을 어긴 채 시작합니다.
-        plan_record = memory.build_user_record(
-            state, model=orchestrator_agent.model,
-            token_cap=int(context_budget(orchestrator_agent) * memory.USER_RECORD_SHARE),
-        ).text
-        plan_record_block = f"{plan_record}\n\n" if plan_record else ""
-
-        # 이번 턴을 연 요청 앞까지가 이전 대화입니다 (끊긴 턴을 이어 갈 때는 요청 뒤에
-        # 개입이 있을 수 있어 "마지막 하나 빼기" 로는 가를 수 없습니다).
-        earlier = state.messages[:state.turn_message_start]
-        if revision is not None:
-            previous = (
-                strip_reasoning_trace(state.messages[state.plan_index].content).strip()
-                if state.plan_index is not None else ""
-            )
-            orch_plan_prompt = [
-                {"role": "user", "content": (
-                    f"[User Request]: {user_prompt}\n\n"
-                    f"{plan_record_block}"
-                    f"{roster_block}"
-                    f"[이전 계획]\n{previous or '(기록 없음)'}\n\n"
-                    f"[유저의 계획 수정 요청]\n{revision}\n\n"
-                    "유저가 위 계획을 승인하지 않고 수정을 요청했습니다. 요청을 반영해 이번 토론의 "
-                    "핵심 목표, 접근 방향, 각 전문가에게 부여할 발언 지침을 처음부터 끝까지 다시 "
-                    "작성하세요. 요청이 언급하지 않은 부분은 이전 계획을 유지하세요. "
-                    f"{assign_rule}"
-                )}
-            ]
-        elif earlier:
-            history_snippets = []
-            for m in earlier:
-                if m.msg_type == "error":
-                    continue
-                # 자르기 **전에** 사고 과정을 뗍니다. 그러지 않으면 250자가
-                # 통째로 "Thought 1: ..." 머리말로 채워져, 정작 결론은 한 글자도
-                # 안 실립니다.
-                history_snippets.append(
-                    f"{m.speaker}: {self._snippet(m, 250)}"
-                )
-            history_text = "\n".join(history_snippets[-6:])
-            orch_plan_prompt = [
-                {"role": "user", "content": (
-                    f"[이전 대화 맥락]:\n{history_text}\n\n"
-                    f"{plan_record_block}"
-                    f"[신규 User Request]:\n{user_prompt}\n\n"
-                    f"{roster_block}"
-                    "위의 이전 세션 논의 맥락과 새로운 유저 요청을 종합 분석하여 이번 토론의 핵심 목표, "
-                    "접근 방향, 각 전문가에게 부여할 발언 지침을 작성하세요. "
-                    f"{assign_rule}"
-                )}
-            ]
-        else:
-            orch_plan_prompt = [
-                {"role": "user", "content": (
-                    f"[User Request]: {user_prompt}\n\n"
-                    f"{roster_block}"
-                    "위 요청을 분석하고 이번 토론의 핵심 목표, 접근 방향, 각 전문가에게 부여할 "
-                    f"발언 지침을 작성하세요. {assign_rule}"
-                )}
-            ]
-
-        # 그래프의 시작 노드에서 "계획 포함" 을 끄면 계획 없이 요청만 흘려보냅니다.
-        plan_message: Optional[DebateMessage] = None
-        if setup.graph_spec is None or setup.graph_spec.start.plan:
-            plan_message = await self._speak(
-                db=db,
-                state=state,
-                agent=orchestrator_agent,
-                prompt_messages=orch_plan_prompt,
-                custom_instructions=setup.custom_instructions,
-                round_number=0,
-                msg_type="orchestrator",
-                on_event=on_event,
-                control=control,
-                kind=turns.KIND_PLAN,
-            )
-        if plan_message is not None and plan_message.msg_type != "error":
-            # 뒤쪽 발언자가 자기 몫을 잊지 않도록 목표 메시지에 고정합니다.
-            state.plan_index = len(state.messages) - 1
-        return plan_message
-
-    # ------------------------------------------------------------ 계획 승인 (ADR-028)
 
     async def _approve_plan(
         self,
@@ -2267,145 +1850,14 @@ class OrchestratorEngine:
         on_event: Optional[EventCallback],
         control: Optional[TurnControl],
     ) -> Optional[DebateMessage]:
-        """계획을 사람에게 보이고 승인을 받습니다. 토론이 시작할 계획 발언을 돌려줍니다.
-
-        planning harness 의 `계획 → 사람 승인 → 실행` 을 엔진의 단계로 옮긴 것입니다
-        (`app/orchestration/plan_gate.py`). 그쪽은 모델이 도구를 불러 주어야 승인이 열렸지만,
-        여기서는 계획이 기록되는 순간 엔진이 엽니다 — 모델이 건너뛸 수 없습니다.
-
-        * **승인** — 사람이 카드에서 고친 태스크·완료 기준이 그대로 승인된 분담이 됩니다.
-          기록에 남고(`KIND_APPROVAL`), 이후 모든 발언자의 맥락과 합성의 완료 확인에 실립니다.
-        * **수정 요청** — 의견을 유저 발언으로 기록하고 계획을 다시 쓰게 한 뒤 다시 묻습니다.
-          횟수 상한은 없습니다. 한 번마다 사람이 눌러야 하므로 혼자 도는 일이 없습니다.
-        * **정지** — 승인 없이 넘어가고, 토론은 정지 요청을 보고 곧장 합성으로 갑니다.
-        * **무응답** — 아무것도 실행하지 않고 턴을 멈춰 둡니다 (`PlanApprovalExpired`).
-
-        묻지 않는 경우: 설정이 꺼져 있거나, 답할 사람이 없거나(`control` 없음 — 배치 실행·
-        테스트), 계획이 없거나 실패했거나, 태스크를 받을 전문가가 없을 때. 계획 자체는 아무것도
-        실행하지 않고, 위험한 도구 호출은 도구 보안이 따로 막습니다.
-        """
-        settings = plan_approval_settings()
-        specialists = [a for a in setup.active_agents if a.key != "orchestrator"]
-        if (
-            not settings.enabled or control is None or not specialists
-            or plan_message is None or plan_message.msg_type == "error"
-        ):
-            return plan_message
-
-        orchestrator = setup.orchestrator
-        await self._set_turn(db, state, phase="approval")
-
-        async def _open(request) -> None:
-            if on_event:
-                await on_event({"type": "plan_approval_requested", **request.describe()})
-
-        notice = ""
-        # 수정 요청을 기록한 뒤 계획을 다시 쓰기 전에 끊긴 턴은 그 요청부터 반영합니다.
-        waiting = plan_gate.pending_revision(state.messages, state.turn_message_start)
-        while True:
-            if waiting is not None:
-                revised = await self._plan(
-                    db, state, setup, on_event=on_event, control=control, revision=waiting,
-                )
-                waiting = None
-                if revised is not None and revised.msg_type != "error":
-                    plan_message = revised
-                else:
-                    # 다시 쓰지 못했습니다. 앞의 계획이 여전히 유효하므로 그것을 다시 보입니다 —
-                    # 조용히 되묻지 않고, 무슨 일이 있었는지 카드에 적습니다.
-                    notice = (
-                        "오케스트레이터가 응답하지 못해 계획을 다시 쓰지 못했습니다. "
-                        "이전 계획을 그대로 다시 보여 드립니다."
-                    )
-            if control.stop_requested:
-                return plan_message
-
-            proposed = await self._plan_proposal(
-                db, state, setup, plan_message, specialists, on_event=on_event,
-            )
-            request = await control.ask_plan_approval(
-                agent_key=orchestrator.key,
-                agent_name=orchestrator.name,
-                payload={
-                    "plan_id": plan_message.id,
-                    # 카드가 떠 있는 동안 피드는 좁아집니다. 계획 본문을 카드에서도 읽을 수 있게 싣습니다.
-                    "plan": strip_reasoning_trace(plan_message.content).strip(),
-                    "tasks": proposed,
-                    "revision": plan_gate.revision_count(state.messages, state.turn_message_start),
-                    "notice": notice,
-                },
-                timeout=float(settings.timeout),
-                on_open=_open,
-            )
-            notice = ""
-            if on_event:
-                await on_event({
-                    "type": "plan_approval_resolved",
-                    "id": request.id,
-                    "agent_name": orchestrator.name,
-                    "decision": request.decision,
-                    "wait_seconds": float(settings.timeout),
-                })
-
-            if request.decision == plan_gate.DECISION_APPROVE:
-                tasks, changes = plan_gate.settle(proposed, request.tasks)
-                await self._record_note(
-                    db=db, state=state, on_event=on_event, agent=orchestrator,
-                    round_number=0, msg_type="orchestrator",
-                    content=plan_gate.approval_note(tasks, changes),
-                    kind=turns.KIND_APPROVAL,
-                    data={
-                        "plan_id": plan_message.id, "tasks": tasks,
-                        "changes": changes, "approver": request.approver,
-                    },
-                )
-                state.plan_tasks = tasks
-                state.approval_index = len(state.messages) - 1
-                logger.info(
-                    f"Plan for session {state.session_id} approved "
-                    f"({len(tasks)} task(s), {len(changes)} change(s) by the user)"
-                )
-                return plan_message
-
-            if request.decision == plan_gate.DECISION_REVISE:
-                text = plan_gate.revision_request(
-                    proposed, request.comment,
-                    plan_gate.clean_comments(proposed, request.task_comments), request.tasks,
-                )
-                await self._record_user_message(
-                    db=db, state=state, content=text, round_number=0,
-                    on_event=on_event, kind=turns.KIND_PLAN_REVISION,
-                )
-                waiting = plan_gate.revision_body(text)
-                continue
-
-            if request.decision == plan_gate.DECISION_STOPPED:
-                return plan_message
-
-            minutes = max(1, int(round(float(settings.timeout) / 60)))
-            raise plan_gate.PlanApprovalExpired(
-                f"계획 승인을 {minutes}분 동안 받지 못해 턴을 멈춰 두었습니다. 아무것도 실행되지 "
-                f"않았습니다. '이어서 진행' 을 누르면 같은 계획으로 승인 카드가 다시 열립니다."
-            )
+        """계획을 사람에게 보이고 승인을 받습니다. (`PlanningPhaseExecutor.approve_plan` 위임)"""
+        return await self.planning_phase.approve_plan(
+            db, state, setup, plan_message, on_event=on_event, control=control
+        )
 
     async def _turn_config(self, db, state: DebateState) -> Optional[Dict[str, Any]]:
-        """턴 기록에 고정해 둔 구성의 **지금** 값. 읽지 못하면 None.
-
-        ORM 객체가 아니라 컬럼을 직접 읽습니다. `_set_turn` 은 행을 문장으로 고치므로, 세션이
-        들고 있는 객체는 그 사이의 변경(스킬 지정 등)을 모를 수 있습니다.
-        """
-        if not state.turn_id:
-            return None
-        try:
-            row = (await db.execute(
-                select(TurnModel.config).where(TurnModel.id == state.turn_id)
-            )).first()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - 못 읽어도 턴은 계속됩니다
-            logger.warning(f"Could not read the config of turn {state.turn_id}: {exc}")
-            return None
-        return dict(row[0] or {}) if row is not None else None
+        """턴 기록에 고정해 둔 구성의 지금 값. (`PlanningPhaseExecutor.turn_config` 위임)"""
+        return await self.planning_phase.turn_config(db, state)
 
     async def _plan_proposal(
         self,
@@ -2417,35 +1869,10 @@ class OrchestratorEngine:
         *,
         on_event: Optional[EventCallback],
     ) -> List[Dict[str, Any]]:
-        """이 계획의 분담표 (전문가별 태스크). 이미 받아 둔 것이 있으면 다시 묻지 않습니다.
-
-        받은 분담표는 턴 기록에 적어 둡니다. 승인을 기다리다 멈춘 턴을 이어 갈 때 LLM 을 다시
-        부르지 않고, 사람이 같은 카드를 다시 봅니다. 분담표를 받지 못하면 전문가마다 빈 칸으로
-        카드를 띄웁니다 — 승인 자체를 건너뛰지는 않습니다.
-        """
-        config = await self._turn_config(db, state)
-        saved = (config or {}).get("plan_gate") or {}
-        if saved.get("plan_id") == plan_message.id:
-            known = {a.key for a in specialists}
-            tasks = [t for t in plan_gate.clean_tasks(saved.get("tasks")) if t["agent"] in known]
-            if tasks:
-                return tasks
-
-        if on_event:
-            await on_event({"type": "plan_tasks_started", "agent_name": setup.orchestrator.name})
-        try:
-            tasks = await self._ask_orchestrator_for_plan_tasks(
-                orchestrator=setup.orchestrator, specialists=specialists, state=state,
-                plan_message=plan_message, custom_instructions=setup.custom_instructions,
-            )
-        except LLMUnavailableError as exc:
-            logger.warning(f"Could not get the task list of the plan; showing blank rows: {exc}")
-            tasks = plan_gate.blank_tasks(specialists)
-
-        if config is not None:
-            config["plan_gate"] = {"plan_id": plan_message.id, "tasks": tasks}
-            await self._set_turn(db, state, config=config)
-        return tasks
+        """이 계획의 분담표 (전문가별 태스크). (`PlanningPhaseExecutor.plan_proposal` 위임)"""
+        return await self.planning_phase.plan_proposal(
+            db, state, setup, plan_message, specialists, on_event=on_event
+        )
 
     async def _ask_orchestrator_for_plan_tasks(
         self,
@@ -2456,22 +1883,14 @@ class OrchestratorEngine:
         plan_message: DebateMessage,
         custom_instructions: str,
     ) -> List[Dict[str, Any]]:
-        """계획 본문을 전문가별 태스크로 옮겨 받습니다.
-
-        발언자 지명(`_ask_orchestrator_for_speakers`)과 같은 이유로 도구와 단계적 사고를 끈
-        사본으로 부릅니다. 이건 JSON 을 받는 호출이지 발언이 아닙니다.
-        """
-        planner = self._tool_less(orchestrator)
-        prompt = [{"role": "user", "content": plan_gate.tasks_prompt(
-            state.user_prompt,
-            strip_reasoning_trace(plan_message.content).strip(),
-            format_roster(specialists, with_keys=True),
-        )}]
-        content, _ = await self.llm_caller.call_agent(
-            planner, prompt, custom_instructions, session_id=state.session_id,
-            mcp=self._mcp_for(state), tool_gate=self._gate_for(state), ledger=state.decision_ledger,
+        """계획 본문을 전문가별 태스크로 옮겨 받습니다. (`PlanningPhaseExecutor.ask_orchestrator_for_plan_tasks` 위임)"""
+        return await self.planning_phase.ask_orchestrator_for_plan_tasks(
+            orchestrator=orchestrator,
+            specialists=specialists,
+            state=state,
+            plan_message=plan_message,
+            custom_instructions=custom_instructions,
         )
-        return plan_gate.parse_tasks(content, specialists)
 
     async def _debate(
         self,
@@ -2485,172 +1904,17 @@ class OrchestratorEngine:
         resume: bool = False,
         redo: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> bool:
-        """전문가 토론 라운드. 사람이 정지시켰으면 True.
-
-        `resume` 이면 끊긴 턴을 이어 갑니다 — 기록에서 어디까지 돌았는지 다시 세어(`turns`),
-        라운드 전략은 마지막 라운드에 아직 발언하지 않은 사람부터, 그래프는 스케줄러를 재생해
-        끊긴 단계의 남은 노드부터 돕니다. `redo` 는 끝나지 못한 발언이 실행한 도구 {에이전트 키:
-        기록}으로, 그 에이전트가 다시 말할 때 지침 앞에 한 번 붙습니다.
-        """
-        redo = dict(redo or {})
-        strategy = get_strategy(setup.strategy_name)
-        orchestrator_agent = setup.orchestrator
-        max_rounds = setup.max_rounds
-        state.status = "debating"
-
-        # 계획 발언과 첫 라운드 사이도 개입이 반영되는 지점입니다.
-        await self._apply_interjections(
-            db=db, state=state, control=control, round_number=0, on_event=on_event
+        """전문가 토론 라운드. (`DebatePhaseExecutor.debate` 위임)"""
+        return await self.debate_phase.debate(
+            db,
+            state,
+            setup,
+            control=control,
+            on_event=on_event,
+            start_value=start_value,
+            resume=resume,
+            redo=redo,
         )
-
-        stopped_early = False
-        if setup.graph_spec is not None:
-            # 그래프 토론은 라운드 대신 그래프의 단계로 돕니다. 계획·합성·산출물·장부는
-            # 다른 전략과 같은 코드를 씁니다.
-            replay = None
-            if resume:
-                replay = turns.replay_graph(
-                    setup.graph_spec, max_rounds, start_value,
-                    state.messages[state.turn_message_start:],
-                )
-            return await self._run_graph(
-                db=db,
-                state=state,
-                spec=setup.graph_spec,
-                orchestrator=orchestrator_agent,
-                active_agents=setup.active_agents,
-                parallel_limit=setup.parallel_limit,
-                max_visits=max_rounds,
-                control=control,
-                on_event=on_event,
-                start_value=start_value,
-                replay=replay,
-                redo=redo,
-            )
-
-        # 이어 가는 턴이면 마지막 라운드부터, 그 라운드에 이미 말한 사람은 건너뜁니다. 그 라운드의
-        # 지명·분배가 기록돼 있으면 다시 묻지 않고 그대로 씁니다.
-        start_round, spoken, record = 1, set(), turns.RoundRecord()
-        if resume:
-            turn_messages = state.messages[state.turn_message_start:]
-            last_round, spoken_keys = turns.round_progress(turn_messages)
-            if last_round:
-                start_round, spoken = last_round, spoken_keys
-                record = turns.round_record(turn_messages, last_round)
-
-        for round_num in range(start_round, max_rounds + 1):
-            resuming_round = resume and round_num == start_round
-            if control is not None and control.stop_requested:
-                stopped_early = True
-                break
-
-            state.current_round = round_num
-            if on_event:
-                await on_event({
-                    "type": "round_started",
-                    "round": round_num,
-                    "max_rounds": max_rounds,
-                })
-
-            # 병렬 지시 전략은 라운드 전체를 다르게 돕니다 — 태스크를 나눠 주고
-            # 동시에 띄운 뒤 취합합니다. 발언자를 한 명씩 세우는 아래 루프와
-            # 섞을 수 없어 라운드째로 갈라집니다.
-            if strategy.orchestrator_dispatches_parallel:
-                stopped_early = await self._run_parallel_round(
-                    db=db,
-                    state=state,
-                    strategy=strategy,
-                    orchestrator=orchestrator_agent,
-                    active_agents=setup.active_agents,
-                    round_num=round_num,
-                    custom_instructions=setup.custom_instructions,
-                    parallel_limit=setup.parallel_limit,
-                    control=control,
-                    on_event=on_event,
-                    resume=record if resuming_round else None,
-                    done=spoken if resuming_round else None,
-                    redo=redo,
-                )
-                if stopped_early:
-                    break
-                if round_num < max_rounds and not (control is not None and control.stop_requested):
-                    await self._update_ledger(
-                        state=state, orchestrator=orchestrator_agent,
-                        on_event=on_event, reason=f"Round {round_num}",
-                    )
-                continue
-
-            if resuming_round and record.nominated is not None:
-                by_key = {a.key: a for a in setup.active_agents}
-                speakers = [by_key[key] for key in record.nominated if key in by_key]
-            else:
-                speakers = await self._select_speakers(
-                    db=db,
-                    state=state,
-                    strategy=strategy,
-                    orchestrator=orchestrator_agent,
-                    active_agents=setup.active_agents,
-                    round_num=round_num,
-                    custom_instructions=setup.custom_instructions,
-                    on_event=on_event,
-                )
-
-            skip = spoken if resuming_round else set()
-            for speaker_index, agent in enumerate(speakers):
-                if agent.key in skip:
-                    continue
-                # 발언과 발언 사이. 사용자의 개입과 정지는 여기서만 반영됩니다.
-                # 진행 중이던 발언을 끊지 않으므로 잘린 기록이 남지 않습니다.
-                await self._apply_interjections(
-                    db=db, state=state, control=control,
-                    round_number=round_num, on_event=on_event,
-                )
-                if control is not None and control.stop_requested:
-                    stopped_early = True
-                    break
-
-                state.current_speaker = agent.name
-                if on_event:
-                    await on_event({
-                        "type": "status_changed",
-                        "status": "debating",
-                        "speaker": agent.name,
-                        "round": round_num,
-                    })
-
-                instruction = strategy.turn_instruction(agent, speakers, speaker_index, state)
-                if agent.key in redo:
-                    instruction = f"{turns.resume_notice(redo.pop(agent.key))}\n\n{instruction}".strip()
-                await self._speak(
-                    db=db,
-                    state=state,
-                    agent=agent,
-                    prompt_messages=await self._context_for_speech(
-                        state,
-                        agent,
-                        instruction,
-                        orchestrator=orchestrator_agent,
-                        on_event=on_event,
-                    ),
-                    custom_instructions=setup.custom_instructions,
-                    round_number=round_num,
-                    msg_type="agent",
-                    on_event=on_event,
-                    control=control,
-                )
-
-            if stopped_early:
-                break
-
-            # 마지막 라운드 뒤와 정지 요청 뒤에는 건너뜁니다. 곧바로 합성이 전사를 직접
-            # 읽고, 합성 뒤의 갱신이 이 라운드까지 함께 접습니다 — 같은 내용으로 두 번
-            # 부를 이유도, 정지를 원한 사람을 한 번 더 기다리게 할 이유도 없습니다.
-            if round_num < max_rounds and not (control is not None and control.stop_requested):
-                await self._update_ledger(
-                    state=state, orchestrator=orchestrator_agent,
-                    on_event=on_event, reason=f"Round {round_num}",
-                )
-        return stopped_early
 
     async def _conclude(
         self,
@@ -2663,175 +1927,17 @@ class OrchestratorEngine:
         control: Optional[TurnControl],
         on_event: Optional[EventCallback],
     ) -> None:
-        """최종 합성 → 산출물 → 장부 → 턴 완료."""
-        session_id = state.session_id
-        orchestrator_agent = setup.orchestrator
-        custom_instructions = setup.custom_instructions
-
-        # 정지 요청이 마지막 발언 도중에 들어왔더라도, 그때까지 쌓인 개입은
-        # 합성 전사에 실어 보냅니다.
-        await self._apply_interjections(
-            db=db, state=state, control=control,
-            round_number=state.current_round, on_event=on_event,
-        )
-        state.stopped_early = stopped_early
-        if stopped_early:
-            logger.info(
-                f"Debate for session {session_id} "
-                + ("was interrupted by a restart" if state.interrupted else "stopped early by the user")
-                + f" at round {state.current_round}/{setup.max_rounds}; synthesizing what we have."
-            )
-
-        state.status = "synthesizing"
-        state.current_speaker = orchestrator_agent.name
-        await self._set_turn(db, state, phase="synthesizing", stopped_early=stopped_early)
-        if on_event:
-            await on_event({
-                "type": "status_changed",
-                "status": "synthesizing",
-                "speaker": orchestrator_agent.name,
-            })
-
-        async def _fix_diagrams(text: str) -> str:
-            return await self._repair_mermaid_blocks(
-                text,
-                agent=orchestrator_agent,
-                custom_instructions=custom_instructions,
-                state=state,
-                on_event=on_event,
-            )
-
-        synth_message = await self._speak(
-            db=db,
-            state=state,
-            agent=orchestrator_agent,
-            prompt_messages=await self._synthesis_prompt_with_notice(
-                state, orchestrator_agent, on_event
-            ),
-            custom_instructions=custom_instructions,
-            round_number=state.current_round + 1,
-            msg_type="orchestrator",
+        """최종 합성 → 산출물 → 장부 → 턴 완료. (`SynthesisPhaseExecutor.conclude` 위임)"""
+        await self.synthesis_phase.conclude(
+            db,
+            state,
+            setup,
+            stopped_early=stopped_early,
+            turn_started_at=turn_started_at,
+            control=control,
             on_event=on_event,
-            post_process=_fix_diagrams,
-            turn_started_at=turn_started_at,
-            kind=turns.KIND_SYNTHESIS,
-        )
-        synthesis_failed = synth_message.msg_type == "error"
-        failure_reason = "LLM 연결 끊김" if synthesis_failed else ""
-        # 연결은 됐는데 결론이 비었습니다. 컨텍스트가 가득 찼거나, 답을 사고 안에만
-        # 썼거나, 응답 한도를 사고에 다 쓴 경우입니다. 정상 결론으로 저장하면 안 됩니다.
-        if not synthesis_failed and not synthesis_has_content(synth_message.content):
-            synthesis_failed = True
-            failure_reason = "빈 응답"
-            logger.error(
-                f"Synthesis for session {session_id} came back empty; "
-                f"keeping each specialist's latest speech as the report instead"
-            )
-
-        # 7. Extract and Persist Artifacts
-        artifacts = self._extract_artifacts_from_synthesis(
-            session_id, synth_message.content, state, synthesis_failed=synthesis_failed,
-            failure_reason=failure_reason,
-            # 합성 발언이 끝난 시각. 다이어그램 자가 수선(`_fix_diagrams`)까지 마친
-            # 뒤에 잰 값이라, 보고서 본문이 확정된 순간입니다.
-            completed_at=synth_message.finished_at,
-            turn_started_at=turn_started_at,
-        )
-        # id 를 먼저 정해 둡니다. 다시 시도할 때 같은 산출물이 같은 행이 되어야 합니다.
-        for art in artifacts:
-            art.id = str(uuid.uuid4())
-            state.artifacts.append(art)
-
-        if artifacts:
-            fence = "`" * 3
-            await self._persist(
-                db,
-                lambda: [
-                    ArtifactModel(
-                        id=art.id,
-                        session_id=session_id,
-                        artifact_type=art.artifact_type,
-                        title=art.title,
-                        content=art.content,
-                        language=art.language,
-                    )
-                    for art in artifacts
-                ],
-                what=f"{len(artifacts)} artifact(s)",
-                label=f"산출물 {len(artifacts)}건",
-                kind="artifacts",
-                session_id=session_id,
-                fallback_title="산출물",
-                fallback_body="\n\n".join(
-                    f"## {art.title} ({art.artifact_type})\n\n"
-                    f"{fence}{art.language or ''}\n{art.content}\n{fence}"
-                    for art in artifacts
-                ),
-                on_event=on_event,
-            )
-
-        # 산출물은 저장되는 대로 화면에 보냅니다. 아래 장부 갱신은 LLM 호출 한 번이라,
-        # 그 뒤로 미루면 보고서 발언은 떴는데 산출물 탭만 그만큼 늦게 채워집니다.
-        if on_event:
-            await on_event({
-                "type": "artifacts_synthesized",
-                "artifacts": [a.model_dump() for a in state.artifacts],
-            })
-
-        # 이번 턴의 결론까지 장부에 접습니다. 다음 턴은 이 장부를 들고 시작합니다.
-        await self._update_ledger(
-            state=state, orchestrator=orchestrator_agent,
-            on_event=on_event, reason="최종 합성",
         )
 
-        # 합성이 시작된 뒤에 도착한 개입은 이번 턴에 실을 자리가 없습니다.
-        # 그대로 버리면 화면은 "다음 발언 차례에 반영됩니다" 라고 알린 채 턴이
-        # 끝나 버립니다. 기록에 남겨 두면 다음 턴이 맥락으로 읽어 갑니다.
-        deferred = await self._apply_interjections(
-            db=db, state=state, control=control,
-            round_number=state.current_round + 1, on_event=on_event,
-        )
-        if deferred and on_event:
-            await on_event({"type": "interjections_deferred", "count": deferred})
-
-        # 장부와 요약은 턴이 끝까지 온 경우에만 저장합니다 (모듈 설명의 "저장").
-        await self._persist_memory(db, state, on_event)
-
-        state.status = "completed"
-        # 쓰이지 않은 초안이 남았으면 그 도구 기록을 "끊김" 안내로 돌리고 지웁니다. 턴이 끝났으니
-        # 더 이어 갈 발언이 없습니다.
-        await self._settle_drafts(db, state, setup, on_event=on_event)
-        await self._set_turn(
-            db, state, status=TURN_COMPLETED, phase="completed", finished_at=utc_now(),
-        )
-        # 사용자가 도중에 끊었다면 합의에 이른 것이 아닙니다.
-        state.is_consensus_reached = (
-            not state.failed_agent_keys and not state.stopped_early and not synthesis_failed
-        )
-        if state.failed_agent_keys:
-            state.error_message = (
-                "다음 에이전트가 LLM 엔드포인트에 닿지 못했습니다: "
-                + ", ".join(state.failed_agent_keys)
-            )
-        elif synthesis_failed:
-            state.error_message = (
-                "오케스트레이터의 최종 결론이 비어 있었습니다. 전문가별 마지막 발언을 "
-                "산출물로 남겼습니다."
-            )
-
-        if on_event:
-            await on_event({
-                "type": "turn_completed",
-                "status": "completed",
-                "turn_id": state.turn_id,
-                "failed_agents": list(state.failed_agent_keys),
-                "fallback_agents": list(state.fallback_agent_keys),
-                "error_message": state.error_message,
-                "stopped_early": state.stopped_early,
-                "interrupted": state.interrupted,
-                "rounds_completed": state.current_round,
-                "max_rounds": state.max_rounds,
-            })
 
     # ------------------------------------------------------------ 발언자 선정
 
@@ -2929,64 +2035,17 @@ class OrchestratorEngine:
         custom_instructions: str,
         on_event: Optional[EventCallback],
     ) -> List[Agent]:
-        """이번 라운드에 누가 발언할지 정합니다.
-
-        보통은 전략이 결정적으로 정합니다. '오케스트레이터 지명' 전략일 때만
-        오케스트레이터에게 물어, 지금 필요한 에이전트만 부릅니다.
-
-        지명에 실패하면 (엔드포인트가 없거나, 응답에서 아는 키를 하나도 못 찾거나)
-        전략의 결정적 순서로 물러섭니다. 물러섰다는 사실은 피드에 남깁니다 —
-        조용히 다른 순서로 도는 것이 제일 나쁩니다.
-        """
-        fallback = strategy.get_speakers_for_round(active_agents, round_num, state)
-        if not strategy.orchestrator_selects_speakers or len(fallback) <= 1:
-            return fallback
-
-        async def _fall_back(why: str) -> List[Agent]:
-            await self._record_note(
-                db=db, state=state, on_event=on_event, agent=orchestrator,
-                round_number=round_num, msg_type="error",
-                content=(
-                    f"[발언자 지명 실패] {why}\n"
-                    f"우선순위 순서로 진행합니다: {', '.join(a.name for a in fallback)}"
-                ),
-                kind=turns.KIND_NOMINATION,
-                data={"speakers": [a.key for a in fallback], "fallback": True},
-            )
-            return fallback
-
-        try:
-            picked, reason = await self._ask_orchestrator_for_speakers(
-                orchestrator=orchestrator,
-                candidates=fallback,
-                state=state,
-                round_num=round_num,
-                custom_instructions=custom_instructions,
-            )
-        except LLMUnavailableError as exc:
-            logger.warning(f"Speaker selection failed; using the deterministic order: {exc}")
-            return await _fall_back(str(exc))
-
-        if not picked:
-            logger.warning("Orchestrator named no known agent; using the deterministic order.")
-            return await _fall_back(
-                "오케스트레이터의 응답에서 이번 라운드에 부를 에이전트를 찾지 못했습니다."
-            )
-
-        # 누가 왜 불렸는지는 기록에 남아야 합니다. 부르지 않은 에이전트가 있다는
-        # 사실도 토론 기록을 읽는 사람에게 보여야 합니다.
-        skipped = [a.name for a in fallback if a not in picked]
-        summary = f"[Round {round_num} 발언권] {' → '.join(a.name for a in picked)}"
-        if skipped:
-            summary += f"\n(이번 라운드 미지명: {', '.join(skipped)})"
-        if reason:
-            summary += f"\n\n{reason}"
-        await self._record_note(
-            db=db, state=state, on_event=on_event, agent=orchestrator,
-            round_number=round_num, msg_type="orchestrator", content=summary,
-            kind=turns.KIND_NOMINATION, data={"speakers": [a.key for a in picked]},
+        """이번 라운드에 누가 발언할지 정합니다. (`DebatePhaseExecutor.select_speakers` 위임)"""
+        return await self.debate_phase.select_speakers(
+            db=db,
+            state=state,
+            strategy=strategy,
+            orchestrator=orchestrator,
+            active_agents=active_agents,
+            round_num=round_num,
+            custom_instructions=custom_instructions,
+            on_event=on_event,
         )
-        return picked
 
     async def _ask_orchestrator_for_speakers(
         self,
@@ -2997,80 +2056,21 @@ class OrchestratorEngine:
         round_num: int,
         custom_instructions: str,
     ) -> "tuple[List[Agent], str]":
-        """오케스트레이터에게 이번 라운드 발언자와 순서를 물어봅니다.
-
-        도구와 단계적 사고를 **끈 사본**으로 부릅니다. 이건 JSON 한 줄을 받는
-        라우팅 호출이지 발언이 아닙니다. 도구를 붙이면 지명하려다 파일을 읽기
-        시작하고, 단계적 사고 프로토콜이 주입되면 `Thought 1..N` 을 쓰다가 형식을
-        놓칩니다.
-        """
-        selector = self._tool_less(orchestrator)
-
-        roster = format_roster(candidates, with_keys=True)
-        recent = [
-            f"{m.speaker}: {self._snippet(m, 300)}"
-            for m in state.messages if m.msg_type != "error"
-        ][-8:]
-
-        prompt = [{"role": "user", "content": (
-            f"[목표]\n{state.user_prompt}\n\n"
-            + self._routing_record(state, selector) +
-            f"[지금까지의 토론]\n" + ("\n".join(recent) or "(아직 없음)") + "\n\n"
-            f"[이번 라운드에 부를 수 있는 에이전트]\n{roster}\n\n"
-            f"지금은 Round {round_num}/{state.max_rounds} 입니다. 논의를 진전시키기 위해 "
-            f"이번 라운드에 **꼭 필요한 에이전트만** 골라 발언 순서를 정하세요. 전원을 부를 "
-            f"필요는 없고, 한 명만 불러도 됩니다.\n\n"
-            f"다음 JSON 형식으로만 답하세요:\n"
-            f'{{"speakers": ["에이전트키", ...], "reason": "한두 문장으로 지명 사유"}}'
-        )}]
-
-        content, _ = await self.llm_caller.call_agent(
-            selector, prompt, custom_instructions, session_id=state.session_id,
-            mcp=self._mcp_for(state), tool_gate=self._gate_for(state), ledger=state.decision_ledger,
+        """오케스트레이터에게 이번 라운드 발언자와 순서를 물어봅니다. (`DebatePhaseExecutor.ask_orchestrator_for_speakers` 위임)"""
+        return await self.debate_phase.ask_orchestrator_for_speakers(
+            orchestrator=orchestrator,
+            candidates=candidates,
+            state=state,
+            round_num=round_num,
+            custom_instructions=custom_instructions,
         )
-        return self._parse_speaker_selection(content, candidates)
 
     @staticmethod
     def _parse_speaker_selection(
         content: str, candidates: List[Agent]
     ) -> "tuple[List[Agent], str]":
-        """응답에서 지명된 에이전트와 사유를 뽑습니다.
-
-        JSON 이 온전하면 그것을 쓰고, 아니면 본문에서 아는 키를 **등장 순서대로**
-        긁습니다. 모델이 설명을 곁들이거나 펜스를 두르는 일은 흔하고, 그때마다
-        지명을 포기하면 이 전략은 결국 우선순위 순서와 같아집니다.
-        """
-        by_key = {a.key: a for a in candidates}
-        reason = ""
-        keys: List[str] = []
-
-        block = re.search(r"\{.*\}", content or "", re.DOTALL)
-        if block:
-            try:
-                data = json.loads(block.group(0))
-            except (ValueError, TypeError):
-                data = None
-            if isinstance(data, dict):
-                raw = data.get("speakers")
-                if isinstance(raw, list):
-                    keys = [str(k).strip() for k in raw]
-                reason = str(data.get("reason") or "").strip()
-
-        if not any(k in by_key for k in keys):
-            # 본문에서 키를 긁습니다. 등장 순서가 곧 발언 순서입니다.
-            found = []
-            for key in by_key:
-                match = re.search(rf"\b{re.escape(key)}\b", content or "")
-                if match:
-                    found.append((match.start(), key))
-            keys = [key for _, key in sorted(found)]
-
-        picked: List[Agent] = []
-        for key in keys:
-            agent = by_key.get(key)
-            if agent is not None and agent not in picked:
-                picked.append(agent)
-        return picked, reason
+        """응답에서 지명된 에이전트와 사유를 뽑습니다. (`DebatePhaseExecutor.parse_speaker_selection` 위임)"""
+        return DebatePhaseExecutor.parse_speaker_selection(content, candidates)
 
     # ------------------------------------------------------- 병렬 지시 라운드
 
@@ -3091,148 +2091,22 @@ class OrchestratorEngine:
         done: Optional[Set[str]] = None,
         redo: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> bool:
-        """한 라운드를 병렬로 돕니다. 정지 요청으로 라운드를 접었으면 True.
-
-        순서: 개입 반영 → 태스크 분배 → 동시 실행 → 취합. 사람의 개입과 정지를 보는
-        지점이 라운드 경계뿐인 것은 이 전략의 성질입니다 — 다른 전략은 발언과 발언
-        사이에서 볼 수 있지만, 여기서는 그 '사이' 에 전원이 이미 달리고 있습니다.
-
-        `resume` 은 끊긴 라운드의 기록입니다 (ADR-024). 분배가 기록돼 있으면 다시 묻지 않고
-        그 태스크로, `done` 에 든 에이전트는 건너뛰고 남은 사람만 돌린 뒤 취합합니다. 남은 사람의
-        프롬프트는 이 라운드의 발언을 뺀 기록으로 만듭니다 — 도는 중에도 서로의 이번 라운드
-        결과는 보지 못했습니다. 취합까지 기록돼 있으면 할 일이 없습니다.
-        """
-        if resume is not None and resume.merged:
-            return False
-        redo = redo if redo is not None else {}
-        done = set(done or ())
-        resumed = resume is not None and resume.tasks is not None
-
-        if resumed:
-            by_key = {a.key: a for a in active_agents}
-            assignments = [(by_key[key], task) for key, task in resume.tasks if key in by_key]
-        else:
-            candidates = strategy.get_speakers_for_round(active_agents, round_num, state)
-            if not candidates:
-                return False
-
-            # 분배 **전에** 개입을 반영합니다. 이 라운드의 태스크를 정하는 근거가
-            # 되어야지, 이미 나눠 준 뒤에 들어와서는 다음 라운드까지 놀게 됩니다.
-            await self._apply_interjections(
-                db=db, state=state, control=control, round_number=round_num, on_event=on_event
-            )
-            if control is not None and control.stop_requested:
-                return True
-
-            assignments = await self._dispatch_parallel_tasks(
-                db=db, state=state, strategy=strategy, orchestrator=orchestrator,
-                candidates=candidates, round_num=round_num,
-                custom_instructions=custom_instructions,
-                parallel_limit=parallel_limit, on_event=on_event,
-            )
-        if not assignments:
-            return False
-
-        board = self._assignment_board(assignments)
-        todo = [i for i, (agent, _task) in enumerate(assignments) if agent.key not in done]
-        prompt_state = state
-        if resumed:
-            prompt_state = state.model_copy(update={"messages": [
-                m for m in state.messages
-                if not (m.round_number == round_num and turns.kind_of(m) in (turns.KIND_SPEECH, turns.KIND_FAILURE))
-            ]})
-        # 프롬프트는 **전부 먼저** 만듭니다. 코루틴 안에서 만들면 먼저 끝난 동료의
-        # 발언이 늦게 시작한 쪽의 맥락에 섞여 들어가, 같은 라운드인데 누구는 남의
-        # 답을 보고 누구는 못 보는 상태가 됩니다. 그건 병렬이 아닙니다.
-        prompts: Dict[int, List[Dict[str, Any]]] = {}
-        for index in todo:
-            agent, task = assignments[index]
-            instruction = self._parallel_turn_instruction(strategy, agent, task, board)
-            if agent.key in redo:
-                instruction = f"{turns.resume_notice(redo.pop(agent.key))}\n\n{instruction}"
-            prompts[index] = await self._context_for_speech(
-                prompt_state, agent, instruction, orchestrator=orchestrator, on_event=on_event,
-            )
-
-        # 기록 시각을 지시 순서로 박아 둡니다 (`_speak` 의 `created_at` 주석 참고).
-        base_time = utc_now()
-        db_lock = asyncio.Lock()
-        semaphore = asyncio.Semaphore(parallel_limit)
-        start_index = len(state.messages)
-
-        async def run_one(index: int) -> DebateMessage:
-            agent, _task = assignments[index]
-            async with semaphore:
-                return await self._speak(
-                    db=db,
-                    state=state,
-                    agent=agent,
-                    prompt_messages=prompts[index],
-                    custom_instructions=custom_instructions,
-                    round_number=round_num,
-                    msg_type="agent",
-                    on_event=on_event,
-                    control=control,
-                    db_lock=db_lock,
-                    created_at=base_time + timedelta(milliseconds=index),
-                )
-
-        if on_event and todo:
-            await on_event({
-                "type": "status_changed",
-                "status": "debating",
-                "speaker": " · ".join(assignments[i][0].name for i in todo),
-                "round": round_num,
-            })
-
-        results = await asyncio.gather(*(run_one(i) for i in todo), return_exceptions=True)
-
-        # 완료 순서가 아니라 지시 순서로 정렬합니다. 실시간 화면은 카드가 만들어진
-        # 순서(= 지시 순서)로 보여주는데, 기록은 `created_at` 순으로 다시 읽히므로
-        # 여기서 맞춰 두지 않으면 새로고침 후 순서가 달라 보입니다.
-        spoken = [r for r in results if isinstance(r, DebateMessage)]
-        produced = state.messages[start_index:]
-        if {m.id for m in spoken} == {m.id for m in produced}:
-            state.messages[start_index:] = spoken
-
-        # 취소는 실패가 아닙니다 (ADR-014: 취소만 전파합니다). `return_exceptions=True` 는 발언
-        # 하나의 취소도 결과로 돌려주므로, 그대로 두면 서버 종료로 끊긴 발언이 "실패" 로 기록되고
-        # 토론이 계속됩니다. 다른 발언이 기록을 마친 뒤 올려 보냅니다 (그래프 단계와 같습니다).
-        for result in results:
-            if isinstance(result, asyncio.CancelledError):
-                raise result
-
-        for index, result in zip(todo, results):
-            agent = assignments[index][0]
-            if isinstance(result, BaseException):
-                logger.error(
-                    f"Parallel turn for '{agent.key}' failed: {type(result).__name__}: {result}",
-                    exc_info=result,
-                )
-                if agent.key not in state.failed_agent_keys:
-                    state.failed_agent_keys.append(agent.key)
-                await self._record_note(
-                    db=db, state=state, on_event=on_event, agent=agent,
-                    round_number=round_num, msg_type="error",
-                    content=(
-                        f"> ⚠️ **{agent.name} 의 병렬 발언이 실패했습니다.**\n>\n"
-                        f"> - 원인: `{type(result).__name__}: {result}`\n>\n"
-                        f"> 이 자리에 들어갈 내용을 대신 지어내지 않았습니다."
-                    ),
-                    kind=turns.KIND_FAILURE,
-                )
-
-        if control is not None and control.stop_requested:
-            # 정지를 원한 사람에게 취합 발언을 한 번 더 기다리게 할 이유가 없습니다.
-            # 최종 합성이 곧바로 이어지고, 그것이 이 라운드의 결과도 함께 읽습니다.
-            return True
-
-        await self._merge_parallel_round(
-            db=db, state=state, orchestrator=orchestrator, assignments=assignments,
-            round_num=round_num, custom_instructions=custom_instructions,
-            control=control, on_event=on_event,
+        """한 라운드를 병렬로 돕니다. (`DebatePhaseExecutor.run_parallel_round` 위임)"""
+        return await self.debate_phase.run_parallel_round(
+            db=db,
+            state=state,
+            strategy=strategy,
+            orchestrator=orchestrator,
+            active_agents=active_agents,
+            round_num=round_num,
+            custom_instructions=custom_instructions,
+            parallel_limit=parallel_limit,
+            control=control,
+            on_event=on_event,
+            resume=resume,
+            done=done,
+            redo=redo,
         )
-        return False
 
     async def _dispatch_parallel_tasks(
         self,
@@ -3247,75 +2121,18 @@ class OrchestratorEngine:
         parallel_limit: int,
         on_event: Optional[EventCallback],
     ) -> List[Tuple[Agent, str]]:
-        """이번 라운드의 태스크 분배를 받아 기록하고 돌려줍니다.
-
-        분배에 실패하면 전원을 태스크 없이 돌리는 것으로 물러섭니다. 지시를 받지
-        못했을 뿐 병렬이라는 성질은 남기고, 물러섰다는 사실은 피드에 남깁니다 —
-        조용히 다른 방식으로 도는 것이 제일 나쁩니다.
-        """
-        fallback = [(agent, "") for agent in candidates]
-
-        async def _fall_back(why: str) -> List[Tuple[Agent, str]]:
-            await self._record_note(
-                db=db, state=state, on_event=on_event, agent=orchestrator,
-                round_number=round_num, msg_type="error",
-                content=(
-                    f"[태스크 분배 실패] {why}\n"
-                    f"태스크 없이 전원을 동시에 진행합니다: "
-                    f"{', '.join(a.name for a in candidates)}"
-                ),
-                kind=turns.KIND_ASSIGNMENT,
-                data={"tasks": [{"agent": a.key, "task": ""} for a in candidates], "fallback": True},
-            )
-            return fallback
-
-        if len(candidates) <= 1:
-            # 한 명뿐이면 나눌 것이 없습니다. 분배를 물어보는 호출만 낭비됩니다.
-            assignments = fallback
-            reason = ""
-        else:
-            try:
-                assignments, reason = await self._ask_orchestrator_for_assignments(
-                    orchestrator=orchestrator,
-                    candidates=candidates,
-                    state=state,
-                    round_num=round_num,
-                    parallel_limit=parallel_limit,
-                    custom_instructions=custom_instructions,
-                )
-            except LLMUnavailableError as exc:
-                logger.warning(f"Task dispatch failed; running everyone without tasks: {exc}")
-                return await _fall_back(str(exc))
-
-            if not assignments:
-                logger.warning("Orchestrator assigned nobody we know; running everyone without tasks.")
-                return await _fall_back(
-                    "오케스트레이터의 응답에서 태스크를 맡길 에이전트를 찾지 못했습니다."
-                )
-
-        named = [agent for agent, _ in assignments]
-        lines = [
-            f"- **{agent.name}** ({agent.role}): {task or '(태스크 지정 없음 — 전문 영역에서 자유 기여)'}"
-            for agent, task in assignments
-        ]
-        over_limit = len(assignments) > parallel_limit
-        summary = (
-            f"[Round {round_num} 병렬 지시] {len(assignments)}명에게 태스크를 나눴습니다"
-            + (f" (동시 실행 상한 {parallel_limit} — 나머지는 순차적으로 밀립니다)" if over_limit else " (동시 실행)")
-            + "\n" + "\n".join(lines)
+        """이번 라운드의 태스크 분배를 받아 기록하고 돌려줍니다. (`DebatePhaseExecutor.dispatch_parallel_tasks` 위임)"""
+        return await self.debate_phase.dispatch_parallel_tasks(
+            db=db,
+            state=state,
+            strategy=strategy,
+            orchestrator=orchestrator,
+            candidates=candidates,
+            round_num=round_num,
+            custom_instructions=custom_instructions,
+            parallel_limit=parallel_limit,
+            on_event=on_event,
         )
-        skipped = [a.name for a in candidates if a not in named]
-        if skipped:
-            summary += f"\n\n(이번 라운드 미지명: {', '.join(skipped)})"
-        if reason:
-            summary += f"\n\n{reason}"
-        await self._record_note(
-            db=db, state=state, on_event=on_event, agent=orchestrator,
-            round_number=round_num, msg_type="orchestrator", content=summary,
-            kind=turns.KIND_ASSIGNMENT,
-            data={"tasks": [{"agent": agent.key, "task": task} for agent, task in assignments]},
-        )
-        return assignments
 
     async def _ask_orchestrator_for_assignments(
         self,
@@ -3327,124 +2144,34 @@ class OrchestratorEngine:
         parallel_limit: int,
         custom_instructions: str,
     ) -> "Tuple[List[Tuple[Agent, str]], str]":
-        """오케스트레이터에게 이번 라운드의 태스크 분배를 물어봅니다.
-
-        발언자 지명(`_ask_orchestrator_for_speakers`)과 같은 이유로 도구와 단계적
-        사고를 끈 사본으로 부릅니다. 이건 JSON 을 받는 호출이지 발언이 아닙니다.
-        """
-        planner = self._tool_less(orchestrator)
-
-        roster = format_roster(candidates, with_keys=True)
-        recent = [
-            f"{m.speaker}: {self._snippet(m, 300)}"
-            for m in state.messages if m.msg_type != "error"
-        ][-8:]
-
-        prompt = [{"role": "user", "content": (
-            f"[목표]\n{state.user_prompt}\n\n"
-            + self._routing_record(state, planner) +
-            f"[지금까지의 토론]\n" + ("\n".join(recent) or "(아직 없음)") + "\n\n"
-            f"[태스크를 맡길 수 있는 에이전트]\n{roster}\n\n"
-            f"지금은 Round {round_num}/{state.max_rounds} 이고, 지목된 에이전트는 "
-            f"**동시에 각자의 태스크를 수행합니다**. 서로의 이번 라운드 결과를 볼 수 없으므로 "
-            f"태스크가 겹치면 같은 일을 두 번 하게 됩니다.\n\n"
-            f"겹치지 않게 태스크를 나누세요. 전원을 부를 필요는 없고, 한 명만 불러도 됩니다. "
-            f"각 태스크는 다른 에이전트의 결과를 기다리지 않고 혼자 끝낼 수 있는 것이어야 하며, "
-            f"무엇을 만들어 낼지(산출물)까지 한두 문장으로 적으세요. "
-            f"동시 실행은 {parallel_limit}명까지이고 그보다 많이 부르면 나머지는 순차적으로 밀립니다.\n\n"
-            f"다음 JSON 형식으로만 답하세요:\n"
-            '{"assignments": [{"agent": "에이전트키", "task": "이 라운드에 맡길 구체적 태스크"}], '
-            '"reason": "한두 문장으로 분배 사유"}'
-        )}]
-
-        content, _ = await self.llm_caller.call_agent(
-            planner, prompt, custom_instructions, session_id=state.session_id,
-            mcp=self._mcp_for(state), tool_gate=self._gate_for(state), ledger=state.decision_ledger,
+        """오케스트레이터에게 이번 라운드의 태스크 분배를 물어봅니다. (`DebatePhaseExecutor.ask_orchestrator_for_assignments` 위임)"""
+        return await self.debate_phase.ask_orchestrator_for_assignments(
+            orchestrator=orchestrator,
+            candidates=candidates,
+            state=state,
+            round_num=round_num,
+            parallel_limit=parallel_limit,
+            custom_instructions=custom_instructions,
         )
-        return self._parse_assignments(content, candidates)
 
     @staticmethod
     def _parse_assignments(
         content: str, candidates: List[Agent]
     ) -> "Tuple[List[Tuple[Agent, str]], str]":
-        """응답에서 (에이전트, 태스크) 목록과 분배 사유를 뽑습니다.
-
-        태스크 문장을 잃더라도 누구를 부를지는 건집니다. `assignments` 가 깨졌으면
-        발언자 지명과 같은 방식으로 아는 키를 등장 순서대로 긁고, 태스크는 빈
-        문자열이 됩니다 — 지시 없는 병렬 라운드가 라운드를 통째로 날리는 것보다
-        낫습니다.
-        """
-        by_key = {a.key: a for a in candidates}
-        reason = ""
-        pairs: List[Tuple[str, str]] = []
-
-        block = re.search(r"\{.*\}", content or "", re.DOTALL)
-        if block:
-            try:
-                data = json.loads(block.group(0))
-            except (ValueError, TypeError):
-                data = None
-            if isinstance(data, dict):
-                reason = str(data.get("reason") or "").strip()
-                raw = data.get("assignments")
-                if isinstance(raw, list):
-                    for item in raw:
-                        if isinstance(item, dict):
-                            key = str(item.get("agent") or item.get("key") or "").strip()
-                            task = str(item.get("task") or item.get("instruction") or "").strip()
-                            pairs.append((key, task))
-                        elif isinstance(item, str):
-                            pairs.append((item.strip(), ""))
-
-        if not any(key in by_key for key, _ in pairs):
-            # 분배가 깨졌습니다. 최소한 누구를 부르려 했는지는 살립니다.
-            picked, scraped = OrchestratorEngine._parse_speaker_selection(content, candidates)
-            reason = reason or scraped
-            pairs = [(a.key, "") for a in picked]
-
-        assignments: List[Tuple[Agent, str]] = []
-        seen = set()
-        for key, task in pairs:
-            agent = by_key.get(key)
-            if agent is None or agent.key in seen:
-                continue
-            seen.add(agent.key)
-            assignments.append((agent, task))
-        return assignments, reason
+        """응답에서 (에이전트, 태스크) 목록과 분배 사유를 뽑습니다. (`DebatePhaseExecutor.parse_assignments` 위임)"""
+        return DebatePhaseExecutor.parse_assignments(content, candidates)
 
     @staticmethod
     def _assignment_board(assignments: List[Tuple[Agent, str]]) -> str:
-        """동시에 도는 동료들이 무엇을 맡았는지 적은 판.
-
-        결과는 못 보여 주지만 **누가 무엇을 하는지**는 알려 줄 수 있습니다. 이것이
-        없으면 여럿이 같은 표를 각자 그려 오고, 취합이 중복 제거부터 시작합니다.
-        """
-        return "\n".join(
-            f"- {agent.name}({agent.role}): {task or '(태스크 지정 없음)'}"
-            for agent, task in assignments
-        )
+        """동시에 도는 동료들이 무엇을 맡았는지 적은 판. (`DebatePhaseExecutor.assignment_board` 위임)"""
+        return DebatePhaseExecutor.assignment_board(assignments)
 
     @staticmethod
     def _parallel_turn_instruction(
         strategy: BaseDebateStrategy, agent: Agent, task: str, board: str
     ) -> str:
-        """병렬 라운드에서 한 에이전트에게 붙는 지침 = 내 태스크 + 동시 실행 현황."""
-        if task:
-            head = f"[병렬 지시] 오케스트레이터가 이번 라운드에 당신에게 맡긴 태스크입니다:\n{task}"
-        else:
-            # 분배가 실패한 라운드. 전략이 들고 있는 문구를 그대로 씁니다.
-            head = strategy.turn_instruction(
-                agent, [agent], 0, DebateState(session_id="", user_prompt="")
-            )
-
-        return (
-            f"{head}\n\n"
-            f"[동시 진행 중]\n{board}\n\n"
-            f"이들은 지금 당신과 **같은 시각에** 답하고 있어 이번 라운드 결과를 볼 수 없습니다. "
-            f"남의 태스크를 대신 하지 말고 당신 몫을 끝까지 마치세요. 다른 태스크의 결과가 필요하면 "
-            f"추측해 채우지 말고 어떤 가정을 두었는지 명시하세요. 라운드 끝에 오케스트레이터가 "
-            f"결과를 합칩니다."
-        )
+        """병렬 라운드에서 한 에이전트에게 붙는 지침. (`DebatePhaseExecutor.parallel_turn_instruction` 위임)"""
+        return DebatePhaseExecutor.parallel_turn_instruction(strategy, agent, task, board)
 
     async def _merge_parallel_round(
         self,
@@ -3458,109 +2185,25 @@ class OrchestratorEngine:
         control: Optional[TurnControl],
         on_event: Optional[EventCallback],
     ) -> DebateMessage:
-        """라운드 끝의 취합 발언. 병렬 결과를 붙이고 충돌과 남은 쟁점을 정리합니다.
-
-        이 발언이 다음 라운드 분배의 입력이 됩니다. 없으면 서로를 못 본 독백들이
-        그대로 최종 합성까지 실려 가고, 모순은 거기서 처음 발견됩니다.
-        """
-        state.current_speaker = orchestrator.name
-        if on_event:
-            await on_event({
-                "type": "status_changed",
-                "status": "debating",
-                "speaker": f"{orchestrator.name} (취합)",
-                "round": round_num,
-            })
-
-        board = self._assignment_board(assignments)
-        instruction = (
-            f"[Round {round_num} 취합] 방금 다음 에이전트가 **동시에** 각자의 태스크를 수행했습니다:\n"
-            f"{board}\n\n"
-            f"이들은 서로의 결과를 보지 못한 채 답했습니다. 수석 오케스트레이터로서 "
-            f"이번 라운드의 결과를 하나로 붙이세요:\n"
-            f"1. 통합된 현재 결론 (무엇이 정해졌는가)\n"
-            f"2. 서로 어긋나는 지점과 그 판정 (누구 말이 맞는지, 아직 판단할 수 없다면 그 이유)\n"
-            f"3. 각자가 세운 가정 중 아직 검증되지 않은 것\n"
-            f"4. 다음 라운드로 넘길 미해결 과제\n\n"
-            f"발언하지 못했거나 실패한 에이전트의 몫을 지어내지 마세요."
-        )
-
-        return await self._speak(
+        """라운드 끝의 취합 발언. (`DebatePhaseExecutor.merge_parallel_round` 위임)"""
+        return await self.debate_phase.merge_parallel_round(
             db=db,
             state=state,
-            agent=orchestrator,
-            prompt_messages=await self._context_for_speech(
-                state, orchestrator, instruction, orchestrator=orchestrator, on_event=on_event,
-            ),
+            orchestrator=orchestrator,
+            assignments=assignments,
+            round_num=round_num,
             custom_instructions=custom_instructions,
-            round_number=round_num,
-            msg_type="orchestrator",
-            on_event=on_event,
             control=control,
-            kind=turns.KIND_MERGE,
+            on_event=on_event,
         )
 
     # ------------------------------------------------------------ 그래프 토론
-    #
-    # 무엇을 왜 이렇게 돌리는지는 `app/orchestration/graph.py` 에 있습니다. 여기는 LLM 을
-    # 부르는 쪽 — 노드마다 맥락을 만들고, 발언시키고, 판정을 받고, 결과를 선으로 보냅니다.
 
     async def _graph_for_turn(
         self, db, session_model: SessionModel, max_rounds: int
     ) -> GraphSpec:
-        """이 턴에 쓸 그래프를 읽고 검사하고, 고정해 둡니다. 쓸 수 없으면 `GraphTurnError`."""
-        from app.agents.personas import frozen_agents
-        from app.config import get_config
-        from app.graph_store import load_graph
-
-        graph_id = (session_model.graph_id or "").strip()
-        if not graph_id:
-            raise GraphTurnError(
-                "그래프 토론에 쓸 그래프가 없습니다. 에이전트 패널의 그래프 선택 메뉴에서 선택하거나 "
-                "'카드 순서로 만들기'로 생성해 주십시오."
-            )
-        try:
-            spec = load_graph(graph_id)
-        except FileNotFoundError:
-            raise GraphTurnError(f"그래프 파일을 찾을 수 없습니다: data/graphs/{graph_id}.json")
-        except ValueError as exc:
-            raise GraphTurnError(f"그래프 {graph_id} 를 읽지 못했습니다: {exc}")
-
-        # 있는 에이전트는 이 엔진의 풀과, 이미 시작한 대화가 고정해 둔 스냅샷입니다(conf.json 에서
-        # 사라졌어도 그 대화에서는 발언합니다). 풀에는 켜진 에이전트만 있어 "꺼짐" 과 "없음" 을
-        # 가릴 수 없으므로, conf.json 에서 꺼진 것만 따로 표시해 오류 문구를 정확히 합니다.
-        known: Dict[str, bool] = {}
-        try:
-            for key, cfg in get_config().agents.items():
-                if not getattr(cfg, "enabled", True):
-                    known[key] = False
-        except Exception:  # noqa: BLE001 - 설정을 못 읽어도 풀만으로 검사합니다
-            logger.debug("Could not read conf.json agents for graph validation", exc_info=True)
-        for agent in self.agent_pool.list_all():
-            known[agent.key] = True
-        for agent in await frozen_agents(db, session_model.id, self.agent_pool):
-            known[agent.key] = True
-        report = validate_graph(spec, known, default_max_visits=max_rounds)
-        if not report.ok:
-            raise GraphTurnError(
-                f"그래프 “{spec.name or spec.id}” 에 오류가 있어 시작하지 않습니다: "
-                + " · ".join(report.errors[:3])
-                + (f" (외 {len(report.errors) - 3}건)" if len(report.errors) > 3 else "")
-            )
-
-        try:
-            await db.execute(
-                update(SessionModel)
-                .where(SessionModel.id == session_model.id)
-                .values(graph_snapshot=spec.dump(), updated_at=SessionModel.updated_at)
-            )
-            await db.commit()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - 스냅샷을 못 적어도 이번 턴은 이 그래프로 돕니다
-            logger.warning(f"Could not store the graph snapshot for {session_model.id}: {exc}")
-            await db.rollback()
-        return spec
+        """이 턴에 쓸 그래프를 읽고 검사하고, 고정해 둡니다. (`DebatePhaseExecutor.graph_for_turn` 위임)"""
+        return await self.debate_phase.graph_for_turn(db, session_model, max_rounds)
 
     async def _run_graph(
         self,
@@ -3578,129 +2221,21 @@ class OrchestratorEngine:
         replay: Optional["turns.GraphReplay"] = None,
         redo: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> bool:
-        """그래프를 단계별로 돕니다. 사용자가 정지시켰으면 True.
-
-        끝나는 경우는 넷입니다: 최종 합성 노드에 닿음 · 더 돌 노드가 없음 · 단계 상한 · 정지.
-        정지가 아닌 셋은 모두 합성으로 넘어가고, 앞의 것이 아니면 왜 멈췄는지 기록에 남깁니다.
-
-        `replay` 가 있으면 끊긴 턴을 이어 갑니다 (`turns.replay_graph`). 기록을 따라 세운
-        스케줄러에서 시작하고, 끊긴 단계에 출력을 내지 못한 노드가 있으면 그 노드만 먼저 돌립니다.
-        """
-        agents = {a.key: a for a in active_agents}
-        redo = redo if redo is not None else {}
-        scheduler = replay.scheduler if replay is not None else GraphScheduler(spec, max_visits)
-        max_steps = scheduler.max_steps()
-        # 재생한 스케줄러가 이미 상한에 닿았다고 본 노드는 끊기기 전에 안내가 기록됐습니다.
-        announced_exhausted = len(scheduler.exhausted)
-
-        if on_event:
-            await on_event({
-                "type": "graph_started",
-                "graph_id": spec.id,
-                "name": spec.name or spec.id,
-                "nodes": [{"id": n.id, "type": n.type, "label": n.display} for n in spec.nodes],
-                # 화면이 이번 턴에 실제로 도는 그림을 그립니다 (파일은 턴 도중에 바뀔 수 있습니다).
-                "spec": spec.dump(),
-                "max_steps": max_steps,
-                # 이어 가는 턴이면 끊기기 전에 돈 노드의 기록. 실행 표시가 처음부터 다시 그려집니다.
-                "history": [
-                    {
-                        "id": m.id, "graph_node_id": m.graph_node_id, "graph_port": m.graph_port,
-                        "round_number": m.round_number, "msg_type": m.msg_type,
-                    }
-                    for m in state.messages[state.turn_message_start:] if m.graph_node_id
-                ] if replay is not None else [],
-            })
-
-        step = 0
-        if replay is None:
-            scheduler.deliver(spec.start.id, "out", start_value)
-        else:
-            step = replay.step
-            state.current_round = step
-            if replay.pending:
-                await self._finish_graph_step(
-                    db=db, state=state, spec=spec, replay=replay, agents=agents,
-                    orchestrator=orchestrator, parallel_limit=parallel_limit,
-                    max_steps=max_steps, control=control, on_event=on_event, redo=redo,
-                )
-
-        while True:
-            await self._apply_interjections(
-                db=db, state=state, control=control, round_number=step, on_event=on_event
-            )
-            if control is not None and control.stop_requested:
-                await self._graph_finished(on_event, "stopped", step)
-                return True
-
-            ready = scheduler.ready()
-            for node_id in scheduler.exhausted[announced_exhausted:]:
-                node = spec.node(node_id)
-                await self._record_note(
-                    db=db, state=state, on_event=on_event, agent=orchestrator,
-                    round_number=step, msg_type="orchestrator", graph_node_id=node_id,
-                    content=(
-                        f"[그래프] “{node.display}” 은(는) 이번 턴에 최대 "
-                        f"{scheduler.visits[node_id]}회까지 불려 더 부르지 않습니다."
-                    ),
-                )
-            announced_exhausted = len(scheduler.exhausted)
-
-            if any(n.type == "end" for n in ready):
-                await self._graph_finished(on_event, "end", step)
-                return False
-            if not ready:
-                waiting = [spec.node(n).display for n in scheduler.pending()]
-                await self._record_note(
-                    db=db, state=state, on_event=on_event, agent=orchestrator,
-                    round_number=step, msg_type="orchestrator",
-                    content=(
-                        "[그래프] 최종 합성 노드에 닿기 전에 더 진행할 노드가 없어, 지금까지의 "
-                        "발언으로 합성합니다."
-                        + (
-                            f" 모든 입력을 기다리다 멈춘 노드: {', '.join('“' + w + '”' for w in waiting)}."
-                            if waiting else ""
-                        )
-                    ),
-                )
-                await self._graph_finished(on_event, "idle", step)
-                return False
-            if step >= max_steps:
-                await self._record_note(
-                    db=db, state=state, on_event=on_event, agent=orchestrator,
-                    round_number=step, msg_type="orchestrator",
-                    content=f"[그래프] 단계 상한({max_steps})에 닿아 여기서 멈추고 합성합니다.",
-                )
-                await self._graph_finished(on_event, "step_cap", step)
-                return False
-
-            step += 1
-            state.current_round = step
-            activations = [scheduler.activate(node) for node in ready]
-            if on_event:
-                await on_event({"type": "round_started", "round": step, "max_rounds": max_steps})
-                await on_event({
-                    "type": "graph_step_started",
-                    "step": step,
-                    "max_steps": max_steps,
-                    "nodes": [{"id": a.node.id, "label": a.node.display, "visit": a.visit} for a in activations],
-                })
-                await on_event({
-                    "type": "status_changed",
-                    "status": "debating",
-                    "speaker": " · ".join(a.node.display for a in activations),
-                    "round": step,
-                })
-
-            outputs = await self._run_graph_step(
-                db=db, state=state, spec=spec, scheduler=scheduler, activations=activations,
-                agents=agents, orchestrator=orchestrator, step=step,
-                parallel_limit=parallel_limit, control=control, on_event=on_event, redo=redo,
-            )
-            for activation in activations:
-                port, value = outputs[activation.node.id]
-                scheduler.deliver(activation.node.id, port, value)
-            await self._after_graph_step(state, spec, scheduler, orchestrator, step, control, on_event)
+        """그래프를 단계별로 돕니다. (`DebatePhaseExecutor.run_graph` 위임)"""
+        return await self.debate_phase.run_graph(
+            db=db,
+            state=state,
+            spec=spec,
+            orchestrator=orchestrator,
+            active_agents=active_agents,
+            parallel_limit=parallel_limit,
+            max_visits=max_visits,
+            control=control,
+            on_event=on_event,
+            start_value=start_value,
+            replay=replay,
+            redo=redo,
+        )
 
     async def _after_graph_step(
         self,
@@ -3712,14 +2247,9 @@ class OrchestratorEngine:
         control: Optional[TurnControl],
         on_event: Optional[EventCallback],
     ) -> None:
-        # 곧바로 합성으로 가는 단계 뒤에는 장부를 건너뜁니다 (합성 뒤 갱신이 대신합니다).
-        heading_to_end = any(
-            scheduler.fresh[n.id] for n in spec.nodes if n.type == "end"
+        await self.debate_phase.after_graph_step(
+            state, spec, scheduler, orchestrator, step, control, on_event
         )
-        if not heading_to_end and not (control is not None and control.stop_requested):
-            await self._update_ledger(
-                state=state, orchestrator=orchestrator, on_event=on_event, reason=f"Step {step}",
-            )
 
     async def _finish_graph_step(
         self,
@@ -3736,46 +2266,24 @@ class OrchestratorEngine:
         on_event: Optional[EventCallback],
         redo: Dict[str, List[Dict[str, Any]]],
     ) -> None:
-        """끊긴 단계를 마저 돌립니다 — 출력을 내지 못한 노드만, 그 단계가 시작된 시점의 기록으로.
-
-        도는 중의 단계는 프롬프트를 전부 먼저 만든 뒤 동시에 돌립니다(같은 단계의 결과가 섞이지
-        않게). 이어 갈 때도 같아야 하므로, 이 단계에 이미 나온 출력은 프롬프트의 기록에서 뺍니다.
-        """
-        step = replay.step
-        pending = replay.pending
-        if on_event:
-            await on_event({"type": "round_started", "round": step, "max_rounds": max_steps})
-            await on_event({
-                "type": "graph_step_started",
-                "step": step,
-                "max_steps": max_steps,
-                "nodes": [{"id": a.node.id, "label": a.node.display, "visit": a.visit} for a in pending],
-            })
-            await on_event({
-                "type": "status_changed",
-                "status": "debating",
-                "speaker": " · ".join(a.node.display for a in pending),
-                "round": step,
-            })
-        view = state.model_copy(update={"messages": [
-            m for m in state.messages if not (m.graph_node_id and m.round_number == step)
-        ]})
-        outputs = dict(replay.outputs)
-        outputs.update(await self._run_graph_step(
-            db=db, state=state, spec=spec, scheduler=replay.scheduler, activations=pending,
-            agents=agents, orchestrator=orchestrator, step=step,
-            parallel_limit=parallel_limit, control=control, on_event=on_event,
-            view=view, redo=redo,
-        ))
-        for activation in replay.activations:
-            port, value = outputs[activation.node.id]
-            replay.scheduler.deliver(activation.node.id, port, value)
-        await self._after_graph_step(state, spec, replay.scheduler, orchestrator, step, control, on_event)
+        """끊긴 단계를 마저 돌립니다. (`DebatePhaseExecutor.finish_graph_step` 위임)"""
+        await self.debate_phase.finish_graph_step(
+            db=db,
+            state=state,
+            spec=spec,
+            replay=replay,
+            agents=agents,
+            orchestrator=orchestrator,
+            parallel_limit=parallel_limit,
+            max_steps=max_steps,
+            control=control,
+            on_event=on_event,
+            redo=redo,
+        )
 
     @staticmethod
     async def _graph_finished(on_event: Optional[EventCallback], reason: str, steps: int) -> None:
-        if on_event:
-            await on_event({"type": "graph_finished", "reason": reason, "steps": steps})
+        await DebatePhaseExecutor.graph_finished(on_event, reason, steps)
 
     async def _run_graph_step(
         self,
@@ -3794,98 +2302,22 @@ class OrchestratorEngine:
         view: Optional[DebateState] = None,
         redo: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> Dict[str, Tuple[str, List[str]]]:
-        """한 단계의 노드들을 동시에 돌리고, 노드마다 (출력 핀, 값) 을 돌려줍니다.
-
-        병렬 지시 라운드와 같은 규칙입니다 — 프롬프트는 전부 먼저 만들고(같은 단계의 결과가
-        섞이지 않게), 기록 구간만 잠그고, 기록 시각은 노드 순서로 박습니다.
-
-        `view` 가 있으면 프롬프트를 그 기록으로 만듭니다 (끊긴 단계를 마저 돌릴 때, 그 단계가
-        시작된 시점의 기록). 발언은 언제나 실제 상태에 쌓입니다.
-        """
-        redo = redo if redo is not None else {}
-        prompts: Dict[str, List[Dict[str, Any]]] = {}
-        for activation in activations:
-            node = activation.node
-            if node.type == "gate":
-                continue
-            speaker = orchestrator if node.type == "merge" else agents[node.agent]
-            prompts[node.id] = await self._context_for_node(
-                state=view if view is not None else state, spec=spec, scheduler=scheduler,
-                activation=activation, speaker=speaker, step=step, orchestrator=orchestrator,
-                on_event=on_event,
-                notice=turns.resume_notice(redo.pop(speaker.key)) if speaker.key in redo else "",
-            )
-
-        base_time = utc_now()
-        db_lock = asyncio.Lock()
-        semaphore = asyncio.Semaphore(max(1, parallel_limit))
-        start_index = len(state.messages)
-
-        async def run_one(index: int, activation: Activation) -> Tuple[str, List[str]]:
-            node = activation.node
-            created_at = base_time + timedelta(milliseconds=index)
-            async with semaphore:
-                if node.type == "gate":
-                    return await self._run_gate(
-                        db=db, state=state, spec=spec, activation=activation,
-                        orchestrator=orchestrator, step=step, on_event=on_event,
-                        db_lock=db_lock, created_at=created_at,
-                    )
-                speaker = orchestrator if node.type == "merge" else agents[node.agent]
-                message = await self._speak(
-                    db=db,
-                    state=state,
-                    agent=speaker,
-                    prompt_messages=prompts[node.id],
-                    custom_instructions=state.custom_instructions,
-                    round_number=step,
-                    msg_type="orchestrator" if node.type == "merge" else "agent",
-                    on_event=on_event,
-                    control=control,
-                    db_lock=db_lock,
-                    created_at=created_at,
-                    graph_node_id=node.id,
-                    graph_port="out",
-                    kind=turns.KIND_MERGE if node.type == "merge" else turns.KIND_SPEECH,
-                )
-                return "out", [message.id]
-
-        results = await asyncio.gather(
-            *(run_one(i, a) for i, a in enumerate(activations)), return_exceptions=True
+        """한 단계의 노드들을 동시에 돌립니다. (`DebatePhaseExecutor.run_graph_step` 위임)"""
+        return await self.debate_phase.run_graph_step(
+            db=db,
+            state=state,
+            spec=spec,
+            scheduler=scheduler,
+            activations=activations,
+            agents=agents,
+            orchestrator=orchestrator,
+            step=step,
+            parallel_limit=parallel_limit,
+            control=control,
+            on_event=on_event,
+            view=view,
+            redo=redo,
         )
-
-        # 완료 순서가 아니라 노드 순서로 (`_run_parallel_round` 와 같은 이유).
-        order = {a.node.id: i for i, a in enumerate(activations)}
-        produced = state.messages[start_index:]
-        if all(m.graph_node_id in order for m in produced):
-            state.messages[start_index:] = sorted(produced, key=lambda m: order[m.graph_node_id])
-
-        outputs: Dict[str, Tuple[str, List[str]]] = {}
-        for activation, result in zip(activations, results):
-            node = activation.node
-            if isinstance(result, BaseException):
-                if isinstance(result, asyncio.CancelledError):
-                    raise result
-                logger.error(
-                    f"Graph node '{node.id}' failed: {type(result).__name__}: {result}",
-                    exc_info=result,
-                )
-                note = await self._record_note(
-                    db=db, state=state, on_event=on_event, agent=orchestrator,
-                    round_number=step, msg_type="error", graph_node_id=node.id,
-                    graph_port=node.default if node.type == "gate" else "out",
-                    content=(
-                        f"> ⚠️ **그래프 노드 “{node.display}” 가 실패했습니다.**\n>\n"
-                        f"> - 원인: `{type(result).__name__}: {result}`\n>\n"
-                        f"> 이 자리에 들어갈 내용을 대신 지어내지 않았습니다."
-                    ),
-                    kind=turns.KIND_FAILURE,
-                )
-                port = node.default if node.type == "gate" else "out"
-                outputs[node.id] = (port, [note.id])
-            else:
-                outputs[node.id] = result
-        return outputs
 
     def _render_graph_input(
         self,
@@ -3895,22 +2327,10 @@ class OrchestratorEngine:
         placeholders: Dict[int, str],
         index_of: Dict[str, int],
     ) -> str:
-        """선 하나가 싣고 온 발언 하나. 선 종류대로 전문 / 요지 / 참조."""
-        if message.msg_type == "error":
-            return f"[{message.sender_name}]: (이 발언은 실패해 내용이 없습니다)"
-        pinned = placeholders.get(index_of.get(message.id, -1))
-        label = "[User]" if message.sender_key == "user" else f"[{message.speaker}]"
-        if pinned:
-            return f"{label}:\n{pinned}"
-        body = strip_reasoning_trace(message.content)
-        if carry == "digest" and message.sender_key != "user":
-            digest = memory.extract_digest(message.content)
-            if digest:
-                return f"{label} {memory.DIGEST_HEADING} (전문 {len(body):,}자 중 요지만):\n{digest}"
-            return f"{label}:\n{memory.reference_code_blocks(body, message.tool_calls)}"
-        if carry == "refs":
-            return f"{label}:\n{memory.reference_code_blocks(body, message.tool_calls)}"
-        return f"{label}:\n{body}"
+        """선 하나가 싣고 온 발언 하나. (`DebatePhaseExecutor.render_graph_input` 위임)"""
+        return self.debate_phase.render_graph_input(
+            state, message, carry, placeholders, index_of
+        )
 
     async def _context_for_node(
         self,
@@ -3925,101 +2345,22 @@ class OrchestratorEngine:
         on_event: Optional[EventCallback],
         notice: str = "",
     ) -> List[Dict[str, Any]]:
-        """노드 하나의 프롬프트. 기본은 **들어온 선만** — 전사 전체 대신.
-
-        `notice` 는 지침 앞에 붙일 안내입니다 (끊긴 발언을 다시 할 때의 `turns.resume_notice`).
-
-        고정 맥락(요청 · 사용자 발언 기록 · 이번 턴 계획)은 모든 노드에 들어가고, 결정 장부는
-        호출기가 마지막 메시지 앞에 붙입니다. 루프로 다시 불린 노드는 자기 직전 발언을 함께 봅니다.
-        "전체 기록 보기" 를 켠 에이전트 노드는 기존 발언 맥락(세 층)을 받습니다.
-        """
-        node = activation.node
-        instruction = self._graph_turn_instruction(spec, activation, step)
-        if notice:
-            instruction = f"{notice}\n\n{instruction}"
-        if node.type == "agent" and node.sees == "all":
-            return await self._context_for_speech(
-                state, speaker, instruction, orchestrator=orchestrator, on_event=on_event,
-            )
-
-        budget = self._speech_budget(speaker, state)
-        record = memory.build_user_record(
-            state, model=speaker.model, token_cap=int(budget * memory.USER_RECORD_SHARE)
+        """노드 하나의 프롬프트. (`DebatePhaseExecutor.context_for_node` 위임)"""
+        return await self.debate_phase.context_for_node(
+            state=state,
+            spec=spec,
+            scheduler=scheduler,
+            activation=activation,
+            speaker=speaker,
+            step=step,
+            orchestrator=orchestrator,
+            on_event=on_event,
+            notice=notice,
         )
-        plan_pin = memory.build_plan_pin(
-            state, model=speaker.model, token_cap=int(budget * memory.PLAN_PIN_SHARE)
-        )
-        placeholders = memory.placeholders_for(state, record, bool(plan_pin))
-        index_of = {m.id: i for i, m in enumerate(state.messages)}
-        by_id = {m.id: m for m in state.messages}
-
-        head = [f"[User Goal / Current Request]:\n{state.user_prompt}"]
-        head += [part for part in (record.text, plan_pin) if part]
-        context: List[Dict[str, Any]] = [{"role": "user", "content": "\n\n".join(head)}]
-
-        previous = [
-            m for m in state.messages[state.turn_message_start:]
-            if m.graph_node_id == node.id and m.msg_type != "error" and m.sender_key == speaker.key
-        ]
-        if previous:
-            last = previous[-1]
-            context.append({
-                "role": "assistant",
-                "content": (
-                    f"[{speaker.name} ({speaker.role}) · 이 노드의 직전 발언]:\n"
-                    f"{memory.reference_code_blocks(strip_reasoning_trace(last.content), last.tool_calls)}"
-                ),
-            })
-
-        back = scheduler.back
-        for edge, ids in activation.inputs:
-            source = spec.node(edge.source[0])
-            parts = [
-                self._render_graph_input(state, by_id[mid], edge.carry, placeholders, index_of)
-                for mid in ids if mid in by_id and not (previous and mid == previous[-1].id)
-            ]
-            if not parts:
-                continue
-            branch = {"yes": " 예 갈래", "no": " 아니오 갈래"}.get(edge.source[1], "")
-            header = (
-                f"[입력 · “{source.display if source else edge.source[0]}”{branch}"
-                f" → {CARRY_LABELS.get(edge.carry, edge.carry)}"
-                f"{' · 되돌림' if edge.id in back else ''}]"
-            )
-            context.append({"role": "user", "content": header + "\n" + "\n\n".join(parts)})
-
-        context.append({"role": "user", "content": instruction})
-        return context
 
     @staticmethod
     def _graph_turn_instruction(spec: GraphSpec, activation: Activation, step: int) -> str:
-        node = activation.node
-        visit = f" ({activation.visit}회차)" if activation.visit > 1 else ""
-        lines = [f"[Graph Step]: {step}단계 · 노드 “{node.display}”{visit}"]
-        if node.type == "merge":
-            lines.append(
-                "[취합] 위 [입력]으로 들어온 발언들을 하나로 붙이세요:\n"
-                "1. 통합된 현재 결론 (무엇이 정해졌는가)\n"
-                "2. 서로 어긋나는 지점과 그 판정\n"
-                "3. 아직 검증되지 않은 가정\n"
-                "4. 다음으로 넘길 미해결 과제\n"
-                "발언하지 못했거나 실패한 쪽의 몫을 지어내지 마세요."
-            )
-        else:
-            lines.append(
-                "[그래프 토론] 당신은 그래프의 한 노드입니다. 위 [입력]으로 들어온 발언을 받아 이 노드의 "
-                "몫을 하세요. 입력에 없는 다른 에이전트의 결론을 추측해 채우지 말고, 필요하면 가정으로 "
-                "명시하세요."
-            )
-        if activation.visit > 1:
-            lines.append(
-                "이 노드가 다시 불렸습니다. 되돌아온 이유(판정·취합 의견)를 먼저 처리하고, 직전 발언에서 "
-                "바뀐 점을 분명히 하세요."
-            )
-        if node.instruction.strip():
-            lines.append(f"[이 노드의 지시]\n{node.instruction.strip()}")
-        lines.append(memory.DIGEST_INSTRUCTION)
-        return "\n\n".join(lines)
+        return DebatePhaseExecutor.graph_turn_instruction(spec, activation, step)
 
     async def _run_gate(
         self,
@@ -4034,75 +2375,19 @@ class OrchestratorEngine:
         db_lock: asyncio.Lock,
         created_at: datetime,
     ) -> Tuple[str, List[str]]:
-        """판정 노드. 오케스트레이터(도구 없는 사본)에게 예/아니오를 받아 한쪽 갈래로 보냅니다.
-
-        내보내는 값은 **판정 기록 + 판정한 입력**입니다. 되돌려 받은 노드는 무엇 때문에 되돌아왔는지와
-        무엇을 고쳐야 하는지를 함께 봐야 합니다. 응답을 읽지 못하면 노드에 정한 기본 갈래로 가고,
-        그 사실을 기록에 남깁니다 — 조용히 한쪽으로 흐르는 것이 제일 나쁩니다.
-        """
-        node = activation.node
-        judge = self._tool_less(orchestrator)
-        by_id = {m.id: m for m in state.messages}
-        index_of = {m.id: i for i, m in enumerate(state.messages)}
-        record = memory.build_user_record(
-            state, model=judge.model, token_cap=int(context_budget(judge) * memory.ROUTING_RECORD_SHARE)
+        """판정 노드. (`DebatePhaseExecutor.run_gate` 위임)"""
+        return await self.debate_phase.run_gate(
+            db=db,
+            state=state,
+            spec=spec,
+            activation=activation,
+            orchestrator=orchestrator,
+            step=step,
+            on_event=on_event,
+            db_lock=db_lock,
+            created_at=created_at,
         )
-        placeholders = memory.placeholders_for(state, record, False)
-        seen: List[str] = []
-        blocks: List[str] = []
-        for edge, ids in activation.inputs:
-            for mid in ids:
-                if mid in by_id and mid not in seen:
-                    seen.append(mid)
-                    blocks.append(self._render_graph_input(state, by_id[mid], edge.carry, placeholders, index_of))
 
-        default_label = "예" if node.default == "yes" else "아니오"
-        prompt = [{"role": "user", "content": (
-            f"[판정] 그래프 토론의 판정 노드 “{node.display}” 입니다.\n\n"
-            f"[목표]\n{state.user_prompt}\n\n"
-            + (f"{record.text}\n\n" if record.text else "")
-            + "[판정할 내용]\n" + ("\n\n".join(blocks) or "(들어온 발언이 없습니다)") + "\n\n"
-            f"[질문]\n{node.question.strip()}\n\n"
-            f"위 내용만 근거로 질문에 예/아니오로 답하세요. 근거가 부족해 판단할 수 없으면 "
-            f"“{default_label}” 로 답하고 그 이유를 적으세요.\n\n"
-            '다음 JSON 한 줄로만 답하세요:\n{"decision": "yes" 또는 "no", "reason": "한두 문장"}'
-        )}]
-
-        decision, reason, understood = node.default, "", False
-        try:
-            content, _ = await self.llm_caller.call_agent(
-                judge, prompt, state.custom_instructions, session_id=state.session_id,
-                mcp=self._mcp_for(state), tool_gate=self._gate_for(state), ledger=state.decision_ledger,
-            )
-            parsed = parse_gate_decision(content)
-            if parsed is not None:
-                decision, reason = parsed
-                understood = True
-            else:
-                reason = "판정 응답을 읽지 못했습니다"
-        except LLMUnavailableError as exc:
-            reason = f"판정 호출에 실패했습니다 ({exc.reason})"
-
-        verdict = "예" if decision == "yes" else "아니오"
-        content_text = f"[판정 · {node.display}] **{verdict}** — {reason or '(사유 없음)'}"
-        if not understood:
-            content_text += f"\n(기본 갈래 “{default_label}” 로 진행합니다)"
-        async with db_lock:
-            note = await self._record_note(
-                db=db, state=state, on_event=on_event, agent=orchestrator,
-                round_number=step, msg_type="orchestrator", graph_node_id=node.id, graph_port=decision,
-                content=content_text, created_at=created_at, kind=turns.KIND_GATE,
-            )
-        if on_event:
-            await on_event({
-                "type": "graph_gate_decided",
-                "node_id": node.id,
-                "label": node.display,
-                "decision": decision,
-                "reason": reason,
-                "fallback": not understood,
-            })
-        return decision, [note.id] + seen
 
     # ------------------------------------------------------------ 대화 기억
     #
@@ -4120,6 +2405,7 @@ class OrchestratorEngine:
         return agent.model_copy(update={
             "allowed_mcp_servers": [],
             "allowed_skills": [],
+            "allow_peer_consultation": False,
             "sequential_thinking": agent.sequential_thinking.model_copy(update={"enabled": False}),
         })
 
@@ -4600,49 +2886,14 @@ class OrchestratorEngine:
         agent: Optional[Agent],
         on_event: Optional[EventCallback],
     ) -> List[Dict[str, Any]]:
-        """합성 프롬프트를 만들고, 전사가 잘렸으면 화면에 알립니다.
-
-        최종 보고서가 초반 논의를 못 보고 쓰였다는 사실은 사람이 알아야 합니다 —
-        예전에는 `logger.warning` 에만 남았습니다.
-        """
-        if agent is not None:
-            await self._ensure_synthesis_room(state, agent, on_event)
-        before = state.context_dropped
-        prompt = self._build_synthesis_prompt(state, agent)
-        dropped = state.context_dropped - before
-        if dropped and on_event:
-            await on_event({
-                "type": "context_trimmed",
-                "agent_key": agent.key if agent else "orchestrator",
-                "agent_name": agent.name if agent else "Orchestrator",
-                "dropped": dropped,
-                "total_dropped": state.context_dropped,
-                "where": "synthesis",
-            })
-        return prompt
+        """합성 프롬프트를 만들고, 전사가 잘렸으면 화면에 알립니다."""
+        return await self.synthesis_phase.synthesis_prompt_with_notice(state, agent, on_event)
 
     async def _ensure_synthesis_room(
         self, state: DebateState, agent: Agent, on_event: Optional[EventCallback]
     ) -> None:
         """합성 전사가 창을 넘으면 앞선 기록을 요약으로 접습니다 (`_ensure_room`)."""
-        budget = context_budget(agent, tools=self._tools_for(agent, state)) - 512
-        record = memory.build_user_record(
-            state, model=agent.model, token_cap=int(budget * memory.USER_RECORD_SHARE)
-        )
-        summary = memory.summary_block(state)
-        start = state.summary_through if summary else 0
-        total = (
-            memory.text_tokens(agent.model, record.text)
-            + memory.text_tokens(agent.model, summary)
-            + sum(
-                memory.text_tokens(agent.model, memory.render_message(m))
-                for m in state.messages[start:] if m.msg_type != "error"
-            )
-        )
-        await self._ensure_room(
-            state, model=agent.model, total=total, budget=budget,
-            orchestrator=agent, on_event=on_event, agent_name=agent.name,
-        )
+        await self.synthesis_phase.ensure_synthesis_room(state, agent, on_event)
 
     def _memory_search_tool_for(
         self, agent: Optional[Agent], state: Optional[DebateState] = None,
@@ -4678,165 +2929,15 @@ class OrchestratorEngine:
             gate = self._gate_for(state) if state else None
             if gate is not None:
                 tools = gate.filter_tools(agent.key, tools, mcp)
-            return tools + skill_tools_for(agent)
+            return tools + skill_tools_for(agent) + consultation_tools_for(agent)
         except Exception:  # noqa: BLE001 - 도구 목록을 못 구해도 합성은 진행합니다
             return []
 
     def _build_synthesis_prompt(
         self, state: DebateState, agent: Optional[Agent] = None
     ) -> List[Dict[str, Any]]:
-        """Constructs prompt for orchestrator final consensus & artifact generation.
-
-        전사(transcript)를 오케스트레이터의 컨텍스트 한도에 맞춰 자릅니다.
-        여기는 한 개의 user 메시지 안에 토론 전체가 통째로 들어가는 자리라,
-        `fit_context_window()` 가 손댈 수 있는 것이 없습니다 (메시지 단위로
-        덜어내는데 덜어낼 메시지가 없습니다). 라운드가 몇 번만 돌아도 한도를
-        넘어 400 이 나므로, 만드는 쪽에서 크기를 정해야 합니다.
-
-        최근 발언부터 채웁니다. 뒤로 갈수록 앞선 논의가 반영된 결론이라,
-        잘라야 한다면 앞쪽을 버리는 편이 낫습니다.
-
-        오케스트레이터에게는 **결론과 종합 다이어그램만** 시킵니다. 예전에는 "완전한 실행
-        가능 소스 코드" 까지 요구해, 전문가들이 이미 쓴 코드를 합성에서 통째로 다시
-        출력했습니다. 응답 한도를 금방 채웠고, 그 합성 발언이 다음 턴 전사에 코드 덤프로
-        다시 들어가 컨텍스트가 턴마다 빠르게 포화됐습니다 — 결국 합성이 비어 돌아오는
-        원인이 됐습니다. 코드 산출물은 전문가 발언에서 따로 모읍니다.
-        """
-        # 사용자 발언은 전사 앞에 고정합니다. 최신부터 채우는 전사에서 초반 요구사항이
-        # 빠지면, 보고서가 그 요구사항을 모른 채 결론을 씁니다.
-        model = agent.model if agent is not None else "gpt-4o"
-        budget = (
-            context_budget(agent, tools=self._tools_for(agent, state)) - 512
-            if agent is not None else 0
-        )
-        record = memory.build_user_record(
-            state, model=model,
-            token_cap=int(budget * memory.USER_RECORD_SHARE) if agent is not None else 10 ** 9,
-        )
-        placeholders = memory.placeholders_for(state, record, plan_pinned=False)
-
-        def render(index: int, msg: DebateMessage) -> str:
-            prefix = "### [User]" if msg.sender_key == "user" else f"### {msg.speaker}"
-            body = msg.content if msg.sender_key == "user" else strip_reasoning_trace(msg.content)
-            return f"{prefix}:\n{placeholders.get(index) or body}\n"
-
-        # 원문이 창에 들어가지 않고 요약이 있으면, 요약이 덮는 앞쪽은 요약으로 읽습니다.
-        summary = memory.summary_block(state) if agent is not None else ""
-        start = 0
-        if summary:
-            full_cost = sum(
-                memory.text_tokens(model, render(i, m))
-                for i, m in enumerate(state.messages) if m.msg_type != "error"
-            )
-            if full_cost + memory.text_tokens(model, record.text) > budget:
-                start = state.summary_through
-            else:
-                summary = ""
-        usable = [
-            (i, m) for i, m in enumerate(state.messages)
-            if i >= start and m.msg_type != "error"
-        ]
-
-        if agent is None:
-            kept, dropped = [render(i, m) for i, m in usable], 0
-        else:
-            # 응답 분량(사고 예산이 더해진 실제 값), 요청마다 실리는 도구 정의, 지시문 몫을
-            # 빼고 남는 것이 전사의 예산입니다. 예전에는 설정값 `max_tokens` 만 뺐습니다 —
-            # 도구 정의 수천 토큰과 `native` 모드의 사고 예산이 빠져, 합성 요청이 창을 넘겼습니다.
-            # 앞에 고정한 사용자 발언 기록과 요약의 몫도 뺍니다.
-            budget -= memory.text_tokens(model, record.text) + memory.text_tokens(model, summary)
-            kept_rev: List[str] = []
-            dropped = 0
-            for index, msg in reversed(usable):
-                block = render(index, msg)
-                probe = [{"role": "user", "content": "\n".join([block] + kept_rev)}]
-                if kept_rev and budget > 0 and estimate_tokens(agent.model, probe) > budget:
-                    dropped = len(usable) - len(kept_rev)
-                    break
-                kept_rev.insert(0, block)
-            kept = kept_rev
-
-        if dropped:
-            logger.warning(
-                f"Synthesis transcript trimmed: dropped {dropped} of {len(usable)} message(s) "
-                f"(max_context_window={agent.max_context_window})"
-            )
-            # 생략 건수를 상태에 누적합니다. 반환값을 바꾸는 대신 이 자리를 쓰는
-            # 것은, 이 메서드가 프롬프트 문자열을 돌려준다는 계약을 호출부와
-            # 테스트가 이미 쓰고 있기 때문입니다.
-            state.context_dropped += dropped
-            memory_tool = self._memory_search_tool_for(agent, state)
-            notice = context_trim_notice(dropped, memory_tool)
-            if memory_tool:
-                notice += (
-                    f"\n[생략된 초반 라운드가 결론에 필요하면 `{memory_tool}` 로 "
-                    f"이 대화의 그래프를 찾아보세요 — 토론 중에 에이전트들이 "
-                    f"핵심을 그곳에 남겼을 수 있습니다.]"
-                )
-            kept.insert(0, notice + "\n")
-
-        full_transcript = "\n".join(kept)
-
-        early_stop = ""
-        if state.stopped_early:
-            # 남은 라운드에서 나왔을 반론을 지어내면, 검증되지 않은 결론이 검증된
-            # 것처럼 보고서에 올라갑니다.
-            why = (
-                "서버가 다시 시작되어 토론이 예정보다 일찍 끊겼고, 유저가 지금까지의 논의로 "
-                "결론을 내도록 골랐습니다"
-                if state.interrupted else
-                "유저가 예정된 라운드보다 일찍 토론을 정지시켰습니다"
-            )
-            early_stop = (
-                f"\n[주의] {why} "
-                f"(진행: {state.current_round}/{state.max_rounds} 라운드). 남은 라운드에서 "
-                f"나왔을 의견을 추측해 채우지 말고, 지금까지 오간 논의만으로 정리하되 "
-                f"아직 검토되지 못한 쟁점을 보고서에 명시하세요.\n"
-            )
-
-        missing = ""
-        if state.failed_agent_keys:
-            # 누가 빠졌는지 알려야, 오케스트레이터가 없는 의견을 있는 것처럼 요약하지 않습니다.
-            missing = (
-                f"\n[주의] 다음 에이전트는 LLM 연결 실패로 이번 토론에서 발언하지 못했습니다: "
-                f"{', '.join(state.failed_agent_keys)}. 이들의 의견을 추측해서 채우지 말고, "
-                f"보고서에 누락 사실을 명시하세요.\n"
-            )
-
-        # 유저가 승인한 태스크의 완료 확인 (ADR-028). 누가 몇 번 말했고 누가 응답하지 못했는지는
-        # 엔진이 기록에서 센 값입니다 — 모델의 자기 보고에 맡기면 하지 않은 일이 완료로 적힙니다.
-        completion = ""
-        if state.plan_tasks:
-            speeches: Dict[str, int] = {}
-            for m in state.messages[state.turn_message_start:]:
-                if turns.kind_of(m) == turns.KIND_SPEECH and m.msg_type != "error":
-                    speeches[m.sender_key] = speeches.get(m.sender_key, 0) + 1
-            completion = "\n" + plan_gate.completion_block(
-                state.plan_tasks, speeches, state.failed_agent_keys
-            ) + "\n"
-
-        pinned = "".join(f"{part}\n\n" for part in (record.text, summary) if part)
-        prompt = (
-            f"[User Goal]: {state.user_prompt}\n\n"
-            f"{pinned}"
-            f"[Full Multi-Agent Debate Transcript]:\n{full_transcript}\n"
-            f"{early_stop}"
-            f"{missing}"
-            f"{completion}\n"
-            f"수석 오케스트레이터로서 토론을 종합해 최종 합의 보고서를 작성하세요. "
-            f"이 보고서가 맡는 것은 **결론과 종합 다이어그램까지**입니다.\n"
-            f"다음 {'세' if completion else '두'} 가지만 쓰세요:\n"
-            f"1. **최종 합의 결론** — 결정 사항과 그 근거, 채택하지 않은 대안과 이유, "
-            f"남은 쟁점과 위험\n"
-            f"2. **종합 Mermaid 다이어그램** 하나 (```mermaid 블록. 노드 라벨에 괄호를 쓸 때는 "
-            f'A["결제 서비스 (Payment)"] 처럼 반드시 큰따옴표로 감쌀 것)\n'
-            + (f"3. {plan_gate.COMPLETION_INSTRUCTION}\n" if completion else "") +
-            f"\n"
-            f"[하지 말 것] 소스 코드를 다시 쓰거나 붙여 넣지 마세요. 코드는 전문가 발언과 작업 "
-            f"공간 파일에 이미 있고, 산출물 탭에도 전문가 발언에서 따로 모읍니다. 코드가 필요한 "
-            f"자리는 파일 경로·모듈·함수 이름으로만 가리키세요."
-        )
-        return [{"role": "user", "content": prompt}]
+        """Constructs prompt for orchestrator final consensus & artifact generation."""
+        return self.synthesis_phase.build_synthesis_prompt(state, agent)
 
     # ------------------------------------------------- 다이어그램 문법 되돌리기
 
@@ -4849,102 +2950,10 @@ class OrchestratorEngine:
         state: DebateState,
         on_event: Optional[EventCallback],
     ) -> str:
-        """합성 본문의 Mermaid 다이어그램을 검사하고, 틀렸으면 고쳐 받습니다.
-
-        예전에는 문법이 어긋난 다이어그램이 그대로 아티팩트가 되었고, 사람이 탭을
-        열었을 때 비로소 "Mermaid 문법 오류" 를 보았습니다. 그때는 토론이 이미
-        끝나 고칠 사람이 없습니다 — 다시 물어보려면 새 턴을 돌려야 하고, 그러면
-        라운드를 통째로 다시 씁니다.
-
-        여기서는 **쓴 사람에게 그 자리에서 돌려줍니다.** 오류 메시지와 문제가 된
-        줄을 그대로 주고 고쳐 달라고 하며, `MERMAID_REPAIR_ATTEMPTS` 번까지
-        반복합니다. 끝내 못 고치면 원문을 그대로 둡니다 — 지어낸 다이어그램으로
-        바꾸느니, 틀린 채로 두고 무엇이 틀렸는지 알리는 편이 낫습니다.
-
-        검사는 `lint_mermaid` 가 합니다. 확실한 오류만 잡도록 만들어져 있어,
-        멀쩡한 그림을 두고 모델을 다시 부르는 일은 없습니다.
-        """
-        blocks = find_mermaid_blocks(text)
-        if not blocks:
-            return text
-
-        broken = [
-            (i, b, issues)
-            for i, b in enumerate(blocks)
-            if (issues := lint_mermaid(normalize_mermaid(b["code"])))
-        ]
-        if not broken:
-            return text
-
-        logger.warning(
-            f"{len(broken)} of {len(blocks)} mermaid diagram(s) in {agent.name}'s synthesis "
-            f"failed the syntax check: "
-            + "; ".join(f"#{i + 1} {[x.rule for x in issues]}" for i, _b, issues in broken)
+        """합성 본문의 Mermaid 다이어그램을 검사하고, 틀렸으면 고쳐 받습니다."""
+        return await self.synthesis_phase.repair_mermaid_blocks(
+            text, agent=agent, custom_instructions=custom_instructions, state=state, on_event=on_event
         )
-
-        fixer = agent.model_copy(update={
-            "allowed_mcp_servers": [],
-            "allowed_skills": [],
-            "sequential_thinking": agent.sequential_thinking.model_copy(update={"enabled": False}),
-        })
-
-        current = text
-        for attempt in range(1, MERMAID_REPAIR_ATTEMPTS + 1):
-            if on_event:
-                await on_event({
-                    "type": "mermaid_repair_started",
-                    "agent_name": agent.name,
-                    "broken": len(broken),
-                    "total": len(blocks),
-                    "attempt": attempt,
-                    "max_attempts": MERMAID_REPAIR_ATTEMPTS,
-                })
-
-            try:
-                fixed = await self._ask_for_fixed_diagrams(
-                    fixer, broken, state, custom_instructions, attempt
-                )
-            except LLMUnavailableError as exc:
-                logger.warning(f"Mermaid repair call failed: {exc}")
-                break
-
-            if not fixed:
-                logger.warning("The repair answer contained no mermaid block; giving up on this pass.")
-                break
-
-            current = self._splice_blocks(current, broken, fixed)
-
-            blocks = find_mermaid_blocks(current)
-            broken = [
-                (i, b, issues)
-                for i, b in enumerate(blocks)
-                if (issues := lint_mermaid(normalize_mermaid(b["code"])))
-            ]
-            if not broken:
-                logger.info(f"Mermaid diagrams fixed on attempt {attempt}.")
-                if on_event:
-                    await on_event({
-                        "type": "mermaid_repair_finished",
-                        "agent_name": agent.name,
-                        "resolved": True,
-                        "attempts": attempt,
-                        "remaining": 0,
-                    })
-                return current
-
-        if on_event:
-            await on_event({
-                "type": "mermaid_repair_finished",
-                "agent_name": agent.name,
-                "resolved": False,
-                "attempts": MERMAID_REPAIR_ATTEMPTS,
-                "remaining": len(broken),
-            })
-        logger.warning(
-            f"{len(broken)} mermaid diagram(s) still fail the syntax check after "
-            f"{MERMAID_REPAIR_ATTEMPTS} attempt(s); keeping the original."
-        )
-        return current
 
     async def _ask_for_fixed_diagrams(
         self,
@@ -4954,56 +2963,10 @@ class OrchestratorEngine:
         custom_instructions: str,
         attempt: int,
     ) -> List[str]:
-        """틀린 다이어그램만 모아 고쳐 달라고 하고, 받은 블록을 순서대로 돌려줍니다.
-
-        보고서 전체를 다시 쓰게 하지 않습니다. 다시 쓰면 결론이 흔들리고 길이도
-        감당할 수 없습니다 — 고쳐야 하는 것은 문법이지 내용이 아닙니다.
-        """
-        parts = [
-            "방금 작성한 보고서의 Mermaid 다이어그램이 문법 오류로 렌더링되지 않습니다.",
-            "",
-            f"아래 {len(broken)}개를 고쳐서 다시 주세요. **다이어그램만** 주면 됩니다 — "
-            "보고서 본문은 다시 쓰지 마세요.",
-            "",
-        ]
-        for order, (_index, block, issues) in enumerate(broken, start=1):
-            parts += [
-                f"### 다이어그램 {order}",
-                "",
-                "렌더러가 지적한 곳:",
-                format_issues(issues),
-                "",
-                "원본:",
-                "```mermaid",
-                block["code"],
-                "```",
-                "",
-            ]
-        parts += [
-            "---",
-            "",
-            f"고친 다이어그램 {len(broken)}개를 **같은 순서로**, 각각 ```mermaid 코드 블록"
-            " 하나씩으로 출력하세요. 다른 설명은 붙이지 마세요.",
-            "",
-            "지킬 것:",
-            "- 라벨에 괄호·따옴표·특수문자가 있으면 큰따옴표로 감싸세요: `A[\"결제 (PG)\"]`",
-            "- `end` 는 예약어입니다. 노드 이름으로 쓰지 마세요 (`END` 는 됩니다).",
-            "- `subgraph` 는 반드시 `end` 로 닫으세요.",
-            "- 첫 줄은 `graph TD` 처럼 다이어그램 종류 선언이어야 합니다.",
-            "- **의미는 바꾸지 마세요.** 노드와 관계는 그대로 두고 문법만 고치세요.",
-        ]
-        if attempt > 1:
-            parts.append(
-                f"- 이번이 {attempt}번째 시도입니다. 앞서 고친 것도 같은 이유로 실패했으니, "
-                f"의심스러운 라벨은 전부 큰따옴표로 감싸세요."
-            )
-
-        content, _ = await self.llm_caller.call_agent(
-            fixer, [{"role": "user", "content": "\n".join(parts)}],
-            custom_instructions, session_id=state.session_id,
-            mcp=self._mcp_for(state), tool_gate=self._gate_for(state),
+        """틀린 다이어그램만 모아 고쳐 달라고 하고, 받은 블록을 순서대로 돌려줍니다."""
+        return await self.synthesis_phase.ask_for_fixed_diagrams(
+            fixer, broken, state, custom_instructions, attempt
         )
-        return [b["code"] for b in find_mermaid_blocks(content or "")]
 
     @staticmethod
     def _splice_blocks(
@@ -5011,98 +2974,22 @@ class OrchestratorEngine:
         broken: List[Tuple[int, Dict[str, Any], List[Any]]],
         replacements: List[str],
     ) -> str:
-        """고친 다이어그램을 원문의 제자리에 끼워 넣습니다.
-
-        뒤에서부터 바꿉니다. 앞에서부터 바꾸면 길이가 달라지면서 뒤쪽 블록의
-        위치가 어긋납니다.
-
-        받은 개수가 모자라면 받은 만큼만 바꿉니다 — 모델이 다이어그램 하나를
-        빠뜨렸다고 나머지 고친 것까지 버릴 이유는 없습니다.
-        """
-        pairs = list(zip(broken, replacements))
-        for (_index, block, _issues), fixed in sorted(pairs, key=lambda x: -x[0][1]["start"]):
-            text = text[:block["start"]] + fixed + text[block["end"]:]
-        return text
+        """고친 다이어그램을 원문의 제자리에 끼워 넣습니다."""
+        return SynthesisPhaseExecutor.splice_blocks(text, broken, replacements)
 
     def _turn_speeches(self, state: DebateState) -> List[DebateMessage]:
         """이번 턴 전문가 발언. 사용자·오케스트레이터(계획·지명·합성)·실패 안내는 뺍니다."""
-        return [
-            m for m in state.messages[state.turn_message_start:]
-            if m.sender_key not in ("user", "orchestrator") and m.msg_type != "error"
-        ]
+        return self.synthesis_phase.turn_speeches(state)
 
     def _debate_code_artifacts(self, state: DebateState, stamp: str) -> List[ArtifactItem]:
-        """이번 턴 전문가 발언에서 코드를 모읍니다. 에이전트마다 **가장 최근에** 코드를 낸 발언.
-
-        오케스트레이터가 합성에서 코드를 다시 쓰지 않으므로, 코드 탭은 여기서 채웁니다.
-        이전 턴의 코드는 그 턴의 산출물로 이미 남아 있으니 다시 올리지 않습니다. 사고 과정에
-        적은 초안이 섞이지 않게 결론만 봅니다. 같은 코드는 한 번만 올립니다.
-        """
-        latest: Dict[str, Tuple[DebateMessage, List[Dict[str, str]]]] = {}
-        for msg in self._turn_speeches(state):
-            blocks = [
-                b for b in extract_code_blocks(strip_reasoning_trace(msg.content))
-                if b["language"] in CODE_LANGUAGES
-            ]
-            if blocks:
-                latest[msg.sender_key] = (msg, blocks)
-
-        artifacts: List[ArtifactItem] = []
-        seen = set()
-        for msg, blocks in latest.values():
-            for block in blocks:
-                key = block["code"].strip()
-                if not key or key in seen:
-                    continue
-                seen.add(key)
-                lang = "python" if block["language"] == "py" else block["language"]
-                artifacts.append(ArtifactItem(
-                    artifact_type="code",
-                    title=f"{stamp} {lang} · {msg.sender_name} R{msg.round_number}".strip(),
-                    content=block["code"],
-                    language=lang,
-                ))
-                if len(artifacts) >= MAX_DEBATE_CODE_ARTIFACTS:
-                    return artifacts
-        return artifacts
+        """이번 턴 전문가 발언에서 코드를 모읍니다. 에이전트마다 **가장 최근에** 코드를 낸 발언."""
+        return self.synthesis_phase.debate_code_artifacts(state, stamp)
 
     def _synthesis_fallback_report(
         self, state: DebateState, failure_reason: str, synth_text: str
     ) -> str:
-        """합성이 비었거나 실패했을 때 남기는 보고서 — LLM 없이 모은 전문가별 마지막 발언.
-
-        토론은 끝났는데 결론만 없는 상태입니다. 예전에는 이 턴의 산출물이 빈 보고서였고,
-        화면이 그것으로 뷰어를 바꿔 **토론 결과가 증발한 것처럼** 보였습니다. 발언 자체는
-        기록에 있지만, 결론을 찾는 사람은 산출물 탭을 봅니다.
-        """
-        latest: Dict[str, DebateMessage] = {}
-        for msg in self._turn_speeches(state):
-            latest[msg.sender_key] = msg
-
-        what = (
-            "만들지 못했습니다 (LLM 연결 끊김)" if failure_reason == "LLM 연결 끊김"
-            else f"비워 두었습니다 ({failure_reason})"
-        )
-        parts = [
-            f"> ⚠️ **오케스트레이터가 이번 턴의 최종 결론을 {what}.**\n"
-            f">\n"
-            f"> 토론 기록은 그대로 남아 있습니다. 아래는 LLM 없이 모은 **전문가별 마지막 "
-            f"발언**입니다. 이전 턴의 결론은 산출물 탭에 그대로 있습니다. 결론이 필요하면 "
-            f"같은 대화에서 \"결론만 다시 정리해 줘\" 처럼 요청하세요."
-        ]
-        notice = (synth_text or "").strip()
-        if notice and failure_reason == "LLM 연결 끊김":
-            parts.append(notice)
-        if latest:
-            parts.append("## 전문가별 마지막 발언")
-            for msg in latest.values():
-                body = strip_reasoning_trace(msg.content).strip() or "(내용 없음)"
-                parts.append(
-                    f"### {msg.speaker} — Round {msg.round_number}\n\n{body}"
-                )
-        else:
-            parts.append("_이번 턴에는 기록된 전문가 발언이 없습니다._")
-        return "\n\n".join(parts) + "\n"
+        """합성이 비었거나 실패했을 때 남기는 보고서 — LLM 없이 모은 전문가별 마지막 발언."""
+        return self.synthesis_phase.synthesis_fallback_report(state, failure_reason, synth_text)
 
     def _extract_artifacts_from_synthesis(
         self,
@@ -5114,120 +3001,16 @@ class OrchestratorEngine:
         turn_started_at: Optional[datetime] = None,
         failure_reason: str = "LLM 연결 끊김",
     ) -> List[ArtifactItem]:
-        """이 턴의 산출물: 최종 결론, 종합 다이어그램, 전문가 코드, 요약 JSON.
-
-        제목 앞에 턴이 끝난 시각(`MM-DD HH:MM`)을 붙입니다. 산출물은 턴마다 쌓이고 화면은
-        지난 턴 것을 지우지 않으므로, 같은 제목의 탭이 여러 개일 때 어느 턴의 것인지 보여야
-        합니다.
-
-        `completed_at` 이 주어지면 보고서 끝에 완료 시각과 총 경과를 적습니다. 합성이
-        실패했으면 적지 않습니다 — 실패 안내를 "보고서 완료" 라고 부르면 거짓입니다.
-        """
-        stamp = to_local(completed_at).strftime("%m-%d %H:%M") if completed_at else ""
-        artifacts: List[ArtifactItem] = []
-
-        # 1. 최종 결론 — 실패했으면 전문가별 마지막 발언으로 대신합니다.
-        if synthesis_failed:
-            artifacts.append(ArtifactItem(
-                artifact_type="markdown",
-                title=f"{stamp} 합성 실패 ({failure_reason or 'LLM 연결 끊김'})".strip(),
-                content=self._synthesis_fallback_report(state, failure_reason, synth_text),
-                language="markdown",
-            ))
-        else:
-            completed_line = report_completed_line(
-                completed_at, turn_started_at,
-                paused_seconds=state.paused_seconds, resumed_count=state.resumed_count,
-            )
-            report = (
-                f"{synth_text.rstrip()}\n\n---\n\n{completed_line}\n" if completed_line else synth_text
-            )
-            artifacts.append(ArtifactItem(
-                artifact_type="markdown",
-                title=f"{stamp} 최종 결론".strip(),
-                content=report,
-                language="markdown",
-            ))
-
-        # 2. 종합 다이어그램 — 합성 원문에서. 코드는 뽑지 않습니다 (오케스트레이터가 쓰지
-        #    않도록 했고, 그래도 썼다면 보고서 본문에 남아 있습니다).
-        def diagram_item(title: str, raw_code: str, source: str) -> ArtifactItem:
-            # 기계적 수선(`normalize_mermaid`) 뒤에도 검사에 걸리면 제목 앞에 ⚠ 를 붙입니다.
-            # 합성 다이어그램은 이미 수선을 거쳤고, 전문가 발언에서 가져온 것은 수선할
-            # 사람이 없어 여기서 처음 검사합니다. 탭을 열기 전에 알 수 있어야 합니다.
-            code = normalize_mermaid(raw_code)
-            issues = lint_mermaid(code)
-            if issues:
-                logger.warning(
-                    f"Diagram '{title}' from {source} still fails the syntax check: "
-                    f"{[i.rule for i in issues]}"
-                )
-                title = f"⚠ {title}"
-            return ArtifactItem(artifact_type="mermaid", title=title, content=code, language="mermaid")
-
-        mermaid_idx = 1
-        if not synthesis_failed:
-            for block in extract_code_blocks(synth_text):
-                if block["language"] != "mermaid":
-                    continue
-                artifacts.append(diagram_item(
-                    f"{stamp} 종합 다이어그램" + (f" #{mermaid_idx}" if mermaid_idx > 1 else ""),
-                    block["code"], "the synthesis",
-                ))
-                mermaid_idx += 1
-
-        # 2-b. 합성에 다이어그램이 없으면 이번 턴 토론 본문에서 찾습니다. 합성이 실패한
-        #      턴에도 다이어그램 탭이 비지 않게 합니다. 이전 턴 다이어그램은 그 턴의
-        #      산출물로 이미 남아 있어 다시 올리지 않습니다. 이 경로는 LLM 수선을 거치지
-        #      않으므로 기계적 수선과 ⚠ 표시가 전부입니다.
-        if mermaid_idx == 1:
-            for msg in reversed(state.messages[state.turn_message_start:]):
-                if msg.msg_type == "error" or msg.sender_key == "user":
-                    continue
-                found = [b for b in extract_code_blocks(msg.content) if b["language"] == "mermaid"]
-                if not found:
-                    continue
-                for block in found:
-                    artifacts.append(diagram_item(
-                        f"{stamp} 다이어그램 #{mermaid_idx} ({msg.sender_name} 제안)".strip(),
-                        block["code"], msg.sender_name,
-                    ))
-                    mermaid_idx += 1
-                break
-
-        # 3. 전문가 코드 — 이번 턴 발언에서.
-        artifacts.extend(self._debate_code_artifacts(state, stamp))
-
-        # 4. 요약 JSON
-        json_summary = {
-            "session_id": session_id,
-            "goal": state.user_prompt,
-            "strategy": state.strategy,
-            "total_rounds": state.current_round,
-            "participating_agents": state.active_agent_keys,
-            "failed_agents": list(state.failed_agent_keys),
-            "fallback_agents": list(state.fallback_agent_keys),
-            "synthesis_failed": synthesis_failed,
-            "total_messages": len(state.messages),
-            # 정지(사람이든 서버 중단이든)로 덜 논의된 턴은 합의가 아닙니다 — 화면의 판정
-            # (`DebateState.is_consensus_reached`)과 같은 기준입니다.
-            "consensus_reached": (
-                not state.failed_agent_keys and not synthesis_failed and not state.stopped_early
-            ),
-        }
-        if state.resumed_count:
-            # 끊겼다가 이어 간 턴 (ADR-024). 총 경과 안에 든 서버 중단 시간을 함께 남깁니다.
-            json_summary["resumed_count"] = state.resumed_count
-            json_summary["paused_seconds"] = state.paused_seconds
-            json_summary["interrupted"] = state.interrupted
-        artifacts.append(ArtifactItem(
-            artifact_type="json",
-            title=f"{stamp} 토론 요약 (JSON)".strip(),
-            content=json.dumps(json_summary, indent=2, ensure_ascii=False),
-            language="json",
-        ))
-
-        return artifacts
+        """이 턴의 산출물: 최종 결론, 종합 다이어그램, 전문가 코드, 요약 JSON."""
+        return self.synthesis_phase.extract_artifacts_from_synthesis(
+            session_id,
+            synth_text,
+            state,
+            synthesis_failed=synthesis_failed,
+            completed_at=completed_at,
+            turn_started_at=turn_started_at,
+            failure_reason=failure_reason,
+        )
 
 _orchestrator_engine: Optional[OrchestratorEngine] = None
 

@@ -20,6 +20,13 @@ from app.agents.skills import (
     skill_guidance,
     skill_tools_for,
 )
+from app.agents.consultation import (
+    PEERS_TOOL_PREFIX,
+    consultation_guidance,
+    consultation_tools_for,
+    is_consultation_tool,
+    run_consultation_tool,
+)
 from app.mcp.manager import MCPManager, get_mcp_manager
 
 logger = logging.getLogger(__name__)
@@ -1537,6 +1544,10 @@ class LLMCaller:
         if skills:
             parts.append(skills)
 
+        consultation = consultation_guidance(tools)
+        if consultation:
+            parts.append(consultation)
+
         if custom_instructions:
             parts.append(f"[Session Custom Instructions]:\n{custom_instructions}")
 
@@ -1544,7 +1555,7 @@ class LLMCaller:
 
     def resolve_tool_servers(self, agent: Agent) -> List[str]:
         """MCP servers this agent may use, including the sequential-thinking server when required."""
-        servers = list(agent.allowed_mcp_servers)
+        servers = [s for s in agent.allowed_mcp_servers if s != PEERS_TOOL_PREFIX]
         st = agent.sequential_thinking
         if st.enabled and st.mode == "mcp" and st.mcp_server not in servers:
             servers.append(st.mcp_server)
@@ -1765,7 +1776,7 @@ class LLMCaller:
         if tool_gate is not None:
             tools = tool_gate.filter_tools(agent.key, tools, mcp)
         # 스킬 도구는 발언이 진행될 때마다 스킬 디렉터리와 활성화 여부를 새로 조회하여 동적으로 생성합니다 (`app/agents/skills.py`).
-        tools = tools + skill_tools_for(agent)
+        tools = tools + skill_tools_for(agent) + consultation_tools_for(agent)
 
         if resume_state is not None:
             # 끊긴 발언을 이어 갑니다. 모델이 보던 메시지를 그대로 씁니다 — 프롬프트를 다시 만들면
@@ -2530,6 +2541,11 @@ class LLMCaller:
                     agent, fn_name, fn_args,
                     workspace=getattr(runtime, "workspace", None), tools=tools,
                 )
+            elif is_consultation_tool(fn_name):
+                output, status = await run_consultation_tool(
+                    agent, fn_name, fn_args,
+                    llm_caller=self,
+                )
             else:
                 output, status = await runtime.execute_tool(
                     fn_name, fn_args, scope=session_id, actor=agent.key
@@ -2958,8 +2974,12 @@ class LLMCaller:
                         # 사용 권한은 `allowed_skills` 및 활성화 설정을 통해 사전에 통제되기 때문입니다.
                         # (스킬 내부의 스크립트를 실제로 **실행**하는 단계는 샌드박스 도구를 통해 수행되므로,
                         # 해당 도구 호출 시 정상적으로 보안 판정을 받게 됩니다.)
-                        gate = None if is_skill_tool(fn_name) else await self._check_tool_gate(
-                            tool_gate, agent, fn_name, fn_args, mcp or self.mcp_manager,
+                        gate = (
+                            None
+                            if (is_skill_tool(fn_name) or is_consultation_tool(fn_name))
+                            else await self._check_tool_gate(
+                                tool_gate, agent, fn_name, fn_args, mcp or self.mcp_manager,
+                            )
                         )
                         if gate is not None and not gate.allowed:
                             output, status = gate.output, gate.status or "denied"

@@ -26,8 +26,10 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 from app.config import resolve_workspace_dir
 from app.orchestration.control import TurnControl
 from app.orchestration.engine import OrchestratorEngine, get_orchestrator_engine
+from app.orchestration.event_bus import BaseEventBus, get_event_bus
 from app.orchestration.graph_run import GraphRunTracker
 from app.orchestration.plan_gate import PlanApprovalExpired
+from app.orchestration.worker import TaskWorkerPool, get_task_worker_pool
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +66,13 @@ class TurnRun:
         *,
         turn_id: Optional[str] = None,
         resume_mode: Optional[str] = None,
+        event_bus: Optional[BaseEventBus] = None,
     ):
         self.session_id = session_id
         self.user_prompt = user_prompt
         self.workspace = resolve_workspace_dir(workspace or None)
+        self.event_bus = event_bus or get_event_bus()
+        self.channel = f"session:{self.session_id}"
         self.status: str = "running"  # running | completed | failed | cancelled
         self.error: Optional[str] = None
         # 이 실행이 돌리는 턴 (`TurnModel`). 새 턴이면 엔진이 요청을 기록하는 순간
@@ -134,11 +139,12 @@ class TurnRun:
     # -------------------------------------------------- 구독
 
     def subscribe(self) -> "asyncio.Queue[Dict[str, Any]]":
-        queue: "asyncio.Queue[Dict[str, Any]]" = asyncio.Queue(maxsize=MAX_QUEUED_EVENTS)
+        queue = self.event_bus.subscribe(self.channel, maxsize=MAX_QUEUED_EVENTS)
         self._subscribers.add(queue)
         return queue
 
     def unsubscribe(self, queue: "asyncio.Queue[Dict[str, Any]]") -> None:
+        self.event_bus.unsubscribe(self.channel, queue)
         self._subscribers.discard(queue)
 
     @property
@@ -146,12 +152,9 @@ class TurnRun:
         return len(self._subscribers)
 
     def _fanout(self, event: Dict[str, Any]) -> None:
+        self.event_bus.publish_nowait(self.channel, event)
         for queue in list(self._subscribers):
-            try:
-                queue.put_nowait(event)
-            except asyncio.QueueFull:
-                # 화면이 따라오지 못하고 있습니다. 큐를 버리면 그 화면은 다음
-                # 스냅샷에서 복구됩니다. 토론은 여기서 멈추지 않습니다.
+            if queue.full():
                 logger.warning("Dropping a slow debate subscriber for session %s", self.session_id)
                 self._subscribers.discard(queue)
 
@@ -617,9 +620,16 @@ class TurnRun:
 class DebateRunner:
     """세션별 토론 태스크의 소유자. 프로세스 전체에서 하나만 씁니다."""
 
-    def __init__(self, engine: Optional[OrchestratorEngine] = None):
+    def __init__(
+        self,
+        engine: Optional[OrchestratorEngine] = None,
+        event_bus: Optional[BaseEventBus] = None,
+        worker_pool: Optional[TaskWorkerPool] = None,
+    ):
         self._engine = engine
         self._runs: Dict[str, TurnRun] = {}
+        self.event_bus = event_bus or get_event_bus()
+        self.worker_pool = worker_pool or get_task_worker_pool()
 
     @property
     def engine(self) -> OrchestratorEngine:
@@ -635,12 +645,7 @@ class DebateRunner:
         return run is not None and run.status == "running"
 
     def running_sessions(self) -> List[str]:
-        """지금 토론이 돌고 있는 대화의 id.
-
-        conf.json 처럼 **모든 런타임의 정본**인 설정을 화면에서 잠글지 판단할 때
-        씁니다. 서버 프로세스는 이제 작업 공간마다 나뉘지만, 그것들이 무엇을 어떻게
-        띄울지는 여전히 파일 하나가 정합니다.
-        """
+        """지금 토론이 돌고 있는 대화의 id."""
         return [sid for sid, run in self._runs.items() if run.status == "running"]
 
     def running_elsewhere(self, session_id: str) -> List[TurnRun]:
@@ -651,15 +656,12 @@ class DebateRunner:
     def start(self, session_id: str, user_prompt: str,
               workspace: Optional[str] = None,
               skill_designations: Optional[Dict[str, List[str]]] = None) -> TurnRun:
-        """토론을 백그라운드에서 시작합니다. 이미 돌고 있으면 그 실행을 돌려줍니다.
-
-        `skill_designations` 는 입력창에서 @전문가 @스킬 로 지정한 것입니다 (전문가 키 → 스킬).
-        """
+        """토론을 백그라운드에서 시작합니다. 이미 돌고 있으면 그 실행을 돌려줍니다."""
         existing = self._runs.get(session_id)
         if existing is not None and existing.status == "running":
             return existing
 
-        run = TurnRun(session_id, user_prompt, workspace)
+        run = TurnRun(session_id, user_prompt, workspace, event_bus=self.event_bus)
         self._runs[session_id] = run
 
         async def body(on_event) -> None:
@@ -672,17 +674,14 @@ class DebateRunner:
 
     def resume(self, session_id: str, turn_id: str, mode: str, user_prompt: str = "",
                workspace: Optional[str] = None) -> TurnRun:
-        """끊긴 턴을 백그라운드에서 마무리하거나(`finish`) 이어 갑니다(`continue`).
-
-        이미 돌고 있는 실행이 있으면 그것을 돌려줍니다 (한 대화에 한 턴만 돕니다). 화면은 새
-        턴을 시작할 때와 똑같이 이 실행에 붙습니다. `user_prompt` 는 그 턴을 연 요청입니다 —
-        긴급 종료하면 입력창으로 돌려줄 글입니다.
-        """
+        """끊긴 턴을 백그라운드에서 마무리하거나(`finish`) 이어 갑니다(`continue`)."""
         existing = self._runs.get(session_id)
         if existing is not None and existing.status == "running":
             return existing
 
-        run = TurnRun(session_id, user_prompt, workspace, turn_id=turn_id, resume_mode=mode)
+        run = TurnRun(
+            session_id, user_prompt, workspace, turn_id=turn_id, resume_mode=mode, event_bus=self.event_bus
+        )
         run.status_text = (
             "끊긴 턴을 지금까지의 발언으로 마무리하는 중..." if mode == "finish"
             else "끊긴 턴을 이어 가는 중..."
@@ -718,19 +717,11 @@ class DebateRunner:
                 run.error = "토론이 취소되었습니다."
                 raise
             except PlanApprovalExpired as exc:
-                # 오류가 아니라 대기의 끝입니다 (ADR-028). 턴은 끊긴 턴과 같은 모양으로 남아
-                # 이어 가거나 버릴 수 있습니다. 실행은 끝났으므로 상태는 "failed" 로 두되,
-                # 화면이 오류로 알리지 않도록 표시를 따로 둡니다.
                 logger.info(f"Debate turn for session {session_id} is parked: {exc}")
                 run.status = "failed"
                 run.parked = True
                 run.error = str(exc)
-            except BaseException as exc:  # noqa: BLE001 - 어떤 실패든 화면에 알려야 합니다
-                # `Exception` 이 아니라 `BaseException` 입니다. anyio 로 도구
-                # 서버를 다루는 경로는 `BaseExceptionGroup` 을 올리는데, 그건
-                # Exception 이 아니라서 예전에는 여기를 그냥 지나갔습니다. 그러면
-                # 태스크가 아무 흔적 없이 죽고 화면은 "토론 중..." 에 영원히
-                # 멈춰 있었습니다.
+            except BaseException as exc:  # noqa: BLE001
                 logger.error(
                     f"Debate turn failed for session {session_id}: "
                     f"{type(exc).__name__}: {exc}",
@@ -758,15 +749,14 @@ class DebateRunner:
                         "error": run.error,
                         "parked": run.parked,
                     })
-                except BaseException:  # noqa: BLE001 - 알리다 실패해도 태스크는 조용히 끝냅니다
+                except BaseException:  # noqa: BLE001
                     logger.warning(
                         "Could not announce the end of the debate for session %s",
                         session_id, exc_info=True,
                     )
 
-        # asyncio.create_task 로 띄운 태스크는 NiceGUI 슬롯 스택을 물려받지 않습니다.
-        # 즉 이 안에서는 UI 엘리먼트를 만들 수 없고, 만들 일도 없습니다.
-        run.task = asyncio.create_task(driver(), name=f"debate-{session_id}")
+        job = self.worker_pool.submit(f"debate:{session_id}", driver)
+        run.task = job.task
         return run
 
     def request_stop(self, session_id: str) -> bool:
@@ -870,28 +860,20 @@ class DebateRunner:
         )
 
     async def cancel(self, session_id: str) -> bool:
+        self.worker_pool.cancel(f"debate:{session_id}")
         run = self._runs.get(session_id)
         if run is None or run.task is None or run.task.done():
             return False
         task = run.task
         task.cancel()
-        # `await task` 가 아니라 `asyncio.wait` 입니다. 전자는 취소된 태스크의
-        # CancelledError 를 이 코루틴 쪽으로 다시 올려서, 정작 취소되지 않은
-        # 호출자(서버 종료 경로)까지 취소된 것처럼 보이게 만듭니다. 후자는
-        # 무엇으로 끝났든 예외를 올리지 않습니다.
         done, _pending = await asyncio.wait({task}, timeout=CANCEL_TIMEOUT)
         if not done:
-            # 취소를 흡수하고 놓아주지 않는 코드가 어딘가 있다는 뜻입니다.
-            # 여기서 계속 기다리면 서버 종료(lifespan)가 그 자리에서 멈추고,
-            # uvicorn 이 강제로 내려가면서 "백엔드가 죽었다" 로 보입니다.
             logger.warning(
                 "Debate task for session %s did not stop within %.0fs; leaving it behind",
                 session_id, CANCEL_TIMEOUT,
             )
             return True
         if not task.cancelled():
-            # 예외를 한 번은 읽어 두어야 "Task exception was never retrieved" 가
-            # 로그를 어지럽히지 않습니다.
             exc = task.exception()
             if exc is not None:
                 logger.debug(
@@ -902,11 +884,13 @@ class DebateRunner:
 
     async def shutdown(self) -> None:
         """서버 종료 시 남은 토론 태스크를 정리합니다."""
+        await self.worker_pool.drain(timeout=CANCEL_TIMEOUT)
         for session_id in list(self._runs):
             await self.cancel(session_id)
 
     def forget(self, session_id: str) -> None:
         """세션이 삭제됐을 때 스냅샷까지 버립니다."""
+        self.worker_pool.cancel(f"debate:{session_id}")
         run = self._runs.pop(session_id, None)
         if run is not None and run.task is not None and not run.task.done():
             run.task.cancel()
