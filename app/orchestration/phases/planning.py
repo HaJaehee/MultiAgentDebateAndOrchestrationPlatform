@@ -45,7 +45,7 @@ class PlanningPhaseExecutor:
         control: Optional[TurnControl],
         revision: Optional[str] = None,
     ) -> Optional[DebateMessage]:
-        """오케스트레이터가 이번 턴의 목표와 분담을 정합니다. 계획을 건너뛰는 그래프면 None."""
+        """오케스트레이터가 이번 턴의 목표와 역할 분담을 수립합니다. 계획 단계를 건너뛰는 그래프인 경우 None을 반환합니다."""
         orchestrator_agent = setup.orchestrator
         user_prompt = state.user_prompt
         state.status = "planning"
@@ -151,7 +151,7 @@ class PlanningPhaseExecutor:
         on_event: Optional[EventCallback],
         control: Optional[TurnControl],
     ) -> Optional[DebateMessage]:
-        """계획을 사람에게 보이고 승인을 받습니다. 토론이 시작할 계획 발언을 돌려줍니다."""
+        """수립된 계획을 사용자에게 제시하고 승인을 받습니다. 토론 시작의 기준이 될 계획 발언 메시지를 반환합니다."""
         from app.orchestration import engine as engine_module
 
         settings = engine_module.plan_approval_settings()
@@ -270,7 +270,7 @@ class PlanningPhaseExecutor:
             )
 
     async def turn_config(self, db: Any, state: DebateState) -> Optional[Dict[str, Any]]:
-        """턴 기록에 고정해 둔 구성의 **지금** 값. 읽지 못하면 None."""
+        """턴 기록에 보존된 구성 정보의 현재 값을 조회합니다. 읽기에 실패하면 None을 반환합니다."""
         if not state.turn_id:
             return None
         try:
@@ -294,7 +294,7 @@ class PlanningPhaseExecutor:
         *,
         on_event: Optional[EventCallback],
     ) -> List[Dict[str, Any]]:
-        """이 계획의 분담표 (전문가별 태스크). 이미 받아 둔 것이 있으면 다시 묻지 않습니다."""
+        """계획에 따른 전문가별 업무 분담표(태스크 목록)를 생성합니다. 이미 저장된 분담표가 있으면 재요청하지 않고 기존 값을 반환합니다."""
         config = await self.engine._turn_config(db, state)
         saved = (config or {}).get("plan_gate") or {}
         if saved.get("plan_id") == plan_message.id:
@@ -331,7 +331,7 @@ class PlanningPhaseExecutor:
         plan_message: DebateMessage,
         custom_instructions: str,
     ) -> List[Dict[str, Any]]:
-        """계획 본문을 전문가별 태스크로 옮겨 받습니다."""
+        """계획 본문으로부터 전문가별 구체적 수행 태스크 목록을 추출합니다."""
         planner = self.engine._tool_less(orchestrator)
         prompt = [{"role": "user", "content": plan_gate.tasks_prompt(
             state.user_prompt,

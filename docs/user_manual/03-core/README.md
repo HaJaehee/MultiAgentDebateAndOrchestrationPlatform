@@ -6,7 +6,7 @@
 
 ---
 
-## 아홉 개의 축
+## 열 개의 축
 
 | 문서 | 주요 내용 | 주요 파일 |
 | :--- | :--- | :--- |
@@ -19,6 +19,7 @@
 | [데이터베이스와 세션 스냅샷](07-persistence.md) | ORM 스키마, 자기완결적 대화 영속화 구조 | `app/database/models.py` |
 | [도구 보안](08-tool-security.md) | 행위 단위 허용·묻기·거부, 승인 카드, 고정 보호 | `app/mcp/policy.py`, `app/orchestration/tool_gate.py` |
 | [스킬](09-skills.md) | 필요 시 동적으로 참조하는 작업 지침 및 스크립트, 에이전트별 할당, 실시간 활성화/비활성화 | `app/agents/skills.py` |
+| [동료 자문 (peers)](10-peer-consultation.md) | 발언 중 다른 전문가에게 묻는 내장 도구, 물을 상대·도구 상한 고르기, 대화별 고정 | `app/agents/consultation.py` |
 
 ---
 

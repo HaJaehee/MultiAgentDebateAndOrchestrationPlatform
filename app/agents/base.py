@@ -7,6 +7,7 @@ from app.config import (
     DEFAULT_DEBATE_PRIORITY,
     PROJECT_ROOT,
     AgentConfig,
+    PeerConsultationConfig,
     SequentialThinkingConfig,
     resolve_agent_icon,
 )
@@ -164,6 +165,8 @@ class Agent(BaseModel):
     allowed_mcp_servers: List[str] = Field(default_factory=list)
     allowed_skills: List[str] = Field(default_factory=list)
     allow_peer_consultation: bool = False
+    # 이 에이전트가 동료 자문(peers)으로 물을 때의 상대와 도구 상한 (`PeerConsultationConfig`).
+    peer_consultation: PeerConsultationConfig = Field(default_factory=PeerConsultationConfig)
     # 토론에서의 자리. 전략이 이 값으로 순서와 진영을 정합니다 (에이전트 키를
     # 문자열로 박아 두던 방식을 대신합니다).
     debate_priority: int = DEFAULT_DEBATE_PRIORITY

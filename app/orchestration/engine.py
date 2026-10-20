@@ -23,7 +23,7 @@ from app.agents.llm import (
 )
 from app.agents import llm_fallback
 from app.agents.llm_gate import LLM_HOLDER
-from app.agents.personas import prepare_agents_for_turn
+from app.agents.personas import frozen_agents, prepare_agents_for_turn
 from app.agents.skills import skill_tools_for, visible_skill_names, with_designated_skills
 from app.agents.consultation import consultation_scope, consultation_tools_for
 from app.agents.pool import AgentPool, get_agent_pool
@@ -109,6 +109,10 @@ class TurnSetup:
     memory_budget: int
     # 입력창에서 @전문가 @스킬 로 지정한 것 (전문가 키 → 스킬). 이 턴에만 겁니다.
     skill_designations: Dict[str, List[str]] = field(default_factory=dict)
+    # 동료 자문(peers)의 상대가 될 수 있는 이 대화의 에이전트 전부. 참여자는 이번 턴의 사본이고,
+    # 참여하지 않는 에이전트는 첫 턴에 고정한 스냅샷입니다 — 자문 상대를 고른 에이전트는 이번
+    # 토론에 참여하지 않는 전문가에게도 물을 수 있습니다 (`peer_consultation.targets`).
+    consult_pool: List[Agent] = field(default_factory=list)
 
     def config(self, workspace: Path) -> Dict[str, Any]:
         """턴 기록에 고정해 둘 구성 (`TurnModel.config`). 끊긴 턴은 이 구성으로 마칩니다."""
@@ -1333,6 +1337,7 @@ class OrchestratorEngine:
             await self._set_turn(db, state, phase="debating")
             with consultation_scope(
                 setup.active_agents,
+                pool=setup.consult_pool,
                 llm_caller=self.llm_caller,
                 custom_instructions=setup.custom_instructions,
                 session_id=session_id,
@@ -1488,6 +1493,7 @@ class OrchestratorEngine:
                 )
                 with consultation_scope(
                     setup.active_agents,
+                    pool=setup.consult_pool,
                     llm_caller=self.llm_caller,
                     custom_instructions=setup.custom_instructions,
                     session_id=session_id,
@@ -1589,6 +1595,10 @@ class OrchestratorEngine:
             (a for a in active_agents if a.key == "orchestrator"),
             self.agent_pool.get_orchestrator(),
         )
+        present_keys = {a.key for a in active_agents}
+        consult_pool = list(active_agents) + [
+            a for a in await frozen_agents(db, session_id, self.agent_pool) if a.key not in present_keys
+        ]
         # 장부와 요약은 모든 참여자의 프롬프트에 실립니다. 상한을 가장 작은 창에 맞춥니다.
         memory_budget = min(
             (context_budget(a) for a in active_agents), default=context_budget(orchestrator_agent)
@@ -1604,6 +1614,7 @@ class OrchestratorEngine:
             graph_spec=graph_spec,
             memory_budget=memory_budget,
             skill_designations=clean_skill_designations(designations, active_keys),
+            consult_pool=consult_pool,
         )
 
     @staticmethod
@@ -2939,7 +2950,7 @@ class OrchestratorEngine:
         """Constructs prompt for orchestrator final consensus & artifact generation."""
         return self.synthesis_phase.build_synthesis_prompt(state, agent)
 
-    # ------------------------------------------------- 다이어그램 문법 되돌리기
+    # ------------------------------------------------- 다이어그램 문법 자가 수선
 
     async def _repair_mermaid_blocks(
         self,
@@ -2950,7 +2961,7 @@ class OrchestratorEngine:
         state: DebateState,
         on_event: Optional[EventCallback],
     ) -> str:
-        """합성 본문의 Mermaid 다이어그램을 검사하고, 틀렸으면 고쳐 받습니다."""
+        """합성 본문의 Mermaid 다이어그램 문법을 검증하고 오류 발생 시 수정을 요청합니다."""
         return await self.synthesis_phase.repair_mermaid_blocks(
             text, agent=agent, custom_instructions=custom_instructions, state=state, on_event=on_event
         )
@@ -2963,7 +2974,7 @@ class OrchestratorEngine:
         custom_instructions: str,
         attempt: int,
     ) -> List[str]:
-        """틀린 다이어그램만 모아 고쳐 달라고 하고, 받은 블록을 순서대로 돌려줍니다."""
+        """문법 오류가 발생한 다이어그램을 취합해 수정을 요청하고 보정된 다이어그램 목록을 반환합니다."""
         return await self.synthesis_phase.ask_for_fixed_diagrams(
             fixer, broken, state, custom_instructions, attempt
         )
@@ -2974,21 +2985,21 @@ class OrchestratorEngine:
         broken: List[Tuple[int, Dict[str, Any], List[Any]]],
         replacements: List[str],
     ) -> str:
-        """고친 다이어그램을 원문의 제자리에 끼워 넣습니다."""
+        """수정된 다이어그램을 원문의 본래 위치에 치환하여 삽입합니다."""
         return SynthesisPhaseExecutor.splice_blocks(text, broken, replacements)
 
     def _turn_speeches(self, state: DebateState) -> List[DebateMessage]:
-        """이번 턴 전문가 발언. 사용자·오케스트레이터(계획·지명·합성)·실패 안내는 뺍니다."""
+        """이번 턴의 전문가 발언 목록을 반환합니다 (사용자 입력, 오케스트레이터 메시지, 실패 안내 제외)."""
         return self.synthesis_phase.turn_speeches(state)
 
     def _debate_code_artifacts(self, state: DebateState, stamp: str) -> List[ArtifactItem]:
-        """이번 턴 전문가 발언에서 코드를 모읍니다. 에이전트마다 **가장 최근에** 코드를 낸 발언."""
+        """이번 턴 전문가 발언에서 코드 산출물을 추출합니다 (에이전트별 최신 코드 발언 기준)."""
         return self.synthesis_phase.debate_code_artifacts(state, stamp)
 
     def _synthesis_fallback_report(
         self, state: DebateState, failure_reason: str, synth_text: str
     ) -> str:
-        """합성이 비었거나 실패했을 때 남기는 보고서 — LLM 없이 모은 전문가별 마지막 발언."""
+        """합성 발언이 비어 있거나 실패했을 때의 대체 보고서를 작성합니다 (전문가별 최종 발언 취합)."""
         return self.synthesis_phase.synthesis_fallback_report(state, failure_reason, synth_text)
 
     def _extract_artifacts_from_synthesis(

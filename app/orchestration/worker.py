@@ -43,10 +43,10 @@ class TaskWorkerPool:
     """동시성 제어 및 수명주기 추적이 가능한 비동기 작업 워커 풀."""
 
     def __init__(self, concurrency: int = 0) -> None:
-        # 0 이면 제한하지 않습니다 (`app.llm_concurrency` 와 같은 약속). 기본값이 0 인 이유:
-        # 토론 턴은 계획·도구 승인을 몇 분씩 기다리는 동안에도 자리를 쥐고, 자리를 기다리는
-        # 턴은 화면에 "진행 중" 으로만 보여 멈춘 것과 구별되지 않습니다. 서버 전체의 부하는
-        # LLM 호출 단위로, 기다림을 화면에 보이며 `app.llm_concurrency` 가 묶습니다.
+        # 0 이면 동시성을 제한하지 않습니다 (`app.llm_concurrency` 와 동일한 정책). 기본값을 0 으로 둔 이유:
+        # 토론 턴은 계획이나 도구 승인을 수 분간 대기하는 동안에도 워커 슬롯을 점유할 수 있는데,
+        # 슬롯을 기다리는 대기 턴은 화면에 단순히 "진행 중" 으로만 표시되어 시스템 정체와 구분하기 어렵기 때문입니다.
+        # 서버 전체의 실질적 부하는 LLM 호출 단위에서 대기 현황을 안내하는 `app.llm_concurrency` 를 통해 안전하게 제한됩니다.
         self.concurrency = max(0, int(concurrency or 0))
         self._semaphore = asyncio.Semaphore(self.concurrency) if self.concurrency else None
         self._jobs: Dict[str, TaskJob] = {}
@@ -70,8 +70,8 @@ class TaskWorkerPool:
     ) -> TaskJob:
         """새 작업을 워커 풀에 제출하고 `TaskJob` 을 반환합니다."""
         existing = self._jobs.get(job_id)
-        # 상태 표시가 아니라 태스크가 살아 있는지로 봅니다. 첫 걸음을 떼기 전에 취소된 작업은
-        # 상태가 "pending" 으로 남는데, 그것을 돌려주면 새 작업이 죽은 태스크를 받습니다.
+        # 상태 플래그뿐만 아니라 asyncio 태스크의 실제 활성 여부를 확인합니다. 실행 시작 전에 취소된 작업은
+        # 상태가 "pending" 으로 남는데, 이를 그대로 반환하면 새 작업이 이미 종료된 태스크를 참조하게 됩니다.
         if existing is not None and existing.task is not None and not existing.task.done():
             logger.info("Job '%s' is already active in worker pool; returning existing", job_id)
             return existing
@@ -120,9 +120,9 @@ class TaskWorkerPool:
     async def drain(self, timeout: float = 20.0) -> None:
         """실행 중인 모든 작업이 완료될 때까지 기다리며, 타임아웃 초과 시 잔여 작업을 취소합니다.
 
-        취소한 뒤에도 `timeout` 까지만 기다립니다. `wait_for(gather(...))` 는 시간이 지나면
-        안쪽을 취소하고 **끝날 때까지** 기다리므로, 취소를 삼키는 작업 하나가 이 호출을
-        영영 붙잡습니다. 그런 작업은 남겨 두고 돌아옵니다 (`DebateRunner.cancel` 과 같은 약속).
+        취소한 뒤에도 `timeout` 까지만 대기합니다. `wait_for(gather(...))` 는 타임아웃 발생 시
+        내부 작업을 취소하고 **완료될 때까지** 대기하므로, 취소 시그널을 무시하는 작업이 발생하면 이 호출이
+        무한정 차단될 수 있습니다. 따라서 지정된 시간을 초과한 작업은 격리한 채 반환합니다 (`DebateRunner.cancel` 과 동일한 정책).
         """
         active = {job.task for job in self._jobs.values() if job.task and not job.task.done()}
         if not active:

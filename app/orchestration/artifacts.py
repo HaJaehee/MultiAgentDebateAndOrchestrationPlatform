@@ -206,7 +206,7 @@ def _normalize_flowchart_line(line: str) -> str:
 
 
 def normalize_mermaid(content: str) -> str:
-    """LLM 이 흔히 내는 Mermaid 문법 오류를 최소한만 손봅니다."""
+    """LLM 이 빈번히 생성하는 Mermaid 문법 오류를 최소한으로 보정합니다."""
     text = (content or "").replace("\ufeff", "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not text:
         return text
@@ -281,7 +281,7 @@ def format_roster(agents: List[Agent], *, with_keys: bool = False) -> str:
 
 
 def synthesis_has_content(text: str) -> bool:
-    """합성 발언이 실제로 결론을 담았는가."""
+    """합성 발언 메시지가 실질적인 결론 내용을 포함하고 있는지 확인합니다."""
     lines = (text or "").strip().splitlines()
     if lines and lines[0].startswith(NATIVE_REASONING_HEADER):
         while lines and (lines[0].startswith(">") or not lines[0].strip()):

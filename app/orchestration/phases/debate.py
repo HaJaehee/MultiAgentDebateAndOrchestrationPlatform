@@ -86,7 +86,7 @@ class DebatePhaseExecutor:
         resume: bool = False,
         redo: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> bool:
-        """전문가 토론 라운드. 사람이 정지시켰으면 True."""
+        """전문가 토론 라운드를 진행합니다. 사용자가 중단 요청을 한 경우 True를 반환합니다."""
         redo = dict(redo or {})
         strategy = get_strategy(setup.strategy_name)
         orchestrator_agent = setup.orchestrator
@@ -257,7 +257,7 @@ class DebatePhaseExecutor:
         custom_instructions: str,
         on_event: Optional[EventCallback],
     ) -> List[Agent]:
-        """이번 라운드에 누가 발언할지 정합니다."""
+        """이번 라운드의 발언 대상자와 발언 순서를 결정합니다."""
         fallback = strategy.get_speakers_for_round(active_agents, round_num, state)
         if not strategy.orchestrator_selects_speakers or len(fallback) <= 1:
             return fallback
@@ -325,7 +325,7 @@ class DebatePhaseExecutor:
         round_num: int,
         custom_instructions: str,
     ) -> Tuple[List[Agent], str]:
-        """오케스트레이터에게 이번 라운드 발언자와 순서를 물어봅니다."""
+        """오케스트레이터에게 이번 라운드의 발언 대상자 지명 및 순서 결정을 요청합니다."""
         selector = self.engine._tool_less(orchestrator)
 
         roster = format_roster(candidates, with_keys=True)
@@ -361,7 +361,7 @@ class DebatePhaseExecutor:
     def parse_speaker_selection(
         content: str, candidates: List[Agent]
     ) -> Tuple[List[Agent], str]:
-        """응답에서 지명된 에이전트와 사유를 뽑습니다."""
+        """오케스트레이터 응답에서 지명된 에이전트 목록과 지명 사유를 추출합니다."""
         by_key = {a.key: a for a in candidates}
         reason = ""
         keys: List[str] = []
@@ -412,7 +412,7 @@ class DebatePhaseExecutor:
         done: Optional[Set[str]] = None,
         redo: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> bool:
-        """한 라운드를 병렬로 돕니다. 정지 요청으로 라운드를 접었으면 True."""
+        """한 라운드를 병렬로 실행합니다. 정지 요청으로 라운드가 중단되었으면 True를 반환합니다."""
         if resume is not None and resume.merged:
             return False
         redo = redo if redo is not None else {}
@@ -558,7 +558,7 @@ class DebatePhaseExecutor:
         parallel_limit: int,
         on_event: Optional[EventCallback],
     ) -> List[Tuple[Agent, str]]:
-        """이번 라운드의 태스크 분배를 받아 기록하고 돌려줍니다."""
+        """이번 라운드의 에이전트별 태스크 분배 결과를 저장 및 반환합니다."""
         fallback = [(agent, "") for agent in candidates]
 
         async def _fall_back(why: str) -> List[Tuple[Agent, str]]:
@@ -610,7 +610,7 @@ class DebatePhaseExecutor:
         over_limit = len(assignments) > parallel_limit
         summary = (
             f"[Round {round_num} 병렬 지시] {len(assignments)}명에게 태스크를 나눴습니다"
-            + (f" (동시 실행 상한 {parallel_limit} — 나머지는 순차적으로 밀립니다)" if over_limit else " (동시 실행)")
+            + (f" (동시 실행 상한 {parallel_limit} — 나머지는 순차적으로 대기 후 실행됩니다)" if over_limit else " (동시 실행)")
             + "\n" + "\n".join(lines)
         )
         skipped = [a.name for a in candidates if a not in named]
@@ -641,7 +641,7 @@ class DebatePhaseExecutor:
         parallel_limit: int,
         custom_instructions: str,
     ) -> Tuple[List[Tuple[Agent, str]], str]:
-        """오케스트레이터에게 이번 라운드의 태스크 분배를 물어봅니다."""
+        """오케스트레이터에게 이번 라운드의 에이전트별 태스크 분배를 요청합니다."""
         planner = self.engine._tool_less(orchestrator)
 
         roster = format_roster(candidates, with_keys=True)
@@ -871,7 +871,7 @@ class DebatePhaseExecutor:
         replay: Optional[turns.GraphReplay] = None,
         redo: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> bool:
-        """그래프를 단계별로 돕니다. 사용자가 정지시켰으면 True."""
+        """그래프를 단계별로 실행합니다. 사용자가 정지 요청을 한 경우 True를 반환합니다."""
         agents = {a.key: a for a in active_agents}
         redo = redo if redo is not None else {}
         scheduler = replay.scheduler if replay is not None else GraphScheduler(spec, max_visits)
@@ -1051,7 +1051,7 @@ class DebatePhaseExecutor:
         on_event: Optional[EventCallback],
         redo: Dict[str, List[Dict[str, Any]]],
     ) -> None:
-        """끊긴 단계를 마저 돌립니다."""
+        """중단된 그래프 단계를 이어서 실행합니다."""
         step = replay.step
         pending = replay.pending
         if on_event:
@@ -1114,7 +1114,7 @@ class DebatePhaseExecutor:
         view: Optional[DebateState] = None,
         redo: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> Dict[str, Tuple[str, List[str]]]:
-        """한 단계의 노드들을 동시에 돌리고, 노드마다 (출력 핀, 값) 을 돌려줍니다."""
+        """현재 단계의 노드들을 동시 실행하고, 노드별 (출력 핀, 결과값) 튜플 목록을 반환합니다."""
         redo = redo if redo is not None else {}
         prompts: Dict[str, List[Dict[str, Any]]] = {}
         for activation in activations:
@@ -1223,7 +1223,7 @@ class DebatePhaseExecutor:
         placeholders: Dict[int, str],
         index_of: Dict[str, int],
     ) -> str:
-        """선 하나가 싣고 온 발언 하나. 선 종류대로 전문 / 요지 / 참조."""
+        """엣지(선)를 통해 전달된 발언 메시지 내용입니다 (전문, 요지, 참조 유형별 변환)."""
         if message.msg_type == "error":
             return f"[{message.sender_name}]: (이 발언은 실패해 내용이 없습니다)"
         pinned = placeholders.get(index_of.get(message.id, -1))
@@ -1253,7 +1253,7 @@ class DebatePhaseExecutor:
         on_event: Optional[EventCallback],
         notice: str = "",
     ) -> List[Dict[str, Any]]:
-        """노드 하나의 프롬프트."""
+        """단일 노드 실행을 위한 프롬프트를 구성합니다."""
         node = activation.node
         instruction = self.engine._graph_turn_instruction(spec, activation, step)
         if notice:
@@ -1355,7 +1355,7 @@ class DebatePhaseExecutor:
         db_lock: asyncio.Lock,
         created_at: datetime,
     ) -> Tuple[str, List[str]]:
-        """판정 노드."""
+        """조건 분기를 위한 판정 노드를 실행합니다."""
         node = activation.node
         judge = self.engine._tool_less(orchestrator)
         by_id = {m.id: m for m in state.messages}

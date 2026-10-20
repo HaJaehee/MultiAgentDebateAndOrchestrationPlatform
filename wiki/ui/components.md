@@ -185,6 +185,25 @@ The web application workspace is organized into four primary UI components in [a
   database only has it once the turn ends). See [Conversation Memory](../orchestration/context-memory.md).
 - **Persona Settings Button**: Links directly to `/personas/{session_id}`. Displays a lock icon if debate has commenced.
 - **MCP Server Chips**: Displays real-time connection states (Green/Orange/Red) and opens diagnostic tooltips on hover. The tooltip names the transport and shows `command:` for a local server, `url:` for a remote one.
+- **Built-in `peers` chip**: always shown after the configured servers, whether or not `conf.json`
+  mentions it, with a `내장` badge and no switch or delete button; it is not counted in `N/M 연결됨`.
+  `peers` is the peer consultation tool (`peers__consult_agent`, `app/agents/consultation.py`), not an
+  MCP server — but it is switched on the way a server is, by listing `"peers"` in an agent's
+  `allowed_mcp_servers`, so it lives here. The hover tooltip (`PEERS_TOOL_TOOLTIP`) states what it does
+  and its limits (orchestrator excluded, one level deep, the consulted agent's tool cap) and
+  names the specialists in this conversation who have it on. The agent card's tool dialog and the add
+  agent dialog always list `peers` too, instead of flagging it `설정에 없음`; for the orchestrator it
+  cannot be newly ticked. `peers` is a reserved MCP server name, like `skills`.
+- **Peer targets (`에이전트 선택`)**: in the card's tool dialog, next to the `peers` checkbox (enabled only
+  while it is ticked), with a one-line summary (`참여 전문가 전원 · 도구 3회`, `고른 2명 · 도구 0회`…).
+  It opens a dialog: a radio between "every other participant this turn" (default, `targets` unset) and
+  "only the ones picked", the candidates — every roster agent except the asker and the orchestrator,
+  participating or not, each with its avatar (icon and colour) and a `토론 참여`/`토론 불참` badge — and a
+  number for the consulted agent's tool cap (0–130, default 3, 0 = no tools). `확인` only updates the tool
+  dialog's state; its `저장` writes `allowed_mcp_servers` and, if changed, `peer_consultation` together
+  (`set_agent_peer_consultation_in_conf_file`). Like every tool assignment it applies to conversations
+  not yet started and is frozen into `session_agents.config_snapshot` at the first message. Not offered on
+  the trial or easy pages. Manual: `docs/user_manual/03-core/10-peer-consultation.md`.
 - **Add server dialog**: one button covers both kinds. A `로컬 프로세스 (stdio)` / `원격 (HTTP)`
   toggle swaps the field set — command/args/env against url/headers/transport — because the two
   ask for entirely different things and showing both at once leaves the reader guessing which

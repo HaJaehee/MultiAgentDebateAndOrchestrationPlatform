@@ -62,7 +62,7 @@ class SynthesisPhaseExecutor:
         control: Optional[TurnControl],
         on_event: Optional[EventCallback],
     ) -> None:
-        """최종 합성 → 산출물 → 장부 → 턴 완료."""
+        """최종 합성 보고서 작성, 산출물 추출, 결정 장부 갱신 및 턴 완료 처리를 수행합니다."""
         session_id = state.session_id
         orchestrator_agent = setup.orchestrator
         custom_instructions = setup.custom_instructions
@@ -251,7 +251,7 @@ class SynthesisPhaseExecutor:
     async def ensure_synthesis_room(
         self, state: DebateState, agent: Agent, on_event: Optional[EventCallback]
     ) -> None:
-        """합성 전사가 창을 넘으면 앞선 기록을 요약으로 접습니다."""
+        """합성 대화 기록이 컨텍스트 창 한도를 초과하면 이전 라운드 기록을 요약본으로 압축합니다."""
         budget = context_budget(agent, tools=self.engine._tools_for(agent, state)) - 512
         record = memory.build_user_record(
             state, model=agent.model, token_cap=int(budget * memory.USER_RECORD_SHARE)
@@ -402,7 +402,7 @@ class SynthesisPhaseExecutor:
         )
         return [{"role": "user", "content": prompt}]
 
-    # ------------------------------------------------- 다이어그램 문법 되돌리기
+    # ------------------------------------------------- 다이어그램 문법 자가 수선
 
     async def repair_mermaid_blocks(
         self,
@@ -413,7 +413,7 @@ class SynthesisPhaseExecutor:
         state: DebateState,
         on_event: Optional[EventCallback],
     ) -> str:
-        """합성 본문의 Mermaid 다이어그램을 검사하고, 틀렸으면 고쳐 받습니다."""
+        """합성 본문의 Mermaid 다이어그램 문법을 검증하고, 오류가 발견되면 오케스트레이터에게 수정을 요청합니다."""
         from app.orchestration import engine as engine_module
 
         max_attempts = engine_module.MERMAID_REPAIR_ATTEMPTS
@@ -507,7 +507,7 @@ class SynthesisPhaseExecutor:
         custom_instructions: str,
         attempt: int,
     ) -> List[str]:
-        """틀린 다이어그램만 모아 고쳐 달라고 하고, 받은 블록을 순서대로 돌려줍니다."""
+        """문법 오류가 발생한 다이어그램만 취합하여 수정을 요청하고, 보정된 다이어그램 블록을 순서대로 반환합니다."""
         parts = [
             "방금 작성한 보고서의 Mermaid 다이어그램이 문법 오류로 렌더링되지 않습니다.",
             "",
@@ -563,7 +563,7 @@ class SynthesisPhaseExecutor:
         broken: List[Tuple[int, Dict[str, Any], List[Any]]],
         replacements: List[str],
     ) -> str:
-        """고친 다이어그램을 원문의 제자리에 끼워 넣습니다."""
+        """수정된 다이어그램을 원문의 본래 위치에 치환하여 삽입합니다."""
         pairs = list(zip(broken, replacements))
         for (_index, block, _issues), fixed in sorted(pairs, key=lambda x: -x[0][1]["start"]):
             text = text[:block["start"]] + fixed + text[block["end"]:]
@@ -571,14 +571,14 @@ class SynthesisPhaseExecutor:
 
     @staticmethod
     def turn_speeches(state: DebateState) -> List[DebateMessage]:
-        """이번 턴 전문가 발언. 사용자·오케스트레이터(계획·지명·합성)·실패 안내는 뺍니다."""
+        """이번 턴의 전문가 발언 목록을 반환합니다. 사용자 입력, 오케스트레이터 메시지, 실패 안내 등은 제외합니다."""
         return [
             m for m in state.messages[state.turn_message_start:]
             if m.sender_key not in ("user", "orchestrator") and m.msg_type != "error"
         ]
 
     def debate_code_artifacts(self, state: DebateState, stamp: str) -> List[ArtifactItem]:
-        """이번 턴 전문가 발언에서 코드를 모읍니다."""
+        """이번 턴의 전문가 발언에서 코드 블록 산출물을 추출합니다."""
         latest: Dict[str, Tuple[DebateMessage, List[Dict[str, str]]]] = {}
         for msg in self.engine._turn_speeches(state):
             blocks = [
@@ -610,7 +610,7 @@ class SynthesisPhaseExecutor:
     def synthesis_fallback_report(
         self, state: DebateState, failure_reason: str, synth_text: str
     ) -> str:
-        """합성이 비었거나 실패했을 때 남기는 보고서 — LLM 없이 모은 전문가별 마지막 발언."""
+        """합성 응답이 비어 있거나 실패했을 때 대체 보고서를 생성합니다 (전문가별 최종 발언 취합)."""
         latest: Dict[str, DebateMessage] = {}
         for msg in self.engine._turn_speeches(state):
             latest[msg.sender_key] = msg

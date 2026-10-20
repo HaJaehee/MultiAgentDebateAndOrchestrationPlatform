@@ -5,10 +5,14 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional
 from nicegui import ui
 from app.agents.base import Agent
 from app.agents.pool import AgentPool, get_agent_pool, reload_agent_pool
+from app.agents.consultation import PEERS_TOOL_BADGE, PEERS_TOOL_SUMMARY, PEERS_TOOL_TOOLTIP
 from app.config import (
     BARE_KEY_PATTERN,
     DEBATE_STANCES,
     DEFAULT_CONFIG_PATH,
+    DEFAULT_PEER_TOOL_ITERATIONS,
+    PEERS_TOOL_PREFIX,
+    TOOL_ITERATION_CEILING,
     active_config_path,
     add_agent_to_conf_file,
     add_mcp_server_to_conf_file,
@@ -20,6 +24,7 @@ from app.config import (
     resolve_workspace_dir,
     set_agent_allowed_mcp_servers_in_conf_file,
     set_agent_allowed_skills_in_conf_file,
+    set_agent_peer_consultation_in_conf_file,
     set_agent_debate_order_in_conf_file,
     set_agent_debate_stance_in_conf_file,
     set_agent_enabled_in_conf_file,
@@ -117,6 +122,51 @@ def dropped_after(event: Any) -> bool:
 STANCE_LABELS = {"proponent": "제안자", "critic": "비판자", "neutral": "중립"}
 STANCE_COLORS = {"proponent": "teal-8", "critic": "amber-9", "neutral": "slate-7"}
 FLOAT_AGENT_FIELDS = ("temperature", "top_p", "timeout")
+
+
+# --- 내장 도구 peers (동료 전문가 자문, app/agents/consultation.py) -------------------
+#
+# MCP 서버가 아니지만 켜는 법이 `allowed_mcp_servers` 에 "peers" 를 넣는 것이라, 화면에서도
+# MCP 서버 칸과 도구 할당에 서버처럼 함께 보입니다. conf.json 의 mcp_servers 에는 없으므로,
+# 거기 없는 이름을 "설정에 없음" 으로 표시하는 규칙에서 빼야 합니다.
+
+
+def peers_users(agents: List[Agent]) -> List[str]:
+    """peers 를 켠 전문가의 이름. 오케스트레이터는 켜 두어도 쓰지 않으므로 뺍니다."""
+    return [
+        a.name for a in agents
+        if a.key != ORCHESTRATOR_KEY and PEERS_TOOL_PREFIX in (a.allowed_mcp_servers or [])
+    ]
+
+
+def peers_chip_tooltip(agents: List[Agent]) -> str:
+    """MCP 서버 칸의 peers 칩에 다는 설명."""
+    users = peers_users(agents)
+    return f"{PEERS_TOOL_TOOLTIP}\n이 대화에서 켠 전문가: {', '.join(users) if users else '없음'}"
+
+
+def unknown_tool_servers(allowed: List[str], configured: Dict[str, Any]) -> List[str]:
+    """도구 할당 창에서 "설정에 없음" 으로 보일 이름. 내장 도구(peers)는 늘 있는 항목이라 빠집니다."""
+    return [name for name in allowed if name not in configured and name != PEERS_TOOL_PREFIX]
+
+
+def peer_candidates(agents: List[Agent], asker_key: str) -> List[Agent]:
+    """peers 로 물을 상대로 고를 수 있는 에이전트 — 토론 참여 여부와 상관없이 자기와 오케스트레이터만 뺍니다.
+
+    conf.json 에서 꺼 둔 에이전트는 풀에 없어 여기에도 없습니다 (켜면 나타납니다).
+    """
+    return [a for a in agents if a.key not in (asker_key, ORCHESTRATOR_KEY)]
+
+
+def peer_selection_summary(targets: Optional[List[str]], tool_limit: int) -> str:
+    """도구 할당 창의 peers 줄에 붙는 한 줄 요약."""
+    if targets is None:
+        who = "참여 전문가 전원"
+    elif targets:
+        who = f"고른 {len(targets)}명"
+    else:
+        who = "고른 상대 없음 (도구가 주어지지 않음)"
+    return f"{who} · 도구 {tool_limit}회" if tool_limit else f"{who} · 도구 없이 답함"
 
 
 class AgentRosterControl:
@@ -970,7 +1020,9 @@ class AgentRosterControl:
                     tools_button.disable()
                     tools_button.tooltip(tools_reason)
                 else:
-                    tools_button.tooltip("해당 에이전트가 호출할 수 있는 MCP 서버를 선택합니다.")
+                    tools_button.tooltip(
+                        "해당 에이전트가 호출할 수 있는 MCP 서버와 내장 도구(peers · 동료 자문)를 선택합니다."
+                    )
 
             # 이 에이전트가 불러 사용할 수 있는 스킬입니다. 할당은 도구와 동일한 규칙(구성 잠금)을 따르며,
             # 스킬의 활성화/비활성화는 설정 패널의 스킬 칩에서 수행합니다.
@@ -1136,6 +1188,16 @@ class AgentRosterControl:
                         remove.tooltip(self.mcp_lock_reason)
                     else:
                         remove.tooltip(f"'{name}' 서버를 conf.json에서 삭제합니다.")
+
+            # 내장 도구 peers. conf.json 에 없어도 늘 있고 띄울 프로세스가 없으므로 켜기·삭제 스위치가
+            # 없고, 위의 "N/M 연결됨" 에도 세지 않습니다. 누가 켰는지는 에이전트 카드의 '도구' 가 정합니다.
+            with ui.element("div").classes(
+                "flex items-center gap-1 pl-2 pr-2 py-1 rounded-md bg-slate-800/70 border border-indigo-700/70"
+            ):
+                ui.icon("forum", size="13px").classes("text-indigo-300")
+                ui.label(PEERS_TOOL_PREFIX).classes("text-[11px] font-semibold text-slate-200")
+                ui.badge(PEERS_TOOL_BADGE, color="indigo-8").props("dense").classes("text-[13px]")
+                ui.tooltip(peers_chip_tooltip(self._roster_agents())).classes("whitespace-pre-line text-[11px]")
 
         enabled_total = len([c for c in configured.values() if c.enabled])
         if self.mcp_badge:
@@ -1703,6 +1765,7 @@ class AgentRosterControl:
                             ui.label(server_name).classes("text-xs text-slate-200")
                             if not server_cfg.enabled:
                                 ui.badge("꺼짐", color="grey-8").props("dense text-[11px]")
+                    self._peers_choice(boxes, checked=False, compact=True)
 
                 ui.label("사용할 스킬").classes(
                     "text-[11px] font-semibold text-slate-400 mt-1"
@@ -2188,7 +2251,10 @@ class AgentRosterControl:
                 ui.timer(0.01, self.on_config_changed, once=True)
 
     def _open_agent_tools_dialog(self, agent_key: str) -> None:
-        """이 에이전트가 호출할 수 있는 MCP 서버를 고릅니다.
+        """이 에이전트가 호출할 수 있는 MCP 서버(와 내장 도구 peers)를 고릅니다.
+
+        peers 는 conf.json 의 mcp_servers 에 없어도 늘 목록에 있습니다 — 켜는 법이 여기서
+        체크하는 것(allowed_mcp_servers 에 "peers")뿐이기 때문입니다.
 
         도구 할당은 conf.json 에 저장되어 **아직 시작하지 않은 대화**에 걸립니다.
         이미 시작한 대화는 첫 발언 때 도구 권한까지 스냅샷으로 고정되었으므로 여기서
@@ -2214,8 +2280,8 @@ class AgentRosterControl:
 
         allowed = list(agent.allowed_mcp_servers or [])
         # conf.json 에서 이미 사라진 서버가 아직 적혀 있을 수 있습니다. 조용히
-        # 지우지 않고 보여주고, 사용자가 체크를 풀어 정리하게 합니다.
-        orphans = [name for name in allowed if name not in configured]
+        # 지우지 않고 보여주고, 사용자가 체크를 풀어 정리하게 합니다. peers 는 빼고요.
+        orphans = unknown_tool_servers(allowed, configured)
         boxes: Dict[str, ui.checkbox] = {}
 
         with ui.dialog() as dialog, ui.card().classes(
@@ -2247,6 +2313,27 @@ class AgentRosterControl:
                         else:
                             ui.badge("연결 안 됨", color="red-9").props("dense").classes("text-[13px]")
 
+                # peers 의 자문 상대·도구 상한. '에이전트 선택' 창이 고치고, 아래 '저장' 이 함께 씁니다.
+                peer_state: Dict[str, Any] = {
+                    "targets": agent.peer_consultation.targets,
+                    "max": agent.peer_consultation.max_tool_iterations,
+                }
+                peer_original = dict(peer_state)
+                summary_holder: Dict[str, Any] = {}
+
+                def refresh_peer_summary() -> None:
+                    label = summary_holder.get("label")
+                    if label is not None and not label.is_deleted:
+                        label.set_text(peer_selection_summary(peer_state["targets"], peer_state["max"]))
+
+                summary_holder["label"] = self._peers_choice(
+                    boxes,
+                    checked=PEERS_TOOL_PREFIX in allowed,
+                    agent_key=agent.key,
+                    on_select=lambda: self._open_peer_targets_dialog(agent, peer_state, refresh_peer_summary),
+                    summary=peer_selection_summary(peer_state["targets"], peer_state["max"]),
+                )
+
                 for name in orphans:
                     with ui.row().classes("w-full items-center gap-2 no-wrap"):
                         boxes[name] = ui.checkbox(value=True).props("dense dark color=amber-6")
@@ -2262,11 +2349,18 @@ class AgentRosterControl:
 
             async def do_save() -> None:
                 servers = [name for name, box in boxes.items() if box.value]
+                peers_changed = peer_state != peer_original
                 dialog.close()
+
+                def write() -> None:
+                    set_agent_allowed_mcp_servers_in_conf_file(agent_key, servers, self._conf_path())
+                    if peers_changed:
+                        set_agent_peer_consultation_in_conf_file(
+                            agent_key, peer_state["targets"], peer_state["max"], self._conf_path()
+                        )
+
                 await self._apply_conf_change(
-                    lambda: set_agent_allowed_mcp_servers_in_conf_file(
-                        agent_key, servers, self._conf_path()
-                    ),
+                    write,
                     f"'{agent.name}' 에이전트의 도구를 {len(servers)}개로 저장하였습니다."
                     if servers else f"'{agent.name}' 에이전트에 도구를 할당하지 않았습니다.",
                     # 서버 구성은 그대로입니다. 다시 띄울 이유가 없습니다.
@@ -2276,6 +2370,141 @@ class AgentRosterControl:
             with ui.row().classes("w-full justify-end gap-2 mt-3"):
                 ui.button("취소", on_click=dialog.close).props("flat color=grey")
                 ui.button("저장", on_click=do_save).props("unelevated color=indigo-6")
+
+        dialog.open()
+
+    @staticmethod
+    def _peers_choice(
+        boxes: Dict[str, Any],
+        *,
+        checked: bool,
+        agent_key: str = "",
+        compact: bool = False,
+        on_select: Optional[Callable[[], None]] = None,
+        summary: str = "",
+    ) -> Optional[ui.label]:
+        """도구 고르는 목록에 내장 도구 peers 한 줄을 넣습니다 (`boxes["peers"]`).
+
+        오케스트레이터는 켜 두어도 쓰지 않으므로 새로 켤 수 없게 합니다. 이미 켜져 있으면
+        풀 수는 있게 남겨 둡니다. `on_select` 가 있으면 체크박스 옆에 '에이전트 선택' 버튼과
+        지금 고른 것의 요약(`summary`)을 붙이고, 그 요약 라벨을 돌려줍니다 (고친 뒤 다시 쓰라고).
+        """
+        orchestrator = agent_key == ORCHESTRATOR_KEY
+        text = "text-xs" if compact else "text-[13px]"
+        summary_label = None
+        with ui.row().classes(("items-center gap-1" if compact else "w-full items-center gap-2") + " no-wrap"):
+            box = ui.checkbox(value=checked).props("dense dark color=indigo-4")
+            boxes[PEERS_TOOL_PREFIX] = box
+            # 설명 툴팁은 이름에만 답니다. 줄 전체에 달면 '에이전트 선택' 버튼을 가립니다.
+            with ui.label(PEERS_TOOL_PREFIX).classes(f"{text} font-semibold text-slate-200 cursor-help"):
+                ui.tooltip(PEERS_TOOL_TOOLTIP).classes("whitespace-pre-line text-[11px]")
+            ui.badge(PEERS_TOOL_BADGE, color="indigo-8").props("dense").classes(
+                "text-[11px]" if compact else "text-[13px]"
+            )
+            if on_select is not None and not orchestrator:
+                select_btn = ui.button("에이전트 선택", icon="group", on_click=lambda _: on_select()).props(
+                    "flat dense no-caps size=sm color=indigo-3"
+                ).classes("text-[12px]")
+                select_btn.bind_enabled_from(box, "value")
+                select_btn.tooltip("peers 로 질문할 수 있는 상대와 자문받는 쪽의 도구 호출 상한을 고릅니다.")
+                summary_label = ui.label(summary).classes("text-[11px] text-slate-400 truncate")
+            elif not compact:
+                ui.label(
+                    "오케스트레이터는 쓰지 않습니다" if orchestrator else PEERS_TOOL_SUMMARY
+                ).classes("text-[11px] text-slate-400 truncate")
+        if orchestrator and not checked:
+            box.disable()
+        return summary_label
+
+    def _participates(self, agent_key: str) -> bool:
+        """이 대화의 로스터에서 그 에이전트가 토론에 참여하는지 (그래프 토론이면 그래프에 놓였는지)."""
+        graph_keys = self._graph_agent_keys
+        if graph_keys is not None:
+            return agent_key in graph_keys
+        return self.selected_agents.get(agent_key, True)
+
+    def _open_peer_targets_dialog(
+        self, agent: Agent, state: Dict[str, Any], on_done: Callable[[], None]
+    ) -> None:
+        """peers 로 물을 상대와 자문받는 쪽의 도구 상한을 고릅니다.
+
+        고른 값은 도구 할당 창의 `state` 에만 담고, 그 창의 '저장' 이 도구 할당과 함께 conf.json 에
+        씁니다. 저장된 값은 아직 시작하지 않은 대화에 걸리고, 대화가 시작되면 첫 발언 때의 다른
+        에이전트 설정과 함께 그 대화의 스냅샷(DB)에 고정됩니다.
+        """
+        candidates = peer_candidates(self._roster_agents(), agent.key)
+        candidate_keys = {a.key for a in candidates}
+        chosen = set(state["targets"] or [])
+        stale = sorted(chosen - candidate_keys)
+        boxes: Dict[str, ui.checkbox] = {}
+
+        with ui.dialog() as dialog, ui.card().classes(
+            "p-4 w-[580px] max-w-full bg-slate-900 text-white border border-slate-700"
+        ):
+            ui.label(f"{agent.name} · peers 자문 상대").classes("text-lg font-bold")
+            ui.label(
+                "이 에이전트가 토론 중 peers 로 질문할 수 있는 상대를 고릅니다. conf.json 에 저장되어 아직 "
+                "시작하지 않은 대화와 앞으로 만드는 대화에 적용되고, 대화가 시작되면 그 대화에 고정됩니다."
+            ).classes("text-[12px] text-amber-400 mb-1 leading-snug")
+
+            mode = ui.radio(
+                {
+                    "all": "이번 턴에 참여한 다른 전문가 전원 (기본)",
+                    "pick": "아래에서 고른 전문가만 — 토론에 참여하지 않는 전문가도 고를 수 있습니다",
+                },
+                value="all" if state["targets"] is None else "pick",
+            ).props("dense dark color=indigo-4").classes("text-[13px]")
+
+            with ui.column().classes("w-full gap-1 max-h-[40vh] overflow-y-auto pl-6 mt-1"):
+                if not candidates:
+                    ui.label("고를 수 있는 다른 전문가가 없습니다.").classes("text-[12px] text-slate-400")
+                for peer in candidates:
+                    participating = self._participates(peer.key)
+                    with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                        box = ui.checkbox(value=peer.key in chosen).props("dense dark color=indigo-4")
+                        box.bind_enabled_from(mode, "value", backward=lambda v: v == "pick")
+                        boxes[peer.key] = box
+                        ui.avatar(peer.avatar, color=peer.color, text_color="white", size="22px").classes(
+                            "flex-shrink-0"
+                        )
+                        with ui.column().classes("gap-0 min-w-0 flex-grow"):
+                            ui.label(peer.name).classes("text-[13px] font-semibold text-slate-200 truncate")
+                            ui.label(peer.role).classes("text-[11px] text-slate-400 truncate")
+                        ui.badge(
+                            "토론 참여" if participating else "토론 불참",
+                            color="teal-8" if participating else "grey-8",
+                        ).props("dense").classes("text-[11px] flex-shrink-0")
+            if stale:
+                ui.label(
+                    f"이 대화의 에이전트가 아닌 상대({', '.join(stale)})는 확인하면 빠집니다."
+                ).classes("text-[11px] text-amber-300 mt-1")
+
+            with ui.row().classes("w-full items-center gap-2 mt-3 no-wrap"):
+                limit_in = ui.number(
+                    "자문받는 쪽 도구 호출 상한", value=state["max"], min=0,
+                    max=TOOL_ITERATION_CEILING, step=1, format="%.0f",
+                ).props("outlined dense dark").classes("w-56 text-xs")
+                ui.label(
+                    f"자문 한 번에 상대가 쓸 수 있는 도구 호출 수. 0 이면 도구 없이 답합니다 "
+                    f"(상대 자신의 상한은 넘지 않습니다)."
+                ).classes("text-[11px] text-slate-500 leading-snug")
+
+            def confirm() -> None:
+                try:
+                    limit = int(limit_in.value if limit_in.value is not None else DEFAULT_PEER_TOOL_ITERATIONS)
+                except (TypeError, ValueError):
+                    limit = DEFAULT_PEER_TOOL_ITERATIONS
+                state["max"] = max(0, min(TOOL_ITERATION_CEILING, limit))
+                state["targets"] = (
+                    None if mode.value == "all"
+                    else [key for key, box in boxes.items() if box.value]
+                )
+                dialog.close()
+                on_done()
+
+            with ui.row().classes("w-full justify-end gap-2 mt-3"):
+                ui.button("취소", on_click=dialog.close).props("flat color=grey")
+                ui.button("확인", on_click=confirm).props("unelevated color=indigo-6")
 
         dialog.open()
 

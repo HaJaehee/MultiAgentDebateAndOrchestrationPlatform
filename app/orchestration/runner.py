@@ -763,10 +763,10 @@ class DebateRunner:
                 announce_end()
 
         def settle_unstarted(task: "asyncio.Task[Any]") -> None:
-            # 드라이버가 한 번도 돌지 못하고 끝난 실행을 정리합니다. 워커 풀의 자리를 기다리는
-            # 중이거나 띄운 직후에 취소되면 드라이버의 `except`·`finally` 가 돌지 않습니다.
-            # 그대로 두면 실행은 "running" 으로 남아, 화면은 끝을 모르고 `start` 는 이 죽은
-            # 실행을 돌려주어 그 대화를 서버를 다시 띄울 때까지 쓸 수 없습니다.
+            # 드라이버가 실행을 시작하지 못하고 종료된 경우 상태를 정리합니다. 워커 풀 슬롯 대기 중이거나
+            # 태스크 생성 직후 취소되면 코루틴 내부의 `except`·`finally` 블록이 실행되지 않습니다.
+            # 이를 방치하면 실행 상태가 "running" 으로 남아 UI 에서 종료를 감지하지 못하고, 이후 `start` 호출 시
+            # 종료된 인스턴스를 반환하여 서버를 재기동하기 전까지 해당 세션을 재사용할 수 없게 됩니다.
             if started:
                 return
             if task.cancelled():
@@ -918,10 +918,10 @@ class DebateRunner:
     async def shutdown(self) -> None:
         """서버 종료 시 남은 토론 태스크를 정리합니다.
 
-        끝나기를 기다리지 않고 바로 취소합니다 (`worker_pool.drain` 을 먼저 부르지 않습니다).
-        토론 턴은 몇 분씩 돌거나 사람의 승인을 기다리므로 기다려도 끝나지 않고, 그동안 서버는
-        내려가지 못한 채 토론이 LLM·도구를 계속 부릅니다. 취소에 반응하지 않는 태스크는
-        `cancel` 이 `CANCEL_TIMEOUT` 뒤에 남겨 두고 넘어갑니다.
+        작업 완료를 무한정 대기하지 않고 즉시 취소합니다 (`worker_pool.drain` 을 먼저 호출하지 않습니다).
+        토론 턴은 수 분간 진행되거나 사용자의 승인을 대기할 수 있어 자연 종료를 기다리면 서버 종료가 과도하게 지연되고,
+        그사이 불필요한 LLM 호출 및 도구 실행이 지속되기 때문입니다. 취소 요청에 응답하지 않는 태스크는
+        `cancel` 의 `CANCEL_TIMEOUT` 경과 후 격리 처리하고 반환합니다.
         """
         for session_id in list(self._runs):
             await self.cancel(session_id)

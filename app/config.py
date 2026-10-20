@@ -640,6 +640,32 @@ class LLMConfig(BaseModel):
     # 에이전트가 물려받는 값이 아닙니다 (`INHERITABLE_LLM_FIELDS` 에 없습니다). 전역 연결 그 자체에 딸린 설정입니다.
     fallback: LLMFallbackConfig = Field(default_factory=LLMFallbackConfig)
 
+# 동료 자문(peers)에서 자문받는 에이전트가 쓰는 도구 호출 상한의 기본값.
+DEFAULT_PEER_TOOL_ITERATIONS = 3
+
+
+class PeerConsultationConfig(BaseModel):
+    """동료 자문(peers, app/agents/consultation.py) 설정. `allowed_mcp_servers` 에 "peers" 가 있을 때만 쓰입니다.
+
+    이 에이전트가 **묻는 쪽**일 때의 설정입니다. 대화가 시작되면 다른 에이전트 설정과 함께 그 대화의
+    스냅샷(`session_agents.config_snapshot`)에 고정되므로, 대화마다 다를 수 있습니다.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # 자문할 수 있는 에이전트 키. None 이면 이번 턴에 참여한 다른 전문가 전원입니다. 목록이면 거기
+    # 적힌 에이전트만 — 이번 토론에 참여하지 않는 전문가도 자문 상대가 될 수 있습니다.
+    targets: Optional[List[str]] = Field(
+        default=None, description="Agent keys this agent may consult; null = every other participating specialist",
+    )
+    # 자문받는 에이전트가 답하는 동안 쓰는 도구 호출 상한. 0 이면 도구 없이 답합니다. 그 에이전트
+    # 자신의 `max_tool_iterations` 를 넘지는 않습니다.
+    max_tool_iterations: int = Field(
+        default=DEFAULT_PEER_TOOL_ITERATIONS, ge=0, le=TOOL_ITERATION_CEILING,
+        description="Tool-loop cap for the consulted agent while it answers (0 = no tools)",
+    )
+
+
 class AgentConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -686,6 +712,7 @@ class AgentConfig(BaseModel):
     allowed_skills: List[str] = Field(
         default_factory=list, description="Skill names (folders under skills.dir) this agent can load"
     )
+    peer_consultation: PeerConsultationConfig = Field(default_factory=PeerConsultationConfig)
     # 토론에서의 자리. 예전에는 전략 코드가 'architect' 다음 'coder' 하는 식으로
     # 키를 문자열로 박아 두었는데, 화면에서 에이전트를 만들 수 있게 되면서 그
     # 방식으로는 새 에이전트가 언제나 맨 뒤로 밀렸습니다. 이제 순서와 진영은
@@ -794,6 +821,16 @@ class SkillsConfig(BaseModel):
 # 동일한 이름의 MCP 서버가 등록되면 도구 이름 충돌이 발생합니다.
 SKILL_TOOL_PREFIX = "skills"
 
+# 동료 자문 도구의 접두사입니다 (`peers__consult_agent`, app/agents/consultation.py). MCP 서버가
+# 아니지만 켜는 법이 `allowed_mcp_servers` 에 이 이름을 넣는 것이라, 같은 이름의 MCP 서버가
+# 등록되면 도구 이름도 켜는 스위치도 겹칩니다.
+PEERS_TOOL_PREFIX = "peers"
+
+RESERVED_SERVER_NAMES = {
+    SKILL_TOOL_PREFIX: f"스킬 도구 이름({SKILL_TOOL_PREFIX}__load_skill)",
+    PEERS_TOOL_PREFIX: f"동료 자문 도구 이름({PEERS_TOOL_PREFIX}__consult_agent)",
+}
+
 
 class RootConfig(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
@@ -899,6 +936,12 @@ class RootConfig(BaseModel):
             raise ValueError(
                 f"\"mcp_servers.{SKILL_TOOL_PREFIX}\" cannot be used: '{SKILL_TOOL_PREFIX}__' is "
                 f"the prefix of the built-in skill tools. Rename the MCP server."
+            )
+        if PEERS_TOOL_PREFIX in self.mcp_servers:
+            raise ValueError(
+                f"\"mcp_servers.{PEERS_TOOL_PREFIX}\" cannot be used: '{PEERS_TOOL_PREFIX}' is the "
+                f"built-in peer consultation tool ({PEERS_TOOL_PREFIX}__consult_agent), switched on by "
+                f"listing it in an agent's allowed_mcp_servers. Rename the MCP server."
             )
         return self
 
@@ -1229,9 +1272,9 @@ def add_mcp_server_to_conf_file(
     화면에서 들어오든 파일을 직접 고치든 같은 말을 들어야 합니다.
     """
     name = _require_key(server_name, "MCP 서버 이름")
-    if name == SKILL_TOOL_PREFIX:
+    if name in RESERVED_SERVER_NAMES:
         raise ValueError(
-            f"'{SKILL_TOOL_PREFIX}'는 스킬 도구 이름({SKILL_TOOL_PREFIX}__load_skill)으로 예약되어 있으므로 "
+            f"'{name}'는 {RESERVED_SERVER_NAMES[name]}으로 예약되어 있으므로 "
             f"MCP 서버 이름으로 사용할 수 없습니다."
         )
     path = Path(config_path)
@@ -1357,6 +1400,44 @@ def set_agent_allowed_mcp_servers_in_conf_file(
     data = read_conf_file(path)
     agent = _entry(data, "agents", key, path)
     agent["allowed_mcp_servers"] = names
+
+    write_conf_file(path, data)
+    reload_config_if_active(path)
+
+
+def set_agent_peer_consultation_in_conf_file(
+    agent_key: str,
+    targets: Optional[List[str]],
+    max_tool_iterations: int,
+    config_path: str | Path = DEFAULT_CONFIG_PATH,
+) -> None:
+    """`agents.<key>.peer_consultation` 을 갈아 끼웁니다 (동료 자문 상대와 도구 상한).
+
+    `targets` 가 None 이면 이번 턴에 참여한 다른 전문가 전원입니다 — 그때는 항목을 적지 않습니다.
+    둘 다 기본값이면 블록을 통째로 지워 파일을 처음 모양으로 둡니다. 도구 할당과 같이 **아직 시작하지
+    않은 대화**에 걸리고, 시작한 대화는 첫 발언 때 고정한 값을 그대로 씁니다.
+    """
+    key = _require_key(agent_key, "에이전트 키")
+    if targets is not None:
+        targets = list(dict.fromkeys(_require_key(t, "자문 대상 에이전트 키") for t in targets))
+        if key in targets:
+            raise ValueError("자기 자신은 자문 대상이 될 수 없습니다.")
+    limit = int(max_tool_iterations)
+    if not 0 <= limit <= TOOL_ITERATION_CEILING:
+        raise ValueError(f"자문 도구 상한은 0~{TOOL_ITERATION_CEILING} 사이여야 합니다.")
+    path = Path(config_path)
+
+    data = read_conf_file(path)
+    agent = _entry(data, "agents", key, path)
+    block: Dict[str, Any] = {}
+    if targets is not None:
+        block["targets"] = targets
+    if limit != DEFAULT_PEER_TOOL_ITERATIONS:
+        block["max_tool_iterations"] = limit
+    if block:
+        agent["peer_consultation"] = block
+    else:
+        agent.pop("peer_consultation", None)
 
     write_conf_file(path, data)
     reload_config_if_active(path)

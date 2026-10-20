@@ -79,15 +79,15 @@ async def last_completion_times(db) -> Dict[str, datetime]:
 def active_agent_count(
     session: SessionModel, graph_keys: Optional[Dict[str, List[str]]] = None
 ) -> int:
-    """카드의 'N Agents' — 이 대화에 실제로 참여하는 에이전트 수.
+    """세션 카드의 'N Agents' — 해당 대화에 실제 참여하는 에이전트 수를 계산합니다.
 
-    그래프 토론은 로스터 체크박스가 아니라 **그래프에 놓인 에이전트**가 참여자입니다
-    (엔진의 `_run_turn`, 로스터 카드의 켜짐 표시와 같은 기준). 그런 대화에서
-    `active_agents` 를 세면 그래프에 두 명만 놓았어도 체크해 둔 전체 수가 나옵니다.
-    오케스트레이터는 그래프에 놓지 않아도 늘 참여하므로 함께 셉니다.
+    그래프 토론의 경우 로스터 체크박스가 아닌 **그래프에 배치된 에이전트**가 실제 참여자입니다
+    (엔진의 `_run_turn` 및 로스터 카드의 활성 표시와 동일한 기준). 그래프 기반 대화에서
+    단순히 `active_agents` 를 집계하면 그래프 노드에 2명만 배치되었더라도 체크된 전체 인원이
+    표시되는 문제가 발생합니다. 오케스트레이터는 그래프 배치 여부와 관계없이 항상 참여하므로 합산합니다.
 
-    `graph_keys` 는 목록을 한 번 그리는 동안 읽은 그래프를 담아 둡니다. 같은 그래프를
-    쓰는 대화가 여럿이어도 파일은 한 번만 읽습니다.
+    `graph_keys` 는 세션 목록 렌더링 중 조회한 그래프 정보를 캐싱하는 딕셔너리입니다. 동일한
+    그래프를 참조하는 대화가 여러 개 있더라도 파일 I/O 는 1회만 발생합니다.
     """
     if not get_strategy(session.strategy).runs_graph:
         return len(session.active_agents or [])

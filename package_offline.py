@@ -529,7 +529,7 @@ def stage_node_mcp_servers() -> bool:
     staging_mcp = STAGING_DIR / "mcp_node"
     staging_mcp.mkdir(parents=True, exist_ok=True)
 
-    # 같은 목록·범위로 깔린 것만 다시 씁니다. 범위를 고정하기 전의 스테이징(2.0.0)은 새로 깝니다.
+    # 동일한 패키지 목록 및 버전 범위로 설치된 경우에만 재사용합니다. 버전 고정 전 스테이징된 버전(2.0.0 등)은 새로 설치합니다.
     if node_servers_installed(staging_mcp):
         print("      기존 설치 확인 완료.")
         return True

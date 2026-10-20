@@ -15,10 +15,15 @@
 2. **외부 패키지 불필요 (폐쇄망 호환)**:
    - 별도의 MCP 서브프로세스나 외부 브로커 없이 `LLMCaller` 의 도구 루프 내부에서 직접 실행됩니다.
 3. **도구 예산 및 이벤트 연동**:
-   - 피자문 에이전트(B)의 도구 반복 상한은 `MAX_CONSULTATION_TOOL_ITERATIONS`(기본 3회)로 제한하여
-     단일 자문 호출이 전체 턴을 지연시키지 않도록 방어합니다.
+   - 피자문 에이전트(B)의 도구 반복 상한은 묻는 쪽(A) 설정의 `peer_consultation.max_tool_iterations`
+     (기본 `MAX_CONSULTATION_TOOL_ITERATIONS` = 3회, 0 이면 도구 없이 답함)로 제한하여 단일 자문 호출이
+     전체 턴을 지연시키지 않도록 방어합니다.
    - `on_event` 콜백이 주어지면 `peer_consultation_started` / `peer_consultation_finished` 이벤트를
      발행하여 실시간 관측성을 제공합니다.
+4. **자문 상대 고르기** (`peer_consultation.targets`):
+   - 고르지 않았으면(None) 이번 턴에 참여한 다른 전문가 전원(`ConsultationScope.peers`)입니다.
+   - 골랐으면 그 에이전트만 — 이번 토론에 참여하지 않는 전문가도 이 대화의 에이전트
+     (`ConsultationScope.pool`, 첫 턴에 고정한 스냅샷)라면 답할 수 있습니다.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 
+from app.config import DEFAULT_PEER_TOOL_ITERATIONS, PEERS_TOOL_PREFIX
 from app.mcp.client import clip_tool_output
 
 if TYPE_CHECKING:
@@ -37,21 +43,43 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-PEERS_TOOL_PREFIX = "peers"
 CONSULT_AGENT_TOOL = f"{PEERS_TOOL_PREFIX}__consult_agent"
 _TOOL_TAILS = {"consult_agent"}
 
 DEFAULT_MAX_CONSULTATION_DEPTH = 1
-MAX_CONSULTATION_TOOL_ITERATIONS = 3
+# 자문받는 에이전트의 도구 상한 기본값. 에이전트마다 `peer_consultation.max_tool_iterations` 로 설정합니다.
+MAX_CONSULTATION_TOOL_ITERATIONS = DEFAULT_PEER_TOOL_ITERATIONS
+
+# 화면에 표시되는 도구 뱃지와 설명. 이 도구는 별도 MCP 서버가 아니지만 `allowed_mcp_servers` 에
+# "peers" 를 추가하여 활성화하므로, 설정 패널의 MCP 서버 목록과 에이전트 카드의 도구 할당 영역에
+# 내장 도구 형태로 함께 안내합니다 (conf.json 의 mcp_servers 에 별도 선언하지 않아도 항상 표시됩니다).
+PEERS_TOOL_BADGE = "내장"
+PEERS_TOOL_SUMMARY = "동료 전문가 자문 — 토론 중 다른 전문가에게 질문"
+PEERS_TOOL_TOOLTIP = "\n".join([
+    f"{PEERS_TOOL_PREFIX}: 앱에 내장된 동료 전문가 자문 도구입니다 (별도 MCP 서버가 아닙니다).",
+    f"해당 기능을 활성화한 전문가는 토론 중 {CONSULT_AGENT_TOOL} 로 다른 전문가에게 질문하고,",
+    "전달받은 답변을 자신의 발언에 반영할 수 있습니다.",
+    "· 에이전트 카드의 '도구' 항목에서 활성화합니다 (conf.json 의 allowed_mcp_servers 에 \"peers\").",
+    "· 동일 창의 '에이전트 선택' 에서 질문할 대상과 자문받는 에이전트의 도구 호출 상한을 설정합니다.",
+    f"  대상을 지정하지 않으면 이번 턴에 참여한 다른 전문가 전원이 대상이 되며, 도구 호출은 기본 최대 {MAX_CONSULTATION_TOOL_ITERATIONS}회까지 허용됩니다.",
+    f"· 오케스트레이터는 쓰지 않습니다. 자문은 {DEFAULT_MAX_CONSULTATION_DEPTH}단계까지입니다.",
+    "· 대화가 시작되면 해당 대화의 자문 설정은 고정됩니다 (첫 발언 시점의 구성 유지).",
+    "· 별도 프로세스를 기동하지 않으므로 conf.json 의 mcp_servers 에는 등록하지 않습니다.",
+])
 
 CONSULTATION_GUIDANCE_HEAD = "[동료 전문가 자문]"
 
 
 @dataclass(frozen=True)
 class ConsultationScope:
-    """현재 턴 또는 발언에서 동료 전문가 자문에 필요한 실행 문맥입니다."""
+    """현재 턴 또는 발언에서 동료 전문가 자문에 필요한 실행 문맥입니다.
+
+    `peers` 는 이번 턴에 참여한 에이전트, `pool` 은 이 대화의 에이전트 전부(참여자는 이번 턴의 사본,
+    나머지는 첫 턴에 고정한 스냅샷)입니다. 자문 상대를 고른 에이전트는 `pool` 에서 찾습니다.
+    """
 
     peers: Tuple["Agent", ...] = ()
+    pool: Tuple["Agent", ...] = ()
     llm_caller: Optional[Any] = None
     custom_instructions: str = ""
     session_id: Optional[str] = None
@@ -78,6 +106,7 @@ def current_consultation_scope() -> Optional[ConsultationScope]:
 def consultation_scope(
     peers: Sequence["Agent"],
     *,
+    pool: Sequence["Agent"] = (),
     llm_caller: Optional[Any] = None,
     custom_instructions: str = "",
     session_id: Optional[str] = None,
@@ -89,9 +118,10 @@ def consultation_scope(
     force_enable: bool = False,
     history: Sequence[str] = (),
 ) -> Iterator[ConsultationScope]:
-    """발언 또는 턴 동안 동료 전문가 자문 문맥을 활성화합니다."""
+    """발언 또는 턴 동안 동료 전문가 자문 문맥을 활성화합니다. `pool` 이 비면 `peers` 를 씁니다."""
     scope = ConsultationScope(
         peers=tuple(peers),
+        pool=tuple(pool) or tuple(peers),
         llm_caller=llm_caller,
         custom_instructions=custom_instructions,
         session_id=session_id,
@@ -141,19 +171,45 @@ def _is_consultation_enabled_for(
     return False
 
 
+def peer_targets_of(agent: Any) -> Optional[List[str]]:
+    """묻는 쪽이 고른 자문 상대 (`peer_consultation.targets`). 고르지 않았으면 None."""
+    settings = getattr(agent, "peer_consultation", None)
+    targets = getattr(settings, "targets", None)
+    return list(targets) if targets is not None else None
+
+
+def peer_tool_limit_of(agent: Any) -> int:
+    """묻는 쪽이 정한, 자문받는 에이전트의 도구 호출 상한 (`peer_consultation.max_tool_iterations`)."""
+    settings = getattr(agent, "peer_consultation", None)
+    limit = getattr(settings, "max_tool_iterations", MAX_CONSULTATION_TOOL_ITERATIONS)
+    return max(0, int(limit))
+
+
 def available_peers_for(
     agent: Any,
     peers: Optional[Sequence["Agent"]] = None,
 ) -> List["Agent"]:
     """`agent` 가 현재 자문을 구할 수 있는 동료 전문가 목록을 반환합니다.
 
-    자기 자신, 오케스트레이터(`orchestrator`), 비활성화된 에이전트, 그리고 이미 호출 사슬(`history`)에
-    등장한 에이전트는 제외합니다.
+    `peers` 를 직접 전달하지 않은 경우, 자문 상대를 지정하지 않은 에이전트는 이번 턴 참여자 전체에서 찾고,
+    특정 상대를 지정한 에이전트는 대화의 전체 에이전트 풀(`scope.pool`) 중 지정된 대상만 선별합니다.
+    어느 쪽이든 자기 자신, 오케스트레이터(`orchestrator`), 비활성화된 에이전트, 이미 호출 사슬(`history`)에
+    포함된 에이전트는 대상에서 제외됩니다. 지정한 에이전트가 대화 풀에 없거나 비활성화되어 있으면 목록에서 자동으로 제외됩니다.
     """
     if agent is None:
         return []
     scope = current_consultation_scope()
-    source = peers if peers is not None else (scope.peers if scope is not None else ())
+    if peers is not None:
+        source: Sequence["Agent"] = peers
+    elif scope is None:
+        source = ()
+    else:
+        targets = peer_targets_of(agent)
+        if targets is None:
+            source = scope.peers
+        else:
+            wanted = set(targets)
+            source = [p for p in scope.pool if getattr(p, "key", "") in wanted]
     blocked = {getattr(agent, "key", ""), "orchestrator"}
     if scope is not None:
         blocked.update(scope.history)
@@ -186,7 +242,7 @@ def consultation_tools_for(
 
     roster_lines = [f"- `{p.key}`: {p.name} ({p.role})" for p in peer_list]
     description = (
-        "현재 세션에 참여 중인 다른 동료 전문가 에이전트에게 구체적인 질문을 보내 자문이나 검증을 받습니다.\n"
+        "이 대화의 다른 동료 전문가 에이전트에게 구체적인 질문을 보내 자문이나 검증을 받습니다.\n"
         "발언을 확정하기 전에 타 분야 전문가의 의견이나 인터페이스·보안·구현 타당성 확인이 꼭 필요할 때만 호출하세요.\n\n"
         "자문 가능한 동료 전문가:\n" + "\n".join(roster_lines)
     )
@@ -306,13 +362,24 @@ async def run_consultation_tool(
         s for s in (target.allowed_mcp_servers or [])
         if s != PEERS_TOOL_PREFIX or next_depth < scope.max_depth
     ]
-    consulted_agent = target.model_copy(update={
-        "max_tool_iterations": min(target.max_tool_iterations, MAX_CONSULTATION_TOOL_ITERATIONS),
+    # 상한은 질문하는 쪽이 설정합니다 (`peer_consultation.max_tool_iterations`). 0 이면 도구 없이 직접 답변하도록
+    # 구성합니다 (도구 루프 상한을 0 으로 두면 응답을 생성하기 전에 루프가 종료되기 때문입니다).
+    tool_limit = peer_tool_limit_of(agent)
+    update: Dict[str, Any] = {
+        "max_tool_iterations": max(1, min(target.max_tool_iterations, tool_limit)),
         "allowed_mcp_servers": filtered_servers,
         "allow_peer_consultation": (
             getattr(target, "allow_peer_consultation", False) and next_depth < scope.max_depth
         ),
-    })
+    }
+    if tool_limit == 0:
+        update["allowed_mcp_servers"] = []
+        update["allowed_skills"] = []
+        update["allow_peer_consultation"] = False
+        st = getattr(target, "sequential_thinking", None)
+        if st is not None and st.enabled and st.mode == "mcp":
+            update["sequential_thinking"] = st.model_copy(update={"enabled": False})
+    consulted_agent = target.model_copy(update=update)
 
     prompt_parts = [
         "[동료 전문가 자문 요청]",
@@ -339,6 +406,7 @@ async def run_consultation_tool(
     try:
         with consultation_scope(
             scope.peers,
+            pool=scope.pool,
             llm_caller=caller,
             custom_instructions=scope.custom_instructions,
             session_id=scope.session_id,

@@ -61,10 +61,10 @@ def load_graph(graph_id: str, directory: Optional[Path] = None) -> GraphSpec:
 
 
 def graph_agent_keys(graph_id: str, directory: Optional[Path] = None) -> List[str]:
-    """이 그래프로 토론하면 참여하는 에이전트 (`GraphSpec.agent_keys`).
+    """해당 그래프 토론에 참여하는 에이전트 키 목록(`GraphSpec.agent_keys`)을 반환합니다.
 
-    그래프를 고르지 않았거나 읽지 못하면 빈 목록입니다 — 그런 그래프로는 토론이 시작되지 않으니
-    참여자도 없습니다. 화면이 카드를 켜고 수를 세는 데 쓰는 값이라 예외를 던지지 않습니다.
+    그래프를 지정하지 않았거나 파일을 읽지 못하면 빈 목록을 반환합니다. 화면에서 세션 카드를 렌더링하고
+    참여자 수를 집계할 때 사용하는 함수이므로 예외를 발생시키지 않습니다.
     """
     if not graph_id:
         return []

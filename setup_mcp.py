@@ -70,10 +70,10 @@ def write_node_manifest(prefix: Path) -> None:
 
 
 def node_servers_installed(prefix: Path) -> bool:
-    """`prefix` 에 이 목록·범위 그대로 깔린 Node MCP 서버가 있는가.
+    """`prefix` 디렉터리에 정의된 Node MCP 서버 목록 및 버전 범위가 올바르게 설치되어 있는지 확인합니다.
 
-    `node_modules` 가 있다는 것만 보면 범위를 고정하기 전에 깔린 것(2.0.0 등)도 그대로 두게
-    됩니다. package.json 의 범위가 지금 목록과 같을 때만 건너뜁니다.
+    `node_modules` 존재 여부만 검사하면 버전 범위를 고정하기 전에 설치된 버전(2.0.0 등)을 그대로 유지하는
+    문제가 발생합니다. `package.json` 의 버전 범위가 현재 요구 목록과 완전히 일치할 때만 설치를 건너뜁니다.
     """
     try:
         manifest = json.loads((prefix / "package.json").read_text(encoding="utf-8"))

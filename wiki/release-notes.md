@@ -14,12 +14,25 @@ unchanged: `OrchestratorEngine` keeps every method name and hands the work to th
 
 **Specialists can consult a peer mid-speech (Agent-as-a-Tool).** A specialist with `"peers"` in its
 `allowed_mcp_servers` gets a `peers__consult_agent` tool during the debate: it sends one question (and optional
-context) to another specialist taking part in this turn and folds the answer into its speech. It is off unless
-`"peers"` is listed — there is no other switch — and the roster card shows `peers` among the tool servers. The
-orchestrator never gets the tool. A consultation goes one level deep (the consulted agent cannot consult in turn),
-never back to an agent already in the chain, and the consulted agent answers with at most 3 tool rounds. There is
-no separate time limit; the turn's stop and cancel apply as usual. The consultation call itself is not a
-tool-security decision, but the consulted agent's own tool calls are.
+context) to another specialist and folds the answer into its speech. It is off unless `"peers"` is listed —
+there is no other switch. Whom it may ask is chosen per agent before a conversation starts: by default every
+other specialist taking part in the turn, or only the agents picked under `에이전트 선택` in the card's tool
+dialog — which may include specialists who are not debating (`peer_consultation.targets`). The same dialog sets
+the consulted agent's tool cap (`peer_consultation.max_tool_iterations`, default 3, 0 = answer without tools,
+never above that agent's own limit). Both are frozen into the conversation at its first message with the rest of
+the agent configuration, so conversations can differ. The orchestrator never gets the tool and cannot be
+consulted. A consultation goes one level deep (the consulted agent cannot consult in turn) and never back to an
+agent already in the chain. There is no separate time limit; the turn's stop and cancel apply as usual. Not
+offered on the trial or easy pages. The consultation call itself is not a tool-security decision, but the consulted agent's own tool
+calls are. On screen, the MCP server section always shows a built-in `peers` chip (`내장`, no switch, not counted
+as a connection) whose tooltip explains it and names who has it on, and the card's tool dialog and the add agent
+dialog always list `peers` — it no longer shows up as `설정에 없음`. `peers` is now a reserved MCP server name.
+→ [UI Components §1.2](ui/components.md) · manual: `docs/user_manual/03-core/10-peer-consultation.md`
+
+**`conf.example.json` no longer carries PairSlide.** The `pair_slide` server entry and the `slide_writer`
+agent, whose whole prompt was about PairSlide's tools, are gone from the example configuration. PairSlide is a
+separate project; the integration in code (tool-name guards, slide guidance) is unchanged, so an existing
+`conf.json` that still declares them keeps working.
 
 **Debate runner: worker pool and event bus.** Each turn now runs as a `TaskWorkerPool` job, which records its
 status, start and end times and error. The pool does not limit how many conversations run at once — a turn
