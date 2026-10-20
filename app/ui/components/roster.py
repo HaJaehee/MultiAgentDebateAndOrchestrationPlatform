@@ -64,6 +64,10 @@ STANCE_PREVIEW_CLASSES = {
 # 작업이 끝났을 때 부르는 dismiss() 는 더 일찍 치우기 위한 것입니다.
 PROGRESS_TOAST_TIMEOUT = 8
 
+# 설정 패널의 MCP 서버 칩 공통 모양. 서버 칩의 높이는 켜기 스위치·삭제 버튼이 정하는데(34px),
+# 그 둘이 없는 내장 도구 peers 칩은 낮아져 줄이 들쭉날쭉했습니다. 최소 높이를 같게 둡니다.
+MCP_CHIP_CLASSES = "flex items-center gap-1 py-1 rounded-md bg-slate-800/70 border min-h-[34px]"
+
 # 새 에이전트 폼에서 정수로 적어야 하는 항목. `ui.number` 는 무엇을 넣든 float 를
 # 돌려주므로, 그대로 쓰면 conf.json 에 `max_tokens = 4096.0` 이 적힙니다.
 INT_AGENT_FIELDS = ("max_tokens", "max_context_window", "num_retries", "max_tool_iterations")
@@ -1132,6 +1136,15 @@ class AgentRosterControl:
         connected_count = 0
 
         with self.mcp_row:
+            # 내장 도구 peers 를 맨 앞에 둡니다. conf.json 에 없어도 늘 있고 띄울 프로세스가 없으므로
+            # 켜기·삭제 스위치가 없고, 아래 "N/M 연결됨" 에도 세지 않습니다. 누가 켰는지는 에이전트
+            # 카드의 '도구' 가 정합니다.
+            with ui.element("div").classes(f"{MCP_CHIP_CLASSES} pl-2 pr-2 border-indigo-700/70"):
+                ui.icon("forum", size="13px").classes("text-indigo-300")
+                ui.label(PEERS_TOOL_PREFIX).classes("text-[11px] font-semibold text-slate-200")
+                ui.badge(PEERS_TOOL_BADGE, color="indigo-8").props("dense").classes("text-[13px]")
+                ui.tooltip(peers_chip_tooltip(self._roster_agents())).classes("whitespace-pre-line text-[11px]")
+
             if not configured:
                 ui.label("conf.json 에 등록된 MCP 서버가 없습니다.").classes("text-[11px] text-slate-500")
             for name, server_cfg in configured.items():
@@ -1163,9 +1176,7 @@ class AgentRosterControl:
                            f"{info.get('error') or '원인을 확인할 수 없습니다'}\r\n"
                            f"에이전트는 해당 서버의 도구 없이 토론을 진행합니다.")
 
-                with ui.element("div").classes(
-                    "flex items-center gap-1 pl-2 pr-1 py-1 rounded-md bg-slate-800/70 border border-slate-700"
-                ):
+                with ui.element("div").classes(f"{MCP_CHIP_CLASSES} pl-2 pr-1 border-slate-700"):
                     # 툴팁은 상태 부분에만 답니다. 스위치 위에서까지 뜨면 조작을 가립니다.
                     with ui.element("div").classes("flex items-center gap-1"):
                         ui.icon(icon, size="13px").classes(icon_cls)
@@ -1188,16 +1199,6 @@ class AgentRosterControl:
                         remove.tooltip(self.mcp_lock_reason)
                     else:
                         remove.tooltip(f"'{name}' 서버를 conf.json에서 삭제합니다.")
-
-            # 내장 도구 peers. conf.json 에 없어도 늘 있고 띄울 프로세스가 없으므로 켜기·삭제 스위치가
-            # 없고, 위의 "N/M 연결됨" 에도 세지 않습니다. 누가 켰는지는 에이전트 카드의 '도구' 가 정합니다.
-            with ui.element("div").classes(
-                "flex items-center gap-1 pl-2 pr-2 py-1 rounded-md bg-slate-800/70 border border-indigo-700/70"
-            ):
-                ui.icon("forum", size="13px").classes("text-indigo-300")
-                ui.label(PEERS_TOOL_PREFIX).classes("text-[11px] font-semibold text-slate-200")
-                ui.badge(PEERS_TOOL_BADGE, color="indigo-8").props("dense").classes("text-[13px]")
-                ui.tooltip(peers_chip_tooltip(self._roster_agents())).classes("whitespace-pre-line text-[11px]")
 
         enabled_total = len([c for c in configured.values() if c.enabled])
         if self.mcp_badge:
