@@ -1,6 +1,5 @@
 import asyncio
 import inspect
-import json
 import logging
 import os
 import signal
@@ -350,7 +349,7 @@ class MCPClientConnection:
 
     @property
     def is_connected(self) -> bool:
-        """실제 stdio 세션이 살아있는지 여부 (mock 폴백과 구분됩니다)."""
+        """세션이 지금 살아 있는지 여부. 끊긴 뒤 다음 호출에서 다시 붙기 전까지는 False."""
         return self._session is not None
 
     @property
@@ -600,9 +599,11 @@ class MCPClientConnection:
     async def discover_tools(self) -> List[MCPToolDefinition]:
         """세션을 열고 도구 목록을 받아 캐시합니다."""
         if not await self.connect():
+            # 띄우지 못한 서버의 도구는 제공하지 않습니다. 예전에는 filesystem·search 용
+            # 가짜 도구를 대신 걸어 두고 지어낸 성공을 돌려줬습니다 — 에이전트는 파일을
+            # 썼다고 믿었습니다.
             self._is_available = False
-            # 외부 서버를 띄울 수 없으면 시뮬레이션/테스트용 mock 도구로 폴백합니다.
-            self._tools = self._get_fallback_mock_tools()
+            self._tools = []
             return self._tools
 
         session = self._session
@@ -641,60 +642,8 @@ class MCPClientConnection:
             )
             await self.close()
             self._is_available = False
-            self._tools = self._get_fallback_mock_tools()
+            self._tools = []
             return self._tools
-
-    def _get_fallback_mock_tools(self) -> List[MCPToolDefinition]:
-        """Provide mock tool definitions if external server is offline or fails."""
-        if "filesystem" in self.server_name:
-            return [
-                MCPToolDefinition(
-                    server_name=self.server_name,
-                    name="read_file",
-                    description="Read file contents from workspace",
-                    input_schema={
-                        "type": "object",
-                        "properties": {"path": {"type": "string", "description": "Relative file path"}},
-                        "required": ["path"],
-                    },
-                ),
-                MCPToolDefinition(
-                    server_name=self.server_name,
-                    name="write_file",
-                    description="Write content to a file in workspace",
-                    input_schema={
-                        "type": "object",
-                        "properties": {
-                            "path": {"type": "string", "description": "Relative file path"},
-                            "content": {"type": "string", "description": "File content"},
-                        },
-                        "required": ["path", "content"],
-                    },
-                ),
-                MCPToolDefinition(
-                    server_name=self.server_name,
-                    name="list_directory",
-                    description="List files in a directory",
-                    input_schema={
-                        "type": "object",
-                        "properties": {"path": {"type": "string", "description": "Directory path", "default": "."}},
-                    },
-                ),
-            ]
-        elif "search" in self.server_name:
-            return [
-                MCPToolDefinition(
-                    server_name=self.server_name,
-                    name="search",
-                    description="Search the web for technical documentation and libraries",
-                    input_schema={
-                        "type": "object",
-                        "properties": {"query": {"type": "string", "description": "Search query"}},
-                        "required": ["query"],
-                    },
-                )
-            ]
-        return []
 
     async def execute_tool(
         self, tool_name: str, arguments: Dict[str, Any], scope: Optional[str] = None
@@ -706,17 +655,14 @@ class MCPClientConnection:
         샌드박스의 네임스페이스).
         """
         if not self._is_available:
-            # Execute fallback simulation if server unavailable
-            return self._simulate_tool_execution(tool_name, arguments)
+            raise self._unreachable(tool_name)
 
         for attempt in (1, 2):
             session = self._session
             if session is None:
-                if not await self.connect():
-                    return self._simulate_tool_execution(tool_name, arguments)
+                if not await self.connect() or self._session is None:
+                    raise self._unreachable(tool_name)
                 session = self._session
-                if session is None:
-                    return self._simulate_tool_execution(tool_name, arguments)
 
             try:
                 meta = build_scope_meta(scope)
@@ -772,7 +718,19 @@ class MCPClientConnection:
                 )
                 raise
 
-        return self._simulate_tool_execution(tool_name, arguments)
+        raise self._unreachable(tool_name)
+
+    def _unreachable(self, tool_name: str) -> MCPToolError:
+        """서버에 닿지 못해 아무것도 실행하지 못했다는 관측. 결과를 지어내지 않습니다."""
+        reason = self.connect_error
+        detail = f" ({reason})" if reason else ""
+        return MCPToolError(
+            self.server_name,
+            tool_name,
+            f"MCP 서버 '{self.server_name}' 에 연결되어 있지 않아 '{tool_name}' 을(를) 실행하지 "
+            f"못했습니다{detail}. 아무것도 실행되지 않았습니다. 이 도구 없이 진행하거나, "
+            f"할 수 없는 일은 할 수 없다고 알리세요.",
+        )
 
     @staticmethod
     def _extract_result_text(res: Any) -> str:
@@ -786,21 +744,3 @@ class MCPClientConnection:
                     texts.append(str(item))
             return "\n".join(texts)
         return str(res)
-
-
-    def _simulate_tool_execution(self, tool_name: str, arguments: Dict[str, Any]) -> str:
-        """Simulates tool execution locally for offline/test environments."""
-        if tool_name == "read_file":
-            path = arguments.get("path", "")
-            return f"[Simulated File Read: '{path}'] (File exists. Length: 120 lines. Status: Ready)"
-        elif tool_name == "write_file":
-            path = arguments.get("path", "")
-            content_len = len(arguments.get("content", ""))
-            return f"[Simulated File Write: '{path}'] (Successfully wrote {content_len} bytes)"
-        elif tool_name == "list_directory":
-            path = arguments.get("path", ".")
-            return f"[Simulated Dir List: '{path}'] ['app/', 'tests/', 'conf.json', 'README.md', 'requirements.txt']"
-        elif tool_name == "search":
-            query = arguments.get("query", "")
-            return f"[Simulated Web Search: '{query}'] Found 3 references: FastAPI docs, NiceGUI documentation, Python stdlib guidelines."
-        return f"[Simulated Tool Execution: {self.server_name}.{tool_name}({json.dumps(arguments)})] Success."

@@ -74,7 +74,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 GEMINI_API_KEY=AIzaSy...
 ```
 
-> **Offline Simulator Available**: If you do not configure any API keys or local servers, the built-in offline simulator automatically takes over, allowing you to explore the full UI, multi-agent debate, and artifact synthesis immediately!
+> **No offline simulator**: Without a reachable model, agents show as unconfigured and a debate turn reports them as unreachable. Nothing is simulated. Tests use `tests/fake_llm.py` instead.
 
 ---
 

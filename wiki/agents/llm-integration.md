@@ -14,7 +14,7 @@ flowchart LR
     LLMCaller --> ToolCheck{is_live?}
     
     ToolCheck -- Yes --> LiteLLM[LiteLLM Gateway]
-    ToolCheck -- No / Fallback --> Sim[Intelligent Offline Simulator]
+    ToolCheck -- No --> Unavailable[LLMUnavailableError: speech recorded as failed]
     
     LiteLLM --> Cloud[Cloud: OpenAI / Anthropic / Gemini / Azure]
     LiteLLM --> Local[Local: Ollama / vLLM / LM Studio]

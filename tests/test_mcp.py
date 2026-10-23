@@ -26,11 +26,12 @@ def test_tool_definition_to_openai():
 
 
 @pytest.mark.asyncio
-async def test_mcp_manager_falls_back_to_mock_tools():
-    """외부 서버를 띄울 수 없으면 mock 도구로 폴백해 앱이 계속 동작해야 한다.
+async def test_a_server_that_cannot_start_offers_no_tools_and_fabricates_nothing():
+    """띄우지 못한 서버는 도구를 내놓지 않고, 부르면 실패를 그대로 돌려준다.
 
-    실제 서버가 설치되어 있는지에 결과가 좌우되지 않도록, 존재할 수 없는 명령을
-    일부러 지정한다.
+    예전에는 filesystem·search 용 가짜 도구를 걸어 두고 `[Simulated File Write …]
+    (Successfully wrote N bytes)` 같은 지어낸 성공을 돌려줬다. 에이전트는 파일을 썼다고
+    믿었다. 실제 서버 설치 여부에 좌우되지 않도록 존재할 수 없는 명령을 지정한다.
     """
     server_configs = {
         "filesystem": MCPServerConfig(
@@ -44,22 +45,37 @@ async def test_mcp_manager_falls_back_to_mock_tools():
     }
     manager = MCPManager(server_configs)
     await manager.initialize()
+    try:
+        assert manager.get_tools_for_servers(["filesystem", "search"]) == []
+        assert manager.get_openai_tools_for_servers(["filesystem", "search"]) == []
 
-    # Verify tool retrieval for servers
-    fs_tools = manager.get_tools_for_servers(["filesystem"])
-    assert len(fs_tools) > 0
-    assert any(t.name == "read_file" for t in fs_tools)
+        output, status = await manager.execute_tool(
+            "filesystem__write_file", {"path": "a.md", "content": "hello"}
+        )
+        assert status == "error"
+        assert "Simulated" not in output and "Successfully" not in output
+        assert not manager.clients["filesystem"].is_connected
+    finally:
+        await manager.shutdown()
 
-    openai_tools = manager.get_openai_tools_for_servers(["filesystem", "search"])
-    assert len(openai_tools) >= 2
 
-    # 폴백 시뮬레이션은 성공으로 보고된다
-    output, status = await manager.execute_tool("filesystem__read_file", {"path": "sample.py"})
-    assert status == "success"
-    assert len(output) > 0
-    assert not manager.clients["filesystem"].is_connected
+@pytest.mark.asyncio
+async def test_a_server_that_dies_and_cannot_come_back_reports_the_failure():
+    """세션이 끊긴 뒤 다시 붙지 못하면, 지어낸 결과 대신 실행하지 못했다는 관측을 돌려준다."""
+    manager = MCPManager({"stateful": MCPServerConfig(command=sys.executable, args=[FIXTURE_SERVER])})
+    await manager.initialize()
+    try:
+        out, _ = await manager.execute_tool("stateful__bump", {})
+        client = manager.clients["stateful"]
+        client.command = "__no_such_command_stateful__"  # 다시 띄우려 해도 뜨지 않게
+        os.kill(int(_field(out, "pid")), getattr(signal, "SIGKILL", signal.SIGTERM))
+        await asyncio.sleep(0.5)
 
-    await manager.shutdown()
+        output, status = await manager.execute_tool("stateful__bump", {})
+        assert status == "error"
+        assert "아무것도 실행되지 않았습니다" in output
+    finally:
+        await manager.shutdown()
 
 
 FIXTURE_SERVER = str(Path(__file__).parent / "fixtures" / "stateful_mcp_server.py")

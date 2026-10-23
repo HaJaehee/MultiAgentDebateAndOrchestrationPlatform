@@ -57,6 +57,8 @@ flowchart LR
 When a tool invocation fails because the underlying stdio process died:
 - [`MCPClientConnection.execute_tool()`](file:///d:/MultiAgentDebateOrchestration/app/mcp/client.py) detects the broken pipe and attempts **exactly one automatic reconnection**.
 - If reconnection succeeds, the call proceeds.
+- If it fails, the call returns `status: "error"` with *"MCP 서버 '…' 에 연결되어 있지 않아 '…' 을(를) 실행하지 못했습니다 … 아무것도 실행되지 않았습니다"*, plus the server's last startup error when there is one.
+- A server that could not start at all offers **no tools**. Until 2026-10 such a server was given stand-in `read_file` / `write_file` / `search` definitions whose calls returned invented successes (`[Simulated File Write …] (Successfully wrote N bytes)`); an agent then believed it had written a file that did not exist. That path is gone.
 - If a tool invocation fails logically (`isError: true` with a live server), **no retry is attempted**. Automatically retrying side-effecting operations (such as file appending or git commits) could cause duplicate operations or state corruption.
 - Uvicorn's file watcher explicitly excludes `workspace/`, `*.db*`, and `.git/` so that file operations performed by sandbox or filesystem tools do not trigger false hot-reloads and application restarts.
 
