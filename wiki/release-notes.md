@@ -4,7 +4,7 @@ Change history for the MADO: Multi-Agent Debate & Orchestration Platform, newest
 entry links to the topic page carrying the full explanation — this file is an index of *what
 changed*, not a second copy of the documentation.
 
-## Unreleased
+## v1.4.1
 
 **An MCP server that cannot start no longer fakes its tools.** When a server failed to start, the client used to
 register stand-in `read_file` / `write_file` / `search` tools whose calls returned invented successes
