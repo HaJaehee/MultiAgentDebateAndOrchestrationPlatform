@@ -67,7 +67,7 @@ model calls a tool
        server call
 ```
 
-The gate is created per turn (`OrchestratorEngine._tool_gates`) and passed to **every** `call_agent` of
+The gate is created per turn (`EngineContext.tool_gates`, set up by `TurnPreparer.setup`) and passed to **every** `call_agent` of
 the turn — speeches and the auxiliary calls (speaker selection, dispatch, graph gates, summaries, ledger,
 Mermaid repair), because those also carry the agent's tools. A denied call is not executed; the refusal
 text becomes the tool result, so the model reads it and changes course. Tools that can never run under

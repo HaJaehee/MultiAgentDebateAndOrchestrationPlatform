@@ -10,7 +10,7 @@
 
 | 문서 | 주요 내용 | 주요 파일 |
 | :--- | :--- | :--- |
-| [설정 레이어](01-config-layer.md) | JSON 로더/기록기, 환경변수 치환, Pydantic 검증 체계 | `app/config.py` |
+| [설정 레이어](01-config-layer.md) | JSON 로더/기록기, 환경변수 치환, Pydantic 검증 체계 | `app/config/` |
 | [에이전트 풀과 페르소나](02-agent-pool.md) | 에이전트 동적 등록, 세션별 인격, 구성 스냅샷 관리 | `app/agents/pool.py`, `base.py`, `personas.py` |
 | [LLM 통합](03-llm-integration.md) | LiteLLM 호출 파이프라인, 도구 루프, 컨텍스트 창 관리, 장애 처리 | `app/agents/llm.py` |
 | [MCP 호스트](04-mcp-host.md) | 서버 수명 주기 관리, 도구 검색 및 안전 실행, 작업 공간 격리 | `app/mcp/manager.py`, `client.py` |

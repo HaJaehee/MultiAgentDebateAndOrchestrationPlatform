@@ -4,6 +4,44 @@ Change history for the MADO: Multi-Agent Debate & Orchestration Platform, newest
 entry links to the topic page carrying the full explanation — this file is an index of *what
 changed*, not a second copy of the documentation.
 
+## Unreleased
+
+**An MCP server that cannot start no longer fakes its tools.** When a server failed to start, the client used to
+register stand-in `read_file` / `write_file` / `search` tools whose calls returned invented successes
+(`[Simulated File Write …] (Successfully wrote N bytes)`); the same happened when a dropped session could not
+reconnect. Agents believed they had written files that did not exist. Now such a server offers no tools, and a
+call to a server that cannot be reached returns an error observation saying nothing was run.
+→ [Resilience & Errors §3](mcp/error-handling-resilience.md)
+
+**PairSlide integration removed.** PairSlide is discontinued. The `slide_*` / `sheet_write_table` tool names, the
+presentation guidance in the system prompt, the alternative-tool hints in refusals, the policy entries for
+`slide_*`, the beginner-page label for `pair_slide` and the `.pairslide` workspace exclusion are gone. The guard
+that refuses writing a binary document (`.pptx`, `.xlsx`, `.docx`, `.pdf`, …) with a text-writing tool stays — it
+prevents broken files and false "created" reports on its own — and now always tells the model to write Markdown
+(CSV for spreadsheets) and say that the requested format could not be produced. A `conf.json` that still declares
+a `pair_slide` server or `slide_writer` agent keeps loading; nothing special is done for them.
+
+**The code base was reorganized for maintenance; behaviour is unchanged.** The plan and its progress are in
+`docs/refactoring-plan.md`.
+- The engine (3,033 → about 500 lines) only assembles and owns a turn's life. Recording, speeches, conversation
+  memory and turn setup are services sharing one `EngineContext`; the phase executors no longer call back into
+  the engine, and the debate phase is split into rounds, parallel dispatch and graph debates.
+- `app/agents/llm.py` (3,064 → under 1,000 lines) keeps `LLMCaller`; request building, answer recovery, tool-call
+  handling, context fitting, limit notices and reasoning traces moved to sibling modules. The model connection
+  classification moved to `connection.py`, which removed an import cycle between the caller, the fallback and
+  the status dialog.
+- `app/config.py` became the `app/config/` package (`env`, `paths`, `schema`, `loader`, `editors`); the tool rule
+  grammar moved to `app/tool_rules.py`.
+- Event names are listed once in `app/events.py`; the runner's snapshot handles one event per method
+  (`orchestration/turn_run.py`).
+- The expert page (`create_ui()`, one 1,224-line function) became `app/ui/expert/`; the roster panel and the chat
+  feed became packages of files by concern; the trial and beginner pages share `app/ui/shared/` and
+  `app/routes.py` instead of importing each other; all three screens attach to a debate through one `RunBinding`.
+- `/api/*` moved to `app/api.py`.
+- Import direction between packages is now checked by a test, and the names that the MADOWarGame driver relies on
+  are pinned by another.
+→ [Module Boundaries](architecture/module-boundaries.md) · [Architecture Overview §4](architecture/overview.md)
+
 ## v1.4
 
 **Orchestration engine split into phase executors.** The planning, debate and synthesis phases moved out of

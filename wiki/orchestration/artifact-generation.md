@@ -19,7 +19,7 @@ viewer.
 
 ## 1. Artifact Extraction Architecture
 
-[`_extract_artifacts_from_synthesis()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py)
+[`SynthesisPhaseExecutor.extract_artifacts_from_synthesis()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/phases/synthesis.py)
 produces four kinds of artifact. Every title starts with the local time the turn finished
 (`MM-DD HH:MM`), because artifacts now accumulate across turns and identical titles must be told apart.
 
@@ -104,7 +104,7 @@ flowchart LR
     titled with its author. Models routinely draw the architecture during the debate and omit it
     from the summary. Earlier turns' diagrams are not re-promoted — they are already that turn's
     artifacts.
-- **Normalisation**: [`normalize_mermaid()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py)
+- **Normalisation**: [`normalize_mermaid()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/artifacts.py)
   normalises line endings and quotes bracket labels containing parentheses
   (`A[결제 (Payment)]` → `A["결제 (Payment)"]`), the most common way an LLM-authored diagram
   fails to parse. Shape syntax (`[(cylinder)]`, `[[subroutine]]`, `[/parallelogram/]`) is
@@ -288,7 +288,7 @@ targets (`검증기`, `api-gw`), `end-node`, `hsl()` colours.
 - **Tools and sequential thinking are switched off** for the repair call, the same reasoning
   as speaker selection: a mechanical call with tools attached starts reading files instead of
   fixing syntax.
-- **It runs inside `_speak(post_process=...)`**, before the DB write and before
+- **It runs inside `SpeechRunner.speak(post_process=...)`**, before the DB write and before
   `message_added`. The streaming card is overwritten with the final text, so what the user
   ends up reading is the repaired version.
 

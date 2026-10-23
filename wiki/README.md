@@ -12,6 +12,7 @@ wiki/
 ├── release-notes.md                       # Change history by version, linked to the topic pages
 ├── architecture/
 │   ├── overview.md                        # High-level architecture, technology stack & data flow
+│   ├── module-boundaries.md               # Which package may import which, checked by a test
 │   └── database-schema.md                 # SQLite + SQLAlchemy async ORM data models & relationships
 ├── configuration/
 │   ├── conf-json-reference.md             # Complete conf.json configuration guide & schema
@@ -52,7 +53,7 @@ wiki/
 
 | Topic Area | Documentation Link | Key Subjects Covered |
 | :--- | :--- | :--- |
-| **Architecture** | [Overview](file:///d:/MultiAgentDebateOrchestration/wiki/architecture/overview.md)<br>[Database Schema](file:///d:/MultiAgentDebateOrchestration/wiki/architecture/database-schema.md) | FastAPI, NiceGUI, LiteLLM, Async SQLAlchemy, SQLite, Stdio MCP, StateGraph-inspired debate loops |
+| **Architecture** | [Overview](file:///d:/MultiAgentDebateOrchestration/wiki/architecture/overview.md)<br>[Module Boundaries](file:///d:/MultiAgentDebateOrchestration/wiki/architecture/module-boundaries.md)<br>[Database Schema](file:///d:/MultiAgentDebateOrchestration/wiki/architecture/database-schema.md) | FastAPI, NiceGUI, LiteLLM, Async SQLAlchemy, SQLite, Stdio MCP, StateGraph-inspired debate loops |
 | **Configuration** | [conf.json Reference](file:///d:/MultiAgentDebateOrchestration/wiki/configuration/conf-json-reference.md)<br>[Environment Variables](file:///d:/MultiAgentDebateOrchestration/wiki/configuration/environment-variables.md) | JSON parsing, `//` comment keys, global `llm` inheritance, per-agent overrides, `${VAR:-default}` substitution |
 | **Agents & Personas** | [Agent Pool & Roles](file:///d:/MultiAgentDebateOrchestration/wiki/agents/agent-pool-and-roles.md)<br>[Roster Editing](file:///d:/MultiAgentDebateOrchestration/wiki/agents/roster-editing.md)<br>[Session Personas](file:///d:/MultiAgentDebateOrchestration/wiki/agents/session-personas.md)<br>[Skills](file:///d:/MultiAgentDebateOrchestration/wiki/agents/skills.md)<br>[LLM Integration](file:///d:/MultiAgentDebateOrchestration/wiki/agents/llm-integration.md) | Master Orchestrator, System Architect, Senior Coder, Security Critic, adding/removing agents from the UI, `debate_priority` / `debate_stance`, card colour and uploaded icons, session freeze and config snapshot, skills loaded on demand with `allowed_skills` and live on/off |
 | **MCP Tool Protocol** | [Overview & Protocol](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/overview-and-protocol.md)<br>[Bundled Servers](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/bundled-servers.md)<br>[Runtime Isolation](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/runtime-isolation.md)<br>[Tool Security](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/tool-security.md)<br>[Resilience & Errors](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/error-handling-resilience.md) | Stdio client lifecycle, long-lived server processes, tool dispatch, `isError: true` feedback, stderr tee, per-workspace runtime pool and concurrent sessions, allow/ask/deny rules, approval cards, hard protections |

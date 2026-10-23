@@ -115,39 +115,54 @@ MultiAgentDebateOrchestration/
 │   ├── agent_icons/          # 업로드된 에이전트 아이콘 이미지
 │   └── trial/secret.key      # 체험 방문자 로그인 세션 서명 키 (초기 1회 자동 생성)
 ├── app/
-│   ├── main.py               # FastAPI + NiceGUI 실행 엔트리포인트
+│   ├── main.py               # 앱 조립: FastAPI 서버, 시작·종료 순서(lifespan), 화면·접근 제어, CLI
+│   ├── api.py                # HTTP 엔드포인트 (/api/*, /agent-icon)
 │   ├── about.py              # 애플리케이션 메타데이터 (이름·버전·저작자 단일 출처)
-│   ├── config.py             # JSON 로더/저장기, 환경변수 치환 및 Pydantic 검증
+│   ├── events.py             # 토론 이벤트 이름표 (EventType)
+│   ├── routes.py             # 화면 주소 (체험·쉬운 화면)
+│   ├── tool_rules.py         # 도구 보안 규칙 문법 (read(경로) · net(호스트) · mcp(서버/도구) …)
 │   ├── workspace_files.py    # 작업 공간 파일 목록·@멘션 해석·업로드 처리 (경로 안전장치)
 │   ├── diagnostics.py        # 이벤트 루프 정체 스택·브라우저 끊김 보고 기록 (data/diagnostics/)
+│   ├── config/               # 설정 (env · paths · schema · loader · editors)
+│   │   ├── schema.py         # conf.json 의 모양 (Pydantic)과 기본값
+│   │   ├── loader.py         # JSON 로더/저장기, get_config 싱글턴
+│   │   └── editors.py        # 화면에서 고친 값을 conf.json 에 되쓰기 (주석·${VAR} 보존)
 │   ├── database/             # SQLite & SQLAlchemy 비동기 ORM
 │   │   ├── models.py         # Session, Message, ToolCallRecord, Artifact, SessionAgent 모델
 │   │   └── session.py        # Async Engine 및 세션 관리
 │   ├── mcp/                  # MCP Host & Tool Integration
-│   │   ├── client.py         # Stdio MCP Client 프로세스 관리자
+│   │   ├── client.py         # Stdio·HTTP MCP Client 연결 관리자
 │   │   ├── manager.py        # 도구 검색 및 Function Calling 디스패치, 고정 보호
+│   │   ├── pool.py           # 작업 공간별 MCP 런타임 풀
 │   │   ├── policy.py         # 도구 보안 판정 (행위 · 규칙 · 모드 · 고정 보호)
 │   │   └── exec_scan.py      # 샌드박스 코드 사전 보안 검사기
 │   ├── agents/               # 에이전트 및 LLM 계층
 │   │   ├── base.py           # Agent 모델, 카드 색상·아이콘 해석 및 폴백
 │   │   ├── personas.py       # 세션별 페르소나 해석·저장·고정
 │   │   ├── skills.py         # 스킬 디렉터리 스캔 및 에이전트별 스킬 도구 (skills__load_skill 등)
-│   │   ├── llm.py            # LiteLLM 호출기, Tool 루프, LLMUnavailableError
+│   │   ├── llm.py            # LiteLLM 호출기와 도구 루프 (곁가지는 llm_request · llm_recovery · llm_tool_calls · llm_context · llm_budget · llm_tools · reasoning)
 │   │   ├── llm_gate.py       # 서버 전역 LLM 동시 요청 상한 제어 및 대기열 관리 (app.llm_concurrency)
-│   │   ├── model_status.py   # 모델 연결 상태 확인 (연결 묶기·가벼운 확인 요청·실패 분류·결과판)
+│   │   ├── connection.py     # 모델 연결 묶기와 실패 분류
+│   │   ├── model_status.py   # 모델 연결 상태 확인 (가벼운 확인 요청·결과판)
 │   │   ├── llm_fallback.py   # 개별 모델 연결 실패 시 전역 기본 모델로 폴백 (llm.fallback, 차단기, ADR-030)
 │   │   └── pool.py           # 동적 에이전트 풀 레지스트리
-│   ├── orchestration/        # 멀티 에이전트 토론 상태 머신
-│   │   ├── state.py          # DebateState, DebateMessage, ArtifactItem
+│   ├── orchestration/        # 멀티 에이전트 토론
+│   │   ├── engine.py         # 조립과 턴 수명 (run_turn · resume_turn)
+│   │   ├── speech.py         # 발언 한 번 (스트리밍 · 확정 기록 · 한도 쪽지)
+│   │   ├── recording.py      # 기록 (재시도 · data/unsaved/ 보존)
+│   │   ├── conversation.py   # 발언 맥락 · 요약 · 결정 장부
+│   │   ├── phases/           # 계획 · 토론(병렬·그래프) · 합성 단계 실행기
 │   │   ├── strategies.py     # 순차 토론, 디베이트, 오케스트레이터 지명, 병렬 지시 전략
-│   │   ├── engine.py         # 오케스트레이션 엔진 & 산출물 합성기
 │   │   ├── tool_gate.py      # 도구 보안 게이트 (판정 · 승인 카드 · 세션별 허용)
 │   │   ├── plan_gate.py      # 계획 승인 (분담표 · 승인 · 수정 요청 · 완료 확인, ADR-028)
-│   │   └── runner.py         # 세션별 백그라운드 토론 태스크 & 재접속 스냅샷
+│   │   ├── runner.py         # 세션별 백그라운드 토론 태스크
+│   │   └── turn_run.py       # 재접속 스냅샷 (이벤트별 리듀서)
 │   ├── trial/                # 체험 서버 모듈 (방문자 로그인·템플릿·세션 격리·운영자 콘솔, /trial)
 │   ├── easy/                 # 비엔지니어 화면 (웰컴·대화로 에이전트 만들기·생각/행동/관찰 실행 화면, /trial/easy, ADR-029)
 │   └── ui/                   # NiceGUI 반응형 웹 UI
-│       ├── app.py            # UI 페이지 레이아웃 및 반응형 바인딩
+│       ├── expert/           # 전문가 화면 (page · 이벤트별 반영 events · 머리 줄 chrome)
+│       ├── shared/           # 체험·쉬운 화면 공용 틀
+│       ├── run_binding.py    # 화면이 진행 중인 토론에 붙는 구독 (세 화면 공용)
 │       ├── personas_page.py  # /personas/{session_id} 페르소나 편집 페이지
 │       ├── theme.py          # Quasar CSS 스타일 & 컬러 팔레트
 │       ├── mention_input.py  # 입력창 @멘션 자동완성 (브라우저 스크립트)
@@ -155,14 +170,16 @@ MultiAgentDebateOrchestration/
 │       ├── math_markdown.py  # 발언·결론의 LaTeX 수식을 MathML 로 렌더링 (ui.markdown 대체)
 │       └── components/       # UI 컴포넌트
 │           ├── sidebar.py    # 세션 히스토리 사이드바
-│           ├── roster.py     # 에이전트 로스터 및 토론 제어판
-│           ├── chat_feed.py  # 대화 타임라인 & MCP 도구 아코디언
+│           ├── roster/       # 에이전트 로스터 및 토론 제어판 (관심사별 파일)
+│           ├── chat_feed/    # 대화 타임라인 & MCP 도구 아코디언 (관심사별 파일)
 │           ├── agent_appearance.py # 카드 색상·아이콘 편집기 (추가 모달 / 페르소나 편집 공용)
 │           ├── model_status.py # `모델 연결 상태` 버튼과 창 (전문가·체험·쉬운 화면 상단 공용)
 │           └── artifact_viewer.py # 탭형 산출물 뷰어 (Code, Markdown, Mermaid)
 ├── mcp_servers/              # 자체 내장 MCP 서버
 │   └── memory_scoped/        # 공식 memory 서버 포크 (세션별 지식 그래프 격리)
 └── tests/                    # 자동화 테스트 스위트
+    ├── test_layering.py       # 모듈 사이 의존 방향 (역방향 import 금지)
+    ├── test_public_surface.py # 바깥(MADOWarGame 구동기)이 기대는 이름·시그니처
     ├── test_config.py
     ├── test_personas.py       # 페르소나 편집 → 고정 → 재개 수명주기
     ├── test_agent_appearance.py # 카드 색상·아이콘 (업로드 → conf.json → 화면 → 스냅샷, 폴백)
@@ -688,7 +705,7 @@ MCP 프로토콜은 실패 상황을 두 가지 범주로 명확히 구분합니
 
 도구 실행 실패가 발생하더라도 대화 세션이 중단되지는 않습니다. 프로세스 재연결은 stdio 통신 스트림이 비정상 종료된 경우에만 수행됩니다.
 
-텍스트 파일 쓰기 도구를 사용하여 `.pptx`, `.xlsx`, `.docx`, `.pdf`와 같은 바이너리 또는 ZIP 기반 오피스 문서를 생성하려는 호출 역시 동일한 방식으로 사전 차단됩니다. 해당 포맷들은 단순 텍스트가 아닌 복합 구조를 가지므로, 텍스트 쓰기 도구로 작성할 경우 도구 자체는 성공을 반환하더라도 열리지 않는 손상된 파일이 생성되기 때문입니다. 따라서 호출이 실제 서버로 전달되기 전에 게이트웨이(`app/mcp/guards.py`)에서 이를 선제적으로 차단하고, 해당 포맷을 지원하는 전용 도구가 연동되어 있다면 그 이름을 안내하며, 연동된 도구가 없다면 마크다운 형식으로 작성하고 사용자에게 바이너리 생성 불가 사실을 안내하도록 피드백을 반환합니다.
+텍스트 파일 쓰기 도구를 사용하여 `.pptx`, `.xlsx`, `.docx`, `.pdf`와 같은 바이너리 또는 ZIP 기반 오피스 문서를 생성하려는 호출 역시 동일한 방식으로 사전 차단됩니다. 해당 포맷들은 단순 텍스트가 아닌 복합 구조를 가지므로, 텍스트 쓰기 도구로 작성할 경우 도구 자체는 성공을 반환하더라도 열리지 않는 손상된 파일이 생성되기 때문입니다. 따라서 호출이 실제 서버로 전달되기 전에 게이트웨이(`app/mcp/guards.py`)에서 이를 선제적으로 차단하고, 마크다운(스프레드시트는 CSV) 형식으로 작성한 뒤 사용자에게 바이너리 생성 불가 사실을 안내하도록 피드백을 반환합니다.
 
 > 일부 MCP 서버는 실행 실패를 `isError`로 반환하지 않고 자체 페이로드 본문에 포함하여 전달하기도 합니다. 예를 들어 `sandbox` 서버는 실행 코드가 예외를 발생시키더라도 "도구 호출 자체는 정상 완료되었으며 코드 실행 결과가 ERROR"인 것으로 간주하여 `isError = false`와 함께 `execution_status: ERROR`를 본문에 반환합니다. 이는 해당 서버의 고유 설계 방식이며 클라이언트 차원에서 임의로 수정할 수 없습니다.
 
@@ -886,7 +903,7 @@ MADO에서 사용하는 `memory` MCP 서버는 공식 구현체가 아닌 자체
 | 지식 그래프 | 대화 세션 단위 격리 | 도출된 합의 사항은 해당 토론에 참여하는 에이전트들만 공유해야 합니다. |
 | IPython 커널 네임스페이스 | 대화 세션 × 발언자 단위 격리 | 커널 메모리 상태는 영구 저장되지 않으며 발언자 간 격리가 필수적입니다. |
 
-샌드박스 커널 네임스페이스를 세션뿐만 아니라 개별 발언자 단위로 격리한 데에는 중요한 기술적 이유가 있습니다. 다음 발언자의 컨텍스트에는 이전 발언의 **순수 텍스트 본문만** 전달되며 이전 발언자가 수행한 도구 호출의 내부 런타임 로그는 전달되지 않습니다 (`_build_context_for_agent`). 만약 커널 상태를 공유할 경우 Critic 에이전트는 생성 과정도 알지 못하는 런타임 변수를 그대로 물려받게 되며, 여러 라운드 전의 과거 `df`(데이터프레임)를 최신 상태로 착각하여 부정확한 비판 리뷰를 작성할 위험이 있습니다. 무엇보다 Critic에게 샌드박스를 부여한 본질적 목적은 "코드를 독립적으로 실행하여 결과를 반박 및 검증"하는 것인데, Coder가 메모리에 대화형으로 생성해 둔 객체를 들여다보는 것은 코드 자체의 검증이 아니라 Coder의 실행 결과에 종속되는 행위에 불과하기 때문입니다.
+샌드박스 커널 네임스페이스를 세션뿐만 아니라 개별 발언자 단위로 격리한 데에는 중요한 기술적 이유가 있습니다. 다음 발언자의 컨텍스트에는 이전 발언의 **순수 텍스트 본문만** 전달되며 이전 발언자가 수행한 도구 호출의 내부 런타임 로그는 전달되지 않습니다 (`ConversationMemory.build_context_for_agent`). 만약 커널 상태를 공유할 경우 Critic 에이전트는 생성 과정도 알지 못하는 런타임 변수를 그대로 물려받게 되며, 여러 라운드 전의 과거 `df`(데이터프레임)를 최신 상태로 착각하여 부정확한 비판 리뷰를 작성할 위험이 있습니다. 무엇보다 Critic에게 샌드박스를 부여한 본질적 목적은 "코드를 독립적으로 실행하여 결과를 반박 및 검증"하는 것인데, Coder가 메모리에 대화형으로 생성해 둔 객체를 들여다보는 것은 코드 자체의 검증이 아니라 Coder의 실행 결과에 종속되는 행위에 불과하기 때문입니다.
 
 따라서 에이전트 간의 산출물 인계는 파일 시스템을 매개로 수행됩니다. Coder 에이전트가 `write_workspace_file` 도구로 코드를 온전히 저장하면, Critic 에이전트가 `run_python_file` 도구로 해당 파일을 완전히 새로운 프로세스 컨텍스트에서 재실행하여 검증합니다. 의존성 누락이나 미정의 변수가 존재할 경우 명확하게 `NameError` 등의 오류가 발생하므로, 파일 수정을 통해 근본적인 코드 문제를 식별하고 해결할 수 있습니다. 반면 단일 에이전트가 라운드를 거듭하며 자신의 코드를 수정 및 보완하는 과정에서의 실행 상태 연속성은 안정적으로 유지됩니다.
 

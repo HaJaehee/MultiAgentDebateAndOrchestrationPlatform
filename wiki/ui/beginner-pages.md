@@ -12,15 +12,16 @@ There are four touch points outside the package:
 
 - `setup_easy()` in [app/main.py](file:///d:/MultiAgentDebateOrchestration/app/main.py).
 - A `쉬운 화면` button in the expert page header
-  ([app/ui/app.py](file:///d:/MultiAgentDebateOrchestration/app/ui/app.py)), left of the `FastAPI + NiceGUI`
-  badge. `EASY_HOME` is imported inside `create_ui()`: `app/ui/__init__.py` imports `app.ui.app`, so a top-level
-  import would close a cycle through the trial pages.
+  ([app/ui/expert/chrome.py](file:///d:/MultiAgentDebateOrchestration/app/ui/expert/chrome.py)), left of the `FastAPI + NiceGUI`
+  badge.
 - A `쉬운 화면` button in the trial header (`header()` in
   [app/trial/pages/common.py](file:///d:/MultiAgentDebateOrchestration/app/trial/pages/common.py)), shown to
-  visitors and the owner alike. `EASY_HOME` is imported inside `header()` too, because `app.easy.pages.common`
-  imports that module. The way back is the `체험 화면` button in `easy_header`.
+  visitors and the owner alike. The way back is the `체험 화면` button in `easy_header`.
+- Both buttons take `EASY_HOME` from [app/routes.py](file:///d:/MultiAgentDebateOrchestration/app/routes.py), where all page addresses live, so the
+  screen packages do not import each other for a link. The visitor-page frame shared by the trial and beginner
+  pages (`page_setup`, footer, avatars, time labels) is [app/ui/shared/page.py](file:///d:/MultiAgentDebateOrchestration/app/ui/shared/page.py).
 - An `에이전트 만들기` button in the expert page's add-agent dialog
-  ([app/ui/components/roster.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster.py)), which
+  ([app/ui/components/roster/agent_admin.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/agent_admin.py)), which
   opens `FormBuilderChat` (§3).
 
 The trial pages gain only that header button; the engine is unchanged.
@@ -92,7 +93,7 @@ Tool names are rendered in plain words by `catalog.tool_label`, e.g. `filesystem
 ## 3. The builder
 
 - **The helper.** A copy of the orchestrator with no tools, no skills and no sequential thinking (the same
-  approach as the engine's `_tool_less`). It uses the orchestrator's endpoint and goes through the global LLM
+  approach as the engine's `ConversationMemory.tool_less`). It uses the orchestrator's endpoint and goes through the global LLM
   gate. The prompt (`builder_prompt`) lists only the tools and skills the viewer can actually pick, with
   plain names. For visitors it adds a read-only notice.
 - **The blueprint block.** Every reply ends with a fenced ```` ```agent {...}``` ```` block whose keys are the

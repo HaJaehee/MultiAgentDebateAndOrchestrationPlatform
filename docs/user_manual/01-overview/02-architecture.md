@@ -9,16 +9,17 @@
 ```text
 ┌──────────────────────────────────────────────────────────────────┐
 │  UI 레이어  (app/ui/)                            NiceGUI         │
-│  app.py · personas_page.py · theme.py                            │
-│  components/  sidebar · roster · chat_feed · artifact_viewer     │
+│  expert/ (전문가 화면) · shared/ (공용 틀) · run_binding.py      │
+│  components/  sidebar · roster/ · chat_feed/ · artifact_viewer   │
 └───────────────────────────┬──────────────────────────────────────┘
                             │ 이벤트 구독 (WebSocket)
 ┌───────────────────────────▼──────────────────────────────────────┐
 │  오케스트레이션 레이어  (app/orchestration/)                      │
-│  runner.py    브라우저와 분리된 비동기 백그라운드 토론 태스크      │
-│  engine.py    계획 → 라운드 루프 → 합성 상태 머신                 │
-│  strategies.py  발언 순서 및 지침 제어 전략                        │
-│  state.py · control.py   토론 상태 / 정지·개입 신호               │
+│  runner.py · turn_run.py  브라우저와 분리된 토론 태스크·스냅샷    │
+│  engine.py    서비스 조립 + 턴 수명 (시작·재개·런타임 대여)       │
+│  phases/      계획 → 라운드 루프(병렬·그래프) → 합성              │
+│  speech · recording · conversation   발언 · 기록 · 대화 기억      │
+│  strategies.py · control.py   발언 순서 전략 / 정지·개입 신호     │
 └──────┬──────────────────────────────────────┬────────────────────┘
        │                                      │
 ┌──────▼───────────────────────┐  ┌───────────▼────────────────────┐
@@ -31,7 +32,7 @@
        │
 ┌──────▼───────────────────────────────────────────────────────────┐
 │  설정 · 영속화 레이어                                             │
-│  config.py    conf.json 로더 / 기록기 / 환경변수 치환             │
+│  config/      conf.json 로더 / 기록기 / 환경변수 치환 / 스키마    │
 │  database/    models.py (ORM) · session.py (비동기 세션 팩토리)    │
 └──────────────────────────────────────────────────────────────────┘
 ```

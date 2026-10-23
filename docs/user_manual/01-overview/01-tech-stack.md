@@ -29,8 +29,9 @@ NiceGUI는 브라우저 내부적으로 Vue.js 및 Quasar 컴포넌트를 렌더
 
 ```python
 # app/main.py
-server = FastAPI(lifespan=lifespan)   # /api/* 엔드포인트
-create_ui()                            # NiceGUI 페이지 등록
+server = FastAPI(lifespan=lifespan)
+server.include_router(api_router)     # /api/* 엔드포인트 (app/api.py)
+create_ui()                            # NiceGUI 페이지 등록 (app/ui/expert/page.py)
 ui.run_with(server, dark=True)         # 같은 앱에 마운트
 ```
 

@@ -118,7 +118,7 @@ Deliberately **not** set:
 
 A second manager is useless if the first one keeps rewriting global state.
 
-- [`RootConfig.mcp_servers_for_workspace()`](file:///d:/MultiAgentDebateOrchestration/app/config.py)
+- [`RootConfig.mcp_servers_for_workspace()`](file:///d:/MultiAgentDebateOrchestration/app/config/schema.py)
   used to assign `os.environ["WORKSPACE_DIR"]` so child processes would inherit it. With
   more than one runtime, whichever call came last overwrote every other runtime's path.
   It now passes the workspace through `resolve_env_vars(..., overrides)` and writes
@@ -137,7 +137,7 @@ A second manager is useless if the first one keeps rewriting global state.
 for a folder that does not exist yet. `as_uri()` then produces `file://?/C:/...`, which the
 server rejects as an invalid URL — the filesystem server comes up with no allowed
 directories and the only trace is a single `Failed to request initial roots` line.
-`strip_extended_path_prefix()` in [app/config.py](file:///d:/MultiAgentDebateOrchestration/app/config.py)
+`strip_extended_path_prefix()` in [app/config/paths.py](file:///d:/MultiAgentDebateOrchestration/app/config/paths.py)
 removes the prefix before the path becomes a URI.
 
 ---

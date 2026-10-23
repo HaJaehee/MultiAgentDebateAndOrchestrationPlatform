@@ -80,7 +80,7 @@ The orchestrator rewrites a structured ledger with five fixed sections — `요�
 - **Input**: previous ledger + pinned user record + this turn's request + only the messages since the
   last update (`ledger_through`), newest first if they do not all fit. Pinned user messages appear as
   references.
-- **Call**: a copy of the orchestrator with tools and sequential thinking off (`_tool_less`, now shared
+- **Call**: a copy of the orchestrator with tools and sequential thinking off (`ConversationMemory.tool_less`, now shared
   with speaker selection and dispatch).
 - **Parsing** (`parse_ledger`): reasoning trace and fences stripped, preamble before the first `## `
   dropped. No `## ` heading at all means it is not a ledger → **the previous ledger is kept** and a
@@ -111,7 +111,7 @@ the anchor is appended verbatim to the elision notice under
 
 ### 2.3. Summarize instead of drop
 
-Before building a speaker's context (`_context_for_speech`) and before synthesis
+Before building a speaker's context (`ConversationMemory.context_for_speech`) and before synthesis
 (`_ensure_synthesis_room`), the engine estimates the request. If it exceeds the budget,
 `choose_fold_cut()` picks how many of the oldest unsummarized messages to fold so the request drops
 to `SUMMARY_TARGET_FILL = 0.6` of the budget, with room for the summary to grow. The orchestrator
@@ -137,7 +137,7 @@ speech is a third of the window) and nothing is dropped. At 128k windows folds a
 ### 2.4. How much of each speech is passed on
 
 Every speech used to reach every later speaker verbatim, code included, round after round. Now each
-speaker sees three tiers (`_build_context_for_agent` → `body_for`):
+speaker sees three tiers (`ConversationMemory.build_context_for_agent` → `body_for`):
 
 | Tier | Which messages | What is sent |
 | :--- | :--- | :--- |

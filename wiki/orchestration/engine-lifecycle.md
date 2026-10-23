@@ -1,6 +1,6 @@
 # Orchestration Engine & Execution Lifecycle
 
-The [`OrchestratorEngine`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py#L33-L436) coordinates the multi-agent debate workflow, turn management, database synchronization, and artifact synthesis. It implements an asynchronous state machine inspired by StateGraph patterns.
+The [`OrchestratorEngine`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py) coordinates the multi-agent debate workflow, turn management, database synchronization, and artifact synthesis. It implements an asynchronous state machine inspired by StateGraph patterns.
 
 ---
 
@@ -63,7 +63,7 @@ time. Every `call_agent()` in the turn is handed that runtime explicitly. See
 For each round $r \in [1, \text{max\_rounds}]$:
 1. The active strategy (e.g. `sequential_debate`) determines the speaker order. Under `orchestrator_led` the orchestrator is asked, each round, which agents should speak.
 2. For each agent in the speaker list:
-   - [`_context_for_speech()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py) first folds old messages into the rolling summary if the request would exceed this agent's window, then [`_build_context_for_agent()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py) constructs the transcript labeled by speaker name and role. Its goal message pins the user record, this turn's plan and (when needed) the summary; pinned messages appear in the transcript as references.
+   - [`ConversationMemory.context_for_speech()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/conversation.py) first folds old messages into the rolling summary if the request would exceed this agent's window, then [`ConversationMemory.build_context_for_agent()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/conversation.py) constructs the transcript labeled by speaker name and role. Its goal message pins the user record, this turn's plan and (when needed) the summary; pinned messages appear in the transcript as references.
    - The engine emits `message_stream_start` and streams response tokens via `message_stream_chunk` events in real time.
    - If the agent calls MCP tools (e.g. reading files or executing code in the sandbox), every tool invocation is stored in the database (`ToolCallRecordModel`) and streamed to the UI as a real-time event.
    - Once completed, the agent's full text response is finalized in the database (`MessageModel`) and emitted via `message_added`.
@@ -72,7 +72,7 @@ For each round $r \in [1, \text{max\_rounds}]$:
 
 ### Phase 3: Consensus & Synthesis
 
-`_speak()` accepts an optional `post_process` coroutine applied to the turn body **before** the
+`SpeechRunner.speak()` accepts an optional `post_process` coroutine applied to the turn body **before** the
 database write and before `message_added`. The synthesis call uses it to run the Mermaid
 self-repair loop, so the streaming card is finalised with the corrected text and the artifacts
 are extracted from it. Failures inside `post_process` are logged and the original body is kept
@@ -82,7 +82,7 @@ are extracted from it. Failures inside `post_process` are logged and the origina
 1. Once all debate rounds conclude, the engine transitions to `status = "synthesizing"`.
 2. The **Master Orchestrator** receives the complete transcript of the debate.
 3. The Orchestrator synthesizes the consensus, integrating architectural proposals, code revisions, and security audit recommendations.
-4. [`_extract_artifacts_from_synthesis()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py#L372-L436) parses the output, extracting code blocks, Mermaid diagrams, and JSON summaries into individual [`ArtifactModel`](file:///d:/MultiAgentDebateOrchestration/app/database/models.py#L80-L92) records.
+4. [`SynthesisPhaseExecutor.extract_artifacts_from_synthesis()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/phases/synthesis.py) parses the output, extracting code blocks, Mermaid diagrams, and JSON summaries into individual [`ArtifactModel`](file:///d:/MultiAgentDebateOrchestration/app/database/models.py#L80-L92) records.
 5. `artifacts_synthesized` is sent as soon as the artifacts are saved; then the ledger is updated once more with the conclusions, and the ledger and summary are saved to `sessions` (only on this path — an aborted turn saves neither).
 6. The state status is marked `completed` with `is_consensus_reached = True`.
 
@@ -96,6 +96,10 @@ The engine communicates with the UI layer through an asynchronous event callback
 async def on_event(event: Dict[str, Any]) -> None:
     ...
 ```
+
+Event names are members of `EventType` in [app/events.py](file:///d:/MultiAgentDebateOrchestration/app/events.py) (a `StrEnum`, so a member equals its
+string and goes out as JSON unchanged). Senders and receivers never spell an event name as a string —
+`tests/test_events.py` checks that, and that every name is sent somewhere.
 
 ### Event Specification:
 
@@ -133,7 +137,7 @@ one browser client, and that had two consequences:
   propagated out of `run_turn()` and killed the debate, usually near the end of a turn.
 - Even when it survived, there was no way to see progress after coming back.
 
-`DebateRunner` keeps a `TurnRun` per session with two things:
+`DebateRunner` keeps a [`TurnRun`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/turn_run.py) per session with two things:
 
 | | Purpose |
 | :--- | :--- |
@@ -143,14 +147,19 @@ one browser client, and that had two consequences:
 The runner never touches NiceGUI. The task is created with `asyncio.create_task`, which
 starts with an empty `Slot` stack, so UI elements cannot be created from it even by mistake.
 
-On the UI side ([`app/ui/app.py`](file:///d:/MultiAgentDebateOrchestration/app/ui/app.py)):
+On the UI side ([`app/ui/expert/page.py`](file:///d:/MultiAgentDebateOrchestration/app/ui/expert/page.py)):
 
 - `load_session_state()` renders DB messages, then merges in the run's snapshot messages
   by id for anything not yet committed, and re-registers the streaming card so incoming
   chunks have somewhere to land. A *finished* run's snapshot is ignored — the database is
   authoritative once the turn ends.
-- `client.on_delete` unsubscribes. Every component (`ChatFeed`, `AgentRosterControl`,
-  `ArtifactViewer`) exposes `alive` and ignores updates aimed at a deleted page.
+- Every screen (expert, trial, beginner) attaches through one
+  [`RunBinding`](file:///d:/MultiAgentDebateOrchestration/app/ui/run_binding.py): it subscribes, feeds each
+  event to the page inside the client context, stops at `run_finished`, and unsubscribes on `client.on_delete`.
+  The expert page draws events with one handler per event type
+  ([`ExpertEventView`](file:///d:/MultiAgentDebateOrchestration/app/ui/expert/events.py)).
+- Every component (`ChatFeed`, `AgentRosterControl`, `ArtifactViewer`) exposes `alive` and ignores updates
+  aimed at a deleted page.
 - Server shutdown cancels outstanding runs via `DebateRunner.shutdown()`; deleting a
   session cancels its run via `forget()`.
 
@@ -166,7 +175,7 @@ workspace there is nothing to clash over; the only remaining refusal is
 ## 5. Turns Are Recorded, and an Interrupted Turn Can Be Resumed
 
 `run_turn()` now writes a `turns` row in the same commit as the opening request and splits its body into
-`_setup_turn` → `_plan` → `_debate` → `_conclude`. `resume_turn(session_id, turn_id, mode)` reuses the same
+`TurnPreparer.setup` → `PlanningPhaseExecutor.plan` → `DebatePhaseExecutor.debate` → `SynthesisPhaseExecutor.conclude`. `resume_turn(session_id, turn_id, mode)` reuses the same
 phases to finish (`finish`) or continue (`continue`) a turn that was cut by a restart or an engine
 exception: it rebuilds the state from the records, resumes the round, graph step or speech where it
 stopped, and continues a tool-using speech after its last finished tool from its draft.

@@ -71,7 +71,7 @@ backend process too. The defence was a single layer with two holes:
 
 - **`except Exception` does not catch `BaseExceptionGroup`.** That is precisely what the
   `anyio`-based stdio paths raise, so it passed straight through `MCPManager`,
-  `engine._speak()`, and `DebateRunner` alike. The debate task died leaving no trace and
+  `engine._speak()` (now `SpeechRunner.speak()`), and `DebateRunner` alike. The debate task died leaving no trace and
   the screen sat on "토론 중..." forever.
 - **`except (Exception, BaseException)` swallowed `CancelledError`.** Cancellation then did
   nothing, `runner.shutdown()` waited on a task that would never stop, the lifespan hung,
@@ -86,10 +86,10 @@ The rule is now stated in one place and enforced at every layer:
 | Layer | Guarantee |
 | :--- | :--- |
 | [`MCPManager.execute_tool()`](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py) | **The boundary.** Returns `(text, "error")` for anything that goes wrong. Re-raises `CancelledError` only. |
-| [`LLMCaller._execute_tool_safely()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) | Enforces the same rule again in case the manager is replaced (test doubles) or lookup itself throws. |
-| [`LLMCaller._parse_tool_call()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) | Absorbs malformed `tool_calls` — object or dict shape, broken argument JSON, missing `tool_call_id` (an empty id makes the *next* request 400). |
-| [`LLMCaller._notify_tool_call()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) | A dead browser callback cannot discard the observation of a tool that actually ran. |
-| [`engine._speak()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py) | Catches `BaseException`, records a `msg_type="error"` turn, and lets the other agents continue. A failed DB commit rolls back so the session is not left broken. |
+| [`LLMCaller._execute_tool_safely()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm_tool_calls.py) | Enforces the same rule again in case the manager is replaced (test doubles) or lookup itself throws. |
+| [`LLMCaller._parse_tool_call()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm_tool_calls.py) | Absorbs malformed `tool_calls` — object or dict shape, broken argument JSON, missing `tool_call_id` (an empty id makes the *next* request 400). |
+| [`LLMCaller._notify_tool_call()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm_tool_calls.py) | A dead browser callback cannot discard the observation of a tool that actually ran. |
+| [`SpeechRunner.speak()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/speech.py) | Catches `BaseException`, records a `msg_type="error"` turn, and lets the other agents continue. A failed DB commit rolls back so the session is not left broken. |
 | [`DebateRunner`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/runner.py) | Reports `BaseExceptionGroup` as `failed` instead of dying silently. `cancel()` uses `asyncio.wait` with a 20 s cap so shutdown is never blocked by a task that ignores cancellation. |
 | [`app/main.py`](file:///d:/MultiAgentDebateOrchestration/app/main.py) | Installs an event-loop exception handler and `threading.excepthook`; MCP init failure no longer prevents the app from starting. |
 

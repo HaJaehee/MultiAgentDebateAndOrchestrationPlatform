@@ -3,7 +3,7 @@
 > 상위: [레퍼런스 개관](README.md) · 이전: [프로젝트 구조](02-project-layout.md)
 
 ```bash
-pytest -q               # 전체 테스트 스위트 실행 (528개 테스트, 약 30초 소요)
+pytest -q               # 전체 테스트 스위트 실행 (2,020개 통과·2개 건너뜀, 약 65초 소요)
 pytest -v tests/test_config.py
 pytest -k "snapshot"
 ```
@@ -14,6 +14,9 @@ pytest -k "snapshot"
 
 | 테스트 파일명 | 검증 및 보호하는 핵심 기능 |
 | :--- | :--- |
+| `test_layering.py` | **모듈 사이 의존 방향** — 토론 쪽은 화면·NiceGUI 를, 단계 실행기·서비스는 엔진을, 화면 패키지끼리는 서로를 import 하지 않음 (함수 안 import 포함) |
+| `test_public_surface.py` | **바깥(MADOWarGame 구동기)이 기대는 이름과 시그니처** — `LLMCaller._complete_unthrottled` 재정의 지점, `engine.session_factory`·`llm_caller`, `run_turn` 인자 등 |
+| `test_events.py` | 이벤트 이름은 `EventType` 으로만 쓰고, 쓰이지 않는 이름이 없으며, 스냅샷 리듀서는 아는 이벤트만 처리 |
 | `test_config.py` | `conf.json` 파싱 로딩, 중첩 환경변수 치환, 오케스트레이터 필수 존재 검증 |
 | `test_agent_admin.py` | 에이전트 추가/비활성화/삭제 시 `conf.json` 원자적 편집과 UI 잠금 규칙 |
 | `test_mcp_admin.py` | MCP 서버 추가/삭제/on-off, 주석(`//`) 및 `${VAR}` 보존, 런타임 실서버 반영 |
@@ -53,6 +56,7 @@ pytest -k "snapshot"
 | 파일명 | 주요 용도 |
 | :--- | :--- |
 | `fake_llm.py` | 외부 네트워크 없이 고속으로 토론 턴을 모의 실행하는 LLM 스텁 |
+| `roster_patch.py` | 로스터 패널(여러 mixin 파일)의 바깥 의존(`get_config` 등)을 패키지 안 모든 파일에 한 번에 바꿔 끼우는 도우미 |
 | `fixtures/stateful_mcp_server.py` | 실제 stdio 프로세스로 구동되어 연결 및 재기동을 검증하는 모의 MCP 서버 |
 
 ---

@@ -1,6 +1,6 @@
 # Environment Variables & Dynamic Resolution
 
-The MADO: Multi-Agent Debate & Orchestration Platform features a dynamic environment variable substitution engine in [app/config.py](file:///d:/MultiAgentDebateOrchestration/app/config.py#L41-L86). It allows a single [conf.json](file:///d:/MultiAgentDebateOrchestration/conf.json) to be shared seamlessly between local developer workstations, staging servers, and air-gapped production bundles without modification.
+The MADO: Multi-Agent Debate & Orchestration Platform features a dynamic environment variable substitution engine in [app/config/env.py](file:///d:/MultiAgentDebateOrchestration/app/config/env.py). It allows a single [conf.json](file:///d:/MultiAgentDebateOrchestration/conf.json) to be shared seamlessly between local developer workstations, staging servers, and air-gapped production bundles without modification.
 
 ---
 
@@ -17,7 +17,7 @@ The configuration loader parses all strings recursively, supporting standard she
 ### Blank-to-None Conversion & Inheritance Protection
 After substitution, an unresolved variable like `${CODER_API_BASE}` is left as an empty string `""`. If treated as a string, this empty value would overwrite the global ``llm.api_base`` setting with blank credentials.
 
-To prevent this, [app/config.py](file:///d:/MultiAgentDebateOrchestration/app/config.py#L255-L261) uses a Pydantic `before` validator (`_blank_to_none`):
+To prevent this, [app/config/schema.py](file:///d:/MultiAgentDebateOrchestration/app/config/schema.py) uses a Pydantic `before` validator (`_blank_to_none`):
 ```python
 @field_validator("api_key", "api_base", "api_version", "provider", mode="before")
 @classmethod
@@ -35,7 +35,7 @@ Any variable that resolves to empty or whitespace is converted to `None`, allowi
 Python-based MCP servers (e.g. `mcp-server-git` and `AirgappedPySandbox`) must run with the **exact same Python interpreter** as the application itself:
 
 ```python
-# app/config.py lines 37-39
+# app/config/env.py
 if not os.environ.get("PYTHON_BIN"):
     os.environ["PYTHON_BIN"] = sys.executable
 ```

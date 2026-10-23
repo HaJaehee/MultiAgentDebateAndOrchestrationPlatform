@@ -2,8 +2,8 @@
 
 > 상위: [핵심 기술 개관](README.md) · 이전: [스킬](09-skills.md)
 >
-> 관련 소스: `app/agents/consultation.py` · `app/config.py` (`PeerConsultationConfig`) ·
-> `app/ui/components/roster.py` (도구 할당 창의 '에이전트 선택')
+> 관련 소스: `app/agents/consultation.py` · `app/config/schema.py` (`PeerConsultationConfig`) ·
+> `app/ui/components/roster/agent_dialogs.py` (도구 할당 창의 '에이전트 선택')
 
 토론 중 한 전문가가 다른 전문가에게 **발언 도중에 바로 물어보는** 고급 기능입니다. 예를 들어
 아키텍트가 설계를 확정하기 전에 보안 리뷰어에게 인증 방식의 취약점을 묻고, 받은 답을 자기 발언에

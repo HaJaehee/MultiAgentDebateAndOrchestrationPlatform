@@ -78,7 +78,7 @@ The web application workspace is organized into four primary UI components in [a
   not exist yet. See
   [Session Handoff](file:///d:/MultiAgentDebateOrchestration/wiki/orchestration/session-handoff.md).
 
-### 1.2. Agent Roster Control ([app/ui/components/roster.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster.py))
+### 1.2. Agent Roster Control ([app/ui/components/roster/](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/control.py))
 
 > The persona button's tooltip element is created once at build time and only its text is swapped
 > afterwards. `Element.tooltip()` builds a new `q-tooltip` in whatever slot is current, so calling it
@@ -232,7 +232,7 @@ the persona editor — because two copies would drift on how a value is picked o
   selection and erase the image it was created to display. The same reason a `_syncing` flag guards
   every write-back from code.
 
-### 1.3. Chat & Debate Feed ([app/ui/components/chat_feed.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/chat_feed.py))
+### 1.3. Chat & Debate Feed ([app/ui/components/chat_feed/](file:///d:/MultiAgentDebateOrchestration/app/ui/components/chat_feed/feed.py))
 - **Color-Coded Message Timeline**: Displays user prompts, orchestrator guidance, and specialist contributions with distinct avatars, roles, and colors.
 - **Per-conversation styling** (v0.5.1): the feed does not resolve colours from `conf.json`. The roster
   hands it the agents it is drawing (`set_agent_styles()`) every time it redraws, so a locked
@@ -345,7 +345,7 @@ Three changes, each closing a different link:
 | Where | Change |
 | :--- | :--- |
 | `ChatFeed` | A chunk only appends and raises a flag. `_flush_streams()`, on a `STREAM_RENDER_INTERVAL` (0.25 s) timer created in `build_ui`, redraws each changed card once and scrolls once. (A timer created from the background consumer never runs — the same reason `_settle_scroll` uses a flag.) The final `message_added` still draws immediately. |
-| `OrchestratorEngine._speak` | Chunk events are coalesced to one per `STREAM_EVENT_INTERVAL` (0.1 s), so a briefly slow page no longer overflows its subscriber queue and gets silently dropped mid-stream. A short delayed flush is armed on the first pending chunk — "send when the next chunk arrives" would hide the line written before a 30-second tool call — and it is drained or cancelled on every exit path, so no chunk lands after the message is final (the runner's snapshot would append it to the final text a second time). |
+| `SpeechRunner.speak` | Chunk events are coalesced to one per `STREAM_EVENT_INTERVAL` (0.1 s), so a briefly slow page no longer overflows its subscriber queue and gets silently dropped mid-stream. A short delayed flush is armed on the first pending chunk — "send when the next chunk arrives" would hide the line written before a 30-second tool call — and it is drained or cancelled on every exit path, so no chunk lands after the message is final (the runner's snapshot would append it to the final text a second time). |
 | `app/main.py` | `reconnect_timeout=30.0`: a few seconds of busyness, a monitor switching off, or waking from sleep resumes the page instead of rebuilding it. |
 
 Database writes were not touched: they were already one row per speech, written after the stream ends.

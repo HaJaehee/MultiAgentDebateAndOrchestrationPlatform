@@ -98,7 +98,7 @@ Four of the bundled servers are rooted at one shared directory:
 | `sandbox` | `SANDBOX_WORKSPACE` env |
 
 `WORKSPACE_DIR` is normalised to an **absolute path** at import time in
-[`app/config.py`](file:///d:/MultiAgentDebateOrchestration/app/config.py), anchored at the project
+[`app/config/paths.py`](file:///d:/MultiAgentDebateOrchestration/app/config/paths.py), anchored at the project
 root rather than the current working directory.
 
 This is not cosmetic. Passing the relative `./workspace` leaves resolution to each child
@@ -144,7 +144,7 @@ so neither can infer the boundary on its own.
 The host supplies it. Every tool call carries the conversation id in the MCP request's `_meta`:
 
 ```
-OrchestratorEngine._speak(state.session_id)
+SpeechRunner.speak(state.session_id)
   -> LLMCaller.call_agent(session_id=...)
     -> MCPManager.execute_tool(..., scope=session_id)
       -> MCPClientConnection.execute_tool(..., scope=...)
@@ -168,7 +168,7 @@ its state is pinned to, and a model asked to declare it will eventually forget.
 `MCPManager.compose_scope()` holds this policy; `AGENT_SCOPED_SERVERS` lists the servers that
 get the speaker appended.
 
-The kernel split is the non-obvious one. `_build_context_for_agent` passes only each message's
+The kernel split is the non-obvious one. `ConversationMemory.build_context_for_agent` passes only each message's
 **prose** to the next speaker — tool call logs stay in the UI accordion and never enter another
 agent's context. A shared kernel therefore hands the critic variables it has no record of, and
 its failure mode is a stale `df` from three rounds ago read as current and reviewed with

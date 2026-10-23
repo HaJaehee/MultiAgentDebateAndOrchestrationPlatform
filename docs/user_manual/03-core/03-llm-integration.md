@@ -162,7 +162,7 @@ formatted = merge_consecutive_roles(formatted)        # 2. 동일 역할 메시�
 | :--- | :--- | :--- |
 | 발언 시작 직전 | `fit_context_window()` | 개별 메시지 (오래된 중간 발언부터) |
 | 도구 루프 반복 도중 | `fit_tool_loop_context()` | **`assistant`와 종속된 `tool` 결과 묶음 전체** |
-| 최종 합성 프롬프트 생성 시 | `_build_synthesis_prompt()` | 에이전트별 이전 발언 (오래된 순) |
+| 최종 합성 프롬프트 생성 시 | `SynthesisPhaseExecutor.build_synthesis_prompt()` | 에이전트별 이전 발언 (오래된 순) |
 
 1번과 3번 지점은 기존에도 관리되었으나, **2번 루프 내부 지점**에 대한 관리가 누락되어 있었습니다. `fit_context_window()`는 발언 시작 시점에 1회만 실행되는 반면, 도구 루프는 반복마다 `assistant`와 `tool` 메시지를 계속 누적합니다. 도구 실행 결과가 수십 KB에 달하는 경우 루프 도중 컨텍스트 한도를 초과하게 되고, 결국 엔드포인트가 HTTP 400 에러를 반환하여 발언 전체가 유실되는 원인이 되었습니다.
 
@@ -355,7 +355,7 @@ LLM call failed for System Architect
 
 **차단기.** 죽은 연결을 발언마다 다시 기다리면 그때마다 `timeout × (num_retries + 1)`을 치릅니다. `FallbackBreaker`는 실패한 연결(`connection_id`)을 `retry_after`초 동안 건너뛰게 하고, 지나면 다음 호출이 원래 모델을 한 번 다시 부릅니다. `모델 연결 상태` 창에서 그 연결이 응답하는 것을 확인하면 즉시 닫히고, 건너뛰는 동안에는 그 창의 해당 줄에 남은 시간이 표시됩니다.
 
-**알림과 기록.** 전환은 `llm_fallback.listening(...)`으로 걸어 둔 곳에 `FallbackNotice`로 전달됩니다 (`call_agent`의 인자를 늘리지 않으려고 컨텍스트 변수로 둡니다). 엔진의 `_speak()`는 이를 받아 다음을 수행합니다.
+**알림과 기록.** 전환은 `llm_fallback.listening(...)`으로 걸어 둔 곳에 `FallbackNotice`로 전달됩니다 (`call_agent`의 인자를 늘리지 않으려고 컨텍스트 변수로 둡니다). 엔진의 `SpeechRunner.speak()`는 이를 받아 다음을 수행합니다.
 
 1. `llm_fallback` 이벤트를 내보내 흘러나오는 발언 카드에 `기본 모델로 응답` 배지를 붙입니다 (기본 모델을 부르기 전).
 2. 발언이 성공하면 `MessageModel.llm_meta`에 `{"fallback": true, "model", "intended_model", "reason", "reason_label"}`을 기록합니다. 주소와 키는 담지 않습니다. 전역 모델까지 실패한 발언에는 기록하지 않습니다.

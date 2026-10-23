@@ -8,7 +8,7 @@ This document describes the high-level architecture, technology stack, component
 
 The MADO: Multi-Agent Debate & Orchestration Platform is designed around five foundational principles:
 
-1. **Python-Native Full-Stack Unification**: The application combines backend logic ([FastAPI](file:///d:/MultiAgentDebateOrchestration/app/main.py)) and frontend reactive rendering ([NiceGUI](file:///d:/MultiAgentDebateOrchestration/app/ui/app.py)) in a single Python runtime. This eliminates separate Node.js frontend build steps, transpilation, or split deployments.
+1. **Python-Native Full-Stack Unification**: The application combines backend logic ([FastAPI](file:///d:/MultiAgentDebateOrchestration/app/main.py)) and frontend reactive rendering ([NiceGUI](file:///d:/MultiAgentDebateOrchestration/app/ui/expert/page.py)) in a single Python runtime. This eliminates separate Node.js frontend build steps, transpilation, or split deployments.
 2. **Dynamic Declarative Configuration**: Everything from model endpoints and API keys to individual agent personas and MCP tool access permissions is governed by [conf.json](file:///d:/MultiAgentDebateOrchestration/conf.json). The application never requires code changes to switch models, tune temperatures, or register new agent roles.
 3. **Decoupled Tool Protocol (MCP)**: Instead of proprietary tool implementations, the system integrates the open **Model Context Protocol (MCP)**. Tool execution runs in isolated background processes (Node.js or Python) communicating via standard JSON-RPC over `stdio`.
 4. **Resilient Multi-Provider LLM Abstraction**: Powered by [LiteLLM](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py), agents can utilize OpenAI, Anthropic, Google Gemini, Azure OpenAI, Ollama, LM Studio, or vLLM endpoints interchangeably. An agent whose endpoint cannot be reached is recorded as unreachable; no answer is invented in its place.
@@ -40,7 +40,7 @@ flowchart TD
 
     subgraph AppLayer ["FastAPI + NiceGUI Single Process"]
         Main["main.py (ASGI Lifespan)"]
-        UI["NiceGUI Reactive UI (app.py)"]
+        UI["NiceGUI Reactive UI (ui/expert)"]
         Engine["OrchestratorEngine (engine.py)"]
         Pool["AgentPool (pool.py)"]
         LLM["LLMCaller (llm.py)"]
@@ -88,21 +88,21 @@ flowchart TD
 
 ## 4. Subsystem Decomposition
 
-### 4.1. Entrypoint & Lifecycle ([app/main.py](file:///d:/MultiAgentDebateOrchestration/app/main.py))
-- Manages application startup and shutdown using `fastapi.concurrency.asynccontextmanager`.
-- Initializes the configuration singleton via `get_config()`.
-- Runs database table migrations via `init_db()`.
-- Warms the default workspace's MCP runtime via `MCPRuntimePool.warm_default()`; other workspaces get their own server group when a debate first needs them (see [Runtime Isolation](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/runtime-isolation.md)).
-- Instantiates the `AgentPool`.
-- Mounts REST API endpoints (`/api/health`, `/api/agents`, `/api/mcp`, `/api/sessions/{session_id}/personas`).
-- Serves the NiceGUI application at `http://{host}:{port}`.
-- On shutdown, gracefully closes every runtime's MCP subprocesses and releases resources.
+### 4.1. Entrypoint & Lifecycle ([app/main.py](file:///d:/MultiAgentDebateOrchestration/app/main.py), [app/api.py](file:///d:/MultiAgentDebateOrchestration/app/api.py))
+- `app/main.py` only assembles: the FastAPI server, its `lifespan`, the HTTP router, the NiceGUI pages, the trial and beginner pages, and the access middleware.
+- `lifespan` fixes the start order in one place: configuration (`get_config()`) → database (`init_db()`, then interrupted turns are marked) → the default workspace's MCP runtime (`MCPRuntimePool.warm_default()`) → the agent pool. Other workspaces get their own server group when a debate first needs them (see [Runtime Isolation](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/runtime-isolation.md)).
+- Process-wide objects (config, DB engine, runtime pool, agent pool, engine, runner) are created by their own `get_*()` on first use. The DB engine is bound to the address of its **first** caller, so a script that drives the app from outside calls `get_config(config_path=…)` and `init_db(…)` before anything else.
+- `app/api.py` holds the HTTP endpoints (`/api/health`, `/api/agents`, `/api/mcp`, `/api/skills`, `/api/sessions/{session_id}/personas`, `/api/diagnostics/client`, `/agent-icon`).
+- On shutdown it cancels running debates first, then closes every runtime's MCP subprocesses.
 
-### 4.2. Configuration Subsystem ([app/config.py](file:///d:/MultiAgentDebateOrchestration/app/config.py))
-- Parses [conf.json](file:///d:/MultiAgentDebateOrchestration/conf.json) with the standard-library `json` module, stripping `//` documentation keys.
-- Replaces environment variable patterns recursively: `${VAR}`, `${VAR:-default}`, and nested `${VAR:-${FALLBACK:-default}}`.
-- Binds global `llm` configurations onto individual agent configurations unless explicitly overridden.
-- Validates configs using Pydantic models: `AppConfig`, `LLMConfig`, `MCPServerConfig`, `AgentConfig`, and `SequentialThinkingConfig`.
+### 4.2. Configuration Subsystem ([app/config/](file:///d:/MultiAgentDebateOrchestration/app/config/__init__.py))
+- `env.py` — reads `.env` (and defaults `PYTHON_BIN`) the moment the package is imported; replaces `${VAR}`, `${VAR:-default}` and nested `${VAR:-${FALLBACK:-default}}`.
+- `paths.py` — project root, data folder, workspace (always absolute), agent icon store.
+- `schema.py` — the Pydantic models (`RootConfig`, `AppConfig`, `LLMConfig`, `AgentConfig`, `MCPServerConfig`, …) and their defaults; binds global `llm` settings onto agents unless overridden.
+- `loader.py` — reads and writes `conf.json` with the standard-library `json` module, strips `//` documentation keys, owns the `get_config()` singleton.
+- `editors.py` — the writers the roster panel uses (add/remove/order agents, MCP servers, skills, tool security rules). They validate before touching the file.
+- The package's `__init__` lists the public names; the rest of the app imports from `app.config`.
+- The tool security rule grammar (`read(path)`, `net(host)`, …) lives in [app/tool_rules.py](file:///d:/MultiAgentDebateOrchestration/app/tool_rules.py) so that configuration validation and the policy share it without importing each other.
 
 ### 4.3. Persistence Subsystem ([app/database/](file:///d:/MultiAgentDebateOrchestration/app/database/))
 - Defined in [models.py](file:///d:/MultiAgentDebateOrchestration/app/database/models.py) and [session.py](file:///d:/MultiAgentDebateOrchestration/app/database/session.py).
@@ -110,10 +110,11 @@ flowchart TD
 - Stores complete conversation history, tool invocation parameters and outputs, extracted artifacts, and locked agent personas.
 
 ### 4.4. Agent & LLM Layer ([app/agents/](file:///d:/MultiAgentDebateOrchestration/app/agents/))
-- **Base Agent Model** ([base.py](file:///d:/MultiAgentDebateOrchestration/app/agents/base.py)): Defines runtime metadata, UI badge colors, icons, and connection modes (live vs. unconfigured).
-- **Agent Pool Registry** ([pool.py](file:///d:/MultiAgentDebateOrchestration/app/agents/pool.py)): Holds active agent instances loaded from configuration.
-- **Session Personas** ([personas.py](file:///d:/MultiAgentDebateOrchestration/app/agents/personas.py)): Coordinates session-specific overrides and the freeze/lock mechanism.
-- **LLM Caller** ([llm.py](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py)): Wraps LiteLLM `acompletion`, injects system prompts, and manages multi-turn tool loops up to `max_tool_iterations`. An unreachable endpoint raises `LLMUnavailableError`; nothing is fabricated in its place.
+- **Base Agent Model** ([base.py](file:///d:/MultiAgentDebateOrchestration/app/agents/base.py)): runtime metadata, card colours and icons, connection modes (live vs. unconfigured).
+- **Agent Pool Registry** ([pool.py](file:///d:/MultiAgentDebateOrchestration/app/agents/pool.py)): active agent instances loaded from configuration.
+- **Session Personas** ([personas.py](file:///d:/MultiAgentDebateOrchestration/app/agents/personas.py)): session-specific overrides and the freeze/lock mechanism.
+- **LLM Caller** ([llm.py](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py)): wraps LiteLLM `acompletion` and runs the tool loop up to `max_tool_iterations`. An unreachable endpoint raises `LLMUnavailableError` ([llm_types.py](file:///d:/MultiAgentDebateOrchestration/app/agents/llm_types.py)); nothing is fabricated in its place. Its side concerns sit next to it: building the request (`llm_request.py`), recovering cut or empty answers (`llm_recovery.py`), handling one tool call (`llm_tool_calls.py`), fitting the context window (`llm_context.py`), limit notices (`llm_budget.py`), tool-name lookup and file-writing guidance (`llm_tools.py`), reasoning traces (`reasoning.py`), request fingerprints (`llm_fingerprint.py`).
+- **Connections** ([connection.py](file:///d:/MultiAgentDebateOrchestration/app/agents/connection.py)): which agents share a model connection, and how a LiteLLM error is classified. Used by the connection status dialog (`model_status.py`) and the global-model fallback (`llm_fallback.py`).
 
 ### 4.5. Model Context Protocol (MCP) Host ([app/mcp/](file:///d:/MultiAgentDebateOrchestration/app/mcp/))
 - Implements an asynchronous MCP host manager ([manager.py](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py)) and stdio client connection manager ([client.py](file:///d:/MultiAgentDebateOrchestration/app/mcp/client.py)).
@@ -121,23 +122,35 @@ flowchart TD
 - Manages long-lived client processes so stateful tools (e.g., IPython kernel namespaces, memory graph) persist across debate turns.
 - Auto-converts MCP tool schemas into OpenAI Function Calling format with namespaced qualified names (`server__tool`).
 - Captures raw process stderr using a dedicated background thread tee for accurate diagnostic tooltips in the UI.
+- A server that cannot start offers no tools, and a call to a server that cannot be reached returns an error observation — nothing is simulated.
 
 ### 4.6. Multi-Agent Orchestration Engine ([app/orchestration/](file:///d:/MultiAgentDebateOrchestration/app/orchestration/))
-- Governed by [engine.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py), [state.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/state.py), and [strategies.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/strategies.py).
-- Coordinates state transitions across three phases:
-  1. **Planning Phase**: Master Orchestrator analyzes the user goal and sets expectations.
-  2. **Specialist Debate Phase**: Active agents take turns according to the selected strategy (`sequential_debate`, `adversarial_debate`, or `orchestrator_led`), invoking MCP tools as needed. Order comes from each agent's `debate_priority`; the adversarial strategy pairs them by `debate_stance`.
-  3. **Consensus & Synthesis Phase**: Master Orchestrator synthesizes the full transcript into comprehensive final artifacts.
+- [engine.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py) assembles the pieces and owns a turn's life: `run_turn()` / `resume_turn()` borrow the workspace's MCP runtime, record the turn, and run the three phases.
+- The pieces share one [`EngineContext`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/context.py) (agent pool, swappable `llm_caller`, DB session factory, tool gates) and never call back into the engine:
+  - [recording.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/recording.py) — `TurnRecorder`: messages, notes, tool records, turn state; retries and the `data/unsaved/` fallback.
+  - [speech.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/speech.py) — `SpeechRunner`: one agent's speech, streamed and recorded; the limit prompts (tool budget, context window).
+  - [conversation.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/conversation.py) — `ConversationMemory`: the speaker's context, folding into the summary, the decision ledger.
+  - [turn_setup.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/turn_setup.py) — `TurnPreparer`: configuration and participants of a turn, the tool gate.
+- Phase executors in [phases/](file:///d:/MultiAgentDebateOrchestration/app/orchestration/phases/):
+  1. **Planning** (`planning.py`): the orchestrator analyzes the goal; the plan can be approved or revised by a person.
+  2. **Specialist Debate** (`debate.py`, with `parallel.py` for parallel dispatch, `graph.py` for graph debates, `routing.py` for reading the orchestrator's speaker and task choices): order comes from each agent's `debate_priority`; the adversarial strategy pairs them by `debate_stance`.
+  3. **Consensus & Synthesis** (`synthesis.py`): the orchestrator synthesizes the transcript into final artifacts.
+- [turn_run.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/turn_run.py) keeps the canonical snapshot of a running turn (one reducer per event); [runner.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/runner.py) starts and ends turns in the background. Event names are listed once in [app/events.py](file:///d:/MultiAgentDebateOrchestration/app/events.py).
 
 ### 4.7. User Interface Subsystem ([app/ui/](file:///d:/MultiAgentDebateOrchestration/app/ui/))
-- Built with [NiceGUI](file:///d:/MultiAgentDebateOrchestration/app/ui/app.py) on Quasar/Vue components.
-- Real-time reactive updates over WebSockets without page reloads.
-- Modular component structure:
-  - [SessionSidebar](file:///d:/MultiAgentDebateOrchestration/app/ui/components/sidebar.py): Session history, creation, and deletion.
-  - [AgentRosterControl](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster.py): Agent toggle badges, strategy selection, round limits, and server health chips.
-  - [ChatFeed](file:///d:/MultiAgentDebateOrchestration/app/ui/components/chat_feed.py): Color-coded messages and accordion-style tool call inspection.
-  - [ArtifactViewer](file:///d:/MultiAgentDebateOrchestration/app/ui/components/artifact_viewer.py): Multi-tab viewer with syntax highlighting and Mermaid diagram rendering.
-  - [PersonasPage](file:///d:/MultiAgentDebateOrchestration/app/ui/personas_page.py): Session persona configuration editor.
+- Built with NiceGUI on Quasar/Vue components; real-time updates over WebSockets without page reloads.
+- The expert page lives in [ui/expert/](file:///d:/MultiAgentDebateOrchestration/app/ui/expert/page.py): `page.py` (`ExpertPage`), `events.py` (one handler per debate event), `chrome.py` (header and about dialog).
+- Every screen (expert, trial, beginner) attaches to a running debate through [`RunBinding`](file:///d:/MultiAgentDebateOrchestration/app/ui/run_binding.py); closing the page drops the subscription, never the debate.
+- Components:
+  - [SessionSidebar](file:///d:/MultiAgentDebateOrchestration/app/ui/components/sidebar.py): session history, creation, and deletion.
+  - [AgentRosterControl](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/control.py): one class split by concern into `roster/` (session settings, agent cards, MCP panel, agent administration, per-card dialogs, skills panel, graph row).
+  - [ChatFeed](file:///d:/MultiAgentDebateOrchestration/app/ui/components/chat_feed/feed.py): one class split into `chat_feed/` (cards, approvals, decision bars, mentions).
+  - [ArtifactViewer](file:///d:/MultiAgentDebateOrchestration/app/ui/components/artifact_viewer.py): multi-tab viewer with syntax highlighting and Mermaid diagram rendering.
+  - [PersonasPage](file:///d:/MultiAgentDebateOrchestration/app/ui/personas_page.py): session persona configuration editor.
+- Trial and beginner pages share the visitor-page frame in [ui/shared/page.py](file:///d:/MultiAgentDebateOrchestration/app/ui/shared/page.py); page addresses are in [app/routes.py](file:///d:/MultiAgentDebateOrchestration/app/routes.py).
+
+### 4.8. Module Boundaries
+Which package may import which is checked by a test. See [Module Boundaries](file:///d:/MultiAgentDebateOrchestration/wiki/architecture/module-boundaries.md).
 
 ---
 

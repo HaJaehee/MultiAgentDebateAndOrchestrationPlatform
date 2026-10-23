@@ -32,7 +32,7 @@ graph TD
 
 ## 2. Page Routing & Mounting
 
-The application registers two primary NiceGUI pages in [app/main.py](file:///d:/MultiAgentDebateOrchestration/app/main.py#L144-L151):
+The application registers two primary NiceGUI pages in [app/main.py](file:///d:/MultiAgentDebateOrchestration/app/main.py) (`create_ui` lives in [app/ui/expert/page.py](file:///d:/MultiAgentDebateOrchestration/app/ui/expert/page.py)):
 
 ```python
 create_ui()              # Registers "/" (Main Workspace)

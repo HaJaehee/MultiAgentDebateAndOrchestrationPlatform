@@ -103,5 +103,18 @@
 | P4 | 완료 | `app/routes.py`, `ui/shared/page.py`, `ui/run_binding.py`, `ui/expert/` |
 | P5 | 완료 | `roster/`·`chat_feed/` 패키지 (mixin) |
 | P6 | 완료 | llm.py 3,064 → 974줄, `connection.py` 로 순환 해소 |
-| P7 | 남음 | 시도 후 되돌림. 경계 분석은 끝남: paths ← env ← schema ← loader ← editors, 규칙 문법은 `app/tool_rules.py` 로. 주의: `PROJECT_ROOT` 는 `parents[2]`, `.env` 읽기·`PYTHON_BIN` 기본값은 env 모듈 import 시점에, `tests/test_easy_builder.py` 가 `_config` 를 직접 저장·복원 |
-| P8 | 남음 | AppServices·APIRouter, 구조·테스트 문서와 위키 갱신 |
+| P7 | 완료 | `app/config/` (env · paths · schema · loader · editors), `app/tool_rules.py`. 남은 의존 방향 위반 0건 |
+| P8 | 완료 | `app/api.py` 라우터, main 은 조립만. 구조·테스트 문서, 위키 개요·모듈 경계·릴리스 노트 갱신 |
+
+**AppServices 는 하지 않았습니다.** 전역 `get_*()` 는 이미 각 모듈이 처음 불릴 때 만들어 들고 있고, 테스트와
+MADOWarGame 구동기가 그 이름에 기대고 있습니다. 컨테이너를 하나 더 두면 소유자가 둘이 되어 오히려 읽기 어렵습니다.
+대신 시작 순서를 `app/main.py` 의 `lifespan` 한 곳에서 정하고, 모듈 설명에 적어 두었습니다 (DB 엔진이 처음
+부른 쪽의 주소로 고정된다는 주의 포함).
+
+## 8. 결과
+
+- 1,000줄이 넘는 파일: 9개 → 1개 (`export_mermaid.py` 1,618줄). 목표는 2개였는데, `mcp/policy.py` 가 규칙 문법을 내보내며 952줄이 됐습니다.
+- `app/` 전체: 45,490 → 45,612줄. 줄이 아니라 경계를 나눈 작업이라 총량은 거의 그대로입니다.
+- 의존 방향 위반(테스트로 검사): 11건 → 0건.
+- 테스트: 2,005 → 2,020 통과 (안전망·이벤트 테스트 추가, 가짜 도구를 기대하던 테스트는 반대 동작으로).
+- MADOWarGame 의 MADO 구동 테스트 19건 통과 (P3·P6 이후 확인).

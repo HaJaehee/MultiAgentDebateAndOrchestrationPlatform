@@ -322,7 +322,7 @@ for keeping the debate alive, but the final synthesis took the same path, so the
 the screen and then vanished on the next reload.
 
 Every engine write — a speech with its tool records, the artifacts, a user message, a note — now goes
-through `OrchestratorEngine._persist()`:
+through `TurnRecorder.persist()`:
 
 1. **Retry.** On failure it rolls back (skip that and every later commit in the session fails too)
    and tries again after `PERSIST_RETRY_DELAYS` (2 s, then 5 s), on top of SQLite's own 30 s wait.

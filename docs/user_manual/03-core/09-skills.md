@@ -2,7 +2,7 @@
 
 > 상위: [핵심 기술 개관](README.md) · 이전: [도구 보안](08-tool-security.md) · 다음: [동료 자문 (peers)](10-peer-consultation.md)
 >
-> 관련 소스: `app/agents/skills.py` · `app/config.py` (`SkillsConfig`, `allowed_skills`)
+> 관련 소스: `app/agents/skills.py` · `app/config/schema.py` (`SkillsConfig`, `allowed_skills`)
 
 ---
 

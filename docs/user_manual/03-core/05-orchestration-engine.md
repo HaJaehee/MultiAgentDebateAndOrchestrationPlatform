@@ -112,7 +112,7 @@ for round_num in 1..max_rounds:
         └─ 도구 실행 이력을 DB에 저장
 ```
 
-**병렬 지시 전략(`parallel_dispatch`)은 라운드 단위로 실행 경로가 분기됩니다.** 발언자를 한 명씩 순차적으로 세우는 일반 루프와 병렬 호출을 함께 처리할 수 없으므로, `_run_parallel_round()` 전용 메서드가 해당 라운드 전체를 책임집니다.
+**병렬 지시 전략(`parallel_dispatch`)은 라운드 단위로 실행 경로가 분기됩니다.** 발언자를 한 명씩 순차적으로 세우는 일반 루프와 병렬 호출을 함께 처리할 수 없으므로, `ParallelRoundRunner.run_parallel_round()`(`app/orchestration/phases/parallel.py`)가 해당 라운드 전체를 책임집니다.
 
 ```text
 for round_num in 1..max_rounds:                     ← parallel_dispatch 전용 라운드 루프
@@ -128,8 +128,8 @@ for round_num in 1..max_rounds:                     ← parallel_dispatch 전용
 
 | 발생하는 기술적 제약 | 시스템의 해결 방식 |
 | :--- | :--- |
-| SQLAlchemy `AsyncSession`은 동일 세션의 동시 비동기 쿼리를 허용하지 않음 (`IllegalStateChangeError` 발생) | `_speak(db_lock=...)`를 통해 **데이터베이스 기록 구간만 세마포어로 직렬화**합니다. 대기 시간이 긴 LLM API 호출은 락 외부에서 완전 병렬로 처리됩니다. |
-| 대화 기록은 `created_at` 시간순으로 정렬되어 다시 읽힘 | `_speak(created_at=...)`에 의도된 지시 순서 타임스탬프를 명시적으로 부여하고, `state.messages` 리스트 역시 동일한 순서로 정렬합니다. |
+| SQLAlchemy `AsyncSession`은 동일 세션의 동시 비동기 쿼리를 허용하지 않음 (`IllegalStateChangeError` 발생) | `SpeechRunner.speak(db_lock=...)`를 통해 **데이터베이스 기록 구간만 세마포어로 직렬화**합니다. 대기 시간이 긴 LLM API 호출은 락 외부에서 완전 병렬로 처리됩니다. |
+| 대화 기록은 `created_at` 시간순으로 정렬되어 다시 읽힘 | `SpeechRunner.speak(created_at=...)`에 의도된 지시 순서 타임스탬프를 명시적으로 부여하고, `state.messages` 리스트 역시 동일한 순서로 정렬합니다. |
 | 뒤늦게 시작된 에이전트의 발언이 앞서 완료된 동료의 답변을 컨텍스트로 참조하는 현상 발생 | 해당 라운드에 참여하는 모든 에이전트의 프롬프트를 `asyncio.gather` 실행 **이전에 모두 사전 생성**하여 완전한 독립성을 보장합니다. |
 | 병렬 실행 도중에는 개별 발언 사이의 틈(Gap)이 존재하지 않음 | 사용자 개입 메모 및 정지 요청 확인을 라운드 시작 경계에서 원자적으로 처리합니다. |
 
@@ -251,7 +251,7 @@ _approve_plan()  ──▶ on_event: plan_approval_requested ──▶ UI 화면
 
 **묻지 않는 경우**는 다음과 같습니다: 설정이 꺼져 있을 때, 답할 사람이 없는 실행(화면 없이 엔진만 호출)일 때, 계획이 없거나 실패했을 때, 태스크를 받을 전문가가 없을 때.
 
-순수 로직(분담표 해석, 답의 반영, 문구)은 `app/orchestration/plan_gate.py` 에, 대기와 응답은 `TurnControl` 에, 기록과 계획 재작성은 `OrchestratorEngine._approve_plan` 에 있습니다.
+순수 로직(분담표 해석, 답의 반영, 문구)은 `app/orchestration/plan_gate.py` 에, 대기와 응답은 `TurnControl` 에, 기록과 계획 재작성은 `PlanningPhaseExecutor.approve_plan` 에 있습니다.
 
 ---
 

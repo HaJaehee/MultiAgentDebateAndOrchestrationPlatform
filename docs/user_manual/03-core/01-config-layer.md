@@ -2,7 +2,7 @@
 
 > 상위: [핵심 기술 개관](README.md) · 다음: [에이전트 풀과 페르소나](02-agent-pool.md)
 >
-> 관련 소스: `app/config.py` (1,035줄) · 설정 작성법은 [conf.json 설정](../02-getting-started/02-configuration.md) 참고
+> 관련 소스: `app/config/` (`env.py`·`paths.py`·`schema.py`·`loader.py`·`editors.py`) · 설정 작성법은 [conf.json 설정](../02-getting-started/02-configuration.md) 참고
 
 이 레이어가 특별한 이유는 **단순히 설정을 읽기만 하지 않기 때문**입니다. UI 화면에서 에이전트를 추가하거나 발언 순서를 변경하면 그 결과가 즉시 `conf.json` 파일에 반영되어 기록됩니다. 즉, 설정 파일이 입력원이자 동시에 출력 대상이 됩니다.
 

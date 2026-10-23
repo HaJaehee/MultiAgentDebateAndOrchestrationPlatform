@@ -34,7 +34,7 @@ conversation is unaffected, because it froze its own copy of both values at lock
 ## 1. The lock: who may edit, and when
 
 All six are gated by
-[`_agent_admin_lock_reason()`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster.py). Opening
+[`_agent_admin_lock_reason()`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/agent_admin.py). Opening
 only some of them would produce the worst outcome — a user changes something and cannot tell why the
 conversation ignored it.
 
@@ -59,20 +59,20 @@ would change the speaker list of a turn already in flight.
 
 Half of `conf.json` is prose — notes explaining what each server does and why something is switched
 off. JSON has no comment syntax, so those notes live as **keys beginning with `//`**, which
-[`strip_comment_keys()`](file:///d:/MultiAgentDebateOrchestration/app/config.py) removes before validation.
+[`strip_comment_keys()`](file:///d:/MultiAgentDebateOrchestration/app/config/loader.py) removes before validation.
 They are ordinary data, which is what makes the writers simple. Every writer in
-[app/config.py](file:///d:/MultiAgentDebateOrchestration/app/config.py) is the same four steps:
+[app/config/editors.py](file:///d:/MultiAgentDebateOrchestration/app/config/editors.py) is the same four steps:
 
 1. **Validate the input first.** Agent keys and server names must match `BARE_KEY_PATTERN`, stances
    must be one of `DEBATE_STANCES`, and unknown override fields are rejected. Nothing has been
    written yet, so a bad request cannot leave a half-edited file behind.
-2. **Read the raw file** with [`read_conf_file()`](file:///d:/MultiAgentDebateOrchestration/app/config.py) —
+2. **Read the raw file** with [`read_conf_file()`](file:///d:/MultiAgentDebateOrchestration/app/config/loader.py) —
    `//` notes included, `${VAR}` placeholders unresolved. The screen shows *resolved* values; echoing
    those back would bake another machine's absolute paths and a plaintext API key into the file.
 3. **Edit the parsed dictionary.** Assigning to an existing key keeps its position; a new key is
    appended inside its own object, so a new agent lands among the agents and a new server among the
    servers, with no insertion-point arithmetic.
-4. **Rewrite it once** with [`write_conf_file()`](file:///d:/MultiAgentDebateOrchestration/app/config.py),
+4. **Rewrite it once** with [`write_conf_file()`](file:///d:/MultiAgentDebateOrchestration/app/config/loader.py),
    which writes to a temporary file and `os.replace()`s it into place. A crash mid-write cannot leave
    a truncated config — that state stops the app from booting at all.
 
@@ -93,11 +93,11 @@ Adding then deleting an agent restores the file **byte for byte**; that round-tr
 
 The add dialog prefills every LLM field — model, API URL, API key, provider, temperature, context
 window, response tokens, timeout, retries, tool-loop limit — from
-[`agent_defaults_from_llm()`](file:///d:/MultiAgentDebateOrchestration/app/config.py), which resolves the
+[`agent_defaults_from_llm()`](file:///d:/MultiAgentDebateOrchestration/app/config/editors.py), which resolves the
 effective default (the `llm` value if set, otherwise the `AgentConfig` default).
 
 **Fields left untouched are not written to the file.**
-[`prune_agent_overrides()`](file:///d:/MultiAgentDebateOrchestration/app/config.py) drops anything equal to
+[`prune_agent_overrides()`](file:///d:/MultiAgentDebateOrchestration/app/config/editors.py) drops anything equal to
 the prefilled default, and only the remainder lands in the section:
 
 ```json
@@ -163,7 +163,7 @@ The orchestrator can be neither disabled nor deleted; it runs planning and synth
 ## 5. Speaking order by drag
 
 Card order **is** speaking order. Dropping a card rewrites `debate_priority` as `10, 20, 30, …`
-([`set_agent_debate_order_in_conf_file()`](file:///d:/MultiAgentDebateOrchestration/app/config.py)); the gaps
+([`set_agent_debate_order_in_conf_file()`](file:///d:/MultiAgentDebateOrchestration/app/config/editors.py)); the gaps
 leave room to insert one agent between two others later without rewriting the rest.
 
 ### 5.1. The drop position must follow the cursor
@@ -190,7 +190,7 @@ NiceGUI emits an event to the server whenever a Python handler is registered, so
 `card.on("dragover.prevent", lambda _: None)` flooded the websocket for the whole duration of a drag.
 
 Passing only `js_handler` handles the event client-side and emits nothing
-([`JS_DRAG_OVER`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster.py)). Exactly three
+([`JS_DRAG_OVER`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/common.py)). Exactly three
 messages now cross the wire per drag: `dragstart`, `drop`, `dragend`.
 
 The same JS handlers provide the feedback that makes the interaction legible: the lifted card fades
@@ -219,7 +219,7 @@ degrades to a single priority-ordered pass.
 ## 7. Applying the change to the running app
 
 Writing the file is not enough — the screen and the live pool would drift until the next restart.
-[`_apply_agent_change()`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster.py) chains:
+[`_apply_agent_change()`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/agent_admin.py) chains:
 
 ```mermaid
 graph LR

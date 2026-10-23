@@ -168,9 +168,9 @@ graph TD
 
 > **Implementation notes.** Parallel speaking breaks two assumptions the sequential engine could
 > take for granted. Concurrent `db.add`/`commit` on the shared `AsyncSession` raises
-> `IllegalStateChangeError`, so `_speak()` takes a `db_lock` covering the record block only —
+> `IllegalStateChangeError`, so `SpeechRunner.speak()` takes a `db_lock` covering the record block only —
 > the LLM call stays outside it. And because messages are reloaded in `created_at` order,
-> finishing order would otherwise reshuffle the transcript on every refresh; `_speak()` accepts
+> finishing order would otherwise reshuffle the transcript on every refresh; `SpeechRunner.speak()` accepts
 > an explicit `created_at` stamped in dispatch order, and `state.messages` is re-sorted to match.
 
 ### 2.5. Graph Debate (`graph_debate`) — engine (v0.9.0)
@@ -178,7 +178,7 @@ graph TD
 - **Idea**: instead of an order derived from cards, a person draws **who feeds whom**. Parallel
   branches, joins and review loops come from the drawing, not from strategy code. The card sort and
   the other four strategies are untouched; the engine branches once, before the round loop
-  (`OrchestratorEngine._run_graph`), and shares planning, synthesis, artifacts and the ledger.
+  (`GraphRunner.run_graph`), and shares planning, synthesis, artifacts and the ledger.
 - **Graph**: `data/graphs/<id>.json`, chosen per session (`sessions.graph_id`) and frozen at each turn
   start into `sessions.graph_snapshot`. Nodes `start` · `agent` · `merge` · `gate` (yes/no) · `end`;
   each wire carries `full`, `digest` (`## 요지` only) or `refs` (long code referenced). Schema,
@@ -253,9 +253,9 @@ graph TD
 3. If your strategy needs an LLM call to pick speakers, set
    `orchestrator_selects_speakers = True` instead of calling the model from the strategy —
    strategies stay pure, and the engine performs the call (and the fallback) in
-   `OrchestratorEngine._select_speakers()`. For a round that runs its speakers concurrently, set
+   `DebatePhaseExecutor.select_speakers()`. For a round that runs its speakers concurrently, set
    `orchestrator_dispatches_parallel = True`; the engine then runs the whole round through
-   `OrchestratorEngine._run_parallel_round()` (dispatch, `asyncio.gather` under the session's
+   `ParallelRoundRunner.run_parallel_round()` (dispatch, `asyncio.gather` under the session's
    `parallel_limit`, interim merge) instead of the one-speaker-at-a-time loop.
 4. If you retire a strategy key that sessions may already hold, add it to
    `LEGACY_STRATEGY_ALIASES` so those conversations keep running.

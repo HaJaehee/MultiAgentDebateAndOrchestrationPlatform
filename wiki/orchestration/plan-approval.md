@@ -5,11 +5,11 @@ speaks until a human has answered. Design record:
 [ADR-028](../../lectures/05-adr/ADR-028-plan-approval-gate.md).
 
 Code: [app/orchestration/plan_gate.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/plan_gate.py)
-(pure logic: parsing, settling, wording), `OrchestratorEngine._approve_plan` in
+(pure logic: parsing, settling, wording), `PlanningPhaseExecutor.approve_plan` in
 [app/orchestration/engine.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/engine.py),
 `PlanApprovalRequest` in
 [app/orchestration/control.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/control.py), and the
-card in [app/ui/components/chat_feed.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/chat_feed.py).
+card in [app/ui/components/chat_feed/approvals.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/chat_feed/approvals.py).
 
 ---
 

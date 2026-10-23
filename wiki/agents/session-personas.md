@@ -192,9 +192,9 @@ Starting from the latest enhancement, editing an agent's persona on the Web UI (
 
 ### Workflow
 1. **Targeted JSON Modification**:
-   [`update_agent_persona_in_conf_file()`](file:///d:/MultiAgentDebateOrchestration/app/config.py) reads the raw `conf.json` — `//` documentation keys and unresolved `${VAR}` placeholders included — locates `agents.<agent_key>`, updates `name`, `role`, and `system_prompt`, and rewrites the file atomically. A multi-line prompt is written as an array of lines so it stays readable. Everything else in the file, including the notes and every other agent, is carried through untouched.
+   [`update_agent_persona_in_conf_file()`](file:///d:/MultiAgentDebateOrchestration/app/config/editors.py) reads the raw `conf.json` — `//` documentation keys and unresolved `${VAR}` placeholders included — locates `agents.<agent_key>`, updates `name`, `role`, and `system_prompt`, and rewrites the file atomically. A multi-line prompt is written as an array of lines so it stays readable. Everything else in the file, including the notes and every other agent, is carried through untouched.
 2. **In-Memory Pool Reloading**:
    After writing to disk, `get_config(reload=True)` re-reads the configuration, and `get_agent_pool().reload()` refreshes all in-memory `Agent` instances.
 3. **Reactive UI Synchronization**:
-   The main debate page's [`AgentRosterControl`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster.py) rebuilds its roster cards via `refresh_agent_cards()`, so modified agent names and roles appear immediately without a full browser refresh.
+   The main debate page's [`AgentRosterControl`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/control.py) rebuilds its roster cards via `refresh_agent_cards()`, so modified agent names and roles appear immediately without a full browser refresh.
 
