@@ -98,13 +98,15 @@
 | 선행 정리 | 완료 | PairSlide 연동 제거, MCP 가짜 도구 폴백 제거 |
 | P0 | 완료 | `test_public_surface.py`, `test_layering.py` |
 | P1 | 완료 | 재내보내기·중복·미사용 import 정리, `__init__` 경량화 |
-| P2 | 완료 | `app/events.py`, `orchestration/turn_run.py` (리듀서 표) |
-| P3 | 완료 | engine 3,033 → 495줄, context·recording·speech·conversation·turn_setup, phases 분할 |
-| P4 | 완료 | `app/routes.py`, `ui/shared/page.py`, `ui/run_binding.py`, `ui/expert/` |
-| P5 | 완료 | `roster/`·`chat_feed/` 패키지 (mixin) |
-| P6 | 완료 | llm.py 3,064 → 974줄, `connection.py` 로 순환 해소 |
+| P2 | 완료 | `app/events.py`, `orchestration/turn_run.py` (리듀서 표). 이벤트 이름표는 계획한 `orchestration/` 이 아니라 `app/` 바로 아래 — `agents/consultation.py` 도 이벤트를 보내기 때문 |
+| P3 | 완료 | engine 3,033 → 495줄, context·recording·speech·conversation·turn_setup, phases 분할. 계획의 persistence·context_builder·lifecycle 는 각각 recording·conversation·turn_setup 이라는 이름으로 |
+| P4 | 일부 | `app/routes.py`, `ui/shared/page.py`, `ui/run_binding.py`, `ui/expert/`. **하지 않음**: 에이전트 초안·카탈로그를 화면 밖으로 — 로스터가 아직 `easy.builder`·`easy.catalog`·`easy.pages.build` 를 씀 |
+| P5 | 일부 | `roster/`·`chat_feed/` 패키지 (한 클래스를 mixin 파일로). **하지 않음**: conf 적용·잠금 규칙을 NiceGUI 없는 서비스로 — `test_agent_admin.py`·`test_roster_lock.py` 가 아직 `ui.notify` 를 바꿔 끼움 |
+| P6 | 완료 | llm.py 3,064 → 974줄, `connection.py` 로 순환 해소. 계획한 `agents/llm/` 패키지가 아니라 `llm_*` 형제 모듈로 나눔 (그렇게 고른 이유는 기록 없음) |
 | P7 | 완료 | `app/config/` (env · paths · schema · loader · editors), `app/tool_rules.py`. 남은 의존 방향 위반 0건 |
 | P8 | 완료 | `app/api.py` 라우터, main 은 조립만. 구조·테스트 문서, 위키 개요·모듈 경계·릴리스 노트 갱신 |
+
+결정과 이유, 하지 않은 항목은 위키 `wiki/architecture/module-boundaries.md` §6 에 정리했습니다.
 
 **AppServices 는 하지 않았습니다.** 전역 `get_*()` 는 이미 각 모듈이 처음 불릴 때 만들어 들고 있고, 테스트와
 MADOWarGame 구동기가 그 이름에 기대고 있습니다. 컨테이너를 하나 더 두면 소유자가 둘이 되어 오히려 읽기 어렵습니다.

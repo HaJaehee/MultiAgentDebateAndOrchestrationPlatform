@@ -12,7 +12,7 @@ wiki/
 ├── release-notes.md                       # Change history by version, linked to the topic pages
 ├── architecture/
 │   ├── overview.md                        # High-level architecture, technology stack & data flow
-│   ├── module-boundaries.md               # Which package may import which, checked by a test
+│   ├── module-boundaries.md               # Which package may import which (checked by a test), restructuring decisions
 │   └── database-schema.md                 # SQLite + SQLAlchemy async ORM data models & relationships
 ├── configuration/
 │   ├── conf-json-reference.md             # Complete conf.json configuration guide & schema

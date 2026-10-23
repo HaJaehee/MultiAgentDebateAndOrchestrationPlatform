@@ -150,7 +150,7 @@ flowchart TD
 - Trial and beginner pages share the visitor-page frame in [ui/shared/page.py](file:///d:/MultiAgentDebateOrchestration/app/ui/shared/page.py); page addresses are in [app/routes.py](file:///d:/MultiAgentDebateOrchestration/app/routes.py).
 
 ### 4.8. Module Boundaries
-Which package may import which is checked by a test. See [Module Boundaries](file:///d:/MultiAgentDebateOrchestration/wiki/architecture/module-boundaries.md).
+Which package may import which is checked by a test. See [Module Boundaries](file:///d:/MultiAgentDebateOrchestration/wiki/architecture/module-boundaries.md), which also records the decisions of the v1.4.1 restructuring (§6).
 
 ---
 
