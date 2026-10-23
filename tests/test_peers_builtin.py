@@ -26,7 +26,7 @@ from app.config import (
     set_agent_allowed_mcp_servers_in_conf_file,
     write_conf_file,
 )
-from app.ui.components.roster import peers_chip_tooltip, peers_users, unknown_tool_servers
+from app.ui.components.roster.common import peers_chip_tooltip, peers_users, unknown_tool_servers
 
 SAMPLE = {
     "mcp_servers": {"filesystem": {"command": "node", "args": ["server.js"]}},

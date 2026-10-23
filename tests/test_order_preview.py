@@ -21,7 +21,7 @@ from app.agents.pool import AgentPool
 from app.config import AgentConfig
 from app.orchestration.state import DebateState
 from app.orchestration.strategies import STRATEGY_MAP
-from app.ui.components.roster import AgentRosterControl
+from app.ui.components.roster.control import AgentRosterControl
 
 
 def _agent(key: str, priority: int, stance: str = "neutral") -> AgentConfig:

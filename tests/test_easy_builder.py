@@ -282,7 +282,7 @@ def test_the_expert_form_chat_hands_its_blueprint_to_the_add_form():
 def test_the_expert_add_dialog_opens_the_builder_and_still_saves_through_its_own_path():
     import inspect
 
-    from app.ui.components.roster import AgentRosterControl
+    from app.ui.components.roster.control import AgentRosterControl
 
     source = inspect.getsource(AgentRosterControl._open_agent_add_dialog)
     button = source.find('ui.button("에이전트 만들기"')

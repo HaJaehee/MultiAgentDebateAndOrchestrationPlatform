@@ -42,7 +42,7 @@ from app.trial.store import (
 )
 from app.trial.web import Visitor, current_visitor, is_owner
 from app.ui.clipboard import copy_to_clipboard
-from app.ui.components.chat_feed import ChatFeed
+from app.ui.components.chat_feed.feed import ChatFeed
 from app.ui.math_markdown import MathMarkdown
 from app.ui.run_binding import RunBinding
 from app.ui.shared.page import (

@@ -17,8 +17,9 @@ from app.agents.pool import AgentPool
 from app.config import AgentConfig
 from app.database.models import SessionModel
 from app.orchestration.graph import graph_from_card_order
-from app.ui.components import roster, sidebar
-from app.ui.components.roster import AgentRosterControl
+from app.ui.components import sidebar
+from tests.roster_patch import patch_roster
+from app.ui.components.roster.control import AgentRosterControl
 from app.ui.components.sidebar import active_agent_count
 
 FIVE = ["orchestrator", "architect", "coder", "critic", "researcher"]
@@ -100,7 +101,7 @@ def roster_control(monkeypatch) -> AgentRosterControl:
         key: AgentConfig(name=key.title(), role=key, model="openai/gpt-4o-mini", api_key="sk-test")
         for key in FIVE
     })
-    monkeypatch.setattr(roster, "get_agent_pool", lambda: pool)
+    patch_roster(monkeypatch, "get_agent_pool", lambda: pool)
     control = AgentRosterControl()
     control.summary_badge = FakeBadge()
     return control

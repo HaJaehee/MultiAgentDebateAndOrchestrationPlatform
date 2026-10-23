@@ -27,8 +27,10 @@ from app.config import (
     strip_comment_keys,
     write_conf_file,
 )
-from app.ui.components import roster as roster_module
-from app.ui.components.roster import AgentRosterControl
+from nicegui import ui
+
+from tests.roster_patch import patch_roster
+from app.ui.components.roster.control import AgentRosterControl
 
 SAMPLE = {
     "app": {"port": 8000},
@@ -364,9 +366,9 @@ class _FakePool:
 @pytest.fixture()
 def roster(monkeypatch):
     runner = _FakeRunner([])
-    monkeypatch.setattr(roster_module, "get_debate_runner", lambda: runner)
-    monkeypatch.setattr(roster_module, "get_runtime_pool", lambda: _FakePool(_FakeManager()))
-    monkeypatch.setattr(roster_module.ui, "notify", lambda *a, **k: None)
+    patch_roster(monkeypatch, "get_debate_runner", lambda: runner)
+    patch_roster(monkeypatch, "get_runtime_pool", lambda: _FakePool(_FakeManager()))
+    monkeypatch.setattr(ui, "notify", lambda *a, **k: None)
 
     control = AgentRosterControl()
     control.build_ui()
@@ -401,7 +403,7 @@ def test_a_running_debate_anywhere_freezes_the_agent_pool(roster):
 def test_the_add_dialog_does_not_open_while_frozen(roster, monkeypatch):
     control, _ = roster
     opened: List[str] = []
-    monkeypatch.setattr(roster_module.ui, "dialog", lambda *a, **k: opened.append("dialog"))
+    monkeypatch.setattr(ui, "dialog", lambda *a, **k: opened.append("dialog"))
 
     control.set_personas_locked(True)
     control._open_agent_add_dialog()
@@ -414,8 +416,7 @@ def test_the_add_dialog_does_not_open_while_frozen(roster, monkeypatch):
 async def test_a_frozen_roster_never_writes_to_the_conf_file(roster, monkeypatch):
     control, _ = roster
     writes: List[tuple] = []
-    monkeypatch.setattr(
-        roster_module, "set_agent_enabled_in_conf_file",
+    patch_roster(monkeypatch, "set_agent_enabled_in_conf_file",
         lambda *args, **kwargs: writes.append(args),
     )
 
@@ -430,8 +431,7 @@ async def test_a_frozen_roster_never_writes_to_the_conf_file(roster, monkeypatch
 async def test_disable_writes_once_the_conversation_is_fresh(roster, monkeypatch):
     control, _ = roster
     writes: List[tuple] = []
-    monkeypatch.setattr(
-        roster_module, "set_agent_enabled_in_conf_file",
+    patch_roster(monkeypatch, "set_agent_enabled_in_conf_file",
         lambda *args, **kwargs: writes.append(args),
     )
 

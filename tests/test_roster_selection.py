@@ -13,7 +13,7 @@
 
 import pytest
 
-from app.ui.components.roster import AgentRosterControl
+from app.ui.components.roster.control import AgentRosterControl
 
 FOUR = ["orchestrator", "architect", "coder", "critic"]
 
@@ -120,12 +120,12 @@ def _control_with_four_agents(monkeypatch) -> AgentRosterControl:
     """conf.json 없이도 돌도록 풀을 직접 넣습니다."""
     from app.agents.pool import AgentPool
     from app.config import AgentConfig
-    from app.ui.components import roster
+    from tests.roster_patch import patch_roster
 
     pool = AgentPool({
         key: AgentConfig(name=key.title(), role=key, model="openai/gpt-4o-mini", api_key="sk-test") for key in FOUR
     })
-    monkeypatch.setattr(roster, "get_agent_pool", lambda: pool)
+    patch_roster(monkeypatch, "get_agent_pool", lambda: pool)
     return AgentRosterControl()
 
 

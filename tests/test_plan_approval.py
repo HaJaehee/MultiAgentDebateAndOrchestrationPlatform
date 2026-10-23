@@ -28,11 +28,7 @@ from app.orchestration.control import PlanApprovalRequest, TurnControl
 from app.orchestration.runner import DebateRunner
 from app.orchestration.state import DebateMessage, DebateState
 from app.orchestration.turn_setup import restore_turn_state
-from app.ui.components.chat_feed import (
-    background_paint,
-    toggled_visibility,
-    unfinished_turn_text,
-)
+from app.ui.components.chat_feed.common import background_paint, toggled_visibility, unfinished_turn_text
 from tests.fake_llm import FakeLLMCaller
 from tests.test_resilience import _engine, _make_session
 

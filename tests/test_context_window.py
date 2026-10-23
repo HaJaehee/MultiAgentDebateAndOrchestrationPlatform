@@ -824,7 +824,7 @@ async def test_trimming_is_reported_to_the_screen():
 
 def test_the_banner_does_not_offer_a_widening_that_is_not_available():
     """확장 버튼이 사라졌는데 문구가 "늘릴까요?" 로 남으면 사라진 버튼을 찾게 됩니다."""
-    from app.ui.components.chat_feed import ChatFeed
+    from app.ui.components.chat_feed.feed import ChatFeed
 
     async def _noop(*args, **kwargs):
         return None

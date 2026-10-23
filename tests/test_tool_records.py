@@ -25,7 +25,7 @@ from app.agents.llm import LLMUnavailableError
 from app.database.models import MessageModel, ToolCallRecordModel
 from app.database.session import get_session_factory
 from app.export import build_session_markdown
-from app.ui.components.chat_feed import MAX_RELOADED_TOOL_OUTPUT, clip_reloaded_output
+from app.ui.components.chat_feed.common import MAX_RELOADED_TOOL_OUTPUT, clip_reloaded_output
 from tests.fake_llm import FakeLLMCaller
 from tests.test_resilience import _engine, _make_session
 

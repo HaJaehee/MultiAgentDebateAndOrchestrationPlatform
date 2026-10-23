@@ -43,7 +43,7 @@ from app.orchestration.turns import unfinished_turn
 from app.routes import EASY_HOME
 from app.security import is_loopback
 from app.ui.clipboard import copy_to_clipboard
-from app.ui.components.chat_feed import ChatFeed
+from app.ui.components.chat_feed.feed import ChatFeed
 from app.ui.math_markdown import MathMarkdown
 from app.ui.run_binding import RunBinding
 from app.ui.shared.page import MARKDOWN_EXTRAS, disabled_page, empty_state, footer_notice

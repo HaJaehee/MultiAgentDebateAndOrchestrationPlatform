@@ -13,13 +13,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.ui.components.chat_feed import (
+from app.ui.components.chat_feed.common import (
     CLAMP_MIN_CHARS,
     CLAMP_MIN_NEWLINES,
     SUBMIT_KEY_EVENT,
-    ChatFeed,
     is_clampable,
 )
+from app.ui.components.chat_feed.feed import ChatFeed
 
 
 @pytest.mark.parametrize("content", [

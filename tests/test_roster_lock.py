@@ -15,8 +15,10 @@ from typing import List
 
 import pytest
 
-from app.ui.components import roster as roster_module
-from app.ui.components.roster import AgentRosterControl
+from nicegui import ui
+
+from tests.roster_patch import patch_roster
+from app.ui.components.roster.control import AgentRosterControl
 
 
 class _FakeRunner:
@@ -101,9 +103,9 @@ class _FakePool:
 def roster(monkeypatch):
     runner = _FakeRunner([])
     manager = _FakeManager()
-    monkeypatch.setattr(roster_module, "get_debate_runner", lambda: runner)
-    monkeypatch.setattr(roster_module, "get_runtime_pool", lambda: _FakePool(manager))
-    monkeypatch.setattr(roster_module.ui, "notify", lambda *a, **k: None)
+    patch_roster(monkeypatch, "get_debate_runner", lambda: runner)
+    patch_roster(monkeypatch, "get_runtime_pool", lambda: _FakePool(manager))
+    monkeypatch.setattr(ui, "notify", lambda *a, **k: None)
 
     control = AgentRosterControl()
     control.build_ui()
@@ -134,8 +136,7 @@ def test_a_running_debate_locks_the_controls(roster):
 async def test_locked_toggle_never_reaches_the_conf_file(roster, monkeypatch):
     control, runner, manager = roster
     writes: List[tuple] = []
-    monkeypatch.setattr(
-        roster_module, "set_mcp_server_enabled_in_conf_file",
+    patch_roster(monkeypatch, "set_mcp_server_enabled_in_conf_file",
         lambda *args, **kwargs: writes.append(args),
     )
 
@@ -150,8 +151,7 @@ async def test_locked_toggle_never_reaches_the_conf_file(roster, monkeypatch):
 async def test_toggle_writes_and_reloads_once_the_debate_is_over(roster, monkeypatch):
     control, runner, manager = roster
     writes: List[tuple] = []
-    monkeypatch.setattr(
-        roster_module, "set_mcp_server_enabled_in_conf_file",
+    patch_roster(monkeypatch, "set_mcp_server_enabled_in_conf_file",
         lambda *args, **kwargs: writes.append(args),
     )
 
@@ -172,7 +172,7 @@ async def test_dialogs_refuse_to_open_while_a_debate_runs(roster, monkeypatch):
     """추가·삭제·도구 할당 창은 잠긴 동안 아예 열리지 않습니다."""
     control, runner, _ = roster
     opened: List[str] = []
-    monkeypatch.setattr(roster_module.ui, "dialog", lambda *a, **k: opened.append("dialog"))
+    monkeypatch.setattr(ui, "dialog", lambda *a, **k: opened.append("dialog"))
 
     runner.running = ["session-a"]
     control._open_mcp_add_dialog()
@@ -237,8 +237,8 @@ async def test_reload_is_refused_while_a_debate_runs(roster, monkeypatch):
             rereads.append("reload")
         return _StubConfig()
 
-    monkeypatch.setattr(roster_module, "get_config", get_config)
-    monkeypatch.setattr(roster_module, "reload_agent_pool", lambda: reloaded.append(1))
+    patch_roster(monkeypatch, "get_config", get_config)
+    patch_roster(monkeypatch, "reload_agent_pool", lambda: reloaded.append(1))
 
     runner.running = ["session-a"]
     await control._on_reload_conf()
@@ -260,8 +260,8 @@ async def test_broken_conf_leaves_the_running_setup_untouched(roster, monkeypatc
         return _StubConfig()
 
     reloaded: List[int] = []
-    monkeypatch.setattr(roster_module, "get_config", get_config)
-    monkeypatch.setattr(roster_module, "reload_agent_pool", lambda: reloaded.append(1))
+    patch_roster(monkeypatch, "get_config", get_config)
+    patch_roster(monkeypatch, "reload_agent_pool", lambda: reloaded.append(1))
 
     await control._on_reload_conf()
 
@@ -274,8 +274,8 @@ async def test_broken_conf_leaves_the_running_setup_untouched(roster, monkeypatc
 async def test_servers_restart_only_when_their_config_changed(roster, monkeypatch):
     """에이전트만 바뀌었으면 MCP 서버를 다시 띄우지 않습니다 (몇 초를 버립니다)."""
     control, _, manager = roster
-    monkeypatch.setattr(roster_module, "get_config", lambda *a, **k: _StubConfig())
-    monkeypatch.setattr(roster_module, "reload_agent_pool",
+    patch_roster(monkeypatch, "get_config", lambda *a, **k: _StubConfig())
+    patch_roster(monkeypatch, "reload_agent_pool",
                         lambda: _StubPool(["orchestrator", "researcher"]))
 
     monkeypatch.setattr(control, "_mcp_fingerprint", lambda: {"git": ("python", (), ())})
@@ -291,8 +291,8 @@ async def test_servers_restart_only_when_their_config_changed(roster, monkeypatc
 @pytest.mark.asyncio
 async def test_reload_picks_up_a_newly_added_agent(roster, monkeypatch):
     control, _, _ = roster
-    monkeypatch.setattr(roster_module, "get_config", lambda *a, **k: _StubConfig())
-    monkeypatch.setattr(roster_module, "reload_agent_pool",
+    patch_roster(monkeypatch, "get_config", lambda *a, **k: _StubConfig())
+    patch_roster(monkeypatch, "reload_agent_pool",
                         lambda: _StubPool(["orchestrator", "architect", "researcher"]))
     monkeypatch.setattr(control, "_mcp_fingerprint", lambda: {})
     control.selected_agents = {"orchestrator": True, "architect": True}
@@ -349,8 +349,8 @@ def test_a_workspace_without_a_runtime_shows_nothing_running(roster, monkeypatch
     안 떠 있는데 말입니다.
     """
     control, _, _ = roster
-    monkeypatch.setattr(roster_module, "get_config", lambda *a, **k: _ConfigWithServers())
-    monkeypatch.setattr(roster_module, "get_runtime_pool",
+    patch_roster(monkeypatch, "get_config", lambda *a, **k: _ConfigWithServers())
+    patch_roster(monkeypatch, "get_runtime_pool",
                         lambda: _LateStartPool(_ConnectedManager()))
 
     control.refresh_mcp_status()
@@ -368,8 +368,8 @@ def test_the_chip_follows_a_runtime_that_starts_mid_debate(roster, monkeypatch):
     """
     control, runner, _ = roster
     pool = _LateStartPool(_ConnectedManager())
-    monkeypatch.setattr(roster_module, "get_config", lambda *a, **k: _ConfigWithServers())
-    monkeypatch.setattr(roster_module, "get_runtime_pool", lambda: pool)
+    patch_roster(monkeypatch, "get_config", lambda *a, **k: _ConfigWithServers())
+    patch_roster(monkeypatch, "get_runtime_pool", lambda: pool)
 
     # 토론이 시작됩니다 — 아직 서버는 뜨기 전.
     runner.running = ["session-a"]

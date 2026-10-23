@@ -29,7 +29,8 @@ from app.export import build_session_markdown
 from app.timestamps import format_duration, report_completed_line, speech_time_text, to_local
 from app.orchestration.control import TurnControl
 from app.orchestration.engine import OrchestratorEngine
-from app.ui.components.chat_feed import ChatFeed, card_time_text
+from app.ui.components.chat_feed.feed import ChatFeed
+from app.ui.components.chat_feed.common import card_time_text
 from tests.fake_llm import FakeLLMCaller
 from tests.test_resilience import _fixed_pool
 

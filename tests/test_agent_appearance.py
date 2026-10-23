@@ -290,7 +290,7 @@ async def test_locked_conversation_keeps_its_colours(db_factory):
 
 def _feed():
     """UI 를 짓지 않고 스타일 판정만 보는 최소 인스턴스."""
-    from app.ui.components.chat_feed import ChatFeed
+    from app.ui.components.chat_feed.feed import ChatFeed
 
     feed = ChatFeed.__new__(ChatFeed)
     feed._agent_styles = {}

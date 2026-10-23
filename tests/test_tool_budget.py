@@ -250,7 +250,7 @@ async def test_answering_a_finished_debate_is_refused_not_silently_dropped():
 
 def _headless_feed():
     """화면 없이 상태만 가진 피드 (`alive` 가 False 라 그리기는 건너뜁니다)."""
-    from app.ui.components.chat_feed import ChatFeed
+    from app.ui.components.chat_feed.feed import ChatFeed
 
     async def _noop(*args, **kwargs):
         return None

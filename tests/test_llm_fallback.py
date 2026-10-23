@@ -753,13 +753,12 @@ def test_a_screen_that_joins_midway_learns_about_it_too():
 def test_the_card_shows_a_badge_from_the_record_while_streaming_and_after():
     import inspect
 
-    from app.ui.components.chat_feed import ChatFeed
+    from app.ui.components.chat_feed.feed import ChatFeed
 
-    source = inspect.getsource(ChatFeed)
     render = inspect.getsource(ChatFeed._render_card)
     assert "FALLBACK_BADGE" in render and 'self._set_fallback(info, msg.get("llm_meta"))' in render
     assert 'self._set_fallback(info, msg.get("llm_meta"))' in inspect.getsource(ChatFeed._finalize_streaming_message)
-    assert "def mark_fallback" in source
+    assert callable(getattr(ChatFeed, "mark_fallback", None))
     # 세 화면이 흘러나오는 카드에 붙입니다.
     for path in ("app/ui/expert/events.py", "app/trial/pages/session.py", "app/easy/pages/session.py"):
         text = (ms_root() / path).read_text(encoding="utf-8")

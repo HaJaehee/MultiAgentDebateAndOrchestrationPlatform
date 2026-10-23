@@ -251,7 +251,7 @@ def test_stale_answers_are_dropped():
 
 def test_the_main_screen_wires_mentions_and_upload():
     app_src = "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "app" / "ui" / "expert").glob("*.py")))
-    feed_src = io.open(ROOT / "app" / "ui" / "components" / "chat_feed.py", encoding="utf-8").read()
+    feed_src = "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "app" / "ui" / "components" / "chat_feed").glob("*.py")))
     assert "MENTION_JS" in app_src
     assert "mention_provider=self.mention_provider" in app_src and "on_upload_file=self.on_upload_file" in app_src
     assert app_src.count("await self.with_references(") == 2, "새 턴과 개입 모두"
@@ -351,7 +351,7 @@ def test_download_search_needs_every_word():
 
 def test_download_buttons_are_wired_in_both_places():
     app_src = "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "app" / "ui" / "expert").glob("*.py")))
-    roster_src = io.open(ROOT / "app" / "ui" / "components" / "roster.py", encoding="utf-8").read()
+    roster_src = io.open(ROOT / "app" / "ui" / "components" / "roster" / "control.py", encoding="utf-8").read()
     viewer_src = io.open(ROOT / "app" / "ui" / "components" / "artifact_viewer.py", encoding="utf-8").read()
     assert "WorkspaceDownloadDialog(self.workspace_root)" in app_src
     assert "self.roster_control.on_open_workspace_download = self.workspace_download.open" in app_src

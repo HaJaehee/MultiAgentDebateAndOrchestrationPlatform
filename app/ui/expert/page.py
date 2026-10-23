@@ -26,9 +26,10 @@ from app.orchestration.turns import unfinished_turn
 from app.security import is_loopback
 from app.session_ops import discard_turn
 from app.ui.components.artifact_viewer import ArtifactViewer, merge_artifacts
-from app.ui.components.chat_feed import ChatFeed, clip_reloaded_output
+from app.ui.components.chat_feed.feed import ChatFeed
+from app.ui.components.chat_feed.common import clip_reloaded_output
 from app.ui.components.quiet_splitter import SPLITTER_FREEZE_JS, QuietSplitter
-from app.ui.components.roster import AgentRosterControl
+from app.ui.components.roster.control import AgentRosterControl
 from app.ui.components.sidebar import SessionSidebar, active_agent_count
 from app.ui.components.workspace_download import WorkspaceDownloadDialog
 from app.ui.diagnostics_script import CLIENT_DIAGNOSTICS_JS
