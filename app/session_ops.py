@@ -26,6 +26,7 @@ import uuid
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import (
     ArtifactModel,
@@ -370,3 +371,21 @@ async def continue_session(
         "workspace": source.workspace_dir or "",
         "source_session_id": source_session_id,
     }
+
+
+async def load_feed_messages(db: AsyncSession, session_id: str) -> List[Dict[str, Any]]:
+    """체험·쉬운 화면이 다시 그릴 이 대화의 발언 목록 (기록 순서). 도구 기록은 싣지 않습니다."""
+    rows = (await db.execute(
+        select(MessageModel).where(MessageModel.session_id == session_id).order_by(MessageModel.created_at)
+    )).scalars().all()
+    return [
+        {
+            "id": m.id, "sender_key": m.sender_key, "sender_name": m.sender_name,
+            "sender_role": m.sender_role, "content": m.content, "round_number": m.round_number,
+            "msg_type": m.msg_type, "created_at": m.created_at, "started_at": m.started_at,
+            "finished_at": m.finished_at, "turn_started_at": m.turn_started_at,
+            "graph_node_id": m.graph_node_id, "graph_port": m.graph_port, "llm_meta": m.llm_meta,
+            "tool_calls": [],
+        }
+        for m in rows
+    ]

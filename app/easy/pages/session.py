@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Dict, List, Optional, Set, Any
+from typing import Any, Dict, List, Optional, Set
 
 from fastapi import Request
 from nicegui import ui
@@ -22,20 +22,32 @@ from app.agents.pool import get_agent_pool
 from app.database.models import SessionModel
 from app.database.session import get_session_factory
 from app.easy.catalog import tool_label
-from app.easy.loop import ACTION, APPROVAL, ERROR, NOTE, PLAN, SYNTHESIS, THOUGHT, USER, Change, LoopTimeline, Speech
-from app.easy.pages.common import EASY_HOME, Viewer, agent_avatar, easy_header, easy_setup, resolve_viewer
+from app.easy.loop import (
+    ACTION,
+    APPROVAL,
+    ERROR,
+    NOTE,
+    PLAN,
+    SYNTHESIS,
+    THOUGHT,
+    USER,
+    Change,
+    LoopTimeline,
+    Speech,
+)
+from app.easy.pages.common import Viewer, agent_avatar, easy_header, easy_setup, resolve_viewer
 from app.easy.sessions import load_messages, owned_session
 from app.events import EventType
 from app.mcp.policy import OUTCOME_LABELS, tool_outcome
-from app.orchestration.turn_run import TurnRun
 from app.orchestration.runner import get_debate_runner
+from app.orchestration.turn_run import TurnRun
 from app.orchestration.turns import unfinished_turn
+from app.routes import EASY_HOME
 from app.security import is_loopback
-from app.trial.pages.common import disabled_page, empty_state, footer_notice
-from app.trial.pages.session import MARKDOWN_EXTRAS
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.components.chat_feed import ChatFeed
 from app.ui.math_markdown import MathMarkdown
+from app.ui.shared.page import MARKDOWN_EXTRAS, disabled_page, empty_state, footer_notice
 
 logger = logging.getLogger(__name__)
 

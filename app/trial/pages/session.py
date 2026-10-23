@@ -18,30 +18,22 @@ from typing import Any, Dict, List, Optional, Set
 from fastapi import Request
 from fastapi.responses import RedirectResponse
 from nicegui import ui
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.llm_gate import get_llm_gate
 from app.agents.personas import session_roster_agents
 from app.agents.pool import get_agent_pool
 from app.config import get_config
-from app.database.models import MessageModel, SessionModel
+from app.database.models import SessionModel
 from app.database.session import get_session_factory
 from app.events import EventType
-from app.orchestration.turn_run import TurnRun
 from app.orchestration.runner import get_debate_runner
+from app.orchestration.turn_run import TurnRun
 from app.orchestration.turns import unfinished_turn
+from app.routes import TRIAL_LOGIN_PATH
+from app.session_ops import load_feed_messages
 from app.trial.catalog import ResolvedTemplate, resolve_template
 from app.trial.models import TrialSessionModel
-from app.trial.pages.common import (
-    disabled_page,
-    duration,
-    empty_state,
-    footer_notice,
-    header,
-    local_time,
-    page_setup,
-)
+from app.trial.pages.common import header
 from app.trial.store import (
     agreed_and_open,
     create_copy,
@@ -50,35 +42,25 @@ from app.trial.store import (
     save_feedback,
     session_result,
 )
-from app.trial.web import TRIAL_LOGIN_PATH, Visitor, current_visitor, is_owner
+from app.trial.web import Visitor, current_visitor, is_owner
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.components.chat_feed import ChatFeed
 from app.ui.math_markdown import MathMarkdown
+from app.ui.shared.page import (
+    MARKDOWN_EXTRAS,
+    disabled_page,
+    duration,
+    empty_state,
+    footer_notice,
+    local_time,
+    page_setup,
+)
 
 logger = logging.getLogger(__name__)
 
 # 발언 수로 세지 않는 기록 (사람의 말, 안내, 실패 표시).
 _NOT_SPEECH = {"user", "system", "error"}
 _ROUND_RE = re.compile(r"(\d+)")
-
-MARKDOWN_EXTRAS = ["fenced-code-blocks", "tables", "mermaid", "cuddled-lists"]
-
-
-async def load_feed_messages(db: AsyncSession, session_id: str) -> List[Dict[str, Any]]:
-    rows = (await db.execute(
-        select(MessageModel).where(MessageModel.session_id == session_id).order_by(MessageModel.created_at)
-    )).scalars().all()
-    return [
-        {
-            "id": m.id, "sender_key": m.sender_key, "sender_name": m.sender_name,
-            "sender_role": m.sender_role, "content": m.content, "round_number": m.round_number,
-            "msg_type": m.msg_type, "created_at": m.created_at, "started_at": m.started_at,
-            "finished_at": m.finished_at, "turn_started_at": m.turn_started_at,
-            "graph_node_id": m.graph_node_id, "graph_port": m.graph_port, "llm_meta": m.llm_meta,
-            "tool_calls": [],
-        }
-        for m in rows
-    ]
 
 
 def is_speech(msg: Dict[str, Any]) -> bool:

@@ -26,6 +26,19 @@ from typing import Dict, Iterator, Set, Tuple
 APP = Path(__file__).resolve().parents[1] / "app"
 
 SCREENS = ("app.ui", "app.trial", "app.easy")
+
+# `app.ui` 안의 두 갈래. 새 모듈은 반드시 어느 한쪽에 넣습니다 (`test_every_ui_module_is_classified`).
+EXPERT_UI = (
+    "app.ui.app", "app.ui.expert", "app.ui.personas_page", "app.ui.graph_page",
+    "app.ui.components.roster", "app.ui.components.sidebar", "app.ui.components.artifact_viewer",
+    "app.ui.components.workspace_download", "app.ui.components.access_token", "app.ui.components.graph_canvas",
+)
+SHARED_UI = (
+    "app.ui.shared", "app.ui.components.chat_feed", "app.ui.components.model_status",
+    "app.ui.components.agent_appearance", "app.ui.components.quiet_splitter", "app.ui.math_markdown",
+    "app.ui.clipboard", "app.ui.theme", "app.ui.mermaid_export", "app.ui.mention_input",
+    "app.ui.diagnostics_script",
+)
 ENGINE_SIDE = ("app.orchestration", "app.agents", "app.mcp", "app.database", "app.config")
 
 # (가져오는 쪽 접두어, 가져올 수 없는 접두어들)
@@ -43,10 +56,14 @@ RULES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("app.orchestration.speech", ("app.orchestration.engine", "app.orchestration.phases")),
     ("app.orchestration.conversation", ("app.orchestration.engine", "app.orchestration.phases")),
     ("app.orchestration.turn_setup", ("app.orchestration.engine", "app.orchestration.phases")),
-    # 전문가 화면(`app.ui.app`, 나중에 `app.ui.expert`)은 체험·쉬운 화면이 가져다 쓰지 않습니다.
-    ("app.trial", ("app.easy", "app.ui.app", "app.ui.expert")),
-    ("app.easy", ("app.trial", "app.ui.app", "app.ui.expert")),
-    ("app.ui", ("app.trial", "app.easy")),
+    # 쉬운 화면은 체험 사이트(방문자 로그인·주소·표) 위에서 돕니다. 체험 쪽은 쉬운 화면을 모르고,
+    # 쉬운 화면은 체험 화면(`app.trial.pages`)을 가져다 쓰지 않습니다. 둘 다 전문가 화면을 모릅니다.
+    ("app.trial", ("app.easy",) + EXPERT_UI),
+    ("app.easy", ("app.trial.pages",) + EXPERT_UI),
+    # 화면 공용 부품은 어느 화면에도 기대지 않습니다.
+    *((shared, ("app.trial", "app.easy") + EXPERT_UI) for shared in SHARED_UI),
+    # 전문가 화면은 쉬운 화면의 기능(대화로 에이전트 만들기)을 빌려 쓰지만 체험 화면은 모릅니다.
+    *((expert, ("app.trial",)) for expert in EXPERT_UI),
 )
 
 # 토론을 돌리는 쪽은 NiceGUI 를 가져오지 않습니다.
@@ -55,16 +72,6 @@ NO_NICEGUI = ENGINE_SIDE
 # 아직 남은 위반: (가져오는 모듈, 가져오는 모듈). 줄이기만 합니다.
 KNOWN_VIOLATIONS: Set[Tuple[str, str]] = {
     ("app.config", "app.mcp"),  # 도구 규칙 문법 (P7)
-    ("app.easy.models", "app.trial"),  # P4
-    ("app.easy.pages.build", "app.trial"),
-    ("app.easy.pages.common", "app.trial"),
-    ("app.easy.pages.home", "app.trial"),
-    ("app.easy.pages.run", "app.trial"),
-    ("app.easy.pages.session", "app.trial"),
-    ("app.easy.sessions", "app.trial"),
-    ("app.trial.pages.common", "app.easy"),
-    ("app.ui.app", "app.easy"),
-    ("app.ui.components.roster", "app.easy"),
 }
 
 
@@ -146,6 +153,16 @@ def test_no_new_layer_violations():
     assert not new, "의존 방향을 거스르는 import 가 새로 생겼습니다:\n" + "\n".join(
         f"  {a} → {b}" for a, b in new
     )
+
+
+def test_every_ui_module_is_classified():
+    """`app.ui` 의 모듈은 전문가 화면이거나 화면 공용 부품입니다. 어느 쪽인지 정해야 규칙이 걸립니다."""
+    loose = sorted(
+        m for m in collect()
+        if _under(m, "app.ui") and m not in ("app.ui", "app.ui.components")
+        and not any(_under(m, p) for p in EXPERT_UI + SHARED_UI)
+    )
+    assert not loose, f"EXPERT_UI 나 SHARED_UI 에 넣어 주세요: {loose}"
 
 
 def test_known_violations_are_still_real():

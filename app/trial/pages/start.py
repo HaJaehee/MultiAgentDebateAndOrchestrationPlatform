@@ -13,16 +13,9 @@ from app.agents.pool import get_agent_pool
 from app.config import get_config
 from app.database.session import get_session_factory
 from app.orchestration.runner import get_debate_runner
+from app.routes import TRIAL_LOGIN_PATH
 from app.trial.catalog import resolve_template
-from app.trial.pages.common import (
-    avatar,
-    disabled_page,
-    empty_state,
-    footer_notice,
-    header,
-    page_setup,
-    participant_color,
-)
+from app.trial.pages.common import header
 from app.trial.store import create_copy
 from app.trial.templates import (
     STRATEGY_CHOICES,
@@ -32,7 +25,15 @@ from app.trial.templates import (
     input_problems,
     render_prompt,
 )
-from app.trial.web import TRIAL_LOGIN_PATH, current_visitor, is_owner
+from app.trial.web import current_visitor, is_owner
+from app.ui.shared.page import (
+    avatar,
+    disabled_page,
+    empty_state,
+    footer_notice,
+    page_setup,
+    participant_color,
+)
 
 logger = logging.getLogger(__name__)
 

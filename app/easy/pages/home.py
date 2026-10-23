@@ -7,18 +7,10 @@ from nicegui import ui
 
 from app.agents.pool import get_agent_pool
 from app.database.session import get_session_factory
-from app.easy.pages.common import (
-    EASY_BUILD,
-    EASY_HOME,
-    EASY_RUN,
-    Viewer,
-    agent_avatar,
-    easy_header,
-    easy_setup,
-    resolve_viewer,
-)
+from app.easy.pages.common import Viewer, agent_avatar, easy_header, easy_setup, resolve_viewer
 from app.easy.sessions import delete_guest_agent, list_easy_sessions, list_guest_agents
-from app.trial.pages.common import disabled_page, footer_notice, local_time
+from app.routes import EASY_BUILD, EASY_HOME, EASY_RUN
+from app.ui.shared.page import disabled_page, footer_notice, local_time
 
 # 색상. 생각·행동·관찰은 실행 화면의 단계 막대와 동일한 색상입니다 (common.py `.easy-step-*`).
 THOUGHT, ACTION, OBSERVE = "#6366f1", "#f59e0b", "#10b981"

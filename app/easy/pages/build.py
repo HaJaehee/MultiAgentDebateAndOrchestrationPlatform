@@ -31,10 +31,11 @@ from app.easy.builder import (
     with_draft,
 )
 from app.easy.catalog import Option, server_options, skill_options
-from app.easy.pages.common import EASY_BUILD, EASY_HOME, EASY_RUN, Viewer, agent_avatar, easy_header, easy_setup, resolve_viewer
+from app.easy.pages.common import Viewer, agent_avatar, easy_header, easy_setup, resolve_viewer
 from app.orchestration.runner import get_debate_runner
-from app.trial.pages.common import disabled_page, footer_notice
+from app.routes import EASY_BUILD, EASY_HOME, EASY_RUN
 from app.ui.math_markdown import MathMarkdown
+from app.ui.shared.page import disabled_page, footer_notice
 
 logger = logging.getLogger(__name__)
 

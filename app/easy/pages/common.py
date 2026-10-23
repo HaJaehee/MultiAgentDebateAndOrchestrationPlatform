@@ -16,14 +16,11 @@ from nicegui import ui
 
 from app.agents.base import style_for_agent
 from app.config import get_config
-from app.trial.gate import TRIAL_HOME
-from app.trial.pages.common import page_setup
-from app.trial.web import TRIAL_LOGIN_PATH, TRIAL_LOGOUT_PATH, current_visitor, is_owner
+from app.routes import EASY_HOME, TRIAL_HOME, TRIAL_LOGIN_PATH, TRIAL_LOGOUT_PATH
+from app.trial.web import current_visitor, is_owner
 from app.ui.components.model_status import build_model_status_button
+from app.ui.shared.page import page_setup
 
-EASY_HOME = "/trial/easy"
-EASY_BUILD = f"{EASY_HOME}/build"
-EASY_RUN = f"{EASY_HOME}/run"
 EASY_TITLE = "AI 에이전트 알아보기"
 
 EASY_CSS = """

@@ -32,7 +32,7 @@ from app.database.models import MessageModel, SessionAgentModel, SessionModel, T
 from app.easy.builder import AgentDraft
 from app.easy.catalog import DEMO_AGENT, GUEST_SERVERS, MAX_RUN_AGENTS, easy_workspace
 from app.easy.models import EasyAgentModel, EasySessionModel
-from app.trial.pages.session import load_feed_messages
+from app.session_ops import load_feed_messages
 
 DEMO_REF = "demo"
 

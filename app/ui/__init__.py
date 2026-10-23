@@ -1,3 +1,1 @@
-from app.ui.app import create_ui
-
-__all__ = ["create_ui"]
+"""화면: 전문가 화면(`app.ui.app`), 화면 공용 부품(`components`, `shared`)."""

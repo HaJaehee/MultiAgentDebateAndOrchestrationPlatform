@@ -19,8 +19,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from app.config import get_config
 from app.database.session import get_session_factory
-from app.security import LOGIN_PATH as OWNER_LOGIN_PATH
-from app.security import VIEWER_OWNER, viewer_role
+from app.routes import TRIAL_HOME, TRIAL_LOGIN_PATH, TRIAL_LOGOUT_PATH
+from app.security import LOGIN_PATH as OWNER_LOGIN_PATH, VIEWER_OWNER, viewer_role
 from app.trial.auth import (
     MAX_NAME_LENGTH,
     MAX_PIN_LENGTH,
@@ -33,10 +33,7 @@ from app.trial.auth import (
     login_or_register,
     user_from_cookie,
 )
-from app.trial.gate import TRIAL_HOME
 
-TRIAL_LOGIN_PATH = "/trial/login"
-TRIAL_LOGOUT_PATH = "/trial/logout"
 MAX_LOGIN_BODY = 4096
 
 

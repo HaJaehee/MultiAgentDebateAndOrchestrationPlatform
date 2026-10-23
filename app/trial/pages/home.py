@@ -12,19 +12,20 @@ from app.agents.llm_gate import get_llm_gate
 from app.config import get_config
 from app.database.session import get_session_factory
 from app.orchestration.runner import get_debate_runner
+from app.routes import TRIAL_LOGIN_PATH
 from app.trial.catalog import official_templates
-from app.trial.pages.common import (
-    avatars,
-    disabled_page,
-    empty_state,
-    footer_notice,
-    header,
-    local_time,
-    page_setup,
+from app.trial.pages.common import avatars, header
+from app.trial.store import (
+    SessionRow,
+    copy_template,
+    delete_copy,
+    delete_trial_session,
+    list_copies,
+    list_user_sessions,
 )
-from app.trial.store import SessionRow, copy_template, delete_copy, delete_trial_session, list_copies, list_user_sessions
 from app.trial.templates import TemplateError, TrialTemplate, copy_ref, official_ref
-from app.trial.web import TRIAL_LOGIN_PATH, Visitor, current_visitor, is_owner
+from app.trial.web import Visitor, current_visitor, is_owner
+from app.ui.shared.page import disabled_page, empty_state, footer_notice, local_time, page_setup
 
 ALL = "전체"
 

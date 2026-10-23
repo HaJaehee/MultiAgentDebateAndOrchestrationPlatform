@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import nicegui
 
-TRIAL_HOME = "/trial"
+from app.routes import TRIAL_HOME
+
 
 _STATIC_PREFIX = f"/_nicegui/{nicegui.__version__}/"
 _ALLOWED_PREFIXES = (

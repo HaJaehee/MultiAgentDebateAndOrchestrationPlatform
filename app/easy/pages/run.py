@@ -23,10 +23,11 @@ from app.easy.catalog import (
     SERVER_GUIDE,
     example_files,
 )
-from app.easy.pages.common import EASY_HOME, EASY_RUN, Viewer, agent_avatar, easy_header, easy_setup, resolve_viewer
+from app.easy.pages.common import Viewer, agent_avatar, easy_header, easy_setup, resolve_viewer
 from app.easy.sessions import DEMO_REF, Choice, agent_choices, create_easy_session
 from app.orchestration.runner import get_debate_runner
-from app.trial.pages.common import disabled_page, footer_notice
+from app.routes import EASY_HOME, EASY_RUN
+from app.ui.shared.page import disabled_page, footer_notice
 
 logger = logging.getLogger(__name__)
 

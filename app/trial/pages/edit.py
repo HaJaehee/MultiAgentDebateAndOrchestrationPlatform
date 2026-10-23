@@ -15,20 +15,12 @@ from fastapi import Request
 from fastapi.responses import RedirectResponse
 from nicegui import ui
 
-from app.config import get_config
+from app.config import ORCHESTRATOR_KEY, get_config
 from app.database.session import get_session_factory
+from app.routes import TRIAL_LOGIN_PATH
 from app.trial.catalog import official_templates
-from app.trial.pages.common import (
-    avatar,
-    disabled_page,
-    empty_state,
-    footer_notice,
-    header,
-    page_setup,
-    participant_color,
-)
+from app.trial.pages.common import header
 from app.trial.store import copy_template, delete_copy, get_copy, save_copy
-from app.config import ORCHESTRATOR_KEY
 from app.trial.templates import (
     STRATEGY_CHOICES,
     TemplateError,
@@ -37,7 +29,15 @@ from app.trial.templates import (
     parse_template,
     role_library,
 )
-from app.trial.web import TRIAL_LOGIN_PATH, current_visitor, is_owner
+from app.trial.web import current_visitor, is_owner
+from app.ui.shared.page import (
+    avatar,
+    disabled_page,
+    empty_state,
+    footer_notice,
+    page_setup,
+    participant_color,
+)
 
 STANCES = {"neutral": "중립", "proponent": "찬성 편", "critic": "반대 편"}
 MAX_PARTICIPANTS = 6

@@ -2,8 +2,10 @@ import asyncio
 import logging
 import uuid
 from typing import Any, Dict, List, Optional, Set, Tuple
+
 from nicegui import run as ng_run, ui
 from sqlalchemy import desc, select
+
 from app.about import (
     ABOUT_LINE,
     APP_NAME,
@@ -14,36 +16,29 @@ from app.about import (
     AUTHOR_EMAIL,
     LICENSE_NAME,
 )
-from app.agents.personas import (
-    effective_personas,
-    resync_agent_configs,
-    session_roster_agents,
-)
+from app.agents.personas import effective_personas, resync_agent_configs, session_roster_agents
 from app.agents.skills import scan_skills
 from app.config import resolve_workspace_dir
 from app.database.models import ArtifactModel, MessageModel, SessionModel
 from app.database.session import get_session_factory
 from app.events import TURN_END_EVENTS, EventType
 from app.orchestration.graph_run import GraphRunTracker, last_graph_turn, node_labels
-from app.orchestration.turn_run import TurnRun
 from app.orchestration.runner import get_debate_runner
 from app.orchestration.strategies import resolve_strategy_name
+from app.orchestration.turn_run import TurnRun
 from app.orchestration.turns import unfinished_turn
+from app.routes import EASY_HOME
 from app.security import is_loopback
 from app.session_ops import discard_turn
+from app.ui.clipboard import copy_to_clipboard
 from app.ui.components.access_token import build_access_buttons
-from app.ui.components.model_status import build_model_status_button
 from app.ui.components.artifact_viewer import ArtifactViewer, merge_artifacts
 from app.ui.components.chat_feed import ChatFeed, clip_reloaded_output
+from app.ui.components.model_status import build_model_status_button
 from app.ui.components.quiet_splitter import SPLITTER_FREEZE_JS, QuietSplitter
 from app.ui.components.roster import AgentRosterControl
-from app.ui.components.sidebar import (
-    SessionSidebar,
-    active_agent_count,
-    event_changes_session_list,
-)
+from app.ui.components.sidebar import SessionSidebar, active_agent_count, event_changes_session_list
 from app.ui.components.workspace_download import WorkspaceDownloadDialog
-from app.ui.clipboard import copy_to_clipboard
 from app.ui.diagnostics_script import CLIENT_DIAGNOSTICS_JS
 from app.ui.mention_input import MENTION_JS
 from app.ui.mermaid_export import MERMAID_EXPORT_JS, MERMAID_IMAGE_JS
@@ -63,10 +58,6 @@ logger = logging.getLogger(__name__)
 
 def create_ui() -> None:
     """Configures the main NiceGUI web application page and event bindings."""
-    # 모듈 맨 위가 아니라 여기서 가져옵니다. `app.easy.pages` 는 체험 화면을 거쳐 `app.ui.mermaid_export`
-    # 를 부르고, 그 꾸러미의 `app/ui/__init__.py` 가 이 모듈을 부르므로 맨 위에 두면 순환 import 가 됩니다.
-    from app.easy.pages.common import EASY_HOME
-
     @ui.page("/", title="MADO: Multi-Agent Debate & Orchestration Platform", favicon=FAVICON_SVG)
     async def index_page():
         ui.dark_mode(True)

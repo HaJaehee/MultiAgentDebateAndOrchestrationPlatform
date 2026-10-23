@@ -15,12 +15,14 @@ from app.agents.llm_gate import get_llm_gate
 from app.config import get_config
 from app.database.session import get_session_factory
 from app.orchestration.runner import get_debate_runner
-from app.trial.catalog import official_templates
-from app.trial.pages.common import duration, footer_notice, header, local_time, page_setup
-from app.trial.stats import TemplateUsage, UserUsage, usage_report
+from app.routes import TRIAL_ADMIN
 from app.timestamps import as_utc
+from app.trial.catalog import official_templates
+from app.trial.pages.common import header
+from app.trial.stats import TemplateUsage, UserUsage, usage_report
 from app.trial.store import reset_pin, unlock_user
 from app.trial.web import is_owner, owner_only_response
+from app.ui.shared.page import duration, footer_notice, local_time, page_setup
 
 
 def _metric(label: str, value: str) -> None:
@@ -50,7 +52,7 @@ def _template_rows(rows: List[TemplateUsage]) -> None:
 
 
 def build_admin() -> None:
-    @ui.page("/trial/admin")
+    @ui.page(TRIAL_ADMIN)
     async def trial_admin(request: Request):
         if not is_owner(request):
             return owner_only_response()
