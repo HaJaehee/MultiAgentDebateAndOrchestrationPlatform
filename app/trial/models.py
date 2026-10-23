@@ -9,18 +9,13 @@ SQLite 의 외래 키 강제는 켜져 있지 않습니다(`app/database/session
 읽으므로(내부 조인) 그런 행은 보이지 않습니다.
 """
 
-import uuid
 from datetime import datetime
 from typing import Any, Optional
 
 from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database.models import Base, utc_now
-
-
-def _uuid() -> str:
-    return str(uuid.uuid4())
+from app.database.models import Base, utc_now, new_id
 
 
 class TrialUserModel(Base):
@@ -28,7 +23,7 @@ class TrialUserModel(Base):
 
     __tablename__ = "trial_users"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     # 화면에 보이는 이름. 처음 적은 그대로 둡니다.
     name: Mapped[str] = mapped_column(String(40))
     # 같은 사람인지 가리는 열쇠 (공백 정리 + 대소문자 무시). `auth.name_key`.
@@ -60,7 +55,7 @@ class TrialTemplateCopyModel(Base):
 
     __tablename__ = "trial_template_copies"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("trial_users.id"), index=True)
     base_ref: Mapped[str] = mapped_column(String(80), default="")
     title: Mapped[str] = mapped_column(String(255), default="")
@@ -76,7 +71,7 @@ class TrialFeedbackModel(Base):
     __tablename__ = "trial_feedback"
     __table_args__ = (UniqueConstraint("session_id", "user_id", name="uq_trial_feedback"),)
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id"), index=True)
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("trial_users.id"), index=True)
     template_ref: Mapped[str] = mapped_column(String(80), default="")

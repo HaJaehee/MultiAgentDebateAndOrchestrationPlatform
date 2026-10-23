@@ -29,12 +29,8 @@ from app.agents.base import Agent
 from app.agents.pool import AgentPool
 from app.config import AgentConfig
 from app.mermaid_lint import format_issues, lint_mermaid
-from app.orchestration.engine import (
-    MERMAID_REPAIR_ATTEMPTS,
-    OrchestratorEngine,
-    find_mermaid_blocks,
-    normalize_mermaid,
-)
+from app.orchestration.artifacts import MERMAID_REPAIR_ATTEMPTS, find_mermaid_blocks, normalize_mermaid
+from app.orchestration.engine import OrchestratorEngine
 from app.orchestration.state import DebateState
 
 

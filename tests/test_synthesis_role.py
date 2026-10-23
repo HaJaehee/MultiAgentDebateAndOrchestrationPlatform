@@ -14,7 +14,8 @@ from sqlalchemy import select
 
 from app.database.models import ArtifactModel
 from app.database.session import get_session_factory
-from app.orchestration.engine import OrchestratorEngine, synthesis_has_content
+from app.orchestration.engine import OrchestratorEngine
+from app.orchestration.artifacts import synthesis_has_content
 from app.orchestration.state import DebateMessage, DebateState
 from app.ui.components.artifact_viewer import default_tab_index, merge_artifacts
 from tests.fake_llm import FakeLLMCaller

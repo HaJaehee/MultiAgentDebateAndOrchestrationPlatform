@@ -15,6 +15,16 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 
+def as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """SQLite 는 시간대를 버리고 돌려줍니다. 시간대가 없으면 UTC 로 다시 붙입니다.
+
+    섞인 채로 비교하면 `TypeError: can't compare offset-naive and offset-aware datetimes` 가 납니다.
+    """
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 def to_local(value: datetime) -> datetime:
     """기록된 시각을 이 기계의 시간대로 옮깁니다.
 

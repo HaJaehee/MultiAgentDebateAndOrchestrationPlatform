@@ -5,19 +5,14 @@
 자체는 기존 공용 세션 테이블(`sessions`)에 저장되므로 관리자(소유자) 화면에서도 확인할 수 있습니다 (체험 세션과 동일).
 """
 
-import uuid
 from datetime import datetime
-from typing import Any, List
+from typing import Any
 
 from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database.models import Base, utc_now
+from app.database.models import Base, utc_now, new_id
 from app.trial import models as _trial_models  # noqa: F401 - `trial_users` 를 외래 키보다 먼저 등록합니다
-
-
-def _uuid() -> str:
-    return str(uuid.uuid4())
 
 
 class EasySessionModel(Base):
@@ -39,7 +34,7 @@ class EasyAgentModel(Base):
 
     __tablename__ = "easy_agents"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("trial_users.id"), index=True)
     name: Mapped[str] = mapped_column(String(80), default="")
     role: Mapped[str] = mapped_column(String(200), default="")

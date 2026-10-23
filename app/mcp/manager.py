@@ -734,19 +734,3 @@ class MCPManager:
             )
 
 
-def get_mcp_manager() -> MCPManager:
-    """기본 작업 공간의 런타임.
-
-    예전에는 이것이 프로세스 전체의 유일한 매니저였습니다. 지금은
-    `MCPRuntimePool` 이 작업 공간마다 하나씩 들고 있고, 이 함수는 그중 기본
-    작업 공간의 것을 돌려줍니다. 토론 경로는 세션의 작업 공간으로 런타임을
-    받아 쓰므로 이 함수를 쓰지 않습니다 — 아직 어느 대화에도 속하지 않은
-    화면(설정 패널의 기본값 표시 등)과 옛 호출자를 위한 자리입니다.
-
-    **아직 떠 있지 않으면 빈 런타임을 돌려줍니다.** 여기서 서버를 띄우지는
-    않습니다. 기동은 소유자가 분명한 자리(풀의 `acquire`)에서만 일어나야
-    반납도 그 짝을 맞출 수 있습니다.
-    """
-    from app.mcp.pool import get_runtime_pool
-
-    return get_runtime_pool().default_runtime()

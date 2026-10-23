@@ -17,15 +17,7 @@ from app.mcp.policy import OUTCOME_LABELS, describe_verdict, tool_outcome
 from app.orchestration.graph_run import NodeBadges, node_labels
 from app.orchestration.state import FALLBACK_BADGE, fallback_sentence
 from app.orchestration.strategies import get_strategy
-# 시각 규칙은 `app.timestamps` 가 정본입니다. 여기서도 이름을 내보내 기존 호출자
-# (`from app.export import to_local` 등)가 그대로 동작하게 합니다.
-from app.timestamps import (  # noqa: F401 - 다시 내보냄
-    format_duration,
-    report_completed_line,
-    speech_time_text,
-    speech_timing,
-    to_local,
-)
+from app.timestamps import speech_time_text, to_local
 
 # 발언 종류별 머리표. 누가 무슨 자격으로 말했는지가 한눈에 보여야 합니다.
 TYPE_LABEL = {
@@ -83,7 +75,7 @@ def _tool_call_block(call: Dict[str, Any]) -> List[str]:
     )
     output = str(call.get("output", "") or "")
 
-    lines = [f"<details>", f"<summary>{mark} <code>{name}</code> — {OUTCOME_LABELS[outcome]}</summary>", ""]
+    lines = ["<details>", f"<summary>{mark} <code>{name}</code> — {OUTCOME_LABELS[outcome]}</summary>", ""]
     verdict = describe_verdict(call.get("security"))
     if verdict:
         lines.append(f"**판정**: {verdict}")

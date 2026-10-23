@@ -5,7 +5,7 @@ import threading
 from typing import Any, AsyncGenerator
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
-from nicegui import app as nicegui_app, ui
+from nicegui import ui
 import uvicorn
 from app.agents.pool import get_agent_pool
 from app.about import (
@@ -25,7 +25,6 @@ from app.diagnostics import (
     start_loop_watchdog,
     stop_loop_watchdog,
 )
-from app.mcp.manager import get_mcp_manager
 from app.mcp.pool import get_runtime_pool
 from app.orchestration.runner import get_debate_runner
 from app.orchestration.turns import mark_interrupted_turns
@@ -295,7 +294,7 @@ async def mcp_status():
     """
     cfg = get_config()
     pool = get_runtime_pool()
-    status = get_mcp_manager().connection_status()
+    status = pool.default_runtime().connection_status()
     servers = [
         {
             "name": name,

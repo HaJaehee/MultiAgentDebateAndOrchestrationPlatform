@@ -25,13 +25,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.database.models import ArtifactModel, MessageModel, SessionModel
 from app.database.session import _add_missing_columns, get_session_factory, init_db
-from app.export import (
-    build_session_markdown,
-    format_duration,
-    report_completed_line,
-    speech_time_text,
-    to_local,
-)
+from app.export import build_session_markdown
+from app.timestamps import format_duration, report_completed_line, speech_time_text, to_local
 from app.orchestration.control import TurnControl
 from app.orchestration.engine import OrchestratorEngine
 from app.ui.components.chat_feed import ChatFeed, card_time_text

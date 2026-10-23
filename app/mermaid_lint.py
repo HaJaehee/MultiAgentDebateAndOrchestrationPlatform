@@ -109,7 +109,7 @@ class MermaidIssue:
 # 앞 글자가 단어 문자여야 `-->` 의 `>` 와 헷갈리지 않습니다.
 _ASYMMETRIC_SPAN_RE = re.compile(r"(?<=\w)>([^\[\]\n>]*)\]")
 # 스타일 문장 안의 `rgb(…)` 류. 쉼표로 속성을 나누는 문장이라 거부됩니다 (파서 확인).
-_STYLE_LINE_RE = re.compile(r"^\s*(?:style|classDef|linkStyle)\b", re.IGNORECASE)
+STYLE_LINE_RE = re.compile(r"^\s*(?:style|classDef|linkStyle)\b", re.IGNORECASE)
 _STYLE_FUNCTION_RE = re.compile(r"\b(?:rgba?|hsla?)\s*\(", re.IGNORECASE)
 _BARE_SUBGRAPH_RE = re.compile(r'^\s*subgraph\s+([^"\[\]]*)$', re.IGNORECASE)
 # `subgraph pay "결제"` — 아이디 뒤에 따옴표 제목은 거부됩니다 (파서 확인).
@@ -327,7 +327,7 @@ def lint_mermaid(code: str) -> List[MermaidIssue]:
             body = _strip_quoted(raw).strip()
             lowered = body.lower()
 
-            if _STYLE_LINE_RE.match(body):
+            if STYLE_LINE_RE.match(body):
                 # 스타일 문장은 노드·라벨 문법이 아니라 괄호 검사 대상이 아닙니다.
                 if _STYLE_FUNCTION_RE.search(raw):
                     issues.append(MermaidIssue(

@@ -40,12 +40,13 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence, Set, 
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.config import ORCHESTRATOR_KEY
+
 NodeType = Literal["start", "agent", "merge", "gate", "end"]
 Carry = Literal["full", "digest", "refs"]
 Wait = Literal["all", "any"]
 
 GRAPH_SCHEMA_VERSION = 1
-ORCHESTRATOR_KEY = "orchestrator"
 
 INPUT_PORTS: Dict[str, Tuple[str, ...]] = {
     "start": (),

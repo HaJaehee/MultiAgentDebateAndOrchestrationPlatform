@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import MessageModel, SessionModel
 from app.trial.models import TrialFeedbackModel, TrialSessionModel, TrialUserModel
-from app.trial.store import aware
+from app.timestamps import as_utc
 
 
 @dataclass
@@ -106,7 +106,7 @@ async def usage_report(db: AsyncSession, *, feedback_limit: int = 30) -> UsageRe
             usage.unfinished += 1
         usage.turns += len(messages)
         for msg in messages:
-            begin, end = aware(msg.turn_started_at), aware(msg.finished_at)
+            begin, end = as_utc(msg.turn_started_at), as_utc(msg.finished_at)
             if begin and end:
                 usage.seconds_total += max(0.0, (end - begin).total_seconds())
                 usage.seconds_count += 1
@@ -126,7 +126,7 @@ async def usage_report(db: AsyncSession, *, feedback_limit: int = 30) -> UsageRe
                 usage.down += 1
         if feedback.comment and len(report.feedback) < feedback_limit:
             report.feedback.append(FeedbackNote(
-                when=aware(feedback.updated_at), user=user_name,
+                when=as_utc(feedback.updated_at), user=user_name,
                 template=titles.get(feedback.template_ref, feedback.template_ref),
                 rating=feedback.rating, comment=feedback.comment, session_id=feedback.session_id,
             ))
@@ -137,7 +137,7 @@ async def usage_report(db: AsyncSession, *, feedback_limit: int = 30) -> UsageRe
         (
             UserUsage(
                 user_id=u.id, name=u.name, sessions=sessions_per_user.get(u.id, 0),
-                last_login_at=aware(u.last_login_at), locked_until=aware(u.locked_until),
+                last_login_at=as_utc(u.last_login_at), locked_until=as_utc(u.locked_until),
                 has_pin=bool(u.pin_hash),
             )
             for u in users

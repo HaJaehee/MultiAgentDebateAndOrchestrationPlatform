@@ -32,7 +32,7 @@ from app.session_ops import discard_turn
 from app.ui.components.access_token import build_access_buttons
 from app.ui.components.model_status import build_model_status_button
 from app.ui.components.artifact_viewer import ArtifactViewer, merge_artifacts
-from app.ui.components.chat_feed import ChatFeed, clip_tool_output
+from app.ui.components.chat_feed import ChatFeed, clip_reloaded_output
 from app.ui.components.quiet_splitter import SPLITTER_FREEZE_JS, QuietSplitter
 from app.ui.components.roster import AgentRosterControl
 from app.ui.components.sidebar import (
@@ -1185,7 +1185,7 @@ def create_ui() -> None:
                             {
                                 "tool_name": tc.tool_name,
                                 "arguments": tc.arguments,
-                                "output": clip_tool_output(tc.output),
+                                "output": clip_reloaded_output(tc.output),
                                 "status": tc.status,
                                 "security": {
                                     "decision": tc.decision or "",

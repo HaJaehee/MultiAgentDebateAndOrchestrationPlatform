@@ -57,7 +57,7 @@ STREAM_RENDER_INTERVAL = 0.25
 MAX_RELOADED_TOOL_OUTPUT = 4000
 
 
-def clip_tool_output(text: str, limit: int = MAX_RELOADED_TOOL_OUTPUT) -> str:
+def clip_reloaded_output(text: str, limit: int = MAX_RELOADED_TOOL_OUTPUT) -> str:
     """긴 도구 출력을 화면용으로 자릅니다. 자른 사실과 전문의 위치를 함께 알립니다."""
     body = text or ""
     if len(body) <= limit:

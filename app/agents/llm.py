@@ -27,7 +27,8 @@ from app.agents.consultation import (
     is_consultation_tool,
     run_consultation_tool,
 )
-from app.mcp.manager import MCPManager, get_mcp_manager
+from app.mcp.manager import MCPManager
+from app.mcp.pool import get_runtime_pool
 
 logger = logging.getLogger(__name__)
 
@@ -1442,7 +1443,7 @@ class LLMCaller:
         # 기본 런타임. 실제 토론은 발언마다 **그 대화의 작업 공간에 해당하는**
         # 런타임을 `call_agent(mcp=...)` 로 받아 씁니다. 이 값은 그것이 주어지지
         # 않았을 때의 폴백입니다.
-        self.mcp_manager = mcp_manager or get_mcp_manager()
+        self.mcp_manager = mcp_manager or get_runtime_pool().default_runtime()
 
     def build_system_prompt(
         self,

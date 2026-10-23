@@ -24,10 +24,10 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 
 from app.agents.base import Agent
+from app.config import ORCHESTRATOR_KEY
 from app.orchestration.state import DebateState
 
 # 오케스트레이터는 라운드 밖에 섭니다. 계획(round 0)과 최종 합성이 그 자리입니다.
-ORCHESTRATOR_KEY = "orchestrator"
 
 
 def order_by_priority(agents: List[Agent]) -> List[Agent]:

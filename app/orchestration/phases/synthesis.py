@@ -28,6 +28,7 @@ from app.orchestration import plan_gate, turns
 from app.orchestration.artifacts import (
     CODE_LANGUAGES,
     MAX_DEBATE_CODE_ARTIFACTS,
+    MERMAID_REPAIR_ATTEMPTS,
     extract_code_blocks,
     find_mermaid_blocks,
     normalize_mermaid,
@@ -395,10 +396,10 @@ class SynthesisPhaseExecutor:
             f"2. **종합 Mermaid 다이어그램** 하나 (```mermaid 블록. 노드 라벨에 괄호를 쓸 때는 "
             f'A["결제 서비스 (Payment)"] 처럼 반드시 큰따옴표로 감쌀 것)\n'
             + (f"3. {plan_gate.COMPLETION_INSTRUCTION}\n" if completion else "") +
-            f"\n"
-            f"[하지 말 것] 소스 코드를 다시 쓰거나 붙여 넣지 마세요. 코드는 전문가 발언과 작업 "
-            f"공간 파일에 이미 있고, 산출물 탭에도 전문가 발언에서 따로 모읍니다. 코드가 필요한 "
-            f"자리는 파일 경로·모듈·함수 이름으로만 가리키세요."
+            "\n"
+            "[하지 말 것] 소스 코드를 다시 쓰거나 붙여 넣지 마세요. 코드는 전문가 발언과 작업 "
+            "공간 파일에 이미 있고, 산출물 탭에도 전문가 발언에서 따로 모읍니다. 코드가 필요한 "
+            "자리는 파일 경로·모듈·함수 이름으로만 가리키세요."
         )
         return [{"role": "user", "content": prompt}]
 
@@ -414,9 +415,7 @@ class SynthesisPhaseExecutor:
         on_event: Optional[EventCallback],
     ) -> str:
         """합성 본문의 Mermaid 다이어그램 문법을 검증하고, 오류가 발견되면 오케스트레이터에게 수정을 요청합니다."""
-        from app.orchestration import engine as engine_module
-
-        max_attempts = engine_module.MERMAID_REPAIR_ATTEMPTS
+        max_attempts = MERMAID_REPAIR_ATTEMPTS
         blocks = find_mermaid_blocks(text)
         if not blocks:
             return text

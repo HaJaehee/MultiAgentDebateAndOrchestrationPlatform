@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import re
@@ -18,10 +17,12 @@ from app.database.models import (
     TurnModel,
 )
 from app.database.session import get_session_factory
-from app.export import build_session_markdown, safe_filename, to_local
+from app.export import build_session_markdown, safe_filename
+from app.timestamps import to_local, as_utc
 from app.graph_store import graph_agent_keys
 from app.orchestration.runner import get_debate_runner
-from app.orchestration.strategies import ORCHESTRATOR_KEY, get_strategy
+from app.config import ORCHESTRATOR_KEY
+from app.orchestration.strategies import get_strategy
 from app.session_ops import continue_session
 
 logger = logging.getLogger(__name__)
@@ -150,13 +151,6 @@ def title_sort_key(title: Optional[str]) -> str:
     return (_LEADING_SYMBOLS.sub("", text) or text).casefold()
 
 
-def _aware(value: Optional[datetime]) -> Optional[datetime]:
-    """SQLite 는 시간대를 떼고 돌려주기도 합니다. 섞여서 비교가 터지지 않게 UTC 로 맞춥니다."""
-    if value is None:
-        return None
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
-
-
 def sort_sessions(
     sessions: Sequence[Any],
     sort: SessionSort,
@@ -174,14 +168,14 @@ def sort_sessions(
         if sort.key == "title":
             return title_sort_key(s.title)
         if sort.key == "started":
-            return _aware(started.get(s.id))
+            return as_utc(started.get(s.id))
         if sort.key == "completed":
-            return _aware(completed.get(s.id))
-        return _aware(s.updated_at)
+            return as_utc(completed.get(s.id))
+        return as_utc(s.updated_at)
 
     epoch = datetime.min.replace(tzinfo=timezone.utc)
     # 동점 정리를 먼저 하고(안정 정렬), 그 위에 기준으로 한 번 더 정렬합니다.
-    by_recent = sorted(sessions, key=lambda s: _aware(s.updated_at) or epoch, reverse=True)
+    by_recent = sorted(sessions, key=lambda s: as_utc(s.updated_at) or epoch, reverse=True)
     present = [s for s in by_recent if value(s) is not None]
     missing = [s for s in by_recent if value(s) is None]
     return sorted(present, key=value, reverse=sort.descending) + missing

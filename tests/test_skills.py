@@ -501,7 +501,8 @@ def test_allowed_skills_ride_along_in_the_session_snapshot():
 
 
 def test_the_orchestrator_sees_live_skill_names_and_tool_less_calls_drop_them(skill_root: _SkillFolder):
-    from app.orchestration.engine import OrchestratorEngine, format_roster
+    from app.orchestration.engine import OrchestratorEngine
+    from app.orchestration.artifacts import format_roster
 
     _write_skill(skill_root.root, "a")
     _write_skill(skill_root.root, "b")

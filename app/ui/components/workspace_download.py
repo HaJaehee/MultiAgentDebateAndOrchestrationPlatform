@@ -19,7 +19,7 @@ import re
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List
 
 from nicegui import app as nicegui_app
 from nicegui import run, ui

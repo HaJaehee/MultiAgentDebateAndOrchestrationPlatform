@@ -25,7 +25,7 @@ from app.agents.llm import LLMUnavailableError
 from app.database.models import MessageModel, ToolCallRecordModel
 from app.database.session import get_session_factory
 from app.export import build_session_markdown
-from app.ui.components.chat_feed import MAX_RELOADED_TOOL_OUTPUT, clip_tool_output
+from app.ui.components.chat_feed import MAX_RELOADED_TOOL_OUTPUT, clip_reloaded_output
 from tests.fake_llm import FakeLLMCaller
 from tests.test_resilience import _engine, _make_session
 
@@ -175,14 +175,14 @@ async def test_saved_document_folds_tool_logs_into_the_speech():
 
 
 def test_short_tool_output_is_left_alone():
-    assert clip_tool_output("짧은 출력") == "짧은 출력"
-    assert clip_tool_output("") == ""
-    assert clip_tool_output(None) == ""
+    assert clip_reloaded_output("짧은 출력") == "짧은 출력"
+    assert clip_reloaded_output("") == ""
+    assert clip_reloaded_output(None) == ""
 
 
 def test_long_tool_output_is_clipped_with_a_pointer_to_the_full_text():
     body = "x" * (MAX_RELOADED_TOOL_OUTPUT + 5000)
-    clipped = clip_tool_output(body)
+    clipped = clip_reloaded_output(body)
 
     assert len(clipped) < len(body)
     assert clipped.startswith("x" * 100)

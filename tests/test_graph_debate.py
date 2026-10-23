@@ -20,13 +20,13 @@ from typing import Any, Dict, List, Tuple
 import pytest
 from sqlalchemy import select
 
-from app.agents.base import Agent
 from app.agents.pool import AgentPool
 from app.config import AgentConfig
 from app.database.models import MessageModel, SessionModel
 from app.database.session import get_session_factory, init_db
 from app.orchestration.control import TurnControl
-from app.orchestration.engine import GraphTurnError, OrchestratorEngine, parse_gate_decision
+from app.orchestration.phases.debate import GraphTurnError, parse_gate_decision
+from app.orchestration.engine import OrchestratorEngine
 from app.orchestration.graph import (
     GraphScheduler,
     back_edges,

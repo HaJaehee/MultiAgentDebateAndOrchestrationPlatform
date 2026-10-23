@@ -9,7 +9,7 @@ import pytest
 
 from app.agents.pool import AgentPool
 from app.config import AgentConfig, SequentialThinkingConfig
-from app.orchestration.engine import format_roster
+from app.orchestration.artifacts import format_roster
 from tests.fake_llm import FakeLLMCaller
 from tests.test_resilience import _engine, _make_session
 

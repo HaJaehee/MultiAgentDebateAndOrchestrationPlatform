@@ -72,6 +72,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.agents.llm import estimate_tokens, is_file_writing_call, strip_reasoning_trace
 from app.orchestration import plan_gate, turns
+from app.orchestration.artifacts import iter_code_fences
 from app.orchestration.state import DebateMessage, DebateState
 
 # 토론 도중 들어온 사용자 발언의 머리표 (`OrchestratorEngine._apply_interjections`).
@@ -204,10 +205,8 @@ def reference_code_blocks(text: str, tool_calls: Sequence[Dict[str, Any]] = ()) 
     참조에는 줄 수, 첫 줄, 짐작되는 파일 경로(펜스 바로 위 줄의 `` `경로` `` 나 펜스의 title,
     이 발언이 쓴 파일)를 적습니다. 다음 발언자는 그 경로를 파일 도구로 읽을 수 있습니다.
     """
-    from app.orchestration.engine import _iter_code_fences
-
     text = text or ""
-    blocks = _iter_code_fences(text)
+    blocks = iter_code_fences(text)
     if not blocks:
         return text
     written = _written_paths(tool_calls)

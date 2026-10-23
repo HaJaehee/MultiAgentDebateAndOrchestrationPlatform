@@ -17,7 +17,7 @@
 import pytest
 
 from app.mermaid_lint import diagram_kind, format_issues, lint_mermaid
-from app.orchestration.engine import normalize_mermaid
+from app.orchestration.artifacts import normalize_mermaid
 
 # 이름: (원문, 파서가 원문을 받았나, 파서가 정규화본을 받았나, 정규화본)
 ORACLE = {
@@ -682,7 +682,8 @@ def test_empty_or_missing_input_does_not_crash(value):
 # ------------------------------------------------------------------ 블록 추출
 
 
-from app.orchestration.engine import OrchestratorEngine, extract_code_blocks, find_mermaid_blocks  # noqa: E402
+from app.orchestration.engine import OrchestratorEngine  # noqa: E402
+from app.orchestration.artifacts import extract_code_blocks, find_mermaid_blocks  # noqa: E402
 
 FENCE = "`" * 3
 

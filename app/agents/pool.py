@@ -1,7 +1,7 @@
 import logging
 from typing import Dict, List, Optional
 from app.agents.base import Agent
-from app.config import AgentConfig, get_config
+from app.config import ORCHESTRATOR_KEY, AgentConfig, get_config
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class AgentPool:
         return self._agents.get(key)
 
     def get_orchestrator(self) -> Agent:
-        orch = self.get("orchestrator")
+        orch = self.get(ORCHESTRATOR_KEY)
         if not orch:
             raise RuntimeError("Orchestrator agent is not registered in AgentPool.")
         return orch
@@ -45,8 +45,8 @@ class AgentPool:
         """Returns list of agents for given keys. Always ensures orchestrator is included."""
         active = []
         # Ensure orchestrator is always first
-        if "orchestrator" not in keys:
-            keys = ["orchestrator"] + [k for k in keys if k != "orchestrator"]
+        if ORCHESTRATOR_KEY not in keys:
+            keys = [ORCHESTRATOR_KEY] + [k for k in keys if k != ORCHESTRATOR_KEY]
 
         for k in keys:
             ag = self.get(k)

@@ -11,7 +11,7 @@ from typing import Any, Dict, List
 from app.agents.base import Agent
 from app.agents.llm import NATIVE_REASONING_HEADER, strip_reasoning_trace
 from app.agents.skills import visible_skill_names
-from app.mermaid_lint import diagram_kind
+from app.mermaid_lint import diagram_kind, STYLE_LINE_RE
 
 # 코드 펜스를 여는 줄. 줄 머리(들여쓰기 허용)의 ``` 또는 ~~~ 세 개 이상, 언어, 그리고
 # 뒤따르는 정보 문자열(```` ```mermaid title="흐름" ````). 백틱 펜스의 정보에는 백틱이
@@ -22,7 +22,7 @@ _FENCE_OPEN_RE = re.compile(r"^[ \t]*(?P<fence>`{3,}|~{3,})(?P<lang>[A-Za-z0-9_+
 _FENCE_MIDLINE_OPEN_RE = re.compile(r"(?P<fence>```)(?P<lang>[A-Za-z0-9_+\-]+)[ \t]*$")
 
 
-def _iter_code_fences(text: str) -> List[Dict[str, Any]]:
+def iter_code_fences(text: str) -> List[Dict[str, Any]]:
     """본문의 코드 블록을 줄 단위로 찾습니다: [{lang, start, end}] (`text[start:end]` 가 코드).
 
     예전에는 정규식 한 줄(```` ```lang\\n(.*?)``` ````)이었고, 세 가지를 놓쳤습니다.
@@ -141,7 +141,6 @@ def _convert_flowchart_notes(lines: List[str]) -> List[str]:
     return out
 
 
-_STYLE_LINE_RE = re.compile(r"^\s*(?:style|classDef|linkStyle)\b", re.IGNORECASE)
 _RGB_RE = re.compile(
     r"rgba?\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*(?:[,/]\s*([\d.]+%?)\s*)?\)",
     re.IGNORECASE,
@@ -191,7 +190,7 @@ def _quote_bracket_label(m: re.Match) -> str:
 
 
 def _normalize_flowchart_line(line: str) -> str:
-    if _STYLE_LINE_RE.match(line):
+    if STYLE_LINE_RE.match(line):
         return _RGB_RE.sub(_rgb_to_hex, line)
     sub = _SUBGRAPH_ID_QUOTED_RE.match(line)
     if sub:
@@ -227,7 +226,7 @@ def find_mermaid_blocks(text: str) -> List[Dict[str, Any]]:
     """본문 속 Mermaid 코드 블록을 **위치와 함께** 찾습니다."""
     blocks: List[Dict[str, Any]] = []
     source = text or ""
-    for fence in _iter_code_fences(source):
+    for fence in iter_code_fences(source):
         lang = fence["lang"].strip().lower() or "text"
         raw = source[fence["start"]:fence["end"]]
         code = raw.strip()
@@ -247,7 +246,7 @@ def extract_code_blocks(text: str) -> List[Dict[str, str]]:
     """Extracts markdown code blocks from text."""
     matches = []
     source = text or ""
-    for fence in _iter_code_fences(source):
+    for fence in iter_code_fences(source):
         lang = fence["lang"].strip().lower() or "text"
         code = source[fence["start"]:fence["end"]].strip()
         if not code:

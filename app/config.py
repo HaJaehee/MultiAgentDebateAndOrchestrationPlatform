@@ -826,6 +826,9 @@ SKILL_TOOL_PREFIX = "skills"
 # 등록되면 도구 이름도 켜는 스위치도 겹칩니다.
 PEERS_TOOL_PREFIX = "peers"
 
+# 필수 에이전트의 키. 토론을 이끌고 합성하는 오케스트레이터는 `agents` 에 이 키로 있어야 합니다.
+ORCHESTRATOR_KEY = "orchestrator"
+
 RESERVED_SERVER_NAMES = {
     SKILL_TOOL_PREFIX: f"스킬 도구 이름({SKILL_TOOL_PREFIX}__load_skill)",
     PEERS_TOOL_PREFIX: f"동료 자문 도구 이름({PEERS_TOOL_PREFIX}__consult_agent)",
@@ -924,9 +927,9 @@ class RootConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_orchestrator_exists(self) -> "RootConfig":
-        if "orchestrator" not in self.agents:
+        if ORCHESTRATOR_KEY not in self.agents:
             raise ValueError("Configuration must contain an \"agents.orchestrator\" definition.")
-        if not self.agents["orchestrator"].enabled:
+        if not self.agents[ORCHESTRATOR_KEY].enabled:
             raise ValueError("The \"agents.orchestrator\" agent cannot be disabled (enabled: false).")
         return self
 
@@ -1699,7 +1702,7 @@ def set_agent_enabled_in_conf_file(
     끈 에이전트는 풀에 등록되지 않아 어떤 대화에도 참여하지 않습니다. 삭제와 다른
     점은 설정과 프롬프트가 파일에 그대로 남아 언제든 되살릴 수 있다는 것입니다.
     """
-    if agent_key == "orchestrator" and not enabled:
+    if agent_key == ORCHESTRATOR_KEY and not enabled:
         raise ValueError(
             "오케스트레이터는 끌 수 없습니다. 토론 진행과 최종 합성을 맡습니다."
         )
@@ -1723,7 +1726,7 @@ def remove_agent_from_conf_file(
     그 위에 붙은 `//` 설명은 남깁니다. 사람이 쓴 글을 지우는 것은 되돌릴 수 없기
     때문입니다 (MCP 서버 삭제와 같은 규칙).
     """
-    if agent_key == "orchestrator":
+    if agent_key == ORCHESTRATOR_KEY:
         raise ValueError(
             "오케스트레이터는 삭제할 수 없습니다. 토론 진행과 최종 합성을 맡습니다."
         )

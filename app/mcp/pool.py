@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 
 from app.config import get_config, resolve_workspace_dir
+from app.mcp.client import positive_float_env
 from app.mcp.manager import MCPManager
 
 logger = logging.getLogger(__name__)
@@ -62,14 +63,6 @@ def _positive_int_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
-def _positive_float_env(name: str, default: float) -> float:
-    try:
-        value = float(os.environ.get(name, "") or default)
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
-
-
 # 동시에 띄워 둘 수 있는 런타임(=서로 다른 작업 공간)의 수.
 #
 # 런타임 하나가 conf.json 의 켜진 서버 수만큼 프로세스를 띄웁니다(기본 4개:
@@ -78,7 +71,7 @@ def _positive_float_env(name: str, default: float) -> float:
 MAX_RUNTIMES = _positive_int_env("MCP_MAX_RUNTIMES", 4)
 
 # 아무도 안 쓰는 런타임을 살려 두는 시간(초).
-IDLE_TTL = _positive_float_env("MCP_RUNTIME_IDLE_TTL", 300.0)
+IDLE_TTL = positive_float_env("MCP_RUNTIME_IDLE_TTL", 300.0)
 
 # 샌드박스 커널은 런타임마다 따로 뜹니다. conf.json 의 값을 그대로 N 벌 두면
 # 커널 수가 곱으로 붙으므로, 런타임 상한으로 나눠 예산을 유지합니다.

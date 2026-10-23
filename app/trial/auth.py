@@ -37,6 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import DATA_DIR
+from app.timestamps import as_utc
 from app.trial.models import TrialUserModel
 
 TRIAL_COOKIE = "mado_trial"
@@ -257,13 +258,6 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _aware(value: Optional[datetime]) -> Optional[datetime]:
-    """SQLite 는 시간대를 버리고 돌려줍니다. UTC 로 다시 붙입니다."""
-    if value is None:
-        return None
-    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-
-
 async def find_user(db: AsyncSession, name: str) -> Optional[TrialUserModel]:
     result = await db.execute(select(TrialUserModel).where(TrialUserModel.name_key == name_key(name)))
     return result.scalar_one_or_none()
@@ -289,7 +283,7 @@ async def login_or_register(
     setting_pin = user is None or not user.pin_hash
 
     if user is not None:
-        locked_until = _aware(user.locked_until)
+        locked_until = as_utc(user.locked_until)
         if locked_until and locked_until > now:
             minutes = int((locked_until - now).total_seconds() // 60) + 1
             return LoginOutcome("locked", f"PIN 번호 입력 오류 횟수를 초과하여 잠겼습니다. {minutes}분 후에 다시 시도해 주십시오.")

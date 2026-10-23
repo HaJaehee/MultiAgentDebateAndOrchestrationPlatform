@@ -36,11 +36,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.personas import config_snapshot_of
 from app.agents.pool import AgentPool
-from app.config import PROJECT_ROOT, AgentConfig, join_text_lines, read_conf_file, strip_comment_keys
+from app.config import (
+    ORCHESTRATOR_KEY,
+    PROJECT_ROOT,
+    AgentConfig,
+    join_text_lines,
+    read_conf_file,
+    strip_comment_keys,
+)
 from app.database.models import SessionAgentModel, SessionModel
 from app.trial.models import TrialSessionModel
 
-ORCHESTRATOR = "orchestrator"
 
 # 방문자가 고를 수 있는 토론 방식. 그래프 토론은 편집기가 필요해 체험에서는 뺍니다.
 STRATEGY_CHOICES: Dict[str, Tuple[str, str]] = {
@@ -136,12 +142,12 @@ class TrialTemplate(BaseModel):
         keys = [p.key for p in self.participants]
         if len(set(keys)) != len(keys):
             raise ValueError("참여자 키가 겹칩니다.")
-        if ORCHESTRATOR not in keys:
+        if ORCHESTRATOR_KEY not in keys:
             raise ValueError("사회자(key: orchestrator)가 있어야 합니다.")
         if len(keys) < 2:
             raise ValueError("사회자 말고 참여자가 한 명 이상 있어야 합니다.")
         # 사회자를 맨 앞에 둡니다. 나머지 순서가 곧 발언 순서입니다.
-        self.participants.sort(key=lambda p: p.key != ORCHESTRATOR)
+        self.participants.sort(key=lambda p: p.key != ORCHESTRATOR_KEY)
         ids = [i.id for i in self.inputs]
         if not ids:
             raise ValueError("입력 칸이 하나 이상 있어야 합니다.")
@@ -154,7 +160,7 @@ class TrialTemplate(BaseModel):
 
     @property
     def specialists(self) -> List[TemplateParticipant]:
-        return [p for p in self.participants if p.key != ORCHESTRATOR]
+        return [p for p in self.participants if p.key != ORCHESTRATOR_KEY]
 
 
 def parse_template(data: Any, fallback_id: str = "") -> TrialTemplate:
@@ -181,7 +187,7 @@ def parse_template(data: Any, fallback_id: str = "") -> TrialTemplate:
 def base_key_for(participant: TemplateParticipant, pool: AgentPool) -> str:
     if participant.base:
         return participant.base
-    return participant.key if pool.get(participant.key) is not None else ORCHESTRATOR
+    return participant.key if pool.get(participant.key) is not None else ORCHESTRATOR_KEY
 
 
 def pool_problems(template: TrialTemplate, pool: AgentPool) -> List[str]:

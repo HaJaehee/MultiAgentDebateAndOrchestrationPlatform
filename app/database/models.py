@@ -9,6 +9,11 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+
+def new_id() -> str:
+    """기본 키로 쓰는 UUID 문자열."""
+    return str(uuid.uuid4())
+
 class Base(DeclarativeBase):
     pass
 
@@ -16,7 +21,7 @@ class Base(DeclarativeBase):
 class SessionModel(Base):
     __tablename__ = "sessions"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     title: Mapped[str] = mapped_column(String(255), default="New Debate Session")
     strategy: Mapped[str] = mapped_column(String(50), default="sequential_debate")
     max_rounds: Mapped[int] = mapped_column(Integer, default=3)
@@ -112,7 +117,7 @@ class TurnModel(Base):
 
     __tablename__ = "turns"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
     status: Mapped[str] = mapped_column(String(20), default=TURN_RUNNING, nullable=False)
     # planning · approval · debating · synthesizing · completed. 끊긴 턴을 어디서부터 이을지 정하는 첫
@@ -177,7 +182,7 @@ class SpeechDraftModel(Base):
 class MessageModel(Base):
     __tablename__ = "messages"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
     sender_key: Mapped[str] = mapped_column(String(50))  # e.g., 'user', 'orchestrator', 'architect'
     sender_name: Mapped[str] = mapped_column(String(100))
@@ -236,7 +241,7 @@ class MessageModel(Base):
 class ToolCallRecordModel(Base):
     __tablename__ = "tool_calls"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
     # 이 호출을 낸 발언. 도구는 실행하는 **즉시** 기록되고(발언이 끝나기 전에 서버가 죽어도
     # 무엇을 실행했는지 남도록), 발언이 기록될 때 같은 커밋에서 여기가 채워집니다. 턴이
@@ -265,7 +270,7 @@ class ToolCallRecordModel(Base):
 class ArtifactModel(Base):
     __tablename__ = "artifacts"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
     artifact_type: Mapped[str] = mapped_column(String(30), default="markdown")  # 'code', 'markdown', 'mermaid', 'json'
     title: Mapped[str] = mapped_column(String(255), default="Synthesized Artifact")
@@ -292,7 +297,7 @@ class SessionAgentModel(Base):
     __tablename__ = "session_agents"
     __table_args__ = (UniqueConstraint("session_id", "agent_key", name="uq_session_agent"),)
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
     agent_key: Mapped[str] = mapped_column(String(50))
     name: Mapped[str] = mapped_column(String(100), default="")

@@ -21,7 +21,6 @@ from nicegui import ui
 from app.agents.model_status import (
     CACHE_SECONDS,
     CHECKING,
-    PROBE_MAX_TOKENS,
     ModelRow,
     describe_row,
     get_model_status_board,

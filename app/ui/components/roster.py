@@ -11,6 +11,7 @@ from app.config import (
     DEBATE_STANCES,
     DEFAULT_CONFIG_PATH,
     DEFAULT_PEER_TOOL_ITERATIONS,
+    ORCHESTRATOR_KEY,
     PEERS_TOOL_PREFIX,
     TOOL_ITERATION_CEILING,
     active_config_path,
@@ -24,10 +25,10 @@ from app.config import (
     resolve_workspace_dir,
     set_agent_allowed_mcp_servers_in_conf_file,
     set_agent_allowed_skills_in_conf_file,
-    set_agent_peer_consultation_in_conf_file,
     set_agent_debate_order_in_conf_file,
     set_agent_debate_stance_in_conf_file,
     set_agent_enabled_in_conf_file,
+    set_agent_peer_consultation_in_conf_file,
     set_mcp_server_enabled_in_conf_file,
     set_skill_enabled_in_conf_file,
 )
@@ -40,7 +41,6 @@ from app.orchestration.runner import get_debate_runner
 from app.orchestration.state import DebateState
 from app.orchestration.strategies import (
     DEFAULT_STRATEGY,
-    ORCHESTRATOR_KEY,
     STRATEGY_MAP,
     order_by_priority,
     resolve_strategy_name,
@@ -2486,8 +2486,8 @@ class AgentRosterControl:
                     max=TOOL_ITERATION_CEILING, step=1, format="%.0f",
                 ).props("outlined dense dark").classes("w-56 text-xs")
                 ui.label(
-                    f"자문 한 번에 상대가 쓸 수 있는 도구 호출 수. 0 이면 도구 없이 답합니다 "
-                    f"(상대 자신의 상한은 넘지 않습니다)."
+                    "자문 한 번에 상대가 쓸 수 있는 도구 호출 수. 0 이면 도구 없이 답합니다 "
+                    "(상대 자신의 상한은 넘지 않습니다)."
                 ).classes("text-[11px] text-slate-500 leading-snug")
 
             def confirm() -> None:

@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import TURN_UNFINISHED, MessageModel, SessionModel, TurnModel
+from app.timestamps import as_utc
 from app.trial.models import (
     TrialFeedbackModel,
     TrialSessionModel,
@@ -22,12 +23,6 @@ from app.trial.models import (
     TrialUserModel,
 )
 from app.trial.templates import TrialTemplate, parse_template
-
-
-def aware(value: Optional[datetime]) -> Optional[datetime]:
-    if value is None:
-        return None
-    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +80,7 @@ async def list_user_sessions(db: AsyncSession, user_id: str) -> List[SessionRow]
     return [
         SessionRow(
             session_id=trial.session_id, title=title, template_ref=trial.template_ref,
-            template_title=trial.template_title, created_at=aware(trial.created_at),
+            template_title=trial.template_title, created_at=as_utc(trial.created_at),
             state=states.get(trial.session_id, "empty"),
         )
         for trial, title in rows
@@ -147,8 +142,8 @@ async def session_result(db: AsyncSession, session_id: str) -> SessionResult:
     )).scalar_one_or_none()
     if final is not None:
         result.final = final.content or ""
-        result.final_at = aware(final.finished_at or final.created_at)
-        started, finished = aware(final.turn_started_at), aware(final.finished_at)
+        result.final_at = as_utc(final.finished_at or final.created_at)
+        started, finished = as_utc(final.turn_started_at), as_utc(final.finished_at)
         if started and finished:
             result.turn_seconds = max(0.0, (finished - started).total_seconds())
         turn = await db.get(TurnModel, final.turn_id) if final.turn_id else None

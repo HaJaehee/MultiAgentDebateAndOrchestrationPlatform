@@ -337,7 +337,7 @@ class DebatePhaseExecutor:
         prompt = [{"role": "user", "content": (
             f"[목표]\n{state.user_prompt}\n\n"
             + self.engine._routing_record(state, selector) +
-            f"[지금까지의 토론]\n" + ("\n".join(recent) or "(아직 없음)") + "\n\n"
+            "[지금까지의 토론]\n" + ("\n".join(recent) or "(아직 없음)") + "\n\n"
             f"[이번 라운드에 부를 수 있는 에이전트]\n{roster}\n\n"
             f"지금은 Round {round_num}/{state.max_rounds} 입니다. 논의를 진전시키기 위해 "
             f"이번 라운드에 **꼭 필요한 에이전트만** 골라 발언 순서를 정하세요. 전원을 부를 "
@@ -653,7 +653,7 @@ class DebatePhaseExecutor:
         prompt = [{"role": "user", "content": (
             f"[목표]\n{state.user_prompt}\n\n"
             + self.engine._routing_record(state, planner) +
-            f"[지금까지의 토론]\n" + ("\n".join(recent) or "(아직 없음)") + "\n\n"
+            "[지금까지의 토론]\n" + ("\n".join(recent) or "(아직 없음)") + "\n\n"
             f"[태스크를 맡길 수 있는 에이전트]\n{roster}\n\n"
             f"지금은 Round {round_num}/{state.max_rounds} 이고, 지목된 에이전트는 "
             f"**동시에 각자의 태스크를 수행합니다**. 서로의 이번 라운드 결과를 볼 수 없으므로 "

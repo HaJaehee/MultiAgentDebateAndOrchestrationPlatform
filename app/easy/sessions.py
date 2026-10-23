@@ -27,14 +27,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.base import Agent
 from app.agents.personas import config_snapshot_of
 from app.agents.pool import AgentPool
-from app.config import AgentConfig
+from app.config import ORCHESTRATOR_KEY, AgentConfig
 from app.database.models import MessageModel, SessionAgentModel, SessionModel, ToolCallRecordModel
 from app.easy.builder import AgentDraft
 from app.easy.catalog import DEMO_AGENT, GUEST_SERVERS, MAX_RUN_AGENTS, easy_workspace
 from app.easy.models import EasyAgentModel, EasySessionModel
 from app.trial.pages.session import load_feed_messages
 
-ORCHESTRATOR = "orchestrator"
 DEMO_REF = "demo"
 
 # 모든 참여 에이전트 공통 프롬프트 지침. 도구 호출 전에 의도를 먼저 설명하도록 유도하여 UI에 '생각' 단계가 누락되지 않도록 합니다.
@@ -100,7 +99,7 @@ async def agent_choices(db: AsyncSession, *, user_id: str, owner: bool, pool: Ag
     if owner:
         choices += [
             Choice(f"pool:{agent.key}", agent.key, _draft_of_agent(agent), from_pool=True)
-            for agent in pool.list_all() if agent.key not in (ORCHESTRATOR, DEMO_AGENT["key"])
+            for agent in pool.list_all() if agent.key not in (ORCHESTRATOR_KEY, DEMO_AGENT["key"])
         ]
     else:
         choices += [
@@ -164,7 +163,7 @@ async def create_easy_session(
     # 오케스트레이터는 계획 수립 및 종합 정리만 수행하므로 도구를 연결하지 않습니다 (체험 세션과 동일).
     orchestrator.update(allowed_mcp_servers=[], allowed_skills=[])
     participants: List[Tuple[str, Dict[str, Any]]] = [
-        (ORCHESTRATOR, AgentConfig.model_validate(orchestrator).model_dump(mode="json"))
+        (ORCHESTRATOR_KEY, AgentConfig.model_validate(orchestrator).model_dump(mode="json"))
     ]
     for index, choice in enumerate(choices):
         participants.append((choice.key, _snapshot(choice, pool, priority=(index + 1) * 10, guest=guest)))

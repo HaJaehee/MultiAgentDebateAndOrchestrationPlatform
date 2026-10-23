@@ -1,11 +1,10 @@
 import asyncio
 import json
 import logging
-import re
 import uuid
 from contextlib import nullcontext
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Coroutine, Dict, List, Optional, Set, Tuple
 from sqlalchemy import delete, select, update
@@ -15,19 +14,16 @@ from app.agents.llm import (
     LLMCaller,
     LLMUnavailableError,
     context_budget,
-    context_trim_notice,
     estimate_tokens,
-    NATIVE_REASONING_HEADER,
     memory_search_tool,
     strip_reasoning_trace,
 )
 from app.agents import llm_fallback
 from app.agents.llm_gate import LLM_HOLDER
 from app.agents.personas import frozen_agents, prepare_agents_for_turn
-from app.agents.skills import skill_tools_for, visible_skill_names, with_designated_skills
+from app.agents.skills import skill_tools_for, with_designated_skills
 from app.agents.consultation import consultation_scope, consultation_tools_for
 from app.agents.pool import AgentPool, get_agent_pool
-from app.timestamps import report_completed_line, to_local
 from app.config import (
     DATA_DIR,
     SKILL_NAME_PATTERN,
@@ -38,13 +34,10 @@ from app.config import (
 )
 from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
-from app.mermaid_lint import diagram_kind, format_issues, lint_mermaid
 from app.database.models import (
-    TURN_COMPLETED,
     TURN_FAILED,
     TURN_RUNNING,
     TURN_UNFINISHED,
-    ArtifactModel,
     MessageModel,
     SessionModel,
     SpeechDraftModel,
@@ -55,16 +48,7 @@ from app.database.models import (
 from app.database.session import get_session_factory
 from app.orchestration import context_memory as memory
 from app.orchestration import plan_gate, turns
-from app.orchestration.graph import (
-    CARRY_LABELS,
-    Activation,
-    GraphNode,
-    GraphScheduler,
-    GraphSpec,
-    back_edges,
-    parse_graph,
-    validate_graph,
-)
+from app.orchestration.graph import Activation, GraphScheduler, GraphSpec, parse_graph
 from app.workspace_files import mention_token
 from app.orchestration.control import TurnControl
 from app.orchestration.tool_gate import ToolGate
@@ -150,28 +134,11 @@ def clean_skill_designations(
     return out
 
 
-from app.orchestration.artifacts import (
-    CODE_LANGUAGES,
-    MAX_DEBATE_CODE_ARTIFACTS,
-    MERMAID_REPAIR_ATTEMPTS,
-    _convert_flowchart_notes,
-    _is_untagged_mermaid,
-    _iter_code_fences,
-    _normalize_flowchart_line,
-    _quote_bracket_label,
-    _rgb_to_hex,
-    extract_code_blocks,
-    find_mermaid_blocks,
-    format_roster,
-    normalize_mermaid,
-    synthesis_has_content,
-)
 from app.orchestration.phases import (
     DebatePhaseExecutor,
     GraphTurnError,
     PlanningPhaseExecutor,
     SynthesisPhaseExecutor,
-    parse_gate_decision,
 )
 
 # 커밋이 실패했을 때 다시 시도하기 전에 기다리는 시간(초). 시도는 이것보다 한 번 많습니다.

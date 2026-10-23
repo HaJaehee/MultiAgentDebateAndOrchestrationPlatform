@@ -18,7 +18,8 @@ from app.orchestration.runner import get_debate_runner
 from app.trial.catalog import official_templates
 from app.trial.pages.common import duration, footer_notice, header, local_time, page_setup
 from app.trial.stats import TemplateUsage, UserUsage, usage_report
-from app.trial.store import aware, reset_pin, unlock_user
+from app.timestamps import as_utc
+from app.trial.store import reset_pin, unlock_user
 from app.trial.web import is_owner, owner_only_response
 
 
@@ -130,7 +131,7 @@ def build_admin() -> None:
 def _person_row(person: UserUsage, body) -> None:
     from datetime import datetime, timezone
 
-    locked = person.locked_until is not None and aware(person.locked_until) > datetime.now(timezone.utc)
+    locked = person.locked_until is not None and as_utc(person.locked_until) > datetime.now(timezone.utc)
     with ui.row().classes("w-full items-center justify-between trial-card px-3 py-2"):
         with ui.column().classes("gap-0"):
             ui.label(person.name).classes("text-sm")

@@ -176,7 +176,6 @@ def get_engine(db_url: str = "sqlite+aiosqlite:///./multiagent.db") -> AsyncEngi
 
 
 def get_session_factory(db_url: str = "sqlite+aiosqlite:///./multiagent.db") -> async_sessionmaker[AsyncSession]:
-    global _sessionmaker
     if _sessionmaker is None:
         get_engine(db_url)
     assert _sessionmaker is not None

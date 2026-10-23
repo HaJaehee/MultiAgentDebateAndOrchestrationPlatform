@@ -19,11 +19,8 @@ from app.agents.pool import AgentPool
 from app.config import AgentConfig
 from app.database.models import SessionModel
 from app.database.session import get_session_factory, init_db
-from app.orchestration.engine import (
-    OrchestratorEngine,
-    extract_code_blocks,
-    normalize_mermaid,
-)
+from app.orchestration.engine import OrchestratorEngine
+from app.orchestration.artifacts import extract_code_blocks, normalize_mermaid
 from app.orchestration.runner import DebateRunner
 from tests.fake_llm import ARCHITECT_REPLY, FakeLLMCaller
 

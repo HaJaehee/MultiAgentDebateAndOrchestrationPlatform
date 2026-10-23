@@ -28,8 +28,8 @@ from app.trial.pages.common import (
     participant_color,
 )
 from app.trial.store import copy_template, delete_copy, get_copy, save_copy
+from app.config import ORCHESTRATOR_KEY
 from app.trial.templates import (
-    ORCHESTRATOR,
     STRATEGY_CHOICES,
     TemplateError,
     TemplateParticipant,
@@ -119,7 +119,7 @@ def build_edit() -> None:
             def participants() -> None:
                 adversarial = data["strategy"] == "adversarial_debate"
                 for index, p in enumerate(data["participants"]):
-                    is_host = p["key"] == ORCHESTRATOR
+                    is_host = p["key"] == ORCHESTRATOR_KEY
                     with ui.card().classes("trial-card w-full p-4 gap-2"):
                         with ui.row().classes("w-full items-center justify-between"):
                             with ui.row().classes("items-center gap-2"):

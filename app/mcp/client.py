@@ -78,7 +78,7 @@ STARTUP_TIMEOUT = 60.0
 SHUTDOWN_TIMEOUT = 10.0
 
 
-def _positive_float_env(name: str, default: float) -> float:
+def positive_float_env(name: str, default: float) -> float:
     """환경 변수를 양수 실수로 읽습니다. 비었거나 이상하면 기본값."""
     try:
         value = float(os.environ.get(name, "") or default)
@@ -91,12 +91,12 @@ def _positive_float_env(name: str, default: float) -> float:
 # 스크립트, 끊긴 원격, 입력을 기다리는 CLI) 하나가 토론 전체를 영원히 붙잡습니다.
 # 태스크가 멈춰 있으면 취소도 종료도 먹지 않아서, 겉보기에는 서버가 죽은 것과
 # 구분되지 않습니다.
-TOOL_CALL_TIMEOUT = _positive_float_env("MCP_TOOL_TIMEOUT", 180.0)
+TOOL_CALL_TIMEOUT = positive_float_env("MCP_TOOL_TIMEOUT", 180.0)
 
 # 도구 결과 한 건의 상한(문자). 서버가 수십 MB를 돌려주는 일이 실제로 있습니다
 # (큰 파일 읽기, 재귀 디렉터리 목록). 그대로 두면 컨텍스트 계산·DB 기록·화면
 # 렌더링이 차례로 무너지고, 그 무게가 프로세스 전체를 끌고 갑니다.
-MAX_TOOL_OUTPUT_CHARS = int(_positive_float_env("MCP_TOOL_MAX_CHARS", 200_000))
+MAX_TOOL_OUTPUT_CHARS = int(positive_float_env("MCP_TOOL_MAX_CHARS", 200_000))
 
 
 def clip_tool_output(text: str, limit: int = MAX_TOOL_OUTPUT_CHARS) -> str:
