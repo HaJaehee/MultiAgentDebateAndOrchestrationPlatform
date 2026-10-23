@@ -466,7 +466,7 @@ async def test_every_llm_call_of_a_turn_gets_the_same_gate():
     assert gate._session_mode == "review"  # noqa: SLF001
     assert gate.grants == ["net(python.org)"]
     assert gate.denials == ["mcp(fetch)"]
-    assert engine._tool_gates == {}, "턴이 끝나면 문지기를 치웁니다"  # noqa: SLF001
+    assert engine.ctx.tool_gates == {}, "턴이 끝나면 문지기를 치웁니다"  # noqa: SLF001
     assert engine.set_tool_mode(sid, "auto") is False
 
 
@@ -611,6 +611,6 @@ async def test_rules_go_through_the_running_gate_only():
     async def save(grants, denials):
         saved.append((grants, denials))
 
-    engine._tool_gates["s"] = ToolGate(session_id="s", save_rules=save)  # noqa: SLF001
+    engine.ctx.tool_gates["s"] = ToolGate(session_id="s", save_rules=save)  # noqa: SLF001
     assert await engine.set_tool_rules("s", ["net(a.com)"], ["net(b.com)"]) is True
     assert saved == [(["net(a.com)"], ["net(b.com)"])]

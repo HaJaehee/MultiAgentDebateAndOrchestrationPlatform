@@ -585,7 +585,7 @@ async def test_the_turn_only_asks_once_however_many_speeches_hit_the_wall():
             control.resolve_decision(5000, event["id"])
 
     agent = _fixed_pool().get("coder")
-    arbiter = engine._make_context_arbiter(debate, agent, control, _on_event)
+    arbiter = engine.speech.make_context_arbiter(debate, agent, control, _on_event)
 
     info = {"agent_key": "coder", "agent_name": "Coder", "window": 8000,
             "used": 9000, "headroom": 100000, "tool_calls": 3}
@@ -613,7 +613,7 @@ async def test_no_answer_keeps_the_debate_going_instead_of_ending_it():
     async def _ignore(event):
         return None
 
-    arbiter = engine._make_context_arbiter(
+    arbiter = engine.speech.make_context_arbiter(
         debate, _fixed_pool().get("coder"), control, _ignore
     )
 

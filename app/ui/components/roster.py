@@ -2907,7 +2907,7 @@ class AgentRosterControl:
     # ------------------------------------------------------------------ 그래프 토론
 
     def _graph_agents(self) -> Dict[str, bool]:
-        """검증에 쓸 {에이전트 키: 켜짐}. 엔진과 같은 기준입니다 (`_graph_for_turn`)."""
+        """검증에 쓸 {에이전트 키: 켜짐}. 엔진과 같은 기준입니다 (`GraphRunner.graph_for_turn`)."""
         known: Dict[str, bool] = {}
         try:
             for key, cfg in get_config().agents.items():

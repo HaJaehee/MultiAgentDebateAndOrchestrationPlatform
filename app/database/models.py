@@ -164,7 +164,7 @@ class SpeechDraftModel(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     session_id: Mapped[str] = mapped_column(String(36), index=True)
     turn_id: Mapped[str] = mapped_column(String(36), ForeignKey("turns.id", ondelete="CASCADE"), index=True)
-    # 이어 갈 때 어느 발언의 초안인지 맞추는 값 (`OrchestratorEngine._speak`).
+    # 이어 갈 때 어느 발언의 초안인지 맞추는 값 (`SpeechRunner.speak`).
     agent_key: Mapped[str] = mapped_column(String(50))
     kind: Mapped[str] = mapped_column(String(20), default="speech")
     round_number: Mapped[int] = mapped_column(Integer, default=0)
@@ -195,7 +195,7 @@ class MessageModel(Base):
     # 발언 행은 LLM 응답이 다 온 **뒤에** 들어가므로 이 값은 대략 끝난 시각이고,
     # 병렬 라운드에서는 아예 `라운드 기준 시각 + 지시 순번(ms)` 으로 덮어씁니다 —
     # 완료 순서가 제각각이라 커밋 시각을 그대로 쓰면 새로고침할 때마다 발언 순서가
-    # 달라지기 때문입니다 (`OrchestratorEngine._speak`). 기록을 다시 읽을 때
+    # 달라지기 때문입니다 (`SpeechRunner.speak`). 기록을 다시 읽을 때
     # `order_by(created_at)` 이 이것을 씁니다. 사람에게 보여줄 시각은 아래 둘입니다.
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     # 발언이 실제로 시작된 시각과 끝난 시각 (벽시계). 병렬 라운드에서는 여러

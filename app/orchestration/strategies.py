@@ -55,7 +55,7 @@ class BaseDebateStrategy(ABC):
     orchestrator_dispatches_parallel: bool = False
 
     # 순서 대신 사람이 그린 그래프를 따라 도는 전략인지. True 면 엔진이 라운드 루프 대신
-    # 그래프 스케줄러로 돕니다 (`OrchestratorEngine._run_graph`, `app/orchestration/graph.py`).
+    # 그래프 스케줄러로 돕니다 (`GraphRunner.run_graph`, `app/orchestration/graph.py`).
     runs_graph: bool = False
 
     @property

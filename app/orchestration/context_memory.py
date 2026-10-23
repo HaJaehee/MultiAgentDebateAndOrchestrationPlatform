@@ -44,7 +44,7 @@
 
 모든 발언이 원문으로 모든 발언자에게 가면 호출 한 번의 입력이 발언 수에 비례해 늘고, 코드가
 든 발언은 라운드마다 통째로 다시 실립니다. 발언자마다 기록을 세 층으로 나눕니다
-(`OrchestratorEngine._build_context_for_agent`).
+(`ConversationMemory.build_context_for_agent`).
 
 * **새 발언** — 이 발언자가 마지막으로 말한 뒤에 나온 것. 아직 응답하지 않은 내용이라 원문
   그대로, 코드도 그대로 줍니다. 비평가는 방금 나온 코드를 읽어야 검토할 수 있습니다.
@@ -63,7 +63,7 @@ OpenAI·Gemini·vLLM 등은 **앞부분이 같은** 요청을 싸고 빠르게 �
 시스템 프롬프트(페르소나 + 커스텀 지침)와 목표 메시지는 한 턴 동안 그대로이고, 기록은 뒤에만
 붙습니다. 새 발언이 오래된 발언이 되며 요지로 바뀌는 자리부터는 캐시가 다시 쓰입니다.
 
-이 모듈은 LLM 을 부르지 않습니다. 부르는 쪽은 `OrchestratorEngine` 입니다.
+이 모듈은 LLM 을 부르지 않습니다. 부르는 쪽은 `app/orchestration/conversation.py` 입니다.
 """
 
 import re
@@ -75,7 +75,7 @@ from app.orchestration import plan_gate, turns
 from app.orchestration.artifacts import iter_code_fences
 from app.orchestration.state import DebateMessage, DebateState
 
-# 토론 도중 들어온 사용자 발언의 머리표 (`OrchestratorEngine._apply_interjections`).
+# 토론 도중 들어온 사용자 발언의 머리표 (`TurnRecorder.apply_interjections`).
 INTERJECTION_PREFIX = "[토론 중 유저 개입]"
 
 # ---------------------------------------------------------------- 1. 고정

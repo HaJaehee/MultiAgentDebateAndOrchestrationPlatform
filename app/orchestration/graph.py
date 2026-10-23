@@ -4,7 +4,7 @@
 전략은 순서 대신 **그래프**를 받습니다. 병렬·합류·반복이 전략 코드가 아니라 그림으로 정해집니다.
 
 이 모듈은 LLM 을 부르지 않습니다. 그래프 모양(스키마), 검증, 그리고 단계마다 어느 노드를 돌릴지
-정하는 스케줄러만 있습니다. 발언은 `OrchestratorEngine._run_graph` 가 합니다. 그래서 단계
+정하는 스케줄러만 있습니다. 발언은 `GraphRunner.run_graph` 가 합니다. 그래서 단계
 전개를 가짜 LLM 없이 테스트할 수 있습니다.
 
 ## 노드·핀·선
@@ -66,6 +66,10 @@ NODE_TYPE_LABELS = {
     "start": "시작", "agent": "에이전트", "merge": "취합", "gate": "판정", "end": "최종 합성",
 }
 CARRY_LABELS = {"full": "전문", "digest": "요지", "refs": "참조"}
+
+
+class GraphTurnError(RuntimeError):
+    """그래프 토론을 시작할 수 없을 때 (그래프 없음 · 파일 없음 · 검증 오류). 사람이 읽을 문장입니다."""
 
 
 class GraphNode(BaseModel):

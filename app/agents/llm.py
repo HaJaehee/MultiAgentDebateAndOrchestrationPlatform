@@ -427,7 +427,7 @@ BUDGET_EXHAUSTED_INSTRUCTION = (
 )
 
 # 발언 초안 저장 (ADR-025). 도구 루프가 한 판을 마칠 때마다 이어 갈 수 있는 상태를 넘깁니다.
-# 받는 쪽(`OrchestratorEngine._speak`)이 DB 에 남기고, 서버가 다시 뜨면 그 상태로 이어 갑니다.
+# 받는 쪽(`SpeechRunner.speak`)이 DB 에 남기고, 서버가 다시 뜨면 그 상태로 이어 갑니다.
 SpeechCheckpoint = Callable[[Dict[str, Any]], Awaitable[None]]
 
 # 초안의 형식. 필드를 바꾸면 올립니다 — 모르는 형식의 초안은 이어 가지 않고 발언을 처음부터 합니다.

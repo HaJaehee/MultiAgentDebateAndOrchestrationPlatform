@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import app.orchestration.engine as eng
+import app.orchestration.speech as speech
 from app.agents.base import Agent
 from app.agents.llm import LLMUnavailableError
 from app.orchestration.engine import OrchestratorEngine
@@ -121,15 +121,14 @@ def _agent():
 
 async def _speak(call_agent, monkeypatch, interval=0.05):
     """`call_agent` 를 갈아 끼운 엔진으로 발언 하나를 돌리고 이벤트를 돌려줍니다."""
-    monkeypatch.setattr(eng, "STREAM_EVENT_INTERVAL", interval)
-    engine = OrchestratorEngine.__new__(OrchestratorEngine)
-    engine.llm_caller = SimpleNamespace(call_agent=call_agent)
+    monkeypatch.setattr(speech, "STREAM_EVENT_INTERVAL", interval)
+    engine = OrchestratorEngine(llm_caller=SimpleNamespace(call_agent=call_agent))
     events = []
 
     async def on_event(event):
         events.append(event)
 
-    await engine._speak(
+    await engine.speech.speak(
         db=_OkDB(), state=DebateState(session_id="s-stream", user_prompt="설계해줘"),
         agent=_agent(), prompt_messages=[{"role": "user", "content": "설계해줘"}],
         custom_instructions="", round_number=1, msg_type="agent", on_event=on_event,
@@ -173,14 +172,13 @@ async def test_text_before_a_slow_tool_is_shown_during_the_wait(monkeypatch):
 
     events_ref = []
 
-    monkeypatch.setattr(eng, "STREAM_EVENT_INTERVAL", 0.05)
-    engine = OrchestratorEngine.__new__(OrchestratorEngine)
-    engine.llm_caller = SimpleNamespace(call_agent=call_agent)
+    monkeypatch.setattr(speech, "STREAM_EVENT_INTERVAL", 0.05)
+    engine = OrchestratorEngine(llm_caller=SimpleNamespace(call_agent=call_agent))
 
     async def on_event(event):
         events_ref.append(event)
 
-    await engine._speak(
+    await engine.speech.speak(
         db=_OkDB(), state=DebateState(session_id="s-pause", user_prompt="p"),
         agent=_agent(), prompt_messages=[{"role": "user", "content": "p"}],
         custom_instructions="", round_number=1, msg_type="agent", on_event=on_event,

@@ -1,7 +1,7 @@
-"""Phase 1: Planning & Plan Approval Executor.
+"""1단계: 계획.
 
-`OrchestratorEngine`에서 계획 수립(`_plan`)과 사용자 계획 승인(`_approve_plan`)
-단계의 책임을 분리한 모듈입니다.
+오케스트레이터가 이번 턴의 목표와 분담을 정하고(`plan`), 사람이 그 계획을 확인하게 합니다
+(`approve_plan`, ADR-028). 수정 요청이 오면 계획을 다시 씁니다.
 """
 
 from __future__ import annotations
@@ -20,20 +20,18 @@ from app.orchestration import context_memory as memory
 from app.orchestration import plan_gate, turns
 from app.orchestration.artifacts import format_roster
 from app.orchestration.control import TurnControl
+from app.orchestration.phases.base import PhaseExecutor
 from app.orchestration.state import DebateMessage, DebateState
 
 if TYPE_CHECKING:
-    from app.orchestration.engine import OrchestratorEngine, TurnSetup
+    from app.orchestration.turn_setup import TurnSetup
 
 logger = logging.getLogger(__name__)
 
 
 
-class PlanningPhaseExecutor:
+class PlanningPhaseExecutor(PhaseExecutor):
     """오케스트레이터의 목표 분석·분담 계획 수립 및 계획 승인 게이트를 전담합니다."""
-
-    def __init__(self, engine: "OrchestratorEngine") -> None:
-        self.engine = engine
 
     async def plan(
         self,
@@ -100,7 +98,7 @@ class PlanningPhaseExecutor:
             for m in earlier:
                 if m.msg_type == "error":
                     continue
-                history_snippets.append(f"{m.speaker}: {self.engine._snippet(m, 250)}")
+                history_snippets.append(f"{m.speaker}: {self.conversation.snippet(m, 250)}")
             history_text = "\n".join(history_snippets[-6:])
             orch_plan_prompt = [
                 {"role": "user", "content": (
@@ -125,7 +123,7 @@ class PlanningPhaseExecutor:
 
         plan_message: Optional[DebateMessage] = None
         if setup.graph_spec is None or setup.graph_spec.start.plan:
-            plan_message = await self.engine._speak(
+            plan_message = await self.speech.speak(
                 db=db,
                 state=state,
                 agent=orchestrator_agent,
@@ -152,9 +150,7 @@ class PlanningPhaseExecutor:
         control: Optional[TurnControl],
     ) -> Optional[DebateMessage]:
         """수립된 계획을 사용자에게 제시하고 승인을 받습니다. 토론 시작의 기준이 될 계획 발언 메시지를 반환합니다."""
-        from app.orchestration import engine as engine_module
-
-        settings = engine_module.plan_approval_settings()
+        settings = plan_gate.plan_approval_settings()
         specialists = [a for a in setup.active_agents if a.key != "orchestrator"]
         if (
             not settings.enabled
@@ -166,7 +162,7 @@ class PlanningPhaseExecutor:
             return plan_message
 
         orchestrator = setup.orchestrator
-        await self.engine._set_turn(db, state, phase="approval")
+        await self.recorder.set_turn(db, state, phase="approval")
 
         async def _open(request: Any) -> None:
             if on_event:
@@ -176,7 +172,7 @@ class PlanningPhaseExecutor:
         waiting = plan_gate.pending_revision(state.messages, state.turn_message_start)
         while True:
             if waiting is not None:
-                revised = await self.engine._plan(
+                revised = await self.plan(
                     db, state, setup, on_event=on_event, control=control, revision=waiting,
                 )
                 waiting = None
@@ -190,7 +186,7 @@ class PlanningPhaseExecutor:
             if control.stop_requested:
                 return plan_message
 
-            proposed = await self.engine._plan_proposal(
+            proposed = await self.plan_proposal(
                 db, state, setup, plan_message, specialists, on_event=on_event,
             )
             request = await control.ask_plan_approval(
@@ -218,7 +214,7 @@ class PlanningPhaseExecutor:
 
             if request.decision == plan_gate.DECISION_APPROVE:
                 tasks, changes = plan_gate.settle(proposed, request.tasks)
-                await self.engine._record_note(
+                await self.recorder.record_note(
                     db=db,
                     state=state,
                     on_event=on_event,
@@ -249,7 +245,7 @@ class PlanningPhaseExecutor:
                     plan_gate.clean_comments(proposed, request.task_comments),
                     request.tasks,
                 )
-                await self.engine._record_user_message(
+                await self.recorder.record_user_message(
                     db=db,
                     state=state,
                     content=text,
@@ -295,7 +291,7 @@ class PlanningPhaseExecutor:
         on_event: Optional[EventCallback],
     ) -> List[Dict[str, Any]]:
         """계획에 따른 전문가별 업무 분담표(태스크 목록)를 생성합니다. 이미 저장된 분담표가 있으면 재요청하지 않고 기존 값을 반환합니다."""
-        config = await self.engine._turn_config(db, state)
+        config = await self.turn_config(db, state)
         saved = (config or {}).get("plan_gate") or {}
         if saved.get("plan_id") == plan_message.id:
             known = {a.key for a in specialists}
@@ -306,7 +302,7 @@ class PlanningPhaseExecutor:
         if on_event:
             await on_event({"type": EventType.PLAN_TASKS_STARTED, "agent_name": setup.orchestrator.name})
         try:
-            tasks = await self.engine._ask_orchestrator_for_plan_tasks(
+            tasks = await self.ask_orchestrator_for_plan_tasks(
                 orchestrator=setup.orchestrator,
                 specialists=specialists,
                 state=state,
@@ -319,7 +315,7 @@ class PlanningPhaseExecutor:
 
         if config is not None:
             config["plan_gate"] = {"plan_id": plan_message.id, "tasks": tasks}
-            await self.engine._set_turn(db, state, config=config)
+            await self.recorder.set_turn(db, state, config=config)
         return tasks
 
     async def ask_orchestrator_for_plan_tasks(
@@ -332,19 +328,19 @@ class PlanningPhaseExecutor:
         custom_instructions: str,
     ) -> List[Dict[str, Any]]:
         """계획 본문으로부터 전문가별 구체적 수행 태스크 목록을 추출합니다."""
-        planner = self.engine._tool_less(orchestrator)
+        planner = self.conversation.tool_less(orchestrator)
         prompt = [{"role": "user", "content": plan_gate.tasks_prompt(
             state.user_prompt,
             strip_reasoning_trace(plan_message.content).strip(),
             format_roster(specialists, with_keys=True),
         )}]
-        content, _ = await self.engine.llm_caller.call_agent(
+        content, _ = await self.ctx.llm_caller.call_agent(
             planner,
             prompt,
             custom_instructions,
             session_id=state.session_id,
-            mcp=self.engine._mcp_for(state),
-            tool_gate=self.engine._gate_for(state),
+            mcp=self.ctx.mcp_for(state),
+            tool_gate=self.ctx.gate_for(state),
             ledger=state.decision_ledger,
         )
         return plan_gate.parse_tasks(content, specialists)

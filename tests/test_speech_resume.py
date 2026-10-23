@@ -420,8 +420,8 @@ def _scripted(monkeypatch) -> List[List[Dict[str, Any]]]:
 def _real_engine(monkeypatch, mcp: _MCP):
     engine = _engine(LLMCaller(mcp_manager=mcp))
     # 이 테스트가 보려는 것은 초안이지 도구 보안이 아닙니다. 런타임 대신 가짜 도구 서버를 씁니다.
-    monkeypatch.setattr(engine, "_mcp_for", lambda state: mcp)
-    monkeypatch.setattr(engine, "_gate_for", lambda state: None)
+    monkeypatch.setattr(engine.ctx, "mcp_for", lambda state: mcp)
+    monkeypatch.setattr(engine.ctx, "gate_for", lambda state: None)
     return engine
 
 

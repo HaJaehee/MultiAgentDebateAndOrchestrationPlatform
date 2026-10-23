@@ -5,7 +5,7 @@
 실립니다.
 
 대화는 그래프 **id** 를 고르고, 턴이 시작될 때 그 내용을 `sessions.graph_snapshot` 에 고정합니다
-(`OrchestratorEngine._run_turn`). 그래서 토론 중에 파일을 고쳐도 도는 턴은 흔들리지 않고, 파일을
+(`OrchestratorEngine.run_turn`). 그래서 토론 중에 파일을 고쳐도 도는 턴은 흔들리지 않고, 파일을
 지워도 지난 턴의 기록은 그때의 그래프로 남습니다.
 """
 

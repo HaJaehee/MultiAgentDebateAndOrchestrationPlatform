@@ -31,6 +31,7 @@ from app.config import AgentConfig
 from app.mermaid_lint import format_issues, lint_mermaid
 from app.orchestration.artifacts import MERMAID_REPAIR_ATTEMPTS, find_mermaid_blocks, normalize_mermaid
 from app.orchestration.engine import OrchestratorEngine
+from app.orchestration.phases.synthesis import SynthesisPhaseExecutor
 from app.orchestration.state import DebateState
 
 
@@ -248,7 +249,7 @@ def test_python_blocks_are_left_alone():
 def test_splice_replaces_in_place_and_keeps_the_rest():
     blocks = find_mermaid_blocks(REPORT)
     broken = [(i, b, []) for i, b in enumerate(blocks)]
-    out = OrchestratorEngine._splice_blocks(
+    out = SynthesisPhaseExecutor.splice_blocks(
         REPORT, broken, ["graph TD\n    A --> B", "sequenceDiagram\n    A->>B: 주문"]
     )
     assert "본문입니다." in out and "가운데 설명." in out
@@ -261,7 +262,7 @@ def test_splice_with_fewer_replacements_keeps_what_it_got():
     """모델이 하나를 빠뜨렸다고 고친 나머지까지 버릴 이유는 없습니다."""
     blocks = find_mermaid_blocks(REPORT)
     broken = [(i, b, []) for i, b in enumerate(blocks)]
-    out = OrchestratorEngine._splice_blocks(REPORT, broken, ["graph TD\n    A --> B"])
+    out = SynthesisPhaseExecutor.splice_blocks(REPORT, broken, ["graph TD\n    A --> B"])
     codes = [b["code"] for b in find_mermaid_blocks(out)]
     assert codes[0] == "graph TD\n    A --> B"
     assert codes[1].startswith("sequenceDiagram")
@@ -300,7 +301,7 @@ async def _repair(engine: OrchestratorEngine, text: str, events: List[Dict[str, 
     async def on_event(e):
         events.append(e)
 
-    return await engine._repair_mermaid_blocks(
+    return await engine.synthesis_phase.repair_mermaid_blocks(
         text,
         agent=engine.agent_pool.get_orchestrator(),
         custom_instructions="",

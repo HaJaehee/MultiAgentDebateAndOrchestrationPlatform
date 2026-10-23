@@ -73,7 +73,7 @@ class DebateState(BaseModel):
     paused_seconds: int = 0
     resumed_count: int = 0
     # 도구 단위로 이어 갈 발언의 초안 (ADR-025). 키는 `turns.draft_key`, 값은 {id, kind, started_at,
-    # state}. `_speak` 이 자기 자리의 초안을 꺼내 이어 가고, 쓰이지 않은 것은 턴이 끝날 때 정리됩니다.
+    # state}. `SpeechRunner.speak` 이 자기 자리의 초안을 꺼내 이어 가고, 쓰이지 않은 것은 턴이 끝날 때 정리됩니다.
     resume_drafts: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     # 이 턴이 빌린 MCP 런타임의 작업 공간. 런타임 객체 자체가 아니라 **키**를
     # 들고 다닙니다 — 살아 있는 프로세스 묶음의 소유권은 풀에 있고, 상태는
@@ -85,7 +85,7 @@ class DebateState(BaseModel):
     custom_instructions: str = ""
     active_agent_keys: List[str] = Field(default_factory=list)
     # 입력창에서 `@전문가 @스킬` 로 지정한 스킬 (전문가 키 → 스킬). 이 턴에만 걸리고, 그 전문가의
-    # 발언마다 미리 불립니다 (`OrchestratorEngine._speak`). 개입 메모로 더해질 수 있습니다.
+    # 발언마다 미리 불립니다 (`SpeechRunner.speak`). 개입 메모로 더해질 수 있습니다.
     skill_designations: Dict[str, List[str]] = Field(default_factory=dict)
     messages: List[DebateMessage] = Field(default_factory=list)
     tool_records: List[Dict[str, Any]] = Field(default_factory=list)

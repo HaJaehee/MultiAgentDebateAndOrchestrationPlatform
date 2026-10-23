@@ -26,10 +26,11 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import app.database.session as dbs
-import app.orchestration.engine as eng
+import app.orchestration.recording as recording
 from app.agents.base import Agent
 from app.database.models import Base, MessageModel
-from app.orchestration.engine import OrchestratorEngine, save_unpersisted
+from app.orchestration.engine import OrchestratorEngine
+from app.orchestration.recording import TurnRecorder, save_unpersisted
 from app.orchestration.state import DebateState
 from tests.fake_llm import FakeLLMCaller
 
@@ -175,15 +176,15 @@ class _FlakyDB:
         self.pending = []
 
 
-def _engine() -> OrchestratorEngine:
-    # `_persist` 는 풀도 LLM 도 쓰지 않습니다. 생성자의 전역 준비를 건너뜁니다.
-    return OrchestratorEngine.__new__(OrchestratorEngine)
+def _recorder() -> TurnRecorder:
+    # `persist` 는 풀도 LLM 도 쓰지 않습니다.
+    return TurnRecorder(ctx=None)
 
 
 @pytest.fixture
 def no_wait(monkeypatch, tmp_path):
-    monkeypatch.setattr(eng, "PERSIST_RETRY_DELAYS", (0.0, 0.0))
-    monkeypatch.setattr(eng, "UNSAVED_DIR", tmp_path / "unsaved")
+    monkeypatch.setattr(recording, "PERSIST_RETRY_DELAYS", (0.0, 0.0))
+    monkeypatch.setattr(recording, "UNSAVED_DIR", tmp_path / "unsaved")
     return tmp_path / "unsaved"
 
 
@@ -197,7 +198,7 @@ async def _persist(db, events, content="보고서 본문", **overrides):
         fallback_body=content, on_event=on_event,
     )
     kwargs.update(overrides)
-    return await _engine()._persist(db, lambda: [MessageModel(id="m1", content=content)], **kwargs)
+    return await _recorder().persist(db, lambda: [MessageModel(id="m1", content=content)], **kwargs)
 
 
 @pytest.mark.asyncio
@@ -265,8 +266,7 @@ def test_an_unwritable_folder_returns_none_instead_of_raising(tmp_path):
 @pytest.mark.asyncio
 async def test_the_synthesis_speech_is_labelled_as_the_report(no_wait):
     """`_speak` 가 합성 발언(턴 시작 시각이 주어진 발언)을 보고서로 밝히는지."""
-    engine = OrchestratorEngine.__new__(OrchestratorEngine)
-    engine.llm_caller = FakeLLMCaller(replies={"orchestrator": "## 최종 합의\n\n결론입니다."})
+    engine = OrchestratorEngine(llm_caller=FakeLLMCaller(replies={"orchestrator": "## 최종 합의\n\n결론입니다."}))
     events = []
 
     async def on_event(event):
@@ -275,7 +275,7 @@ async def test_the_synthesis_speech_is_labelled_as_the_report(no_wait):
     state = DebateState(session_id="sess-synth01", user_prompt="설계해줘")
     agent = Agent(key="orchestrator", name="Master Orchestrator", role="Moderator",
                   model="fake/model", api_key="k")
-    await engine._speak(
+    await engine.speech.speak(
         db=_FlakyDB(fail_times=99), state=state, agent=agent,
         prompt_messages=[{"role": "user", "content": "합성해줘"}], custom_instructions="",
         round_number=3, msg_type="orchestrator", on_event=on_event,
@@ -296,8 +296,8 @@ async def test_retry_succeeds_against_a_real_lock_on_a_real_database(tmp_path, m
     잠금이 풀린 뒤의 재시도가 같은 발언을 **한 번만** 기록하는지 봅니다.
     """
     monkeypatch.setattr(dbs, "SQLITE_BUSY_TIMEOUT_MS", 100)
-    monkeypatch.setattr(eng, "PERSIST_RETRY_DELAYS", (1.2, 1.2))
-    monkeypatch.setattr(eng, "UNSAVED_DIR", tmp_path / "unsaved")
+    monkeypatch.setattr(recording, "PERSIST_RETRY_DELAYS", (1.2, 1.2))
+    monkeypatch.setattr(recording, "UNSAVED_DIR", tmp_path / "unsaved")
 
     url = _file_url(tmp_path)
     engine = create_async_engine(url)
@@ -313,7 +313,7 @@ async def test_retry_succeeds_against_a_real_lock_on_a_real_database(tmp_path, m
         events.append(event)
 
     async with factory() as db:
-        ok = await _engine()._persist(
+        ok = await _recorder().persist(
             db, lambda: [MessageModel(id="synth-1", session_id="s", sender_key="orchestrator",
                                       sender_name="O", sender_role="R", content="보고서",
                                       round_number=3, msg_type="orchestrator")],

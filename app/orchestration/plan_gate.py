@@ -29,16 +29,20 @@ planning harness(MCP 서버)의 `계획 → 사람 승인 → 실행 → 완료 
    아니라 기록입니다.
 
 이 모듈은 순수합니다 — 글과 값만 다룹니다. 묻고 기다리는 것은 `control.TurnControl`,
-기록하고 다시 계획을 부르는 것은 `engine.OrchestratorEngine._approve_plan` 입니다.
+기록하고 다시 계획을 부르는 것은 `PlanningPhaseExecutor.approve_plan` 입니다.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from app.config import PlanApprovalConfig, get_config
 from app.orchestration import turns
+
+logger = logging.getLogger(__name__)
 
 # 수정 요청으로 기록되는 유저 발언의 머리표. 유저 발언 기록이 이것으로 "계획 수정 요청" 이라 적습니다
 # (`context_memory._user_label`).
@@ -62,6 +66,20 @@ MAX_COMMENT_CHARS = 1000
 
 # 태스크 칸을 비운 채 승인했을 때. 그 전문가는 계획 본문에 적힌 대로 합니다.
 FOLLOWS_PLAN = "(계획 본문을 따릅니다)"
+
+
+def plan_approval_settings() -> PlanApprovalConfig:
+    """계획 승인 설정 (ADR-028). 도구 보안처럼 **지금의** conf.json 에서 읽습니다.
+
+    대화가 시작된 뒤에 켜거나 끈 것도 다음 계획부터 걸려야 합니다 (에이전트 설정처럼 대화에
+    고정되지 않습니다). 설정을 읽지 못하면 켠 것으로 봅니다 — 승인을 건너뛰는 쪽으로 틀리면
+    확인받지 않은 계획이 그대로 돕니다.
+    """
+    try:
+        return get_config().plan_approval
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Could not read plan_approval settings; keeping the gate on: {exc}")
+        return PlanApprovalConfig()
 
 
 class PlanApprovalExpired(RuntimeError):

@@ -138,7 +138,7 @@ def test_next_speaker_context_carries_conclusions_only():
     state = _state_with_reasoning()
     critic = engine.agent_pool.get("critic")
 
-    context = engine._build_context_for_agent(state, critic)
+    context = engine.conversation.build_context_for_agent(state, critic)
     blob = "\n".join(str(m["content"]) for m in context)
 
     assert "Thought 1" not in blob
@@ -155,7 +155,7 @@ def test_an_agent_does_not_get_its_own_trace_back_either():
     state = _state_with_reasoning()
     architect = engine.agent_pool.get("architect")
 
-    context = engine._build_context_for_agent(state, architect)
+    context = engine.conversation.build_context_for_agent(state, architect)
     own = [m for m in context if m["role"] == "assistant"]
 
     assert own, "자기 발언이 assistant 역할로 들어가야 합니다"
@@ -169,7 +169,7 @@ def test_synthesis_transcript_carries_conclusions_only():
     engine = _engine()
     state = _state_with_reasoning()
 
-    prompt = engine._build_synthesis_prompt(state)
+    prompt = engine.synthesis_phase.build_synthesis_prompt(state)
     blob = "\n".join(str(m["content"]) for m in prompt)
 
     assert "Thought 1" not in blob
@@ -192,7 +192,7 @@ async def test_speaker_selection_prompt_sees_the_conclusion_not_the_preamble():
             return '{"speakers": ["critic"], "reason": "검증 차례"}', []
 
     engine.llm_caller = _Recorder()
-    await engine._ask_orchestrator_for_speakers(
+    await engine.debate_phase.ask_orchestrator_for_speakers(
         orchestrator=orchestrator,
         candidates=[engine.agent_pool.get("critic")],
         state=state,
@@ -228,7 +228,7 @@ async def test_the_full_trace_is_still_what_gets_persisted():
     engine.llm_caller = _Thinker()
 
     async with factory() as db:
-        await engine._speak(
+        await engine.speech.speak(
             db=db, state=state, agent=engine.agent_pool.get("architect"),
             prompt_messages=[{"role": "user", "content": "q"}],
             custom_instructions="", round_number=1, msg_type="agent", on_event=None,

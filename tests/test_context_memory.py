@@ -29,6 +29,7 @@ from app.config import AgentConfig
 from app.database.models import SessionModel
 from app.database.session import _add_missing_columns, get_session_factory, init_db
 from app.orchestration import context_memory as memory
+from app.orchestration.conversation import ConversationMemory
 from app.orchestration.engine import OrchestratorEngine
 from app.orchestration.turn_run import TurnRun
 from app.orchestration.state import DebateMessage, DebateState
@@ -239,7 +240,7 @@ async def test_synthesis_keeps_the_user_record_even_when_the_transcript_is_trimm
 
     tight = Agent(key="orchestrator", name="O", role="R", model="fake/model",
                   max_context_window=6000, max_tokens=1000)
-    prompt = engine._build_synthesis_prompt(state, tight)[0]["content"]
+    prompt = engine.synthesis_phase.build_synthesis_prompt(state, tight)[0]["content"]
 
     assert "컨텍스트 한도로 생략" in prompt, "이 테스트의 전제: 전사가 실제로 잘립니다"
     assert MARKER in prompt
@@ -651,7 +652,7 @@ def _debate_state() -> Tuple[DebateState, Agent]:
 def test_each_speaker_gets_new_speeches_verbatim_and_older_ones_as_digests_or_references():
     state, coder = _debate_state()
     engine = OrchestratorEngine(agent_pool=_pool(), llm_caller=FakeLLMCaller())
-    context = engine._build_context_for_agent(state, coder, "지시")
+    context = engine.conversation.build_context_for_agent(state, coder, "지시")
     # context[0] 은 목표 메시지, context[1] 은 요청 자리(참조)입니다. 발언 i 는 context[i + 1].
     by_index = {i: context[i + 1]["content"] for i in range(1, 7)}
 
@@ -668,9 +669,9 @@ def test_the_prompt_prefix_does_not_change_between_rounds():
     """라운드 표시가 목표 메시지에 있으면 라운드마다 두 번째 메시지가 바뀌어 기록 전체의 캐시가 깨집니다."""
     state, coder = _debate_state()
     engine = OrchestratorEngine(agent_pool=_pool(), llm_caller=FakeLLMCaller())
-    first = engine._build_context_for_agent(state, coder, "지시")
+    first = engine.conversation.build_context_for_agent(state, coder, "지시")
     state.current_round = 3
-    second = engine._build_context_for_agent(state, coder, "지시")
+    second = engine.conversation.build_context_for_agent(state, coder, "지시")
 
     assert first[:-1] == second[:-1]
     assert "Round 2 of 3" in first[-1]["content"] and "Round 3 of 3" in second[-1]["content"]
@@ -680,8 +681,8 @@ def test_the_prompt_prefix_does_not_change_between_rounds():
 
 def test_short_routing_snippets_use_the_digest():
     speech = _msg("architect", _speech())
-    assert OrchestratorEngine._snippet(speech, 300).startswith("- LRU 캐시로 결정")
-    assert OrchestratorEngine._snippet(_msg("critic", "짧은 말"), 300) == "짧은 말"
+    assert ConversationMemory.snippet(speech, 300).startswith("- LRU 캐시로 결정")
+    assert ConversationMemory.snippet(_msg("critic", "짧은 말"), 300) == "짧은 말"
 
 
 @pytest.mark.asyncio

@@ -60,7 +60,7 @@ def test_the_synthesis_prompt_asks_for_conclusion_and_diagram_only():
     state.messages.append(DebateMessage(
         sender_key="coder", sender_name="Coder", sender_role="Impl", content=CODER_REPLY, round_number=1,
     ))
-    prompt = OrchestratorEngine(agent_pool=_engine().agent_pool)._build_synthesis_prompt(state)[0]["content"]
+    prompt = OrchestratorEngine(agent_pool=_engine().agent_pool).synthesis_phase.build_synthesis_prompt(state)[0]["content"]
 
     assert "최종 합의 보고서" in prompt, "가짜 LLM 과 기존 흐름이 합성 요청을 이 표시로 알아봅니다"
     assert "종합 Mermaid 다이어그램" in prompt

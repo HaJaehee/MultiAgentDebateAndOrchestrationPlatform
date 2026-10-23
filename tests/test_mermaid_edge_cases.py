@@ -684,6 +684,7 @@ def test_empty_or_missing_input_does_not_crash(value):
 
 from app.orchestration.engine import OrchestratorEngine  # noqa: E402
 from app.orchestration.artifacts import extract_code_blocks, find_mermaid_blocks  # noqa: E402
+from app.orchestration.phases.synthesis import SynthesisPhaseExecutor
 
 FENCE = "`" * 3
 
@@ -762,7 +763,7 @@ def test_empty_and_adjacent_blocks():
 def test_splicing_a_fixed_diagram_keeps_the_fences_intact(text):
     """수선한 다이어그램을 제자리에 끼운 뒤에도 펜스가 깨지지 않고, 앞뒤 글이 그대로여야 합니다."""
     blocks = find_mermaid_blocks(text)
-    out = OrchestratorEngine._splice_blocks(text, [(0, blocks[0], [])], ["graph LR\n X-->Y"])
+    out = SynthesisPhaseExecutor.splice_blocks(text, [(0, blocks[0], [])], ["graph LR\n X-->Y"])
     assert out.startswith("앞") and out.rstrip().endswith("뒤")
     again = find_mermaid_blocks(out)
     assert [b["code"] for b in again] == ["graph LR\n X-->Y"]

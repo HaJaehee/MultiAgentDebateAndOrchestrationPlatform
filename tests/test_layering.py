@@ -35,6 +35,14 @@ RULES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("app.mcp", SCREENS + ("app.main", "app.orchestration", "app.agents")),
     ("app.database", SCREENS + ("app.main", "app.orchestration", "app.agents", "app.mcp")),
     ("app.config", SCREENS + ("app.main", "app.orchestration", "app.agents", "app.mcp", "app.database")),
+    # 엔진은 조립만 합니다. 단계 실행기와 서비스는 엔진을 되부르지 않습니다.
+    ("app.orchestration.phases", ("app.orchestration.engine", "app.orchestration.runner")),
+    ("app.orchestration.context", ("app.orchestration.engine", "app.orchestration.phases")),
+    ("app.orchestration.recording", ("app.orchestration.engine", "app.orchestration.phases",
+                                     "app.orchestration.speech", "app.orchestration.conversation")),
+    ("app.orchestration.speech", ("app.orchestration.engine", "app.orchestration.phases")),
+    ("app.orchestration.conversation", ("app.orchestration.engine", "app.orchestration.phases")),
+    ("app.orchestration.turn_setup", ("app.orchestration.engine", "app.orchestration.phases")),
     # 전문가 화면(`app.ui.app`, 나중에 `app.ui.expert`)은 체험·쉬운 화면이 가져다 쓰지 않습니다.
     ("app.trial", ("app.easy", "app.ui.app", "app.ui.expert")),
     ("app.easy", ("app.trial", "app.ui.app", "app.ui.expert")),

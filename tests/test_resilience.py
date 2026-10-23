@@ -204,11 +204,11 @@ async def test_failure_notice_never_enters_the_next_agents_context():
     engine = _engine(llm_caller=caller)
     state = await engine.run_turn(session_id=sid, user_prompt="설계해줘")
 
-    context = engine._build_context_for_agent(state, Agent(key="critic", name="C", role="R"))
+    context = engine.conversation.build_context_for_agent(state, Agent(key="critic", name="C", role="R"))
     joined = "\n".join(m["content"] for m in context)
     assert "연결 끊김" not in joined
 
-    synthesis = engine._build_synthesis_prompt(state)[0]["content"]
+    synthesis = engine.synthesis_phase.build_synthesis_prompt(state)[0]["content"]
     assert "연결 끊김" not in synthesis
     # 다만 누가 빠졌는지는 합성 프롬프트에 명시되어야 합니다.
     assert "architect" in synthesis
@@ -299,7 +299,7 @@ async def test_real_debate_context_alternates_roles():
     state = await engine.run_turn(session_id=sid, user_prompt="설계해줘")
 
     critic = _fixed_pool().get("critic")
-    context = engine._build_context_for_agent(state, critic)
+    context = engine.conversation.build_context_for_agent(state, critic)
     raw = [{"role": "system", "content": "sys"}] + context
     # 다듬기 전에는 user 가 연달아 나옵니다 (이것이 400 의 원인이었습니다).
     assert max(len(list(g)) for _, g in groupby(m["role"] for m in raw)) > 1
@@ -364,8 +364,8 @@ async def test_synthesis_prompt_is_bounded_by_context_window():
     roomy = Agent(key="orchestrator", name="O", role="R", model="fake/model",
                   max_context_window=128000, max_tokens=4096)
 
-    bounded = engine._build_synthesis_prompt(state, tight)[0]["content"]
-    full = engine._build_synthesis_prompt(state, roomy)[0]["content"]
+    bounded = engine.synthesis_phase.build_synthesis_prompt(state, tight)[0]["content"]
+    full = engine.synthesis_phase.build_synthesis_prompt(state, roomy)[0]["content"]
 
     assert len(bounded) < len(full)
     assert "컨텍스트 한도로 생략" in bounded

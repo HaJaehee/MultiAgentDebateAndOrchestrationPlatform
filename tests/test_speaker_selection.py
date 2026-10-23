@@ -27,6 +27,7 @@ from app.config import AgentConfig
 from app.database.models import MessageModel, SessionModel
 from app.database.session import get_session_factory, init_db
 from app.orchestration.engine import OrchestratorEngine
+from app.orchestration.phases.routing import parse_speaker_selection
 from app.orchestration.state import DebateState
 from tests.fake_llm import FakeLLMCaller
 
@@ -45,7 +46,7 @@ def _candidates() -> List[Agent]:
 
 
 def test_a_clean_json_answer_is_honoured():
-    picked, reason = OrchestratorEngine._parse_speaker_selection(
+    picked, reason = parse_speaker_selection(
         '{"speakers": ["critic", "architect"], "reason": "먼저 설계를 검증합니다."}',
         _candidates(),
     )
@@ -55,7 +56,7 @@ def test_a_clean_json_answer_is_honoured():
 
 def test_json_wrapped_in_prose_and_fences_is_still_read():
     """모델이 설명을 곁들이거나 펜스를 두르는 일은 흔합니다."""
-    picked, _ = OrchestratorEngine._parse_speaker_selection(
+    picked, _ = parse_speaker_selection(
         "이번 라운드는 구현부터 보겠습니다.\n```json\n"
         '{"speakers": ["coder"], "reason": "설계는 이미 합의됨"}\n```\n',
         _candidates(),
@@ -65,14 +66,14 @@ def test_json_wrapped_in_prose_and_fences_is_still_read():
 
 def test_plain_prose_falls_back_to_scraping_keys_in_order():
     """형식 하나 때문에 지명을 포기하면 이 전략은 우선순위 순서와 같아집니다."""
-    picked, _ = OrchestratorEngine._parse_speaker_selection(
+    picked, _ = parse_speaker_selection(
         "critic 이 먼저 반박하고, 그다음 architect 가 답하세요.", _candidates()
     )
     assert [a.key for a in picked] == ["critic", "architect"]
 
 
 def test_unknown_names_are_dropped_and_duplicates_collapse():
-    picked, _ = OrchestratorEngine._parse_speaker_selection(
+    picked, _ = parse_speaker_selection(
         '{"speakers": ["critic", "ghost", "critic", "coder"]}', _candidates()
     )
     assert [a.key for a in picked] == ["critic", "coder"]
@@ -80,11 +81,11 @@ def test_unknown_names_are_dropped_and_duplicates_collapse():
 
 def test_an_answer_naming_nobody_we_know_yields_nothing():
     """빈 결과는 '물러서라' 는 신호입니다."""
-    picked, _ = OrchestratorEngine._parse_speaker_selection(
+    picked, _ = parse_speaker_selection(
         '{"speakers": ["ghost"], "reason": "..."}', _candidates()
     )
     assert picked == []
-    assert OrchestratorEngine._parse_speaker_selection("", _candidates())[0] == []
+    assert parse_speaker_selection("", _candidates())[0] == []
 
 
 # --------------------------------------------------------------- 실제 토론

@@ -236,7 +236,7 @@ async def test_an_engine_error_marks_the_turn_failed(monkeypatch):
     async def broken_ledger(**_kwargs):
         raise RuntimeError("장부 저장소가 사라졌습니다")
 
-    monkeypatch.setattr(engine, "_update_ledger", broken_ledger)
+    monkeypatch.setattr(engine.conversation, "update_ledger", broken_ledger)
     with pytest.raises(RuntimeError):
         await engine.run_turn(session_id=sid, user_prompt=REQUEST)
 

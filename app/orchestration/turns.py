@@ -293,7 +293,7 @@ def replay_graph(
                 continue
             value = [_get(msg, "id")]
             if activation.node.type == "gate":
-                # 도는 중의 판정 노드가 내보낸 값과 같게 — 판정 기록 + 판정한 입력 (`_run_gate`).
+                # 도는 중의 판정 노드가 내보낸 값과 같게 — 판정 기록 + 판정한 입력 (`GraphRunner.run_gate`).
                 seen: List[str] = []
                 for _edge, ids in activation.inputs:
                     for mid in ids:

@@ -5,7 +5,7 @@
 문법 오류" 를 보았습니다. 그때는 토론이 이미 끝나 고칠 사람이 없습니다.
 
 여기서는 합성 직후에 검사하고, 틀렸으면 **오케스트레이터에게 오류를 그대로
-돌려주어 스스로 고치게** 합니다 (`OrchestratorEngine._repair_mermaid_blocks`).
+돌려주어 스스로 고치게** 합니다 (`SynthesisPhaseExecutor.repair_mermaid_blocks`).
 
 ## 설계 원칙: 놓치는 것보다 잘못 잡는 것이 나쁘다
 

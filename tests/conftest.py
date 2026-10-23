@@ -58,10 +58,10 @@ def _no_plan_approval(request, monkeypatch):
     if "plan_approval" in request.fixturenames:
         return
     from app.config import PlanApprovalConfig
-    from app.orchestration import engine as engine_module
+    from app.orchestration import plan_gate
 
     monkeypatch.setattr(
-        engine_module, "plan_approval_settings", lambda: PlanApprovalConfig(enabled=False)
+        plan_gate, "plan_approval_settings", lambda: PlanApprovalConfig(enabled=False)
     )
 
 
@@ -69,10 +69,10 @@ def _no_plan_approval(request, monkeypatch):
 def plan_approval(monkeypatch):
     """계획 승인을 켠 테스트가 받는 설정. 값을 고치면 그 테스트의 다음 계획부터 걸립니다."""
     from app.config import PlanApprovalConfig
-    from app.orchestration import engine as engine_module
+    from app.orchestration import plan_gate
 
     settings = PlanApprovalConfig(enabled=True, timeout=30)
-    monkeypatch.setattr(engine_module, "plan_approval_settings", lambda: settings)
+    monkeypatch.setattr(plan_gate, "plan_approval_settings", lambda: settings)
     return settings
 
 

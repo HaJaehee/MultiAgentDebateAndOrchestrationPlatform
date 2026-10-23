@@ -10,13 +10,12 @@ from app.orchestration.artifacts import (
     synthesis_has_content,
 )
 from app.orchestration.engine import OrchestratorEngine
-from app.orchestration.phases import (
-    DebatePhaseExecutor,
-    GraphTurnError,
-    PlanningPhaseExecutor,
-    SynthesisPhaseExecutor,
-    parse_gate_decision,
-)
+from app.orchestration.phases.debate import DebatePhaseExecutor
+from app.orchestration.phases.graph import parse_gate_decision
+from app.orchestration.graph import GraphTurnError
+from app.orchestration.phases.planning import PlanningPhaseExecutor
+from app.orchestration.phases.routing import parse_speaker_selection
+from app.orchestration.phases.synthesis import SynthesisPhaseExecutor
 from app.orchestration.state import DebateMessage, DebateState
 
 
@@ -30,14 +29,21 @@ def _dummy_agent(key: str = "architect", name: str = "Architect") -> Agent:
     )
 
 
-def test_engine_lazy_initializes_phase_executors():
-    engine = OrchestratorEngine.__new__(OrchestratorEngine)
+def test_engine_wires_phases_to_shared_services():
+    """단계 실행기는 엔진을 되부르지 않고, 엔진이 만든 서비스를 함께 씁니다."""
+    engine = OrchestratorEngine()
     assert isinstance(engine.planning_phase, PlanningPhaseExecutor)
     assert isinstance(engine.debate_phase, DebatePhaseExecutor)
     assert isinstance(engine.synthesis_phase, SynthesisPhaseExecutor)
-    assert engine.planning_phase.engine is engine
-    assert engine.debate_phase.engine is engine
-    assert engine.synthesis_phase.engine is engine
+    for phase in (engine.planning_phase, engine.debate_phase, engine.synthesis_phase):
+        assert phase.ctx is engine.ctx
+        assert phase.recorder is engine.recorder
+        assert phase.speech is engine.speech
+        assert phase.conversation is engine.conversation
+    # 실행 중에 갈아 끼운 호출기(MADOWarGame 의 대역)를 모든 단계가 봅니다.
+    caller = object()
+    engine.llm_caller = caller
+    assert engine.ctx.llm_caller is caller
 
 
 def test_artifacts_module_functions():
@@ -61,17 +67,17 @@ def test_artifacts_module_functions():
 
 
 def test_debate_phase_parse_speaker_selection():
-    engine = OrchestratorEngine.__new__(OrchestratorEngine)
+    engine = OrchestratorEngine()
     candidates = [_dummy_agent("arch", "Architect"), _dummy_agent("sec", "Security")]
 
-    selected, reason = engine.debate_phase.parse_speaker_selection(
+    selected, reason = parse_speaker_selection(
         '{"speakers": ["sec"], "stop": false, "reason": "Need security review"}',
         candidates,
     )
     assert [a.key for a in selected] == ["sec"]
     assert reason == "Need security review"
 
-    stopped_selected, stopped_reason = engine.debate_phase.parse_speaker_selection(
+    stopped_selected, stopped_reason = parse_speaker_selection(
         '{"speakers": [], "stop": true, "reason": "All agreed"}',
         candidates,
     )
@@ -80,7 +86,7 @@ def test_debate_phase_parse_speaker_selection():
 
 
 def test_synthesis_phase_extract_artifacts():
-    engine = OrchestratorEngine.__new__(OrchestratorEngine)
+    engine = OrchestratorEngine()
     state = DebateState(
         session_id="sess-1",
         user_prompt="Build API",
@@ -110,7 +116,7 @@ def test_synthesis_phase_extract_artifacts():
     assert "json" in types
 
 
-def test_parse_gate_decision_reexport():
+def test_parse_gate_decision():
     decision = parse_gate_decision('{"decision": "yes", "reason": "Looks good"}')
     assert decision == ("yes", "Looks good")
     assert issubclass(GraphTurnError, Exception)

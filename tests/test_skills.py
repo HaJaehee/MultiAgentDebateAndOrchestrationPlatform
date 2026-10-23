@@ -45,6 +45,7 @@ from app.config import (
     set_skill_enabled_in_conf_file,
     write_conf_file,
 )
+from app.orchestration.conversation import ConversationMemory
 
 
 def _write_skill(root: Path, name: str, description: str = "표를 요약할 때 씁니다.",
@@ -511,7 +512,7 @@ def test_the_orchestrator_sees_live_skill_names_and_tool_less_calls_drop_them(sk
     assert format_roster([agent]).endswith("· 도구: 없음 · 스킬: a")
     assert "스킬" not in format_roster([_agent()])
 
-    bare = OrchestratorEngine._tool_less(agent)
+    bare = ConversationMemory.tool_less(agent)
     assert bare.allowed_skills == [] and agent.allowed_skills == ["a", "b"]
 
 

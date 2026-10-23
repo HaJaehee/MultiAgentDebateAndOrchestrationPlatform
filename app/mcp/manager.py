@@ -340,7 +340,7 @@ def carry_over_memory_graph(
 #   memory           : 대화 단위. 합의된 사실은 그 토론의 참가자 전원이 함께 봐야 합니다.
 #   sandbox          : 발언자 단위. 커널 변수는 어디에도 기록되지 않기 때문입니다 —
 #                      다음 발언자의 컨텍스트에는 앞 발언의 본문만 들어가고 도구 실행
-#                      로그는 들어가지 않으므로(engine._build_context_for_agent), 커널을
+#                      로그는 들어가지 않으므로(ConversationMemory.build_context_for_agent), 커널을
 #                      공유하면 자기가 존재도 모르는 변수를 물려받게 됩니다. 에이전트
 #                      사이의 인계는 작업 공간 파일로 합니다. 그건 filesystem·git diff·
 #                      아티팩트 뷰어에 남아서 검증할 수 있습니다.

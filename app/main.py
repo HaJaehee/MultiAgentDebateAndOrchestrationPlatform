@@ -52,7 +52,7 @@ def _install_process_guards() -> None:
     이유를 모르겠다" 가 되지 않습니다.
 
     앱의 다른 부분은 이미 각자 자리에서 실패를 흡수합니다 (도구 호출은
-    MCPManager, 발언은 engine._speak, 토론은 DebateRunner). 이건 그 밖으로 새어
+    MCPManager, 발언은 SpeechRunner.speak, 토론은 DebateRunner). 이건 그 밖으로 새어
     나온 것을 붙잡는 마지막 그물입니다.
     """
     def _on_loop_exception(loop: asyncio.AbstractEventLoop, context: dict) -> None:

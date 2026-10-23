@@ -1,8 +1,7 @@
-"""Phase 3: Consensus Synthesis, Mermaid Self-Repair, and Artifact Extraction.
+"""3단계: 합성.
 
-`OrchestratorEngine`에서 최종 합의 도출(`_conclude`), 합성 프롬프트 생성,
-Mermaid 문법 자가 수선(`_repair_mermaid_blocks`), 산출물 추출(`_extract_artifacts_from_synthesis`)을
-전담하는 `SynthesisPhaseExecutor` 모듈입니다.
+오케스트레이터가 토론을 종합해 최종 보고서를 쓰고(`conclude`), 다이어그램 문법을 스스로 고치게
+한 뒤(`repair_mermaid_blocks`), 이번 턴의 산출물을 뽑아 기록합니다(`extract_artifacts_from_synthesis`).
 """
 
 from __future__ import annotations
@@ -36,21 +35,19 @@ from app.orchestration.artifacts import (
     synthesis_has_content,
 )
 from app.orchestration.control import TurnControl
+from app.orchestration.phases.base import PhaseExecutor
 from app.orchestration.state import ArtifactItem, DebateMessage, DebateState
 from app.timestamps import report_completed_line, to_local
 
 if TYPE_CHECKING:
-    from app.orchestration.engine import OrchestratorEngine, TurnSetup
+    from app.orchestration.turn_setup import TurnSetup
 
 logger = logging.getLogger(__name__)
 
 
 
-class SynthesisPhaseExecutor:
+class SynthesisPhaseExecutor(PhaseExecutor):
     """최종 합의 보고서 작성, Mermaid 다이어그램 자가 수선, 산출물 추출 및 턴 마무리를 전담합니다."""
-
-    def __init__(self, engine: "OrchestratorEngine") -> None:
-        self.engine = engine
 
     async def conclude(
         self,
@@ -68,7 +65,7 @@ class SynthesisPhaseExecutor:
         orchestrator_agent = setup.orchestrator
         custom_instructions = setup.custom_instructions
 
-        await self.engine._apply_interjections(
+        await self.recorder.apply_interjections(
             db=db,
             state=state,
             control=control,
@@ -85,7 +82,7 @@ class SynthesisPhaseExecutor:
 
         state.status = "synthesizing"
         state.current_speaker = orchestrator_agent.name
-        await self.engine._set_turn(db, state, phase="synthesizing", stopped_early=stopped_early)
+        await self.recorder.set_turn(db, state, phase="synthesizing", stopped_early=stopped_early)
         if on_event:
             await on_event({
                 "type": EventType.STATUS_CHANGED,
@@ -94,7 +91,7 @@ class SynthesisPhaseExecutor:
             })
 
         async def _fix_diagrams(text: str) -> str:
-            return await self.engine._repair_mermaid_blocks(
+            return await self.repair_mermaid_blocks(
                 text,
                 agent=orchestrator_agent,
                 custom_instructions=custom_instructions,
@@ -102,11 +99,11 @@ class SynthesisPhaseExecutor:
                 on_event=on_event,
             )
 
-        synth_message = await self.engine._speak(
+        synth_message = await self.speech.speak(
             db=db,
             state=state,
             agent=orchestrator_agent,
-            prompt_messages=await self.engine._synthesis_prompt_with_notice(
+            prompt_messages=await self.synthesis_prompt_with_notice(
                 state, orchestrator_agent, on_event
             ),
             custom_instructions=custom_instructions,
@@ -127,7 +124,7 @@ class SynthesisPhaseExecutor:
                 f"keeping each specialist's latest speech as the report instead"
             )
 
-        artifacts = self.engine._extract_artifacts_from_synthesis(
+        artifacts = self.extract_artifacts_from_synthesis(
             session_id,
             synth_message.content,
             state,
@@ -142,7 +139,7 @@ class SynthesisPhaseExecutor:
 
         if artifacts:
             fence = "`" * 3
-            await self.engine._persist(
+            await self.recorder.persist(
                 db,
                 lambda: [
                     ArtifactModel(
@@ -174,14 +171,14 @@ class SynthesisPhaseExecutor:
                 "artifacts": [a.model_dump() for a in state.artifacts],
             })
 
-        await self.engine._update_ledger(
+        await self.conversation.update_ledger(
             state=state,
             orchestrator=orchestrator_agent,
             on_event=on_event,
             reason="최종 합성",
         )
 
-        deferred = await self.engine._apply_interjections(
+        deferred = await self.recorder.apply_interjections(
             db=db,
             state=state,
             control=control,
@@ -191,11 +188,11 @@ class SynthesisPhaseExecutor:
         if deferred and on_event:
             await on_event({"type": EventType.INTERJECTIONS_DEFERRED, "count": deferred})
 
-        await self.engine._persist_memory(db, state, on_event)
+        await self.conversation.persist_memory(db, state, on_event)
 
         state.status = "completed"
-        await self.engine._settle_drafts(db, state, setup, on_event=on_event)
-        await self.engine._set_turn(
+        await self.recorder.settle_drafts(db, state, setup, on_event=on_event)
+        await self.recorder.set_turn(
             db, state, status=TURN_COMPLETED, phase="completed", finished_at=utc_now(),
         )
         state.is_consensus_reached = (
@@ -234,9 +231,9 @@ class SynthesisPhaseExecutor:
     ) -> List[Dict[str, Any]]:
         """합성 프롬프트를 만들고, 전사가 잘렸으면 화면에 알립니다."""
         if agent is not None:
-            await self.engine._ensure_synthesis_room(state, agent, on_event)
+            await self.ensure_synthesis_room(state, agent, on_event)
         before = state.context_dropped
-        prompt = self.engine._build_synthesis_prompt(state, agent)
+        prompt = self.build_synthesis_prompt(state, agent)
         dropped = state.context_dropped - before
         if dropped and on_event:
             await on_event({
@@ -253,7 +250,7 @@ class SynthesisPhaseExecutor:
         self, state: DebateState, agent: Agent, on_event: Optional[EventCallback]
     ) -> None:
         """합성 대화 기록이 컨텍스트 창 한도를 초과하면 이전 라운드 기록을 요약본으로 압축합니다."""
-        budget = context_budget(agent, tools=self.engine._tools_for(agent, state)) - 512
+        budget = context_budget(agent, tools=self.conversation.tools_for(agent, state)) - 512
         record = memory.build_user_record(
             state, model=agent.model, token_cap=int(budget * memory.USER_RECORD_SHARE)
         )
@@ -267,7 +264,7 @@ class SynthesisPhaseExecutor:
                 for m in state.messages[start:] if m.msg_type != "error"
             )
         )
-        await self.engine._ensure_room(
+        await self.conversation.ensure_room(
             state,
             model=agent.model,
             total=total,
@@ -283,7 +280,7 @@ class SynthesisPhaseExecutor:
         """Constructs prompt for orchestrator final consensus & artifact generation."""
         model = agent.model if agent is not None else "gpt-4o"
         budget = (
-            context_budget(agent, tools=self.engine._tools_for(agent, state)) - 512
+            context_budget(agent, tools=self.conversation.tools_for(agent, state)) - 512
             if agent is not None else 0
         )
         record = memory.build_user_record(
@@ -335,7 +332,7 @@ class SynthesisPhaseExecutor:
                 f"(max_context_window={agent.max_context_window})"
             )
             state.context_dropped += dropped
-            memory_tool = self.engine._memory_search_tool_for(agent, state)
+            memory_tool = self.conversation.memory_search_tool_for(agent, state)
             notice = context_trim_notice(dropped, memory_tool)
             if memory_tool:
                 notice += (
@@ -453,7 +450,7 @@ class SynthesisPhaseExecutor:
                 })
 
             try:
-                fixed = await self.engine._ask_for_fixed_diagrams(
+                fixed = await self.ask_for_fixed_diagrams(
                     fixer, broken, state, custom_instructions, attempt
                 )
             except LLMUnavailableError as exc:
@@ -464,7 +461,7 @@ class SynthesisPhaseExecutor:
                 logger.warning("The repair answer contained no mermaid block; giving up on this pass.")
                 break
 
-            current = self.engine._splice_blocks(current, broken, fixed)
+            current = self.splice_blocks(current, broken, fixed)
 
             blocks = find_mermaid_blocks(current)
             broken = [
@@ -546,13 +543,13 @@ class SynthesisPhaseExecutor:
                 f"의심스러운 라벨은 전부 큰따옴표로 감싸세요."
             )
 
-        content, _ = await self.engine.llm_caller.call_agent(
+        content, _ = await self.ctx.llm_caller.call_agent(
             fixer,
             [{"role": "user", "content": "\n".join(parts)}],
             custom_instructions,
             session_id=state.session_id,
-            mcp=self.engine._mcp_for(state),
-            tool_gate=self.engine._gate_for(state),
+            mcp=self.ctx.mcp_for(state),
+            tool_gate=self.ctx.gate_for(state),
         )
         return [b["code"] for b in find_mermaid_blocks(content or "")]
 
@@ -579,7 +576,7 @@ class SynthesisPhaseExecutor:
     def debate_code_artifacts(self, state: DebateState, stamp: str) -> List[ArtifactItem]:
         """이번 턴의 전문가 발언에서 코드 블록 산출물을 추출합니다."""
         latest: Dict[str, Tuple[DebateMessage, List[Dict[str, str]]]] = {}
-        for msg in self.engine._turn_speeches(state):
+        for msg in self.turn_speeches(state):
             blocks = [
                 b for b in extract_code_blocks(strip_reasoning_trace(msg.content))
                 if b["language"] in CODE_LANGUAGES
@@ -611,7 +608,7 @@ class SynthesisPhaseExecutor:
     ) -> str:
         """합성 응답이 비어 있거나 실패했을 때 대체 보고서를 생성합니다 (전문가별 최종 발언 취합)."""
         latest: Dict[str, DebateMessage] = {}
-        for msg in self.engine._turn_speeches(state):
+        for msg in self.turn_speeches(state):
             latest[msg.sender_key] = msg
 
         what = (
@@ -657,7 +654,7 @@ class SynthesisPhaseExecutor:
             artifacts.append(ArtifactItem(
                 artifact_type="markdown",
                 title=f"{stamp} 합성 실패 ({failure_reason or 'LLM 연결 끊김'})".strip(),
-                content=self.engine._synthesis_fallback_report(state, failure_reason, synth_text),
+                content=self.synthesis_fallback_report(state, failure_reason, synth_text),
                 language="markdown",
             ))
         else:
@@ -716,7 +713,7 @@ class SynthesisPhaseExecutor:
                     mermaid_idx += 1
                 break
 
-        artifacts.extend(self.engine._debate_code_artifacts(state, stamp))
+        artifacts.extend(self.debate_code_artifacts(state, stamp))
 
         # 4. 요약 JSON
         json_summary = {

@@ -251,7 +251,7 @@ async def test_the_turn_pool_holds_specialists_who_do_not_debate(db_factory, mon
     engine = OrchestratorEngine(agent_pool=pool, llm_caller=FakeLLMCaller())
     async with db_factory() as db:
         session_model = await db.get(SessionModel, sid)
-        setup = await engine._setup_turn(db, session_model, control=None, on_event=None)
+        setup = await engine.preparer.setup(db, session_model, control=None, on_event=None)
 
     assert {a.key for a in setup.active_agents} == {"orchestrator", "critic"}
     assert {a.key for a in setup.consult_pool} == {"orchestrator", "critic", "architect", "coder"}

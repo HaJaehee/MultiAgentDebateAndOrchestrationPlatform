@@ -27,6 +27,7 @@ from app.orchestration import plan_gate, turns
 from app.orchestration.control import PlanApprovalRequest, TurnControl
 from app.orchestration.runner import DebateRunner
 from app.orchestration.state import DebateMessage, DebateState
+from app.orchestration.turn_setup import restore_turn_state
 from app.ui.components.chat_feed import (
     background_paint,
     toggled_visibility,
@@ -431,7 +432,7 @@ async def test_a_turn_cut_after_approval_is_not_asked_again(plan_approval):
     async def crash(*args, **kwargs):
         raise asyncio.CancelledError()
 
-    engine._debate = crash  # noqa: SLF001 - 승인 직후 서버가 내려간 상황
+    engine.debate_phase.debate = crash  # noqa: SLF001 - 승인 직후 서버가 내려간 상황
     task = asyncio.ensure_future(engine.run_turn(session_id=sid, user_prompt=REQUEST, control=control))
     _approve(control, await _card(control, task))
     with pytest.raises(asyncio.CancelledError):
@@ -440,7 +441,7 @@ async def test_a_turn_cut_after_approval_is_not_asked_again(plan_approval):
         await turns.mark_interrupted_turns(db)
     turn = await _turn_row(sid)
 
-    del engine._debate  # noqa: SLF001
+    del engine.debate_phase.debate  # noqa: SLF001
     resumed = TurnControl()
     state = await engine.resume_turn(sid, turn.id, "continue", control=resumed)
 
@@ -457,14 +458,14 @@ async def test_a_revision_request_left_unanswered_is_rewritten_first(plan_approv
     sid = await _make_session()
     engine = _engine(llm_caller=llm)
     control = TurnControl()
-    original_plan = engine._plan  # noqa: SLF001
+    original_plan = engine.planning_phase.plan  # noqa: SLF001
 
     async def plan(*args, revision=None, **kwargs):
         if revision is not None:
             raise asyncio.CancelledError()
         return await original_plan(*args, revision=revision, **kwargs)
 
-    engine._plan = plan  # noqa: SLF001
+    engine.planning_phase.plan = plan  # noqa: SLF001
     task = asyncio.ensure_future(engine.run_turn(session_id=sid, user_prompt=REQUEST, control=control))
     request = await _card(control, task)
     control.resolve_plan_approval(request.id, "revise", comment="API 부터 정해 주세요.")
@@ -474,7 +475,7 @@ async def test_a_revision_request_left_unanswered_is_rewritten_first(plan_approv
         await turns.mark_interrupted_turns(db)
     turn = await _turn_row(sid)
 
-    del engine._plan  # noqa: SLF001
+    del engine.planning_phase.plan  # noqa: SLF001
     resumed = TurnControl()
     again = asyncio.ensure_future(engine.resume_turn(sid, turn.id, "continue", control=resumed))
     card = await _card(resumed, again)
@@ -752,11 +753,11 @@ def test_an_approval_only_counts_for_the_plan_it_names():
         _msg(turns.KIND_OPENING, "요청", "user", "user"), plan,
         _msg(turns.KIND_APPROVAL, "[계획 승인]", plan_id=plan.id, tasks=tasks),
     ])
-    OrchestratorEngine._restore_turn_state(state)  # noqa: SLF001
+    restore_turn_state(state)  # noqa: SLF001
     assert state.approval_index == 2 and state.plan_tasks[0]["task"] == "구현"
 
     state.messages[2] = _msg(turns.KIND_APPROVAL, "[계획 승인]", plan_id="다른-계획", tasks=tasks)
-    OrchestratorEngine._restore_turn_state(state)  # noqa: SLF001
+    restore_turn_state(state)  # noqa: SLF001
     assert state.approval_index is None and state.plan_tasks == []
 
 

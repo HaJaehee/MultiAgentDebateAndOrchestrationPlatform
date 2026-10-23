@@ -189,11 +189,11 @@ async def test_the_synthesis_transcript_leaves_room_for_tool_definitions(monkeyp
     llm.resolve_tool_servers = lambda agent: ["srv"]
     # 턴이 끝나도 풀에는 그 폴더의 런타임(도구 없음)이 유휴로 남아 먼저 잡힙니다.
     # 여기서는 도구 목록만 바꿔 보려는 것이라 호출기의 매니저를 쓰게 합니다.
-    monkeypatch.setattr(engine, "_mcp_for", lambda state: None)
+    monkeypatch.setattr(engine.ctx, "mcp_for", lambda state: None)
     llm.mcp_manager = _Tools([])
-    without = engine._build_synthesis_prompt(state, orchestrator)[0]["content"]
+    without = engine.synthesis_phase.build_synthesis_prompt(state, orchestrator)[0]["content"]
     llm.mcp_manager = _Tools(_tools(35))
-    with_tools = engine._build_synthesis_prompt(state, orchestrator)[0]["content"]
+    with_tools = engine.synthesis_phase.build_synthesis_prompt(state, orchestrator)[0]["content"]
 
     assert len(with_tools) < len(without), "도구 정의 몫만큼 전사가 줄어야 합니다"
 

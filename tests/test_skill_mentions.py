@@ -28,7 +28,7 @@ from app.config import RootConfig
 from app.database.models import TurnModel
 from app.database.session import get_session_factory
 from app.orchestration.control import TurnControl
-from app.orchestration.engine import clean_skill_designations
+from app.orchestration.turn_setup import clean_skill_designations
 from app.workspace_files import (
     REFERENCE_MARKER,
     MentionAgent,

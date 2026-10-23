@@ -25,7 +25,8 @@ from app.config import AgentConfig
 from app.database.models import MessageModel, SessionModel
 from app.database.session import get_session_factory, init_db
 from app.orchestration.control import TurnControl
-from app.orchestration.phases.debate import GraphTurnError, parse_gate_decision
+from app.orchestration.graph import GraphTurnError
+from app.orchestration.phases.graph import parse_gate_decision
 from app.orchestration.engine import OrchestratorEngine
 from app.orchestration.graph import (
     GraphScheduler,
