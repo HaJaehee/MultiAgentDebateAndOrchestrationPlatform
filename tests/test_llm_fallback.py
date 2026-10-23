@@ -20,11 +20,12 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from app.agents import llm as llm_module
+from app.agents import connection as conn, llm as llm_module
 from app.agents import llm_fallback as fb
 from app.agents import model_status as ms
 from app.agents.base import Agent
-from app.agents.llm import LLMCaller, LLMUnavailableError
+from app.agents.llm import LLMCaller
+from app.agents.llm_types import LLMUnavailableError
 from app.agents.llm_gate import LLMGate
 from app.agents.pool import AgentPool
 from app.config import AgentConfig, RootConfig, SequentialThinkingConfig
@@ -105,7 +106,7 @@ def test_only_an_agent_with_its_own_connection_has_somewhere_to_go():
     assert fb.route_for(agent_of(config, "orchestrator"), config) is None, "이미 전역 연결을 씁니다"
     route = fb.route_for(agent_of(config, "critic"), config)
     assert route is not None and route.substitute.model == "openai/shared"
-    assert route.connection == ms.connection_id(config.agents["critic"]), "연결 상태 창의 줄과 같은 이름표"
+    assert route.connection == conn.connection_id(config.agents["critic"]), "연결 상태 창의 줄과 같은 이름표"
 
     no_global = make_config(llm={"model": "openai/shared"})  # 전역에 주소도 키도 없음
     assert fb.route_for(agent_of(no_global, "critic"), no_global) is None
@@ -169,9 +170,9 @@ def test_provider_bound_thinking_options_do_not_follow_the_agent():
 
 
 def test_only_connection_failures_qualify():
-    assert fb.FALLBACK_STATES == {ms.AUTH, ms.MODEL, ms.UNREACHABLE, ms.TIMEOUT, ms.SERVER_ERROR}
-    assert ms.RATE_LIMITED not in fb.FALLBACK_STATES, "한도 초과는 잠깐 뒤에 풀립니다"
-    assert ms.REJECTED not in fb.FALLBACK_STATES, "요청의 문제는 기본 모델도 같은 이유로 실패합니다"
+    assert fb.FALLBACK_STATES == {conn.AUTH, conn.MODEL, conn.UNREACHABLE, conn.TIMEOUT, conn.SERVER_ERROR}
+    assert conn.RATE_LIMITED not in fb.FALLBACK_STATES, "한도 초과는 잠깐 뒤에 풀립니다"
+    assert conn.REJECTED not in fb.FALLBACK_STATES, "요청의 문제는 기본 모델도 같은 이유로 실패합니다"
 
 
 # ---------------------------------------------------------------- 5. 차단기
@@ -181,11 +182,11 @@ def test_a_failed_connection_is_skipped_for_a_while_then_tried_again():
     clock = Clock()
     breaker = fb.FallbackBreaker(clock=clock)
     assert breaker.state("c1", 60) is None
-    breaker.trip("c1", ms.AUTH)
-    assert breaker.state("c1", 60) == ms.AUTH and breaker.remaining("c1", 60) == pytest.approx(60)
+    breaker.trip("c1", conn.AUTH)
+    assert breaker.state("c1", 60) == conn.AUTH and breaker.remaining("c1", 60) == pytest.approx(60)
     assert breaker.state("other", 60) is None
     clock.now += 59
-    assert breaker.state("c1", 60) == ms.AUTH and breaker.remaining("c1", 60) == pytest.approx(1)
+    assert breaker.state("c1", 60) == conn.AUTH and breaker.remaining("c1", 60) == pytest.approx(1)
     clock.now += 1
     assert breaker.state("c1", 60) is None, "다시 불러 볼 때가 됐습니다"
     assert breaker.close("c1") is False, "시간이 다 된 것은 잊습니다"
@@ -193,9 +194,9 @@ def test_a_failed_connection_is_skipped_for_a_while_then_tried_again():
 
 def test_closing_and_zero_retry():
     breaker = fb.FallbackBreaker(clock=Clock())
-    breaker.trip("c1", ms.TIMEOUT)
+    breaker.trip("c1", conn.TIMEOUT)
     assert breaker.close("c1") is True and breaker.state("c1", 60) is None
-    breaker.trip("c1", ms.TIMEOUT)
+    breaker.trip("c1", conn.TIMEOUT)
     assert breaker.state("c1", 0) is None, "retry_after 가 0 이면 매번 원래 모델부터 부릅니다"
 
 
@@ -262,17 +263,17 @@ async def test_a_dead_model_is_answered_by_the_global_one_and_everyone_is_told(s
     assert order == ["told", "substitute called"], "기본 모델을 부르기 전에 알립니다"
     (notice,) = notices
     assert (notice.agent_key, notice.intended_model, notice.model) == ("critic", "openai/critic-only", "openai/shared")
-    assert notice.state == ms.UNREACHABLE and notice.label == "연결 실패" and notice.skipped is False
+    assert notice.state == conn.UNREACHABLE and notice.label == "연결 실패" and notice.skipped is False
     meta = notice.as_meta()
     assert meta == {"fallback": True, "model": "openai/shared", "intended_model": "openai/critic-only",
-                    "reason": ms.UNREACHABLE, "reason_label": "연결 실패"}
+                    "reason": conn.UNREACHABLE, "reason_label": "연결 실패"}
     assert "secret" not in json.dumps(meta) and "local" not in json.dumps(meta), "키와 주소는 기록에 담지 않습니다"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("error, state", [
-    (coded_error(401), ms.AUTH), (coded_error(404), ms.MODEL), (coded_error(503), ms.SERVER_ERROR),
-    (asyncio.TimeoutError(), ms.TIMEOUT), (connection_error(), ms.UNREACHABLE),
+    (coded_error(401), conn.AUTH), (coded_error(404), conn.MODEL), (coded_error(503), conn.SERVER_ERROR),
+    (asyncio.TimeoutError(), conn.TIMEOUT), (connection_error(), conn.UNREACHABLE),
 ])
 async def test_every_connection_failure_falls_back(setup, error, state):
     caller = Scripted({"openai/critic-only": error, "openai/shared": "ok"})
@@ -288,7 +289,7 @@ async def test_rate_limits_and_rejected_requests_do_not_fall_back(setup, error):
     result, notices = await call(caller, critic)
     assert isinstance(result, LLMUnavailableError) and not notices
     assert caller.calls == ["openai/critic-only"]
-    assert setup["breaker"].state(ms.connection_id(critic), 60) is None, "건너뛸 이유도 아닙니다"
+    assert setup["breaker"].state(conn.connection_id(critic), 60) is None, "건너뛸 이유도 아닙니다"
 
 
 @pytest.mark.asyncio
@@ -310,7 +311,7 @@ async def test_an_error_from_elsewhere_in_the_tool_loop_is_not_a_dead_connection
     result, notices = await call(caller, critic)
     assert isinstance(result, LLMUnavailableError) and not notices
     assert caller.calls == ["openai/critic-only"]
-    assert setup["breaker"].state(ms.connection_id(critic), 60) is None
+    assert setup["breaker"].state(conn.connection_id(critic), 60) is None
 
 
 @pytest.mark.asyncio
@@ -325,7 +326,7 @@ async def test_no_fallback_once_text_has_reached_the_screen(setup):
     result, notices = await call(caller, critic)
     assert isinstance(result, LLMUnavailableError) and not notices
     assert caller.calls == ["openai/critic-only"], "같은 답이 두 번 붙지 않게 합니다"
-    assert setup["breaker"].state(ms.connection_id(critic), 60) == ms.UNREACHABLE, "다음 발언은 곧바로 기본 모델로"
+    assert setup["breaker"].state(conn.connection_id(critic), 60) == conn.UNREACHABLE, "다음 발언은 곧바로 기본 모델로"
 
 
 @pytest.mark.asyncio
@@ -345,7 +346,7 @@ async def test_no_fallback_once_the_model_has_called_tools(setup):
 @pytest.mark.asyncio
 async def test_a_resumed_speech_stays_on_its_own_model_even_when_it_is_known_to_be_down(setup):
     critic = agent_of(setup["config"], "critic")
-    setup["breaker"].trip(ms.connection_id(critic), ms.AUTH)
+    setup["breaker"].trip(conn.connection_id(critic), conn.AUTH)
     caller = Scripted({"openai/critic-only": coded_error(401), "openai/shared": "ok"})
     result, notices = await call(caller, critic, resume_state={"messages": [], "turn_anchor": ""})
     assert isinstance(result, LLMUnavailableError) and not notices
@@ -362,7 +363,7 @@ async def test_a_known_dead_connection_is_not_called_again_until_it_is_time(setu
     setup["clock"].now += 30
     result, notices = await call(caller, critic)
     assert result == ("ok", []) and caller.calls[2:] == ["openai/shared"], "타임아웃을 다시 치르지 않습니다"
-    assert notices[0].skipped is True and notices[0].state == ms.AUTH
+    assert notices[0].skipped is True and notices[0].state == conn.AUTH
 
     setup["clock"].now += 31
     caller.script["openai/critic-only"] = "원래 모델이 돌아왔습니다"
@@ -569,7 +570,7 @@ async def test_real_call_a_rejected_key_is_answered_by_the_global_model(setup, f
             on_chunk=chunks.append,
         )
     assert content == "shared 의 답변입니다" and "".join(chunks) == content and logs == []
-    assert [n.state for n in notices] == [ms.AUTH]
+    assert [n.state for n in notices] == [conn.AUTH]
     # 죽은 연결에 스트리밍 없이 다시 묻느라 시간을 쓰지 않았습니다.
     assert _FakeLLM.seen == [{"model": "bad-key", "stream": True}, {"model": "shared", "stream": True}]
 
@@ -585,7 +586,7 @@ async def test_real_call_a_server_error_is_asked_once_more_without_streaming_fir
             agent_of(setup["config"], "critic"), [{"role": "user", "content": "검토해 주세요"}],
             on_chunk=lambda text: None,
         )
-    assert content == "shared 의 답변입니다" and [n.state for n in notices] == [ms.SERVER_ERROR]
+    assert content == "shared 의 답변입니다" and [n.state for n in notices] == [conn.SERVER_ERROR]
     # 5xx 는 클라이언트가 스스로 몇 번 더 보내기도 하므로 횟수가 아니라 순서를 봅니다.
     before, last = _FakeLLM.seen[:-1], _FakeLLM.seen[-1]
     assert last == {"model": "shared", "stream": True} and {s["model"] for s in before} == {"broken"}
@@ -636,7 +637,7 @@ class FallingBack(FakeLLMCaller):
             if listener is not None:
                 outcome = listener(fb.FallbackNotice(
                     agent_key=agent.key, agent_name=agent.name, intended_model="anthropic/claude-x",
-                    model="openai/shared", state=ms.AUTH,
+                    model="openai/shared", state=conn.AUTH,
                 ))
                 if asyncio.iscoroutine(outcome):
                     await outcome
@@ -680,7 +681,7 @@ async def test_the_speech_record_says_who_actually_answered():
     critic = next(m for m in state.messages if m.sender_key == "critic")
     assert critic.msg_type != "error"
     assert critic.llm_meta == {"fallback": True, "model": "openai/shared", "intended_model": "anthropic/claude-x",
-                               "reason": ms.AUTH, "reason_label": "인증 실패"}
+                               "reason": conn.AUTH, "reason_label": "인증 실패"}
     assert all(m.llm_meta is None for m in state.messages if m.sender_key != "critic")
     assert state.fallback_agent_keys == ["critic"] and state.failed_agent_keys == [], "실패가 아닙니다"
 
@@ -777,14 +778,14 @@ def ms_root():
 @pytest.mark.asyncio
 async def test_the_status_dialog_shows_the_fallback_and_a_good_probe_ends_it(setup):
     config = setup["config"]
-    critic_id = ms.connection_id(config.agents["critic"])
-    setup["breaker"].trip(critic_id, ms.AUTH)
+    critic_id = conn.connection_id(config.agents["critic"])
+    setup["breaker"].trip(critic_id, conn.AUTH)
     setup["clock"].now += 18
 
-    states = {"openai/critic-only": ms.AUTH}
+    states = {"openai/critic-only": conn.AUTH}
 
     async def prober(target):
-        return ms.ModelStatus(target.id, states.get(target.model, ms.OK))
+        return ms.ModelStatus(target.id, states.get(target.model, conn.OK))
 
     board = ms.ModelStatusBoard(prober=prober)
     rows = {row.target.model: row for row in board.rows(config)}
@@ -796,7 +797,7 @@ async def test_the_status_dialog_shows_the_fallback_and_a_good_probe_ends_it(set
 
     board.start(config)
     await board.wait()
-    assert setup["breaker"].state(critic_id, 60) == ms.AUTH, "여전히 안 되면 그대로 건너뜁니다"
+    assert setup["breaker"].state(critic_id, 60) == conn.AUTH, "여전히 안 되면 그대로 건너뜁니다"
 
     # 키를 고친 뒤 다시 확인하면 (새 결과판 = 캐시 없이 바로 확인)
     states.clear()
@@ -809,5 +810,5 @@ async def test_the_status_dialog_shows_the_fallback_and_a_good_probe_ends_it(set
 
 def test_with_fallback_off_the_dialog_shows_nothing_about_it(setup):
     setup["config"] = make_config(enabled=False)
-    setup["breaker"].trip(ms.connection_id(setup["config"].agents["critic"]), ms.AUTH)
+    setup["breaker"].trip(conn.connection_id(setup["config"].agents["critic"]), conn.AUTH)
     assert all(row.skip_seconds is None for row in ms.ModelStatusBoard().rows(setup["config"]))

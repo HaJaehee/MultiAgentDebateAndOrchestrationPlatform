@@ -11,7 +11,9 @@ from sqlalchemy import update
 
 from app.agents.base import Agent
 from app.agents.consultation import consultation_tools_for
-from app.agents.llm import context_budget, estimate_tokens, memory_search_tool, strip_reasoning_trace
+from app.agents.llm_context import context_budget, estimate_tokens
+from app.agents.llm_tools import memory_search_tool
+from app.agents.reasoning import strip_reasoning_trace
 from app.agents.skills import skill_tools_for, with_designated_skills
 from app.database.models import SessionModel
 from app.events import EventCallback, EventType

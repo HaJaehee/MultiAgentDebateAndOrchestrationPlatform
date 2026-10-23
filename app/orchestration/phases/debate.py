@@ -10,7 +10,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from app.agents.base import Agent
-from app.agents.llm import LLMUnavailableError
+from app.agents.llm_types import LLMUnavailableError
 from app.events import EventCallback, EventType
 from app.orchestration import turns
 from app.orchestration.artifacts import format_roster

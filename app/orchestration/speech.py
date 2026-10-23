@@ -16,7 +16,7 @@ from sqlalchemy import delete, update
 
 from app.agents import llm_fallback
 from app.agents.base import Agent
-from app.agents.llm import LLMUnavailableError
+from app.agents.llm_types import LLMUnavailableError
 from app.agents.skills import with_designated_skills
 from app.config import TOOL_ITERATION_CEILING
 from app.database.models import MessageModel, SpeechDraftModel, ToolCallRecordModel, utc_now

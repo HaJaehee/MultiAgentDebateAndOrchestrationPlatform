@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy import select
 
 from app.agents.base import Agent
-from app.agents.llm import LLMUnavailableError
+from app.agents.llm_types import LLMUnavailableError
 from app.agents.pool import AgentPool
 from app.config import AgentConfig
 from app.database.models import MessageModel, SessionModel

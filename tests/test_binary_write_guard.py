@@ -10,7 +10,7 @@ from typing import Any, List
 
 import pytest
 
-from app.agents.llm import binary_file_guidance
+from app.agents.llm_tools import binary_file_guidance
 from app.mcp.guards import binary_write_refusal
 from app.mcp.manager import MCPManager
 

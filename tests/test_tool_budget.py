@@ -17,10 +17,7 @@ import uuid
 
 import pytest
 
-from app.agents.llm import (
-    TOOL_BUDGET_FINAL_COUNTDOWN,
-    tool_budget_notice,
-)
+from app.agents.llm_budget import TOOL_BUDGET_FINAL_COUNTDOWN, tool_budget_notice
 from app.agents.pool import AgentPool
 from app.config import TOOL_ITERATION_CEILING, AgentConfig
 from app.database.models import SessionModel

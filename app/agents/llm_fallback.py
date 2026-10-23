@@ -55,8 +55,9 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterator, Optional, Tuple
 
 from app.agents.base import Agent
-from app.agents.model_status import (
+from app.agents.connection import (
     AUTH,
+    CONNECTION_FIELDS,
     MODEL,
     SERVER_ERROR,
     STATE_INFO,
@@ -79,7 +80,6 @@ __all__ = [
 # 물러서는 실패. 연결 자체가 안 되는 것만 고릅니다.
 FALLBACK_STATES = frozenset({AUTH, MODEL, UNREACHABLE, TIMEOUT, SERVER_ERROR})
 
-_CONNECTION_FIELDS = ("model", "api_key", "api_base", "api_version", "provider", "extra_headers", "extra_body")
 # 전역에서 함께 가져오는 것: 그 모델의 용량과 전송 설정.
 _CAPACITY_FIELDS = ("max_tokens", "max_context_window", "timeout", "num_retries", "drop_params")
 
@@ -210,7 +210,7 @@ def substitute_for(agent: Agent, llm: LLMConfig) -> Optional[Agent]:
     if connection_signature(target) == connection_signature(agent):
         return None
     update: Dict[str, Any] = {
-        name: getattr(target, name) for name in (*_CONNECTION_FIELDS, *_CAPACITY_FIELDS)
+        name: getattr(target, name) for name in (*CONNECTION_FIELDS, *_CAPACITY_FIELDS)
     }
     if agent.sequential_thinking.enabled and agent.sequential_thinking.mode == "native":
         # Provider 고유의 사고 옵션은 그 모델에 묶인 값입니다. 전역 모델에는 전역의 설정을 씁니다.

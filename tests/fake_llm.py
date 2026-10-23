@@ -9,7 +9,7 @@ import asyncio
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.agents.base import Agent
-from app.agents.llm import LLMUnavailableError
+from app.agents.llm_types import LLMUnavailableError
 
 
 ARCHITECT_REPLY = """### 아키텍처 제안

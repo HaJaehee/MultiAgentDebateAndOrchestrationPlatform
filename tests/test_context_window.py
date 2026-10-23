@@ -17,7 +17,7 @@ import uuid
 import pytest
 
 from app.agents.base import Agent
-from app.agents.llm import (
+from app.agents.llm_context import (
     CONTEXT_PRESSURE_BANDS,
     context_headroom,
     context_pressure_notice,
@@ -25,9 +25,8 @@ from app.agents.llm import (
     context_budget,
     estimate_tokens,
     fit_tool_loop_context,
-    memory_search_tool,
-    memory_write_tool,
 )
+from app.agents.llm_tools import memory_search_tool, memory_write_tool
 from app.agents.pool import AgentPool
 from app.config import AgentConfig
 from app.database.models import SessionModel

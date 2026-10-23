@@ -21,7 +21,7 @@ from typing import Any, Dict, List
 import pytest
 from sqlalchemy import select
 
-from app.agents.llm import LLMUnavailableError
+from app.agents.llm_types import LLMUnavailableError
 from app.database.models import MessageModel, ToolCallRecordModel
 from app.database.session import get_session_factory
 from app.export import build_session_markdown

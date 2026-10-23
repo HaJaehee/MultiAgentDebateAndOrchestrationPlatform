@@ -8,7 +8,8 @@ import pytest
 from app.config import AppConfig, load_config, update_agent_persona_in_conf_file
 from app.agents.base import Agent
 from app.agents.pool import AgentPool
-from app.agents.llm import LLMCaller, LLMUnavailableError
+from app.agents.llm import LLMCaller
+from app.agents.llm_types import LLMUnavailableError
 from app.database.models import MessageModel, SessionModel
 from app.database.session import get_session_factory
 from app.mcp.client import make_list_roots_handler, MCPClientConnection

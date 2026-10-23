@@ -18,14 +18,8 @@ from typing import Any, Dict, List
 
 from nicegui import ui
 
-from app.agents.model_status import (
-    CACHE_SECONDS,
-    CHECKING,
-    ModelRow,
-    describe_row,
-    get_model_status_board,
-    summarize,
-)
+from app.agents.model_status import CACHE_SECONDS, ModelRow, describe_row, get_model_status_board, summarize
+from app.agents.connection import CHECKING
 
 BUTTON_LABEL = "모델 연결 상태"
 BUTTON_ICON = "network_check"

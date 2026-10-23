@@ -70,7 +70,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from app.agents.llm import estimate_tokens, is_file_writing_call, strip_reasoning_trace
+from app.agents.llm_context import estimate_tokens
+from app.agents.llm_tools import is_file_writing_call
+from app.agents.reasoning import strip_reasoning_trace
 from app.orchestration import plan_gate, turns
 from app.orchestration.artifacts import iter_code_fences
 from app.orchestration.state import DebateMessage, DebateState

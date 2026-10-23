@@ -13,13 +13,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from app.agents.base import Agent
-from app.agents.llm import (
-    LLMUnavailableError,
-    context_budget,
-    context_trim_notice,
-    estimate_tokens,
-    strip_reasoning_trace,
-)
+from app.agents.llm_types import LLMUnavailableError
+from app.agents.llm_context import context_budget, context_trim_notice, estimate_tokens
+from app.agents.reasoning import strip_reasoning_trace
 from app.database.models import TURN_COMPLETED, ArtifactModel, utc_now
 from app.events import EventCallback, EventType
 from app.mermaid_lint import format_issues, lint_mermaid

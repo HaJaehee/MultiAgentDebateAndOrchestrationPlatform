@@ -15,7 +15,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.agents.base import Agent
-from app.agents.llm import LLMCaller, request_fingerprint
+from app.agents.llm import LLMCaller
+from app.agents.llm_fingerprint import request_fingerprint
 
 
 def _agent(**kwargs) -> Agent:

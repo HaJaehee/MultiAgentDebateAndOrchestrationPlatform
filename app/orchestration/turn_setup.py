@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Coroutine, Dict, List, Optional
 
 from app.agents.base import Agent
-from app.agents.llm import context_budget
+from app.agents.llm_context import context_budget
 from app.agents.personas import frozen_agents, prepare_agents_for_turn
 from app.config import SKILL_NAME_PATTERN
 from app.database.models import SessionModel

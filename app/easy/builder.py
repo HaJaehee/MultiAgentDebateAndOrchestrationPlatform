@@ -25,7 +25,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.base import CARD_COLOR_CHOICES, ICON_CHOICES, Agent
-from app.agents.llm import LLMCaller, strip_reasoning_trace
+from app.agents.llm import LLMCaller
+from app.agents.reasoning import strip_reasoning_trace
 from app.agents.pool import AgentPool, get_agent_pool, reload_agent_pool
 from app.config import (
     DEFAULT_CONFIG_PATH,

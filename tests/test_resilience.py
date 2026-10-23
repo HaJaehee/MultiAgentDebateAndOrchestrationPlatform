@@ -14,7 +14,7 @@ import uuid
 import pytest
 
 from app.agents.base import Agent
-from app.agents.llm import LLMUnavailableError
+from app.agents.llm_types import LLMUnavailableError
 from app.agents.pool import AgentPool
 from app.config import AgentConfig
 from app.database.models import SessionModel
@@ -260,7 +260,7 @@ async def test_partial_stream_is_kept_alongside_the_failure_notice():
 
 def test_consecutive_same_role_messages_are_merged():
     """Anthropic·Gemini·일부 OpenAI 호환 셔임은 role 이 교대하지 않으면 400 을 냅니다."""
-    from app.agents.llm import merge_consecutive_roles
+    from app.agents.llm_context import merge_consecutive_roles
 
     merged = merge_consecutive_roles([
         {"role": "system", "content": "s"},
@@ -277,7 +277,7 @@ def test_consecutive_same_role_messages_are_merged():
 
 def test_merge_leaves_tool_call_messages_alone():
     """도구 호출이 얽힌 메시지를 합치면 tool_call_id 짝이 깨집니다."""
-    from app.agents.llm import merge_consecutive_roles
+    from app.agents.llm_context import merge_consecutive_roles
 
     messages = [
         {"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]},
@@ -292,7 +292,7 @@ def test_merge_leaves_tool_call_messages_alone():
 async def test_real_debate_context_alternates_roles():
     """실제 토론 전사가 엔드포인트에 나갈 때 role 이 교대해야 합니다."""
     from itertools import groupby
-    from app.agents.llm import fit_context_window, merge_consecutive_roles
+    from app.agents.llm_context import fit_context_window, merge_consecutive_roles
 
     sid = await _make_session(max_rounds=2)
     engine = _engine(llm_caller=FakeLLMCaller())
@@ -311,7 +311,7 @@ async def test_real_debate_context_alternates_roles():
 
 def test_context_window_drops_oldest_middle_messages():
     """한도를 넘으면 가운데를 오래된 것부터 덜어내고, 앞뒤는 남깁니다."""
-    from app.agents.llm import fit_context_window
+    from app.agents.llm_context import fit_context_window
 
     agent = Agent(key="architect", name="A", role="R", model="fake/model",
                   max_context_window=2000, max_tokens=1000)
@@ -332,7 +332,7 @@ def test_context_window_drops_oldest_middle_messages():
 
 
 def test_context_window_leaves_short_conversations_untouched():
-    from app.agents.llm import fit_context_window
+    from app.agents.llm_context import fit_context_window
 
     agent = Agent(key="architect", name="A", role="R", model="fake/model",
                   max_context_window=128000, max_tokens=4096)

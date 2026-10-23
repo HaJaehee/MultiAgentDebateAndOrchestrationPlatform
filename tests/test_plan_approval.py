@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import pytest
 from sqlalchemy import select
 
-from app.agents.llm import LLMUnavailableError
+from app.agents.llm_types import LLMUnavailableError
 from app.database.models import TURN_COMPLETED, TURN_FAILED, MessageModel, TurnModel
 from app.database.session import get_session_factory
 from app.orchestration import context_memory as memory

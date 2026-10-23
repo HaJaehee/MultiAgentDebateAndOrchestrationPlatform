@@ -26,19 +26,21 @@ import litellm
 import pytest
 
 from app.agents.base import Agent
-from app.agents.llm import (
+from app.agents.llm_recovery import (
     ANSWER_AFTER_REASONING_INSTRUCTION,
     ANSWER_ONLY_IN_REASONING_FOOTER,
-    NATIVE_REASONING_HEADER,
     CONTINUE_ANSWER_INSTRUCTION,
     LEAKED_TOOL_CALL_FOOTER,
     MAX_LEAKED_TOOL_CALL_RETRIES,
     REASONING_CARRY_CHARS,
-    LLMCaller,
+    find_leaked_tool_call,
+)
+from app.agents.llm import LLMCaller
+from app.agents.reasoning import NATIVE_REASONING_HEADER
+from app.agents.llm_context import (
     context_budget,
     effective_max_tokens,
     estimate_tokens,
-    find_leaked_tool_call,
     fit_context_window,
     fit_tool_loop_context,
     max_tokens_label,

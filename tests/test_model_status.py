@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from app.agents import llm as llm_module
+from app.agents import connection as conn, llm as llm_module
 from app.agents import model_status as ms
 from app.agents.llm_gate import LLMGate
 from app.config import RootConfig
@@ -186,8 +186,8 @@ def fake_llm():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model, expected", [
-    ("ok", ms.OK), ("bad-key", ms.AUTH), ("forbidden", ms.AUTH), ("missing", ms.MODEL),
-    ("limited", ms.RATE_LIMITED), ("bad-request", ms.REJECTED), ("broken", ms.SERVER_ERROR),
+    ("ok", conn.OK), ("bad-key", conn.AUTH), ("forbidden", conn.AUTH), ("missing", conn.MODEL),
+    ("limited", conn.RATE_LIMITED), ("bad-request", conn.REJECTED), ("broken", conn.SERVER_ERROR),
 ])
 async def test_real_litellm_failures_land_in_the_right_bucket(fake_llm, gate, model, expected):
     _FakeLLM.seen.clear()
@@ -195,7 +195,7 @@ async def test_real_litellm_failures_land_in_the_right_bucket(fake_llm, gate, mo
     assert result.state == expected, result.detail
     assert len(_FakeLLM.seen) == 1, "다시 시도하지 않습니다"
     assert _FakeLLM.seen[0]["max_tokens"] == ms.PROBE_MAX_TOKENS and "tools" not in _FakeLLM.seen[0]
-    assert (result.latency_ms is not None) == (expected == ms.OK)
+    assert (result.latency_ms is not None) == (expected == conn.OK)
     assert SHARED_KEY not in result.detail, "Provider 가 되돌려 보낸 키도 가립니다"
     assert gate.snapshot()["active"] == 0
 
@@ -203,20 +203,20 @@ async def test_real_litellm_failures_land_in_the_right_bucket(fake_llm, gate, mo
 @pytest.mark.asyncio
 async def test_a_server_that_is_down_is_unreachable_not_a_server_error(gate):
     result = await ms.probe(make_target(api_base=f"http://127.0.0.1:{_free_port()}/v1"), timeout_seconds=8)
-    assert result.state == ms.UNREACHABLE, result.detail
+    assert result.state == conn.UNREACHABLE, result.detail
 
 
 @pytest.mark.asyncio
 async def test_a_server_that_does_not_answer_in_time_is_a_timeout(fake_llm, gate):
     result = await ms.probe(make_target(model="openai/slow", api_base=fake_llm), timeout_seconds=0.5)
-    assert result.state == ms.TIMEOUT, result.detail
+    assert result.state == conn.TIMEOUT, result.detail
     assert gate.snapshot()["active"] == 0
 
 
 @pytest.mark.asyncio
 async def test_an_unknown_provider_prefix_points_at_the_model_name(gate):
     result = await ms.probe(make_target(model="google/gemini-1.5-pro", api_base=None), timeout_seconds=5)
-    assert result.state == ms.MODEL, result.detail
+    assert result.state == conn.MODEL, result.detail
 
 
 def test_classification_falls_back_to_status_codes_and_words():
@@ -225,15 +225,15 @@ def test_classification_falls_back_to_status_codes_and_words():
             super().__init__(message)
             self.status_code = status_code
 
-    assert ms.classify(Coded("nope", 401)) == ms.AUTH
-    assert ms.classify(Coded("nope", 404)) == ms.MODEL
-    assert ms.classify(Coded("nope", 429)) == ms.RATE_LIMITED
-    assert ms.classify(Coded("nope", 502)) == ms.SERVER_ERROR
-    assert ms.classify(Coded("API key not valid. Please pass a valid API key.", 400)) == ms.AUTH
-    assert ms.classify(Coded("model 'x' not found", 400)) == ms.MODEL
-    assert ms.classify(Coded("All connection attempts failed", 500)) == ms.UNREACHABLE
-    assert ms.classify(asyncio.TimeoutError()) == ms.TIMEOUT
-    assert ms.classify(RuntimeError("something else")) == ms.ERROR
+    assert conn.classify(Coded("nope", 401)) == conn.AUTH
+    assert conn.classify(Coded("nope", 404)) == conn.MODEL
+    assert conn.classify(Coded("nope", 429)) == conn.RATE_LIMITED
+    assert conn.classify(Coded("nope", 502)) == conn.SERVER_ERROR
+    assert conn.classify(Coded("API key not valid. Please pass a valid API key.", 400)) == conn.AUTH
+    assert conn.classify(Coded("model 'x' not found", 400)) == conn.MODEL
+    assert conn.classify(Coded("All connection attempts failed", 500)) == conn.UNREACHABLE
+    assert conn.classify(asyncio.TimeoutError()) == conn.TIMEOUT
+    assert conn.classify(RuntimeError("something else")) == conn.ERROR
 
 
 def test_error_text_is_masked_and_short():
@@ -259,7 +259,7 @@ async def test_probe_holds_a_slot_while_it_calls_and_returns_it(gate, monkeypatc
 
     monkeypatch.setattr(llm_module.litellm, "acompletion", fake_completion)
     result = await ms.probe(make_target())
-    assert result.state == ms.OK
+    assert result.state == conn.OK
     assert seen["snapshot"]["active_holders"] == [ms.GATE_HOLDER]
     assert seen["kwargs"]["api_key"] == SHARED_KEY
     assert gate.snapshot()["active"] == 0
@@ -276,11 +276,11 @@ async def test_probe_does_not_cut_in_when_the_gate_is_full(gate, monkeypatch):
     gate.configure(1)
     await gate.acquire("debate-1")
     result = await ms.probe(make_target(), gate_wait_seconds=0.05)
-    assert result.state == ms.BUSY and not called
+    assert result.state == conn.BUSY and not called
     snap = gate.snapshot()
     assert snap["active_holders"] == ["debate-1"] and snap["waiting"] == 0, "줄에 흔적을 남기지 않습니다"
     gate.release("debate-1")
-    assert (await ms.probe(make_target(), gate_wait_seconds=0.05)).state == ms.OK
+    assert (await ms.probe(make_target(), gate_wait_seconds=0.05)).state == conn.OK
 
 
 @pytest.mark.asyncio
@@ -290,7 +290,7 @@ async def test_a_connection_without_info_is_not_called(gate, monkeypatch):
 
     monkeypatch.setattr(llm_module.litellm, "acompletion", fake_completion)
     result = await ms.probe(make_target(is_live=False, api_base=None, api_key=None))
-    assert result.state == ms.NOT_CONFIGURED
+    assert result.state == conn.NOT_CONFIGURED
 
 
 # ---------------------------------------------------------------- 5. 결과판
@@ -320,7 +320,7 @@ def make_board(gate, *, hold: asyncio.Event | None = None, states=None):
                 await asyncio.sleep(0.01)
         finally:
             running["now"] -= 1
-        return ms.ModelStatus(target.id, (states or {}).get(target.model, ms.OK), latency_ms=120)
+        return ms.ModelStatus(target.id, (states or {}).get(target.model, conn.OK), latency_ms=120)
 
     return ms.ModelStatusBoard(prober=prober, clock=clock), calls, running, clock
 
@@ -333,11 +333,11 @@ async def test_only_one_round_runs_and_everyone_shares_it(gate):
     assert board.start(config) is True
     assert board.start(config) is False and board.start(config, force=True) is False, "도는 판에 올라탑니다"
     await asyncio.sleep(0)
-    assert board.running and {row.state for row in board.rows(config)} == {ms.CHECKING}
+    assert board.running and {row.state for row in board.rows(config)} == {conn.CHECKING}
     hold.set()
     await board.wait()
     assert not board.running and sorted(calls) == ["openai/coder-only", "openai/shared", "openai/shared"]
-    assert [row.state for row in board.rows(config)] == [ms.OK, ms.OK, ms.OK]
+    assert [row.state for row in board.rows(config)] == [conn.OK, conn.OK, conn.OK]
 
 
 @pytest.mark.asyncio
@@ -384,7 +384,7 @@ async def test_a_changed_config_is_checked_right_away_and_old_rows_are_dropped(g
         "orchestrator": {"name": "Orchestrator", "role": "Moderator"},
         "coder": {"name": "Coder", "role": "Code", "model": "openai/brand-new"},
     })
-    assert [row.state for row in board.rows(changed)] == [ms.OK, ms.UNKNOWN], "처음 보는 연결은 '확인 전' 입니다"
+    assert [row.state for row in board.rows(changed)] == [conn.OK, conn.UNKNOWN], "처음 보는 연결은 '확인 전' 입니다"
     assert board.start(changed) is True, "캐시 시간 안이어도 처음 보는 연결이 있으면 확인합니다"
     await board.wait()
     assert calls[-2:] == ["openai/shared", "openai/brand-new"] or sorted(calls[-2:]) == ["openai/brand-new", "openai/shared"]
@@ -394,16 +394,16 @@ async def test_a_changed_config_is_checked_right_away_and_old_rows_are_dropped(g
 
 @pytest.mark.asyncio
 async def test_rows_show_what_each_connection_came_back_with(gate):
-    board, _, _, _ = make_board(gate, states={"openai/coder-only": ms.AUTH})
+    board, _, _, _ = make_board(gate, states={"openai/coder-only": conn.AUTH})
     config = make_config(agents={
         "orchestrator": {"name": "Orchestrator", "role": "Moderator"},
         "coder": {"name": "Coder", "role": "Code", "model": "openai/coder-only"},
     })
-    assert [row.state for row in board.rows(config)] == [ms.UNKNOWN, ms.UNKNOWN]
+    assert [row.state for row in board.rows(config)] == [conn.UNKNOWN, conn.UNKNOWN]
     board.start(config)
     await board.wait()
     rows = board.rows(config)
-    assert [row.state for row in rows] == [ms.OK, ms.AUTH]
+    assert [row.state for row in rows] == [conn.OK, conn.AUTH]
     assert ms.summarize(rows) == "연결 2개 중 1개 응답"
 
 
@@ -429,14 +429,14 @@ async def test_one_crashing_probe_does_not_stop_the_rest(gate):
     async def prober(target):
         if target.model == "openai/coder-only":
             raise RuntimeError(f"exploded with {SHARED_KEY}")
-        return ms.ModelStatus(target.id, ms.OK)
+        return ms.ModelStatus(target.id, conn.OK)
 
     board = ms.ModelStatusBoard(prober=prober)
     config = make_config()
     board.start(config)
     await board.wait()
     rows = board.rows(config)
-    assert [row.state for row in rows] == [ms.OK, ms.ERROR, ms.OK]
+    assert [row.state for row in rows] == [conn.OK, conn.ERROR, conn.OK]
     assert SHARED_KEY not in rows[1].detail
     assert not board.running and board.start(config) is False
 
@@ -444,13 +444,13 @@ async def test_one_crashing_probe_does_not_stop_the_rest(gate):
 def test_a_connection_without_info_reads_as_such_before_any_check():
     config = make_config(agents={"orchestrator": {"name": "O", "role": "M"}}, llm={})
     (row,) = ms.ModelStatusBoard().rows(config)
-    assert row.state == ms.NOT_CONFIGURED
+    assert row.state == conn.NOT_CONFIGURED
 
 
 # ---------------------------------------------------------------- 6. 화면으로 가는 자료
 
 
-def _row(state=ms.AUTH, detail="litellm.AuthenticationError: bad key [키 가림]") -> ms.ModelRow:
+def _row(state=conn.AUTH, detail="litellm.AuthenticationError: bad key [키 가림]") -> ms.ModelRow:
     target = make_target(users=("전역 기본값", "Coder"), api_base="http://gateway.internal:8443/v1")
     return ms.ModelRow(target, state, latency_ms=None, detail=detail, age_seconds=12.0)
 
@@ -472,25 +472,25 @@ def test_the_owner_gets_the_address_and_the_error_but_never_the_key():
 
 
 def test_every_state_has_a_label_a_tone_and_something_to_do():
-    states = [getattr(ms, name) for name in (
+    states = [getattr(conn, name) for name in (
         "OK", "NOT_CONFIGURED", "BUSY", "AUTH", "MODEL", "RATE_LIMITED", "UNREACHABLE", "TIMEOUT",
         "REJECTED", "SERVER_ERROR", "ERROR", "CHECKING", "UNKNOWN",
     )]
-    assert set(states) == set(ms.STATE_INFO)
+    assert set(states) == set(conn.STATE_INFO)
     for state in states:
-        label, tone, hint = ms.STATE_INFO[state]
+        label, tone, hint = conn.STATE_INFO[state]
         assert label and hint and tone in ("good", "warn", "bad", "idle")
-    assert ms.STATE_INFO[ms.OK][1] == "good"
+    assert conn.STATE_INFO[conn.OK][1] == "good"
     # 연결은 되는데 지금 못 쓰는 것은 '실패' 가 아니라 '주의' 입니다.
-    assert {ms.STATE_INFO[s][1] for s in (ms.RATE_LIMITED, ms.BUSY)} == {"warn"}
+    assert {conn.STATE_INFO[s][1] for s in (conn.RATE_LIMITED, conn.BUSY)} == {"warn"}
 
 
 def test_timing_text_is_readable():
-    fast = ms.describe_row(ms.ModelRow(make_target(), ms.OK, latency_ms=484, age_seconds=2.0), detail=False)
-    slow = ms.describe_row(ms.ModelRow(make_target(), ms.OK, latency_ms=2340, age_seconds=75.0), detail=False)
+    fast = ms.describe_row(ms.ModelRow(make_target(), conn.OK, latency_ms=484, age_seconds=2.0), detail=False)
+    slow = ms.describe_row(ms.ModelRow(make_target(), conn.OK, latency_ms=2340, age_seconds=75.0), detail=False)
     assert (fast["latency"], fast["age"]) == ("484ms", "방금 확인")
     assert (slow["latency"], slow["age"]) == ("2.3초", "1분 전 확인")
-    checking = [ms.ModelRow(make_target(), ms.CHECKING), ms.ModelRow(make_target(id="t2"), ms.OK)]
+    checking = [ms.ModelRow(make_target(), conn.CHECKING), ms.ModelRow(make_target(id="t2"), conn.OK)]
     assert ms.summarize(checking) == "확인 중 — 2개 중 1개 끝남"
 
 

@@ -22,7 +22,8 @@ import uuid
 import pytest
 
 from app.agents.base import Agent
-from app.agents.llm import LLMCaller, strip_reasoning_trace
+from app.agents.llm import LLMCaller
+from app.agents.reasoning import strip_reasoning_trace
 from app.agents.pool import AgentPool
 from app.config import AgentConfig
 from app.database.models import MessageModel, SessionModel

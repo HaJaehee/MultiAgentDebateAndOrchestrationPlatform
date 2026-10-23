@@ -13,7 +13,7 @@ from typing import Callable, Dict, List, Optional
 from fastapi import Request
 from nicegui import ui
 
-from app.agents.llm import LLMUnavailableError
+from app.agents.llm_types import LLMUnavailableError
 from app.config import get_config
 from app.database.session import get_session_factory
 from app.easy.builder import (

@@ -9,7 +9,7 @@ import re
 from typing import Any, Dict, List
 
 from app.agents.base import Agent
-from app.agents.llm import NATIVE_REASONING_HEADER, strip_reasoning_trace
+from app.agents.reasoning import NATIVE_REASONING_HEADER, strip_reasoning_trace
 from app.agents.skills import visible_skill_names
 from app.mermaid_lint import diagram_kind, STYLE_LINE_RE
 

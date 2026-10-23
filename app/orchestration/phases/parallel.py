@@ -8,7 +8,7 @@ from datetime import timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from app.agents.base import Agent
-from app.agents.llm import LLMUnavailableError
+from app.agents.llm_types import LLMUnavailableError
 from app.database.models import utc_now
 from app.events import EventCallback, EventType
 from app.orchestration import turns

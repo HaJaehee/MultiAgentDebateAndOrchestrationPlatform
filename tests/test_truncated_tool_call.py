@@ -18,15 +18,15 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.agents.base import Agent
-from app.agents.llm import (
-    LLMCaller,
+from app.agents.llm import LLMCaller
+from app.agents.llm_budget import (
     completion_budget_report,
-    file_writing_guidance,
     limit_reached_notice,
     reasoning_heavy_note,
     reasoning_share,
     truncation_advice,
 )
+from app.agents.llm_tools import file_writing_guidance
 
 # 실제로 끊긴 자리를 그대로 옮긴 인자입니다. 닫히지 않은 문자열이라 파싱되지 않습니다.
 TRUNCATED = '{"path": "app/util.py", "content": "def load(path):\n    if path:'

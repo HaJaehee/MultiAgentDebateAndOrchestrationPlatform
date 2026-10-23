@@ -16,7 +16,7 @@ import pytest
 
 import app.orchestration.speech as speech
 from app.agents.base import Agent
-from app.agents.llm import LLMUnavailableError
+from app.agents.llm_types import LLMUnavailableError
 from app.orchestration.engine import OrchestratorEngine
 from app.orchestration.state import DebateState
 from app.ui.components.chat_feed.common import STREAM_RENDER_INTERVAL

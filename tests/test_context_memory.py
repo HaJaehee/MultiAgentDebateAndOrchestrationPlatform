@@ -23,7 +23,8 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.agents.base import Agent
-from app.agents.llm import LLMCaller, estimate_tokens, fit_context_window, context_budget
+from app.agents.llm import LLMCaller
+from app.agents.llm_context import estimate_tokens, fit_context_window, context_budget
 from app.agents.pool import AgentPool
 from app.config import AgentConfig
 from app.database.models import SessionModel
@@ -285,7 +286,7 @@ async def test_the_ledger_goes_before_the_last_instruction_and_the_system_prompt
 
 
 def test_a_ledger_after_a_non_user_message_becomes_its_own_message():
-    from app.agents.llm import place_ledger_last
+    from app.agents.llm_context import place_ledger_last
 
     out = place_ledger_last([{"role": "assistant", "content": "a"}], "## 결정 사항\n- A")
     assert [m["role"] for m in out] == ["assistant", "user"]
