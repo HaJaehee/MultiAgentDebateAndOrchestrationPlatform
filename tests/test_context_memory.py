@@ -30,7 +30,7 @@ from app.database.models import SessionModel
 from app.database.session import _add_missing_columns, get_session_factory, init_db
 from app.orchestration import context_memory as memory
 from app.orchestration.engine import OrchestratorEngine
-from app.orchestration.runner import TurnRun
+from app.orchestration.turn_run import TurnRun
 from app.orchestration.state import DebateMessage, DebateState
 from app.session_ops import continue_session
 from tests.fake_llm import LEDGER_REPLY, FakeLLMCaller

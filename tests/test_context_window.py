@@ -448,7 +448,7 @@ async def test_an_unknown_limit_still_offers_a_widening():
         assert request.kind == "context_window"
         assert request.payload["headroom_known"] is False
         assert request.extension_step > 0
-        control.resolve_context_window(request.extension_step, request.id)
+        control.resolve_decision(request.extension_step, request.id)
 
     request = await control.ask_context_window(
         agent_key="a", agent_name="A", window=8000, used=9000,
@@ -462,7 +462,7 @@ async def test_a_widening_never_passes_the_real_limit():
     control = TurnControl()
 
     async def _greedy(request):
-        control.resolve_context_window(999_999, request.id)
+        control.resolve_decision(999_999, request.id)
 
     request = await control.ask_context_window(
         agent_key="a", agent_name="A", window=64000, used=70000,
@@ -582,7 +582,7 @@ async def test_the_turn_only_asks_once_however_many_speeches_hit_the_wall():
     async def _on_event(event):
         if event.get("type") == "context_window_exhausted":
             asked.append(event)
-            control.resolve_context_window(5000, event["id"])
+            control.resolve_decision(5000, event["id"])
 
     agent = _fixed_pool().get("coder")
     arbiter = engine._make_context_arbiter(debate, agent, control, _on_event)
@@ -641,11 +641,11 @@ async def test_the_runner_labels_the_answer_with_the_right_kind():
     이벤트 이름이 됩니다 (`context_window_resolved` / `tool_budget_resolved`).
     엉뚱한 이름으로 나가면 화면이 알림 문구를 잘못 고릅니다.
     """
-    from app.orchestration.runner import TurnRun
+    from app.orchestration.turn_run import TurnRun
 
     run = TurnRun("s1", "prompt")
     events = []
-    run._fanout = lambda event: events.append(event)  # noqa: SLF001
+    run.publish = lambda event: events.append(event)  # noqa: SLF001
 
     async def _pending():
         return await run.control.ask_context_window(
@@ -804,7 +804,7 @@ async def test_the_loop_asks_before_it_starts_losing_observations():
 @pytest.mark.asyncio
 async def test_trimming_is_reported_to_the_screen():
     """예전에는 logger 에만 남아, 기록이 사라지는 것을 사람이 알 수 없었습니다."""
-    from app.orchestration.runner import TurnRun
+    from app.orchestration.turn_run import TurnRun
 
     run = TurnRun("s1", "prompt")
     run.apply({

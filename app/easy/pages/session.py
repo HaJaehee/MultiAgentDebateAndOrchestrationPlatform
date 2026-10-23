@@ -25,8 +25,10 @@ from app.easy.catalog import tool_label
 from app.easy.loop import ACTION, APPROVAL, ERROR, NOTE, PLAN, SYNTHESIS, THOUGHT, USER, Change, LoopTimeline, Speech
 from app.easy.pages.common import EASY_HOME, Viewer, agent_avatar, easy_header, easy_setup, resolve_viewer
 from app.easy.sessions import load_messages, owned_session
+from app.events import EventType
 from app.mcp.policy import OUTCOME_LABELS, tool_outcome
-from app.orchestration.runner import TurnRun, get_debate_runner
+from app.orchestration.turn_run import TurnRun
+from app.orchestration.runner import get_debate_runner
 from app.orchestration.turns import unfinished_turn
 from app.security import is_loopback
 from app.trial.pages.common import disabled_page, empty_state, footer_notice
@@ -464,7 +466,7 @@ class EasySessionScreen:
                 except RuntimeError as exc:
                     logger.debug("Stopped feeding a closed easy page: %s", exc)
                     break
-                if event.get("type") == "run_finished":
+                if event.get("type") == EventType.RUN_FINISHED:
                     break
         except asyncio.CancelledError:
             raise
@@ -480,50 +482,50 @@ class EasySessionScreen:
 
         feed = self.feed
         etype = event.get("type")
-        if etype == "status_changed":
+        if etype == EventType.STATUS_CHANGED:
             status = event.get("status") or ""
             if status and status != self.phase:
                 self.phase = status
                 self.status_view.refresh()
             speaker = event.get("speaker", "")
             feed.set_busy(True, f"[{speaker}] 작업 수행 중..." if speaker else "진행 중...", "진행 중")
-        elif etype == "message_stream_start":
+        elif etype == EventType.MESSAGE_STREAM_START:
             feed.start_streaming_message(event.get("message", {}))
-        elif etype == "message_stream_chunk":
+        elif etype == EventType.MESSAGE_STREAM_CHUNK:
             feed.append_stream_chunk(event.get("message_id", ""), event.get("delta", ""))
-        elif etype == "llm_fallback":
+        elif etype == EventType.LLM_FALLBACK:
             feed.mark_fallback(event.get("message_id", ""), event.get("llm_meta"))
-        elif etype == "message_added":
+        elif etype == EventType.MESSAGE_ADDED:
             feed.append_message(event.get("message", {}))
-        elif etype == "stop_requested":
+        elif etype == EventType.STOP_REQUESTED:
             feed.set_busy(True, "중단 요청됨 — 현재 진행 중인 발언을 마친 뒤 정리합니다.", "중단 중")
             feed.set_stop_pending(True)
-        elif etype in ("tool_budget_exhausted", "context_window_exhausted"):
+        elif etype in (EventType.TOOL_BUDGET_EXHAUSTED, EventType.CONTEXT_WINDOW_EXHAUSTED):
             feed.set_decision_request({k: v for k, v in event.items() if k != "type"})
             self._ask_attention(f"{event.get('agent_name', '에이전트')}이(가) 리소스 한도에 도달하여 사용자 선택을 기다립니다.")
-        elif etype in ("tool_budget_resolved", "context_window_resolved"):
+        elif etype in (EventType.TOOL_BUDGET_RESOLVED, EventType.CONTEXT_WINDOW_RESOLVED):
             feed.clear_budget_request(event.get("id"))
-        elif etype == "plan_approval_requested":
+        elif etype == EventType.PLAN_APPROVAL_REQUESTED:
             # 계획이 승인되기 전에는 작업을 시작하지 않습니다 (ADR-028).
             feed.set_plan_approval({k: v for k, v in event.items() if k != "type"})
             self.phase = "approval"
             self.status_view.refresh()
             self._ask_attention("오케스트레이터가 수립한 계획의 승인이 필요합니다. 승인 후 작업이 시작됩니다.")
-        elif etype == "plan_approval_resolved":
+        elif etype == EventType.PLAN_APPROVAL_RESOLVED:
             feed.clear_plan_approval(event.get("id"))
-        elif etype == "tool_approval_requested":
+        elif etype == EventType.TOOL_APPROVAL_REQUESTED:
             feed.add_approval({k: v for k, v in event.items() if k != "type"})
             self.phase = "approval"
             self.status_view.refresh()
             self._ask_attention(f"{event.get('agent_name', '에이전트')}이(가) 도구 실행 승인을 요청했습니다.")
-        elif etype == "tool_approval_resolved":
+        elif etype == EventType.TOOL_APPROVAL_RESOLVED:
             feed.remove_approval(event.get("id"))
             self.phase = "debating"
             self.status_view.refresh()
-        elif etype == "turn_completed":
+        elif etype == EventType.TURN_COMPLETED:
             failed = event.get("failed_agents") or []
             feed.set_busy(False, f"완료 — 응답 실패 에이전트: {', '.join(failed)}" if failed else "완료", "완료")
-        elif etype == "run_finished":
+        elif etype == EventType.RUN_FINISHED:
             status = event.get("status")
             if event.get("parked"):
                 self.phase = "parked"

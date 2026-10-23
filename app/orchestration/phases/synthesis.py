@@ -11,7 +11,7 @@ import json
 import logging
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Callable, Coroutine, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from app.agents.base import Agent
 from app.agents.llm import (
@@ -22,6 +22,7 @@ from app.agents.llm import (
     strip_reasoning_trace,
 )
 from app.database.models import TURN_COMPLETED, ArtifactModel, utc_now
+from app.events import EventCallback, EventType
 from app.mermaid_lint import format_issues, lint_mermaid
 from app.orchestration import context_memory as memory
 from app.orchestration import plan_gate, turns
@@ -43,7 +44,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-EventCallback = Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]
 
 
 class SynthesisPhaseExecutor:
@@ -88,7 +88,7 @@ class SynthesisPhaseExecutor:
         await self.engine._set_turn(db, state, phase="synthesizing", stopped_early=stopped_early)
         if on_event:
             await on_event({
-                "type": "status_changed",
+                "type": EventType.STATUS_CHANGED,
                 "status": "synthesizing",
                 "speaker": orchestrator_agent.name,
             })
@@ -170,7 +170,7 @@ class SynthesisPhaseExecutor:
 
         if on_event:
             await on_event({
-                "type": "artifacts_synthesized",
+                "type": EventType.ARTIFACTS_SYNTHESIZED,
                 "artifacts": [a.model_dump() for a in state.artifacts],
             })
 
@@ -189,7 +189,7 @@ class SynthesisPhaseExecutor:
             on_event=on_event,
         )
         if deferred and on_event:
-            await on_event({"type": "interjections_deferred", "count": deferred})
+            await on_event({"type": EventType.INTERJECTIONS_DEFERRED, "count": deferred})
 
         await self.engine._persist_memory(db, state, on_event)
 
@@ -214,7 +214,7 @@ class SynthesisPhaseExecutor:
 
         if on_event:
             await on_event({
-                "type": "turn_completed",
+                "type": EventType.TURN_COMPLETED,
                 "status": "completed",
                 "turn_id": state.turn_id,
                 "failed_agents": list(state.failed_agent_keys),
@@ -240,7 +240,7 @@ class SynthesisPhaseExecutor:
         dropped = state.context_dropped - before
         if dropped and on_event:
             await on_event({
-                "type": "context_trimmed",
+                "type": EventType.CONTEXT_TRIMMED,
                 "agent_key": agent.key if agent else "orchestrator",
                 "agent_name": agent.name if agent else "Orchestrator",
                 "dropped": dropped,
@@ -444,7 +444,7 @@ class SynthesisPhaseExecutor:
         for attempt in range(1, max_attempts + 1):
             if on_event:
                 await on_event({
-                    "type": "mermaid_repair_started",
+                    "type": EventType.MERMAID_REPAIR_STARTED,
                     "agent_name": agent.name,
                     "broken": len(broken),
                     "total": len(blocks),
@@ -476,7 +476,7 @@ class SynthesisPhaseExecutor:
                 logger.info(f"Mermaid diagrams fixed on attempt {attempt}.")
                 if on_event:
                     await on_event({
-                        "type": "mermaid_repair_finished",
+                        "type": EventType.MERMAID_REPAIR_FINISHED,
                         "agent_name": agent.name,
                         "resolved": True,
                         "attempts": attempt,
@@ -486,7 +486,7 @@ class SynthesisPhaseExecutor:
 
         if on_event:
             await on_event({
-                "type": "mermaid_repair_finished",
+                "type": EventType.MERMAID_REPAIR_FINISHED,
                 "agent_name": agent.name,
                 "resolved": False,
                 "attempts": max_attempts,

@@ -23,8 +23,10 @@ from app.agents.skills import scan_skills
 from app.config import resolve_workspace_dir
 from app.database.models import ArtifactModel, MessageModel, SessionModel
 from app.database.session import get_session_factory
+from app.events import TURN_END_EVENTS, EventType
 from app.orchestration.graph_run import GraphRunTracker, last_graph_turn, node_labels
-from app.orchestration.runner import TurnRun, get_debate_runner
+from app.orchestration.turn_run import TurnRun
+from app.orchestration.runner import get_debate_runner
 from app.orchestration.strategies import resolve_strategy_name
 from app.orchestration.turns import unfinished_turn
 from app.security import is_loopback
@@ -108,36 +110,36 @@ def create_ui() -> None:
             etype = event.get("type")
 
             # 그래프 실행 표시. 카드가 그려지기 전에 노드 이름을 알아야 배지가 붙습니다.
-            if etype == "graph_started":
+            if etype == EventType.GRAPH_STARTED:
                 graph_tracker = GraphRunTracker()
                 chat_feed.set_graph_labels(node_labels(event.get("spec")))
             if graph_tracker is not None:
                 changed = graph_tracker.observe(event)
-                if etype in ("turn_completed", "run_finished"):
+                if etype in TURN_END_EVENTS:
                     roster_control.set_graph_run(graph_tracker, active=False)
                 elif changed:
                     roster_control.set_graph_run(graph_tracker, active=True)
 
-            if etype == "status_changed":
+            if etype == EventType.STATUS_CHANGED:
                 speaker = event.get("speaker", "")
                 status = event.get("status", "")
                 round_num = event.get("round", "")
                 label = f"[{speaker}] 발언 및 분석 중..." if speaker else f"상태: {status}"
                 round_info = f"Round {round_num}" if round_num else "Debating"
                 chat_feed.set_busy(True, label, round_info)
-            elif etype == "round_started":
+            elif etype == EventType.ROUND_STARTED:
                 r = event.get("round", 1)
                 mr = event.get("max_rounds", 3)
                 chat_feed.set_busy(True, f"Round {r}/{mr} 전문가 토론 진행 중...", f"Round {r}/{mr}")
-            elif etype == "message_stream_start":
+            elif etype == EventType.MESSAGE_STREAM_START:
                 chat_feed.start_streaming_message(event.get("message", {}))
-            elif etype == "message_stream_chunk":
+            elif etype == EventType.MESSAGE_STREAM_CHUNK:
                 chat_feed.append_stream_chunk(event.get("message_id", ""), event.get("delta", ""))
-            elif etype == "llm_fallback":
+            elif etype == EventType.LLM_FALLBACK:
                 chat_feed.mark_fallback(event.get("message_id", ""), event.get("llm_meta"))
-            elif etype == "message_added":
+            elif etype == EventType.MESSAGE_ADDED:
                 chat_feed.append_message(event.get("message", {}))
-            elif etype == "mermaid_repair_started":
+            elif etype == EventType.MERMAID_REPAIR_STARTED:
                 chat_feed.set_busy(
                     True,
                     f"[{event.get('agent_name', '')}] 다이어그램 {event.get('broken', 0)}개의 "
@@ -145,7 +147,7 @@ def create_ui() -> None:
                     f"({event.get('attempt', 1)}/{event.get('max_attempts', 1)}회차)...",
                     "Fixing diagram",
                 )
-            elif etype == "mermaid_repair_finished":
+            elif etype == EventType.MERMAID_REPAIR_FINISHED:
                 if event.get("resolved"):
                     ui.notify(
                         f"다이어그램 문법 오류를 {event.get('attempts', 1)}회 만에 수정하였습니다.",
@@ -159,10 +161,10 @@ def create_ui() -> None:
                         f"원본을 보존하였으니 산출물 탭에서 확인하십시오.",
                         type="warning", position="bottom-right", close_button="확인",
                     )
-            elif etype == "artifacts_synthesized":
+            elif etype == EventType.ARTIFACTS_SYNTHESIZED:
                 # 교체가 아니라 덧붙이기입니다. 이 이벤트에는 이번 턴 산출물만 옵니다.
                 artifact_viewer.add_artifacts(event.get("artifacts", []))
-            elif etype == "stop_requested":
+            elif etype == EventType.STOP_REQUESTED:
                 # 정지를 누른 화면뿐 아니라 같은 세션을 보고 있는 모든 화면이
                 # 같은 상태를 보아야 합니다.
                 chat_feed.set_busy(
@@ -176,7 +178,7 @@ def create_ui() -> None:
                     type="warning",
                     position="bottom-right",
                 )
-            elif etype == "interjection_queued":
+            elif etype == EventType.INTERJECTION_QUEUED:
                 pending = event.get("pending", 0)
                 if event.get("deferred"):
                     # 합성이 시작된 뒤에는 이번 턴에 실을 자리가 없습니다.
@@ -193,7 +195,7 @@ def create_ui() -> None:
                         type="info",
                         position="bottom-right",
                     )
-            elif etype == "interjections_deferred":
+            elif etype == EventType.INTERJECTIONS_DEFERRED:
                 count = event.get("count", 0)
                 ui.notify(
                     f"개입 메시지 {count}건이 합성 단계 이후에 도착하여 이번 턴에 반영되지 않았습니다. "
@@ -201,7 +203,7 @@ def create_ui() -> None:
                     type="warning",
                     position="bottom-right",
                 )
-            elif etype == "tool_budget_exhausted":
+            elif etype == EventType.TOOL_BUDGET_EXHAUSTED:
                 # 에이전트는 지금 이 답을 기다리며 멈춰 있습니다. 알림은 지나가지만
                 # 안내 줄은 답할 때까지 남습니다.
                 chat_feed.set_budget_request({k: v for k, v in event.items() if k != "type"})
@@ -217,7 +219,7 @@ def create_ui() -> None:
                     type="warning",
                     position="bottom-right",
                 )
-            elif etype == "tool_budget_resolved":
+            elif etype == EventType.TOOL_BUDGET_RESOLVED:
                 chat_feed.clear_budget_request(event.get("id"))
                 granted = event.get("granted", 0)
                 if granted:
@@ -240,7 +242,7 @@ def create_ui() -> None:
                         type="info",
                         position="bottom-right",
                     )
-            elif etype == "context_window_exhausted":
+            elif etype == EventType.CONTEXT_WINDOW_EXHAUSTED:
                 chat_feed.set_decision_request({k: v for k, v in event.items() if k != "type"})
                 chat_feed.set_busy(
                     True,
@@ -254,7 +256,7 @@ def create_ui() -> None:
                     type="warning",
                     position="bottom-right",
                 )
-            elif etype == "context_window_resolved":
+            elif etype == EventType.CONTEXT_WINDOW_RESOLVED:
                 chat_feed.clear_budget_request(event.get("id"))
                 granted = event.get("granted", 0)
                 if granted:
@@ -276,7 +278,7 @@ def create_ui() -> None:
                         type="info",
                         position="bottom-right",
                     )
-            elif etype == "tool_approval_requested":
+            elif etype == EventType.TOOL_APPROVAL_REQUESTED:
                 # 에이전트는 이 답을 기다리며 멈춰 있습니다. 카드는 답하거나 시간이
                 # 지나 거부될 때까지 남습니다.
                 chat_feed.add_approval({k: v for k, v in event.items() if k != "type"})
@@ -292,7 +294,7 @@ def create_ui() -> None:
                     type="warning",
                     position="bottom-right",
                 )
-            elif etype == "tool_approval_resolved":
+            elif etype == EventType.TOOL_APPROVAL_RESOLVED:
                 chat_feed.remove_approval(event.get("id"))
                 # "이 대화에서 허용·거부" 가 더해졌을 수 있습니다. 규칙 창의 숫자와 목록을 맞춥니다.
                 roster_control.set_tool_rules(event.get("session_grants"), event.get("session_denials"))
@@ -311,13 +313,13 @@ def create_ui() -> None:
                         type="warning",
                         position="bottom-right",
                     )
-            elif etype == "plan_tasks_started":
+            elif etype == EventType.PLAN_TASKS_STARTED:
                 chat_feed.set_busy(
                     True,
                     f"[{event.get('agent_name', '')}] 승인받을 태스크 분담표를 정리하는 중입니다...",
                     "Plan",
                 )
-            elif etype == "plan_approval_requested":
+            elif etype == EventType.PLAN_APPROVAL_REQUESTED:
                 # 턴 전체가 이 답을 기다리며 멈춰 있습니다 (ADR-028). 카드는 답하거나 대기
                 # 시간이 끝날 때까지 남습니다.
                 chat_feed.set_plan_approval({k: v for k, v in event.items() if k != "type"})
@@ -332,7 +334,7 @@ def create_ui() -> None:
                     type="warning",
                     position="bottom-right",
                 )
-            elif etype == "plan_approval_resolved":
+            elif etype == EventType.PLAN_APPROVAL_RESOLVED:
                 chat_feed.clear_plan_approval(event.get("id"))
                 decision = event.get("decision")
                 if decision == "approve":
@@ -341,7 +343,7 @@ def create_ui() -> None:
                     chat_feed.set_busy(
                         True, "계획 수정을 요청하였습니다. 오케스트레이터가 계획을 다시 작성합니다.", "Planning"
                     )
-            elif etype == "graph_gate_decided":
+            elif etype == EventType.GRAPH_GATE_DECIDED:
                 verdict = "예" if event.get("decision") == "yes" else "아니오"
                 ui.notify(
                     f"판정 “{event.get('label', '')}”: {verdict}"
@@ -350,47 +352,47 @@ def create_ui() -> None:
                     type="warning" if event.get("fallback") else "info",
                     position="bottom-right",
                 )
-            elif etype == "graph_finished" and event.get("reason") in ("idle", "step_cap"):
+            elif etype == EventType.GRAPH_FINISHED and event.get("reason") in ("idle", "step_cap"):
                 ui.notify(
                     "그래프가 최종 합성 노드에 도달하기 전에 종료되어, 지금까지의 발언 내용으로 합성합니다."
                     if event.get("reason") == "idle" else
                     "그래프가 최대 단계 상한에 도달하여 지금까지의 발언 내용으로 합성합니다.",
                     type="warning", position="bottom-right",
                 )
-            elif etype == "ledger_update_started":
+            elif etype == EventType.LEDGER_UPDATE_STARTED:
                 chat_feed.set_busy(
                     True, f"결정 장부 정리 중 ({event.get('reason', '')})...", "Ledger"
                 )
-            elif etype == "ledger_updated":
+            elif etype == EventType.LEDGER_UPDATED:
                 roster_control.set_decision_ledger(event.get("ledger", ""))
-            elif etype == "ledger_update_failed":
+            elif etype == EventType.LEDGER_UPDATE_FAILED:
                 ui.notify(
                     f"결정 장부를 갱신하지 못하여 기존 장부를 유지합니다 ({event.get('reason', '')}): "
                     f"{event.get('error', '')}",
                     type="warning",
                     position="bottom-right",
                 )
-            elif etype == "context_summarizing":
+            elif etype == EventType.CONTEXT_SUMMARIZING:
                 chat_feed.set_busy(
                     True,
                     f"[{event.get('agent_name', '')}] 컨텍스트 용량 초과로 이전 기록 "
                     f"{event.get('messages', 0)}건을 요약하는 중입니다...",
                     "Summarizing",
                 )
-            elif etype == "context_summarized":
+            elif etype == EventType.CONTEXT_SUMMARIZED:
                 ui.notify(
                     f"컨텍스트 용량 초과로 이전 기록 {event.get('folded', 0)}건을 요약 압축하였습니다 "
                     f"(누적 {event.get('total', 0)}건). 사용자 발언과 결정 장부는 원문 그대로 유지됩니다.",
                     type="info",
                     position="bottom-right",
                 )
-            elif etype == "context_summary_failed":
+            elif etype == EventType.CONTEXT_SUMMARY_FAILED:
                 ui.notify(
                     "이전 기록을 요약하지 못하여, 컨텍스트 한도를 초과하는 오래된 기록은 생략하고 진행합니다.",
                     type="warning",
                     position="bottom-right",
                 )
-            elif etype == "context_trimmed":
+            elif etype == EventType.CONTEXT_TRIMMED:
                 # 답이 필요한 물음이 아니라 사후 통지입니다. 버튼 없는 알림으로만
                 # 띄웁니다 — 배너는 사람이 골라야 하는 자리에만 씁니다.
                 where = "최종 합성 전사" if event.get("where") == "synthesis" else "발언 맥락"
@@ -401,7 +403,7 @@ def create_ui() -> None:
                     type="warning",
                     position="bottom-right",
                 )
-            elif etype == "persist_failed":
+            elif etype == EventType.PERSIST_FAILED:
                 # 사람이 자리를 비운 사이에 일어나기 쉬운 일이라(백신 검사·백업이 파일을
                 # 잡는 때), 저절로 사라지는 알림으로는 돌아와서 볼 수가 없습니다. 닫을
                 # 때까지 남깁니다.
@@ -419,7 +421,7 @@ def create_ui() -> None:
                     timeout=0,
                     multi_line=True,
                 )
-            elif etype == "turn_completed":
+            elif etype == EventType.TURN_COMPLETED:
                 failed = event.get("failed_agents") or []
                 fallback = event.get("fallback_agents") or []
                 if fallback:
@@ -466,7 +468,7 @@ def create_ui() -> None:
                     chat_feed.set_busy(False, "토론 완료 및 최종 산출물 합성 완료", "Done")
                 # 첫 턴에서 페르소나가 고정되었으므로 편집 버튼을 잠금 상태로 바꿉니다.
                 roster_control.set_personas_locked(True)
-            elif etype == "run_finished":
+            elif etype == EventType.RUN_FINISHED:
                 # 토론이 끝났으므로 MCP 서버 구성을 다시 만질 수 있습니다. 상태가
                 # 확정되는 시점이 여기라, 잠금 해제도 여기서 알립니다.
                 roster_control.refresh_mcp_lock()
@@ -520,7 +522,7 @@ def create_ui() -> None:
                         # 갱신 도중 페이지가 사라진 경우. 토론은 계속됩니다.
                         logger.debug(f"Stopped feeding a closed page: {exc}")
                         break
-                    if event.get("type") == "run_finished":
+                    if event.get("type") == EventType.RUN_FINISHED:
                         break
             except asyncio.CancelledError:
                 raise

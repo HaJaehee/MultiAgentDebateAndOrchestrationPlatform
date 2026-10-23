@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Coroutine, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from sqlalchemy import select
 
 from app.agents.base import Agent
 from app.agents.llm import LLMUnavailableError, context_budget, strip_reasoning_trace
 from app.database.models import TurnModel
+from app.events import EventCallback, EventType
 from app.orchestration import context_memory as memory
 from app.orchestration import plan_gate, turns
 from app.orchestration.artifacts import format_roster
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-EventCallback = Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]
 
 
 class PlanningPhaseExecutor:
@@ -52,7 +52,7 @@ class PlanningPhaseExecutor:
         state.current_speaker = orchestrator_agent.name
         if on_event:
             await on_event({
-                "type": "status_changed",
+                "type": EventType.STATUS_CHANGED,
                 "status": "planning",
                 "speaker": orchestrator_agent.name,
             })
@@ -170,7 +170,7 @@ class PlanningPhaseExecutor:
 
         async def _open(request: Any) -> None:
             if on_event:
-                await on_event({"type": "plan_approval_requested", **request.describe()})
+                await on_event({"type": EventType.PLAN_APPROVAL_REQUESTED, **request.describe()})
 
         notice = ""
         waiting = plan_gate.pending_revision(state.messages, state.turn_message_start)
@@ -209,7 +209,7 @@ class PlanningPhaseExecutor:
             notice = ""
             if on_event:
                 await on_event({
-                    "type": "plan_approval_resolved",
+                    "type": EventType.PLAN_APPROVAL_RESOLVED,
                     "id": request.id,
                     "agent_name": orchestrator.name,
                     "decision": request.decision,
@@ -304,7 +304,7 @@ class PlanningPhaseExecutor:
                 return tasks
 
         if on_event:
-            await on_event({"type": "plan_tasks_started", "agent_name": setup.orchestrator.name})
+            await on_event({"type": EventType.PLAN_TASKS_STARTED, "agent_name": setup.orchestrator.name})
         try:
             tasks = await self.engine._ask_orchestrator_for_plan_tasks(
                 orchestrator=setup.orchestrator,

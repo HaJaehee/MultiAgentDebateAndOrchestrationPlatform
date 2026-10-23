@@ -27,7 +27,9 @@ from app.agents.pool import get_agent_pool
 from app.config import get_config
 from app.database.models import MessageModel, SessionModel
 from app.database.session import get_session_factory
-from app.orchestration.runner import TurnRun, get_debate_runner
+from app.events import EventType
+from app.orchestration.turn_run import TurnRun
+from app.orchestration.runner import get_debate_runner
 from app.orchestration.turns import unfinished_turn
 from app.trial.catalog import ResolvedTemplate, resolve_template
 from app.trial.models import TrialSessionModel
@@ -501,7 +503,7 @@ class TrialSessionScreen:
                 except RuntimeError as exc:
                     logger.debug("Stopped feeding a closed trial page: %s", exc)
                     break
-                if event.get("type") == "run_finished":
+                if event.get("type") == EventType.RUN_FINISHED:
                     break
         except asyncio.CancelledError:
             raise
@@ -513,7 +515,7 @@ class TrialSessionScreen:
     async def apply(self, event: Dict[str, Any]) -> None:
         feed = self.feed
         etype = event.get("type")
-        if etype == "status_changed":
+        if etype == EventType.STATUS_CHANGED:
             speaker = event.get("speaker", "")
             status = event.get("status", "")
             round_num = event.get("round", "")
@@ -530,53 +532,53 @@ class TrialSessionScreen:
                 self.round, changed = int(round_num), True
             if changed:
                 self.progress_view.refresh()
-        elif etype == "round_started":
+        elif etype == EventType.ROUND_STARTED:
             self.round = int(event.get("round", 1) or 1)
             self.max_rounds = max(self.max_rounds, int(event.get("max_rounds", self.max_rounds) or 1))
             self.phase = "debating"
             feed.set_busy(True, f"토론 {self.round}/{self.max_rounds}회차 진행 중...", f"토론 {self.round}/{self.max_rounds}")
             self.progress_view.refresh()
-        elif etype == "message_stream_start":
+        elif etype == EventType.MESSAGE_STREAM_START:
             feed.start_streaming_message(event.get("message", {}))
-        elif etype == "message_stream_chunk":
+        elif etype == EventType.MESSAGE_STREAM_CHUNK:
             feed.append_stream_chunk(event.get("message_id", ""), event.get("delta", ""))
-        elif etype == "llm_fallback":
+        elif etype == EventType.LLM_FALLBACK:
             feed.mark_fallback(event.get("message_id", ""), event.get("llm_meta"))
-        elif etype == "message_added":
+        elif etype == EventType.MESSAGE_ADDED:
             message = event.get("message", {})
             feed.append_message(message)
             if is_speech(message):
                 self.speeches += 1
                 self.total_speeches += 1
                 self.progress_view.refresh()
-        elif etype == "stop_requested":
+        elif etype == EventType.STOP_REQUESTED:
             feed.set_busy(True, "정지가 요청되었습니다 — 진행 중인 발언을 마친 후 정리합니다.", "정지 중")
             feed.set_stop_pending(True)
-        elif etype in ("tool_budget_exhausted", "context_window_exhausted"):
+        elif etype in (EventType.TOOL_BUDGET_EXHAUSTED, EventType.CONTEXT_WINDOW_EXHAUSTED):
             feed.set_decision_request({k: v for k, v in event.items() if k != "type"})
             feed.set_busy(True, f"[{event.get('agent_name', '')}] 한도에 도달하여 사용자의 선택을 기다리는 중입니다.", "선택 대기")
-        elif etype in ("tool_budget_resolved", "context_window_resolved"):
+        elif etype in (EventType.TOOL_BUDGET_RESOLVED, EventType.CONTEXT_WINDOW_RESOLVED):
             feed.clear_budget_request(event.get("id"))
-        elif etype == "plan_tasks_started":
+        elif etype == EventType.PLAN_TASKS_STARTED:
             feed.set_busy(True, "승인받을 태스크 분담표를 정리하는 중입니다...", "계획")
-        elif etype == "plan_approval_requested":
+        elif etype == EventType.PLAN_APPROVAL_REQUESTED:
             # 승인하기 전에는 아무도 발언하지 않습니다 (ADR-028).
             feed.set_plan_approval({k: v for k, v in event.items() if k != "type"})
             feed.set_busy(True, "계획 승인 대기 — 태스크를 확인하고 승인하시거나, 의견을 적어 수정을 요청해 주십시오.", "승인 대기")
             ui.notify("계획이 승인을 기다리고 있습니다. 승인하시기 전에는 토론이 시작되지 않습니다.", type="warning")
-        elif etype == "plan_approval_resolved":
+        elif etype == EventType.PLAN_APPROVAL_RESOLVED:
             feed.clear_plan_approval(event.get("id"))
             if event.get("decision") == "approve":
                 feed.set_busy(True, "계획을 승인하였습니다. 토론을 시작합니다.", "진행 중")
             elif event.get("decision") == "revise":
                 feed.set_busy(True, "계획 수정을 요청하였습니다. 오케스트레이터가 계획을 다시 작성합니다.", "계획")
-        elif etype == "ledger_update_started":
+        elif etype == EventType.LEDGER_UPDATE_STARTED:
             feed.set_busy(True, "합의 사항과 잔여 쟁점을 정리하는 중입니다...", "정리")
-        elif etype == "context_summarizing":
+        elif etype == EventType.CONTEXT_SUMMARIZING:
             feed.set_busy(True, "이전 대화 기록을 요약하는 중입니다...", "요약")
-        elif etype == "mermaid_repair_started":
+        elif etype == EventType.MERMAID_REPAIR_STARTED:
             feed.set_busy(True, "다이어그램 문법을 수정하는 중입니다...", "다이어그램")
-        elif etype == "turn_completed":
+        elif etype == EventType.TURN_COMPLETED:
             failed = event.get("failed_agents") or []
             if failed:
                 feed.set_busy(False, f"완료 — 응답하지 못한 참여자: {', '.join(failed)}", "일부 실패")
@@ -586,7 +588,7 @@ class TrialSessionScreen:
                 feed.set_busy(False, "정지 요청에 따라 지금까지의 토론 내용을 종합하여 정리했습니다.", "정지됨")
             else:
                 feed.set_busy(False, "토론 완료", "완료")
-        elif etype == "run_finished":
+        elif etype == EventType.RUN_FINISHED:
             status = event.get("status")
             if event.get("parked"):
                 # 계획 승인에 답이 없어 멈춰 둔 것입니다 (ADR-028). 오류가 아니고, 아무것도 실행되지 않았습니다.

@@ -15,6 +15,8 @@ UI 를 모르는 순수 코드입니다 — 러너도 import 하고, 테스트�
 
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
+from app.events import TURN_END_EVENTS, EventType
+
 # 방문 상한 안내처럼 노드에 붙었지만 출력이 아닌 기록은 핀이 없습니다.
 OUTPUT_PORTS = ("out", "yes", "no")
 DECISION_LABELS = {"yes": "예", "no": "아니오"}
@@ -106,26 +108,26 @@ class GraphRunTracker:
     def observe(self, event: Mapping[str, Any]) -> bool:
         """엔진 이벤트 하나를 반영합니다. 화면을 다시 그려야 하면 True."""
         etype = event.get("type")
-        if etype == "graph_started":
+        if etype == EventType.GRAPH_STARTED:
             self.__init__(event.get("spec"), int(event.get("max_steps") or 0))
             # 끊긴 턴을 이어 가면 그 전에 돈 노드의 기록이 함께 옵니다 (ADR-024).
             for msg in event.get("history") or []:
                 self.observe_message(msg)
             return True
-        if etype == "graph_step_started":
+        if etype == EventType.GRAPH_STEP_STARTED:
             self.step = int(event.get("step") or 0)
             self.max_steps = int(event.get("max_steps") or self.max_steps)
             self.running = [n.get("id") for n in event.get("nodes") or [] if n.get("id")]
             return True
-        if etype == "message_stream_start":
+        if etype == EventType.MESSAGE_STREAM_START:
             return self.observe_message(event.get("message") or {})
-        if etype == "message_added":
+        if etype == EventType.MESSAGE_ADDED:
             return self.finish_message(event.get("message") or {})
-        if etype == "graph_finished":
+        if etype == EventType.GRAPH_FINISHED:
             self.finished = event.get("reason") or "end"
             self.running = []
             return True
-        if etype in ("turn_completed", "run_finished"):
+        if etype in TURN_END_EVENTS:
             changed = bool(self.running)
             self.running = []
             return changed

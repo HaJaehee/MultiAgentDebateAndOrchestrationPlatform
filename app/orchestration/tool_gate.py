@@ -32,6 +32,7 @@ from app.config import (
     add_tool_security_rules_to_conf_file,
     get_config,
 )
+from app.events import EventCallback, EventType
 from app.mcp.policy import (
     ALLOW,
     DENY,
@@ -56,7 +57,6 @@ from app.mcp.policy import (
 
 logger = logging.getLogger(__name__)
 
-EventCallback = Callable[[Dict[str, Any]], Awaitable[None]]
 # (이 대화에서 허용, 이 대화에서 거부) 를 세션에 저장하는 함수.
 RuleSaver = Callable[[List[str], List[str]], Awaitable[None]]
 
@@ -335,7 +335,7 @@ class ToolGate:
 
         async def _open(request) -> None:
             if self.on_event:
-                await self.on_event({"type": "tool_approval_requested", **request.describe()})
+                await self.on_event({"type": EventType.TOOL_APPROVAL_REQUESTED, **request.describe()})
 
         request = await self.control.ask_tool_approval(
             agent_key=agent.key,
@@ -404,7 +404,7 @@ class ToolGate:
 
         if self.on_event:
             await self.on_event({
-                "type": "tool_approval_resolved",
+                "type": EventType.TOOL_APPROVAL_RESOLVED,
                 "id": request.id,
                 "agent_name": request.agent_name,
                 "tool_name": tool_name,

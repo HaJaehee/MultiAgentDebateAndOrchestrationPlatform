@@ -22,6 +22,7 @@ from app.timestamps import to_local, as_utc
 from app.graph_store import graph_agent_keys
 from app.orchestration.runner import get_debate_runner
 from app.config import ORCHESTRATOR_KEY
+from app.events import TURN_END_EVENTS, EventType
 from app.orchestration.strategies import get_strategy
 from app.session_ops import continue_session
 
@@ -197,13 +198,13 @@ def event_changes_session_list(event: Dict[str, Any]) -> bool:
     나오지 않아 스피너가 계속 돌았습니다.
     """
     etype = event.get("type")
-    if etype == "message_added":
+    if etype == EventType.MESSAGE_ADDED:
         # 사용자 발언이 방금 기록되었습니다. 이 대화의 '시작 시각' 이 생기는
         # 순간입니다 (개입 발언이면 이미 있는 값이라 결과는 그대로입니다).
         return ((event.get("message") or {}).get("sender_key")) == "user"
     # 토론이 끝났습니다 — 진행 중 표시를 내려야 합니다. 오류·취소로 끝난 경우
     # `turn_completed` 는 오지 않으므로 `run_finished` 도 함께 봅니다.
-    return etype in ("turn_completed", "run_finished")
+    return etype in TURN_END_EVENTS
 
 
 class SessionSidebar:

@@ -101,7 +101,7 @@ async def test_late_subscriber_gets_full_snapshot():
 @pytest.mark.asyncio
 async def test_snapshot_tracks_streaming_message_in_progress():
     """스트리밍 중에 붙은 화면이 이어 쓸 수 있도록 진행 중인 발언을 표시합니다."""
-    from app.orchestration.runner import TurnRun
+    from app.orchestration.turn_run import TurnRun
 
     run = TurnRun("s1", "prompt")
     run.apply({"type": "message_stream_start", "message": {
@@ -127,14 +127,14 @@ async def test_snapshot_tracks_streaming_message_in_progress():
 @pytest.mark.asyncio
 async def test_slow_subscriber_is_dropped_not_the_run():
     """따라오지 못하는 구독자는 버리고 토론은 계속합니다."""
-    from app.orchestration.runner import TurnRun
+    from app.orchestration.turn_run import TurnRun
 
     run = TurnRun("s1", "prompt")
     queue = run.subscribe()
     for _ in range(queue.maxsize):
         queue.put_nowait({"type": "noop"})
 
-    run._fanout({"type": "overflow"})
+    run.publish({"type": "overflow"})
     assert run.subscriber_count == 0
 
 

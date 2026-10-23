@@ -17,7 +17,7 @@ from app import graph_store
 from app.orchestration.engine import OrchestratorEngine
 from app.orchestration.graph import parse_graph
 from app.orchestration.graph_run import GraphRunTracker, NodeBadges, last_graph_turn, node_labels
-from app.orchestration.runner import TurnRun
+from app.orchestration.turn_run import TurnRun
 from tests.test_graph_debate import GraphLLM, _pool, _rows, _session, example, graphs  # noqa: F401
 
 GATE_NO_THEN_YES = ['{"decision": "no", "reason": "인증 누락"}', '{"decision": "yes", "reason": "해결됨"}']

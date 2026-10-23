@@ -33,7 +33,7 @@ from app.database.session import get_session_factory, init_db
 from app.export import build_session_markdown
 from app.orchestration import turns
 from app.orchestration.engine import OrchestratorEngine
-from app.orchestration.runner import TurnRun
+from app.orchestration.turn_run import TurnRun
 from app.orchestration.state import FALLBACK_BADGE, fallback_sentence
 from tests.fake_llm import FakeLLMCaller
 

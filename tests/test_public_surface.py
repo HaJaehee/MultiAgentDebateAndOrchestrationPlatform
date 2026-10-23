@@ -81,7 +81,8 @@ async def test_engine_instance_attributes():
 
 
 def test_runner_surface():
-    from app.orchestration.runner import DebateRunner, TurnRun, get_debate_runner
+    from app.orchestration.runner import DebateRunner, get_debate_runner
+    from app.orchestration.turn_run import TurnRun
 
     assert callable(get_debate_runner)
     assert _params(DebateRunner.start)[:3] == ["session_id", "user_prompt", "workspace"]

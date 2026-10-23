@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from app.config import DEFAULT_PEER_TOOL_ITERATIONS, PEERS_TOOL_PREFIX
+from app.events import EventType
 from app.mcp.client import clip_tool_output
 
 if TYPE_CHECKING:
@@ -394,7 +395,7 @@ async def run_consultation_tool(
     prompt_messages = [{"role": "user", "content": "\n".join(prompt_parts)}]
 
     await _emit_consultation_event(scope, {
-        "type": "peer_consultation_started",
+        "type": EventType.PEER_CONSULTATION_STARTED,
         "caller_key": agent.key,
         "caller_name": agent.name,
         "target_key": target.key,
@@ -431,7 +432,7 @@ async def run_consultation_tool(
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Peer consultation from {agent.key} to {target.key} failed: {exc}")
         await _emit_consultation_event(scope, {
-            "type": "peer_consultation_finished",
+            "type": EventType.PEER_CONSULTATION_FINISHED,
             "caller_key": agent.key,
             "target_key": target.key,
             "status": "error",
@@ -445,7 +446,7 @@ async def run_consultation_tool(
         )
 
     await _emit_consultation_event(scope, {
-        "type": "peer_consultation_finished",
+        "type": EventType.PEER_CONSULTATION_FINISHED,
         "caller_key": agent.key,
         "target_key": target.key,
         "status": "success",

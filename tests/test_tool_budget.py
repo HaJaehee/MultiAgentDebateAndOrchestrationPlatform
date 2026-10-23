@@ -130,7 +130,7 @@ async def test_an_unanswered_question_ends_in_wrap_up_not_a_stuck_debate():
     assert opened, "물어보기는 했어야 합니다"
     assert request.granted == 0
     assert request.outcome == "timeout"
-    assert control.pending_budget_request is None, "답이 난 쪽지는 치웁니다"
+    assert control.pending_decision is None, "답이 난 쪽지는 치웁니다"
 
 
 @pytest.mark.asyncio
@@ -156,7 +156,7 @@ async def test_a_grant_never_climbs_past_the_hard_ceiling():
     control = TurnControl()
 
     async def _grant_far_too_much(request):
-        control.resolve_tool_budget(9999, request.id)
+        control.resolve_decision(9999, request.id)
 
     request = await control.ask_tool_budget(
         agent_key="coder", agent_name="Coder", limit=30, used=30, tool_calls=44,
@@ -171,8 +171,8 @@ async def test_an_answer_to_an_old_question_is_ignored():
     control = TurnControl()
 
     async def _answer_the_wrong_one(request):
-        assert control.resolve_tool_budget(15, "지난-번-쪽지") is False
-        control.resolve_tool_budget(15, request.id)
+        assert control.resolve_decision(15, "지난-번-쪽지") is False
+        control.resolve_decision(15, request.id)
 
     request = await control.ask_tool_budget(
         agent_key="coder", agent_name="Coder", limit=30, used=30, tool_calls=44,
@@ -200,9 +200,9 @@ async def test_the_screen_is_asked_and_its_answer_reaches_the_agent():
     assert asked["limit"] > 0
     assert asked["max_extension"] <= TOOL_ITERATION_CEILING
     # 새로고침한 화면도 같은 물음을 봅니다.
-    assert run.snapshot()["budget_request"]["id"] == asked["id"]
+    assert run.snapshot()["decision_request"]["id"] == asked["id"]
 
-    assert runner.resolve_tool_budget(sid, 12, asked["id"]) is True
+    assert runner.resolve_decision(sid, 12, asked["id"]) is True
 
     resolved = await _wait_for(queue, "tool_budget_resolved")
     assert resolved["granted"] == 12
@@ -210,7 +210,7 @@ async def test_the_screen_is_asked_and_its_answer_reaches_the_agent():
     await run.task
     assert run.status == "completed"
     assert caller.budget_grants == [12], "누른 답이 실제로 그 발언에 전달돼야 합니다"
-    assert run.snapshot()["budget_request"] is None
+    assert run.snapshot()["decision_request"] is None
 
 
 @pytest.mark.asyncio
@@ -225,7 +225,7 @@ async def test_finish_now_is_a_real_answer_too():
     queue = run.subscribe()
     asked = await _wait_for(queue, "tool_budget_exhausted")
 
-    assert runner.resolve_tool_budget(sid, 0, asked["id"]) is True
+    assert runner.resolve_decision(sid, 0, asked["id"]) is True
 
     await run.task
     assert run.status == "completed"
@@ -242,7 +242,7 @@ async def test_answering_a_finished_debate_is_refused_not_silently_dropped():
     run = runner.start(sid, "구현해줘")
     await run.task
 
-    assert runner.resolve_tool_budget(sid, 15, None) is False
+    assert runner.resolve_decision(sid, 15, None) is False
 
 
 # --------------------------------------------------------------- 4. 화면 쪽 규칙
@@ -343,9 +343,9 @@ async def test_two_agents_asking_at_once_can_both_be_answered():
     async def _answer_both():
         while len(ids) < 2:
             await asyncio.sleep(0)
-        assert len(control.pending_budget_requests) == 2
-        assert control.resolve_tool_budget(20, ids[0]) is True
-        assert control.resolve_tool_budget(0, ids[1]) is True
+        assert len(control.pending_decisions) == 2
+        assert control.resolve_decision(20, ids[0]) is True
+        assert control.resolve_decision(0, ids[1]) is True
 
     first, second, _ = await asyncio.gather(_ask("A"), _ask("B"), _answer_both())
 

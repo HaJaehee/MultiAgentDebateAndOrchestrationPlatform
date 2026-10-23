@@ -11,13 +11,14 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Callable, Coroutine, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy import update
 
 from app.agents.base import Agent
 from app.agents.llm import LLMUnavailableError, context_budget, strip_reasoning_trace
 from app.database.models import SessionModel, utc_now
+from app.events import EventCallback, EventType
 from app.orchestration import context_memory as memory
 from app.orchestration import turns
 from app.orchestration.artifacts import format_roster
@@ -37,7 +38,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-EventCallback = Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]
 
 
 class GraphTurnError(RuntimeError):
@@ -139,7 +139,7 @@ class DebatePhaseExecutor:
             state.current_round = round_num
             if on_event:
                 await on_event({
-                    "type": "round_started",
+                    "type": EventType.ROUND_STARTED,
                     "round": round_num,
                     "max_rounds": max_rounds,
                 })
@@ -204,7 +204,7 @@ class DebatePhaseExecutor:
                 state.current_speaker = agent.name
                 if on_event:
                     await on_event({
-                        "type": "status_changed",
+                        "type": EventType.STATUS_CHANGED,
                         "status": "debating",
                         "speaker": agent.name,
                         "round": round_num,
@@ -489,7 +489,7 @@ class DebatePhaseExecutor:
 
         if on_event and todo:
             await on_event({
-                "type": "status_changed",
+                "type": EventType.STATUS_CHANGED,
                 "status": "debating",
                 "speaker": " · ".join(assignments[i][0].name for i in todo),
                 "round": round_num,
@@ -765,7 +765,7 @@ class DebatePhaseExecutor:
         state.current_speaker = orchestrator.name
         if on_event:
             await on_event({
-                "type": "status_changed",
+                "type": EventType.STATUS_CHANGED,
                 "status": "debating",
                 "speaker": f"{orchestrator.name} (취합)",
                 "round": round_num,
@@ -880,7 +880,7 @@ class DebatePhaseExecutor:
 
         if on_event:
             await on_event({
-                "type": "graph_started",
+                "type": EventType.GRAPH_STARTED,
                 "graph_id": spec.id,
                 "name": spec.name or spec.id,
                 "nodes": [{"id": n.id, "type": n.type, "label": n.display} for n in spec.nodes],
@@ -985,15 +985,15 @@ class DebatePhaseExecutor:
             state.current_round = step
             activations = [scheduler.activate(node) for node in ready]
             if on_event:
-                await on_event({"type": "round_started", "round": step, "max_rounds": max_steps})
+                await on_event({"type": EventType.ROUND_STARTED, "round": step, "max_rounds": max_steps})
                 await on_event({
-                    "type": "graph_step_started",
+                    "type": EventType.GRAPH_STEP_STARTED,
                     "step": step,
                     "max_steps": max_steps,
                     "nodes": [{"id": a.node.id, "label": a.node.display, "visit": a.visit} for a in activations],
                 })
                 await on_event({
-                    "type": "status_changed",
+                    "type": EventType.STATUS_CHANGED,
                     "status": "debating",
                     "speaker": " · ".join(a.node.display for a in activations),
                     "round": step,
@@ -1055,15 +1055,15 @@ class DebatePhaseExecutor:
         step = replay.step
         pending = replay.pending
         if on_event:
-            await on_event({"type": "round_started", "round": step, "max_rounds": max_steps})
+            await on_event({"type": EventType.ROUND_STARTED, "round": step, "max_rounds": max_steps})
             await on_event({
-                "type": "graph_step_started",
+                "type": EventType.GRAPH_STEP_STARTED,
                 "step": step,
                 "max_steps": max_steps,
                 "nodes": [{"id": a.node.id, "label": a.node.display, "visit": a.visit} for a in pending],
             })
             await on_event({
-                "type": "status_changed",
+                "type": EventType.STATUS_CHANGED,
                 "status": "debating",
                 "speaker": " · ".join(a.node.display for a in pending),
                 "round": step,
@@ -1095,7 +1095,7 @@ class DebatePhaseExecutor:
     @staticmethod
     async def graph_finished(on_event: Optional[EventCallback], reason: str, steps: int) -> None:
         if on_event:
-            await on_event({"type": "graph_finished", "reason": reason, "steps": steps})
+            await on_event({"type": EventType.GRAPH_FINISHED, "reason": reason, "steps": steps})
 
     async def run_graph_step(
         self,
@@ -1426,7 +1426,7 @@ class DebatePhaseExecutor:
             )
         if on_event:
             await on_event({
-                "type": "graph_gate_decided",
+                "type": EventType.GRAPH_GATE_DECIDED,
                 "node_id": node.id,
                 "label": node.display,
                 "decision": decision,

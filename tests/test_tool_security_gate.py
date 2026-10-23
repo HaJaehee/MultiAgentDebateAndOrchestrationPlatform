@@ -32,7 +32,7 @@ from app.mcp import manager as manager_module
 from app.mcp.manager import MCPManager
 from app.orchestration.control import ToolApprovalRequest, TurnControl
 from app.orchestration.engine import OrchestratorEngine
-from app.orchestration.runner import TurnRun
+from app.orchestration.turn_run import TurnRun
 from app.orchestration.tool_gate import ToolGate
 from tests.fake_llm import FakeLLMCaller
 

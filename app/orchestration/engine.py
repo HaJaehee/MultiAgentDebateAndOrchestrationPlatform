@@ -46,6 +46,7 @@ from app.database.models import (
     utc_now,
 )
 from app.database.session import get_session_factory
+from app.events import EventCallback, EventType
 from app.orchestration import context_memory as memory
 from app.orchestration import plan_gate, turns
 from app.orchestration.graph import Activation, GraphScheduler, GraphSpec, parse_graph
@@ -61,7 +62,6 @@ from app.orchestration.strategies import (
 
 logger = logging.getLogger(__name__)
 
-EventCallback = Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]
 
 
 def plan_approval_settings() -> PlanApprovalConfig:
@@ -365,7 +365,7 @@ class OrchestratorEngine:
 
             async def _open(request) -> None:
                 if on_event:
-                    await on_event({"type": "tool_budget_exhausted", **request.describe()})
+                    await on_event({"type": EventType.TOOL_BUDGET_EXHAUSTED, **request.describe()})
 
             request = await control.ask_tool_budget(
                 agent_key=str(info.get("agent_key", "")),
@@ -378,7 +378,7 @@ class OrchestratorEngine:
             )
             if on_event:
                 await on_event({
-                    "type": "tool_budget_resolved",
+                    "type": EventType.TOOL_BUDGET_RESOLVED,
                     "id": request.id,
                     "agent_name": request.agent_name,
                     "outcome": request.outcome,
@@ -416,7 +416,7 @@ class OrchestratorEngine:
 
             async def _open(request) -> None:
                 if on_event:
-                    await on_event({"type": "context_window_exhausted", **request.describe()})
+                    await on_event({"type": EventType.CONTEXT_WINDOW_EXHAUSTED, **request.describe()})
 
             request = await control.ask_context_window(
                 agent_key=str(info.get("agent_key", "")),
@@ -430,7 +430,7 @@ class OrchestratorEngine:
             state.context_grant = request.granted
             if on_event:
                 await on_event({
-                    "type": "context_window_resolved",
+                    "type": EventType.CONTEXT_WINDOW_RESOLVED,
                     "id": request.id,
                     "agent_name": request.agent_name,
                     "outcome": request.outcome,
@@ -513,7 +513,7 @@ class OrchestratorEngine:
         prior_record_ids: List[str] = list((draft_state or {}).get("tool_record_ids") or [])
         if on_event:
             await on_event({
-                "type": "message_stream_start",
+                "type": EventType.MESSAGE_STREAM_START,
                 "message": {
                     "id": msg_id,
                     "sender_key": agent.key,
@@ -545,7 +545,7 @@ class OrchestratorEngine:
                 recorded_tools[id(call_log)] = record_id
             if on_event:
                 await on_event({
-                    "type": "tool_executed",
+                    "type": EventType.TOOL_EXECUTED,
                     "agent_key": agent.key,
                     "agent_name": agent.name,
                     "tool_call": call_log,
@@ -567,7 +567,7 @@ class OrchestratorEngine:
             fallback_notices.append(notice)
             if on_event:
                 await on_event({
-                    "type": "llm_fallback",
+                    "type": EventType.LLM_FALLBACK,
                     "message_id": msg_id,
                     "agent_key": agent.key,
                     "agent_name": agent.name,
@@ -629,7 +629,7 @@ class OrchestratorEngine:
                 delta = "".join(pending_chunks)
                 pending_chunks.clear()
                 await on_event({
-                    "type": "message_stream_chunk",
+                    "type": EventType.MESSAGE_STREAM_CHUNK,
                     "message_id": msg_id,
                     "delta": delta,
                 })
@@ -797,7 +797,7 @@ class OrchestratorEngine:
 
         if trimmed_here and on_event:
             await on_event({
-                "type": "context_trimmed",
+                "type": EventType.CONTEXT_TRIMMED,
                 "agent_key": agent.key,
                 "agent_name": agent.name,
                 "dropped": sum(trimmed_here),
@@ -827,7 +827,7 @@ class OrchestratorEngine:
         state.messages.append(message)
 
         if on_event:
-            await on_event({"type": "message_added", "message": message.model_dump()})
+            await on_event({"type": EventType.MESSAGE_ADDED, "message": message.model_dump()})
         return message
 
     # ------------------------------------------------------------------ 기록
@@ -964,7 +964,7 @@ class OrchestratorEngine:
             first_line = str(last).splitlines()[0] if str(last) else ""
             try:
                 await on_event({
-                    "type": "persist_failed",
+                    "type": EventType.PERSIST_FAILED,
                     "what": what,
                     "label": label,
                     "error": f"{type(last).__name__}: {first_line}",
@@ -1041,7 +1041,7 @@ class OrchestratorEngine:
         state.messages.append(message)
 
         if on_event:
-            await on_event({"type": "message_added", "message": message.model_dump()})
+            await on_event({"type": EventType.MESSAGE_ADDED, "message": message.model_dump()})
         return message
 
     async def _apply_interjections(
@@ -1289,7 +1289,7 @@ class OrchestratorEngine:
             )
             turn_started_at = opening.started_at
             if on_event:
-                await on_event({"type": "turn_opened", "turn_id": turn_id, "resumed": False})
+                await on_event({"type": EventType.TURN_OPENED, "turn_id": turn_id, "resumed": False})
 
             # 4. Phase 1: Master Orchestrator Goal Analysis & Planning
             plan_message = await self._plan(db, state, setup, on_event=on_event, control=control)
@@ -1388,7 +1388,7 @@ class OrchestratorEngine:
                 # 끊기기 전의 기록도 싣습니다. 러너의 스냅샷이 턴 전체를 들고 있어야, 이어 가는 중에
                 # 새로고침한 화면이 그래프 진행 표시를 처음부터 다시 그립니다.
                 await on_event({
-                    "type": "turn_opened", "turn_id": turn_id, "resumed": True, "mode": mode,
+                    "type": EventType.TURN_OPENED, "turn_id": turn_id, "resumed": True, "mode": mode,
                     "messages": [m.model_dump() for m in state.messages[start:]],
                 })
 
@@ -1998,7 +1998,7 @@ class OrchestratorEngine:
         )
         state.messages.append(message)
         if on_event:
-            await on_event({"type": "message_added", "message": message.model_dump()})
+            await on_event({"type": EventType.MESSAGE_ADDED, "message": message.model_dump()})
         return message
 
     async def _select_speakers(
@@ -2488,7 +2488,7 @@ class OrchestratorEngine:
                 logger.debug("Rollback after a failed ledger commit also failed", exc_info=True)
             if on_event:
                 await on_event({
-                    "type": "persist_failed",
+                    "type": EventType.PERSIST_FAILED,
                     "what": "the decision ledger",
                     "label": "결정 장부",
                     "error": f"{type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''}",
@@ -2592,7 +2592,7 @@ class OrchestratorEngine:
 
         if on_event:
             await on_event({
-                "type": "context_summarizing",
+                "type": EventType.CONTEXT_SUMMARIZING,
                 "agent_name": agent_name,
                 "messages": cut - start,
             })
@@ -2625,7 +2625,7 @@ class OrchestratorEngine:
             )
             if on_event:
                 await on_event({
-                    "type": "context_summary_failed",
+                    "type": EventType.CONTEXT_SUMMARY_FAILED,
                     "agent_name": agent_name,
                     "error": f"{type(exc).__name__}: {exc}",
                 })
@@ -2633,7 +2633,7 @@ class OrchestratorEngine:
         folded = state.summary_through - start
         if folded and on_event:
             await on_event({
-                "type": "context_summarized",
+                "type": EventType.CONTEXT_SUMMARIZED,
                 "agent_name": agent_name,
                 "folded": folded,
                 "total": state.summary_through,
@@ -2704,7 +2704,7 @@ class OrchestratorEngine:
             used += cost
 
         if on_event:
-            await on_event({"type": "ledger_update_started", "reason": reason})
+            await on_event({"type": EventType.LEDGER_UPDATE_STARTED, "reason": reason})
         try:
             content, _ = await self.llm_caller.call_agent(
                 writer,
@@ -2732,7 +2732,7 @@ class OrchestratorEngine:
             )
             if on_event:
                 await on_event({
-                    "type": "ledger_update_failed",
+                    "type": EventType.LEDGER_UPDATE_FAILED,
                     "reason": reason,
                     "error": f"{type(exc).__name__}: {exc}",
                 })
@@ -2741,7 +2741,7 @@ class OrchestratorEngine:
         state.decision_ledger = ledger
         state.ledger_through = upto
         if on_event:
-            await on_event({"type": "ledger_updated", "reason": reason, "ledger": ledger})
+            await on_event({"type": EventType.LEDGER_UPDATED, "reason": reason, "ledger": ledger})
         return True
 
     def _build_context_for_agent(

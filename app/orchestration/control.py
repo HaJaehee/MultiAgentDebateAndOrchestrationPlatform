@@ -166,15 +166,6 @@ class TurnControl:
                 return request
         return None
 
-    # 예전 이름. 러너와 테스트가 쓰고 있어 그대로 둡니다.
-    @property
-    def pending_budget_request(self) -> Optional["DecisionRequest"]:
-        return self.pending_decision
-
-    @property
-    def pending_budget_requests(self) -> List["DecisionRequest"]:
-        return self.pending_decisions
-
     async def _ask(self, request: "DecisionRequest", timeout: float, on_open) -> "DecisionRequest":
         """쪽지를 걸어 두고 답을 기다립니다. 종류가 무엇이든 흐름은 같습니다."""
         if self._stop_requested or not request.answerable:
@@ -251,10 +242,6 @@ class TurnControl:
         )
         return await self._ask(request, timeout, on_open)
 
-    def resolve_context_window(self, extra: int, request_id: Optional[str] = None) -> bool:
-        """컨텍스트 확장 요청에 답합니다 (`resolve_decision` 과 같습니다)."""
-        return self.resolve_decision(extra, request_id)
-
     # -------------------------------------------------- 도구 예산
 
     async def ask_tool_budget(
@@ -291,10 +278,6 @@ class TurnControl:
             max_extension=max_extension,
         )
         return await self._ask(request, timeout, on_open)
-
-    def resolve_tool_budget(self, extra: int, request_id: Optional[str] = None) -> bool:
-        """도구 상한 요청에 답합니다 (`resolve_decision` 과 같습니다)."""
-        return self.resolve_decision(extra, request_id)
 
     # -------------------------------------------------- 도구 승인
 

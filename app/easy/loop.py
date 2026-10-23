@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Set
 
+from app.events import EventType
+
 THOUGHT, ACTION = "thought", "action"
 # 발언 종류. UI에서 표시 형태를 결정합니다.
 USER, PLAN, SYNTHESIS, AGENT, ERROR, NOTE = "user", "plan", "synthesis", "agent", "error", "note"
@@ -136,10 +138,10 @@ class LoopTimeline:
 
     def apply(self, event: Dict[str, Any]) -> Optional[Change]:
         etype = event.get("type")
-        if etype == "status_changed":
+        if etype == EventType.STATUS_CHANGED:
             self.phase = event.get("status") or self.phase
             return None
-        if etype == "message_stream_start":
+        if etype == EventType.MESSAGE_STREAM_START:
             msg = event.get("message") or {}
             speech = self._by_id.get(str(msg.get("id") or "")) or self._add(msg, self.phase)
             if msg.get("content"):
@@ -147,18 +149,18 @@ class LoopTimeline:
                 speech.steps.append(Step(THOUGHT, text=msg["content"]))
             self._live[speech.agent_key] = speech
             return Change(speech)
-        if etype == "message_stream_chunk":
+        if etype == EventType.MESSAGE_STREAM_CHUNK:
             speech = self._by_id.get(str(event.get("message_id") or ""))
             if speech is None or speech.done:
                 return None
             return Change(speech, tail_only=self._add_text(speech, event.get("delta") or ""))
-        if etype == "tool_executed":
+        if etype == EventType.TOOL_EXECUTED:
             speech = self._live.get(event.get("agent_key") or "")
             if speech is None or speech.done:
                 return None
             speech.steps.append(Step(ACTION, tool=dict(event.get("tool_call") or {})))
             return Change(speech)
-        if etype == "message_added":
+        if etype == EventType.MESSAGE_ADDED:
             msg = event.get("message") or {}
             speech = self._by_id.get(str(msg.get("id") or ""))
             if speech is None:
