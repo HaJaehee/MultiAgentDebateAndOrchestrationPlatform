@@ -250,11 +250,11 @@ def test_stale_answers_are_dropped():
 
 
 def test_the_main_screen_wires_mentions_and_upload():
-    app_src = io.open(ROOT / "app" / "ui" / "app.py", encoding="utf-8").read()
+    app_src = "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "app" / "ui" / "expert").glob("*.py")))
     feed_src = io.open(ROOT / "app" / "ui" / "components" / "chat_feed.py", encoding="utf-8").read()
     assert "MENTION_JS" in app_src
-    assert "mention_provider=mention_provider" in app_src and "on_upload_file=on_upload_file" in app_src
-    assert app_src.count("await with_references(") == 2, "새 턴과 개입 모두"
+    assert "mention_provider=self.mention_provider" in app_src and "on_upload_file=self.on_upload_file" in app_src
+    assert app_src.count("await self.with_references(") == 2, "새 턴과 개입 모두"
     assert "MENTION_INPUT_CLASS" in feed_src and "MENTION_QUERY_EVENT" in feed_src
     assert MENTION_QUERY_EVENT in MENTION_JS and MENTION_INPUT_CLASS in MENTION_JS
 
@@ -350,12 +350,12 @@ def test_download_search_needs_every_word():
 
 
 def test_download_buttons_are_wired_in_both_places():
-    app_src = io.open(ROOT / "app" / "ui" / "app.py", encoding="utf-8").read()
+    app_src = "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "app" / "ui" / "expert").glob("*.py")))
     roster_src = io.open(ROOT / "app" / "ui" / "components" / "roster.py", encoding="utf-8").read()
     viewer_src = io.open(ROOT / "app" / "ui" / "components" / "artifact_viewer.py", encoding="utf-8").read()
-    assert "WorkspaceDownloadDialog(workspace_root)" in app_src
-    assert "roster_control.on_open_workspace_download = workspace_download.open" in app_src
-    assert "ArtifactViewer(on_open_workspace_files=workspace_download.open)" in app_src
+    assert "WorkspaceDownloadDialog(self.workspace_root)" in app_src
+    assert "self.roster_control.on_open_workspace_download = self.workspace_download.open" in app_src
+    assert "ArtifactViewer(on_open_workspace_files=self.workspace_download.open)" in app_src
     assert "작업 공간 파일 다운로드" in roster_src
     # 입력란 아래: 버튼이 입력란보다 뒤, 안내 줄보다 앞에 만들어집니다.
     assert roster_src.index("self.workspace_input = ui.input(") < roster_src.index("self.workspace_download_btn = (") \

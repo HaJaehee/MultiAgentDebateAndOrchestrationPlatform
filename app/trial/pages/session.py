@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from typing import Any, Dict, List, Optional, Set
@@ -27,7 +26,6 @@ from app.database.models import SessionModel
 from app.database.session import get_session_factory
 from app.events import EventType
 from app.orchestration.runner import get_debate_runner
-from app.orchestration.turn_run import TurnRun
 from app.orchestration.turns import unfinished_turn
 from app.routes import TRIAL_LOGIN_PATH
 from app.session_ops import load_feed_messages
@@ -46,6 +44,7 @@ from app.trial.web import Visitor, current_visitor, is_owner
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.components.chat_feed import ChatFeed
 from app.ui.math_markdown import MathMarkdown
+from app.ui.run_binding import RunBinding
 from app.ui.shared.page import (
     MARKDOWN_EXTRAS,
     disabled_page,
@@ -91,9 +90,11 @@ class TrialSessionScreen:
         self.debate_tab: Optional[ui.tab] = None
         self.queue_label: Optional[ui.label] = None
 
-        self.subscribed: Optional[TurnRun] = None
-        self.subscription: Optional["asyncio.Queue[Dict[str, Any]]"] = None
-        self.consumer: Optional[asyncio.Task] = None
+        # 백그라운드 토론의 구독. 화면이 사라지면 구독만 끊기고 토론은 계속됩니다.
+        self.binding = RunBinding(
+            self.client, self.apply,
+            alive=lambda: self.feed is not None and self.feed.alive, name="trial page",
+        )
 
     # ------------------------------------------------------------ 구성
 
@@ -161,9 +162,8 @@ class TrialSessionScreen:
                         self.feed.set_unfinished_turn(unfinished)
 
         ui.timer(1.0, self.tick_queue)
-        self.client.on_delete(self.detach)
         if running:
-            self.attach(run)
+            self.binding.attach(run)
 
     # ------------------------------------------------------------ 진행 단계
 
@@ -389,7 +389,7 @@ class TrialSessionScreen:
         self.feed.set_busy(True, run.status_text, _korean_badge(run.round_info))
         self.progress_view.refresh()
         self.result_view.refresh()
-        self.attach(run)
+        self.binding.attach(run)
 
     async def resume(self, turn_id: str, mode: str) -> None:
         """끊긴 요청을 이어 가거나(`continue`) 지금까지의 발언으로 정리합니다(`finish`)."""
@@ -422,7 +422,7 @@ class TrialSessionScreen:
         self.feed.set_busy(True, run.status_text, "정리" if mode == "finish" else "재개")
         self.progress_view.refresh()
         await self.result_view.refresh()
-        self.attach(run)
+        self.binding.attach(run)
 
     async def interject(self, text: str) -> None:
         if not self.runner.interject(self.session_id, text):
@@ -455,44 +455,6 @@ class TrialSessionScreen:
                 self.feed.clear_plan_approval(request_id)
             ui.notify("이미 처리된 요청입니다 (대기 시간이 끝났거나 토론이 종료되었습니다).", type="warning")
         return accepted
-
-    # ------------------------------------------------------------ 구독
-
-    def attach(self, run: TurnRun) -> None:
-        self.detach()
-        if run.status != "running":
-            return
-        self.subscribed = run
-        self.subscription = run.subscribe()
-        self.consumer = asyncio.create_task(self._consume(run, self.subscription))
-
-    def detach(self) -> None:
-        if self.subscribed is not None and self.subscription is not None:
-            self.subscribed.unsubscribe(self.subscription)
-        if self.consumer is not None and not self.consumer.done():
-            self.consumer.cancel()
-        self.subscribed = self.subscription = self.consumer = None
-
-    async def _consume(self, run: TurnRun, queue: "asyncio.Queue[Dict[str, Any]]") -> None:
-        try:
-            while True:
-                event = await queue.get()
-                if self.client.is_deleted or self.feed is None or not self.feed.alive:
-                    break
-                try:
-                    with self.client:
-                        await self.apply(event)
-                except RuntimeError as exc:
-                    logger.debug("Stopped feeding a closed trial page: %s", exc)
-                    break
-                if event.get("type") == EventType.RUN_FINISHED:
-                    break
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Trial event consumer stopped: %s", exc, exc_info=True)
-        finally:
-            run.unsubscribe(queue)
 
     async def apply(self, event: Dict[str, Any]) -> None:
         feed = self.feed

@@ -29,12 +29,12 @@ SCREENS = ("app.ui", "app.trial", "app.easy")
 
 # `app.ui` 안의 두 갈래. 새 모듈은 반드시 어느 한쪽에 넣습니다 (`test_every_ui_module_is_classified`).
 EXPERT_UI = (
-    "app.ui.app", "app.ui.expert", "app.ui.personas_page", "app.ui.graph_page",
+    "app.ui.expert", "app.ui.personas_page", "app.ui.graph_page",
     "app.ui.components.roster", "app.ui.components.sidebar", "app.ui.components.artifact_viewer",
     "app.ui.components.workspace_download", "app.ui.components.access_token", "app.ui.components.graph_canvas",
 )
 SHARED_UI = (
-    "app.ui.shared", "app.ui.components.chat_feed", "app.ui.components.model_status",
+    "app.ui.shared", "app.ui.run_binding", "app.ui.components.chat_feed", "app.ui.components.model_status",
     "app.ui.components.agent_appearance", "app.ui.components.quiet_splitter", "app.ui.math_markdown",
     "app.ui.clipboard", "app.ui.theme", "app.ui.mermaid_export", "app.ui.mention_input",
     "app.ui.diagnostics_script",

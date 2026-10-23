@@ -360,7 +360,7 @@ def test_the_middleware_is_the_outermost_layer_and_buttons_are_wired():
     from app.main import server
 
     assert server.user_middleware[0].cls is AccessMiddleware
-    app_src = io.open(ROOT / "app" / "ui" / "app.py", encoding="utf-8").read()
+    app_src = "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "app" / "ui" / "expert").glob("*.py")))
     assert app_src.index('info_btn = ui.button(icon="info"') < app_src.index("build_access_buttons()")
     button_src = io.open(ROOT / "app" / "ui" / "components" / "access_token.py", encoding="utf-8").read()
     assert button_src.count("if not _caller_is_loopback():") == 4, "버튼 생성과 세 처리 함수(적용·생성·잠금 해제) 모두 루프백을 확인"

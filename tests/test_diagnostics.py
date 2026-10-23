@@ -166,5 +166,5 @@ def test_the_page_script_reports_long_tasks_and_disconnects_over_http():
     assert "visibilityState === 'visible'" in js, "API 가 없는 브라우저는 보이는 탭에서만 타이머로 어림잡습니다"
     assert "socket.on('disconnect'" in js and "socket.on('connect'" in js and "connect_error" in js
     assert "keepalive: true" in js and CLIENT_DIAGNOSTICS_ENDPOINT in js, "끊긴 순간에도 보낼 수 있게 HTTP 로"
-    app_src = io.open(ROOT / "app" / "ui" / "app.py", encoding="utf-8").read()
+    app_src = "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "app" / "ui" / "expert").glob("*.py")))
     assert "<script>{CLIENT_DIAGNOSTICS_JS}</script>" in app_src

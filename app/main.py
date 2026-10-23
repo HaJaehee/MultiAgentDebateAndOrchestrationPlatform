@@ -30,7 +30,7 @@ from app.orchestration.runner import get_debate_runner
 from app.orchestration.turns import mark_interrupted_turns
 from app.easy import setup_easy
 from app.trial import setup_trial
-from app.ui.app import create_ui
+from app.ui.expert.page import create_ui
 from app.ui.graph_page import create_graph_page
 from app.ui.personas_page import create_personas_page
 

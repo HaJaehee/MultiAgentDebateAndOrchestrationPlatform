@@ -165,7 +165,7 @@ def test_the_popup_shows_a_skill_icon():
 
 def test_the_main_screen_passes_designations_with_new_turns_and_interjections():
     root = Path(__file__).resolve().parents[1]
-    src = (root / "app" / "ui" / "app.py").read_text(encoding="utf-8")
+    src = (root / "app" / "ui" / "expert" / "page.py").read_text(encoding="utf-8")
     assert "skill_designations=skill_designations" in src
     assert src.count("skill_designations=skill_designations") == 2, "새 턴과 개입 모두"
 

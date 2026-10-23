@@ -1815,7 +1815,7 @@ class AgentRosterControl:
 
             def open_chat() -> None:
                 # 여기서 가져옵니다. `app.easy.pages` 는 체험 화면을 거쳐 `app.ui` 를 부르므로 맨 위에 두면
-                # 순환 import 가 됩니다 (`app/ui/app.py` 의 EASY_HOME 과 같은 이유).
+                # 순환 import 가 됩니다.
                 from app.easy.pages.build import FormBuilderChat
 
                 if "screen" not in chat:

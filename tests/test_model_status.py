@@ -504,7 +504,7 @@ def test_the_button_is_in_all_three_headers_with_the_right_level_of_detail():
 
     assert component.BUTTON_LABEL == "모델 연결 상태"
     # 전문가 화면은 주인만 엽니다. 체험·쉬운 화면은 방문자도 여므로 주인일 때만 자세히 보여 줍니다.
-    expert = (ROOT / "app" / "ui" / "app.py").read_text(encoding="utf-8")
+    expert = (ROOT / "app" / "ui" / "expert" / "chrome.py").read_text(encoding="utf-8")
     assert "build_model_status_button(detail=True)" in expert
     assert "build_model_status_button(detail=owner)" in inspect.getsource(trial_common.header)
     assert "build_model_status_button(detail=viewer.owner)" in inspect.getsource(easy_common.easy_header)

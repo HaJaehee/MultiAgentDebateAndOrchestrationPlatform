@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Set
 
@@ -40,13 +39,13 @@ from app.easy.sessions import load_messages, owned_session
 from app.events import EventType
 from app.mcp.policy import OUTCOME_LABELS, tool_outcome
 from app.orchestration.runner import get_debate_runner
-from app.orchestration.turn_run import TurnRun
 from app.orchestration.turns import unfinished_turn
 from app.routes import EASY_HOME
 from app.security import is_loopback
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.components.chat_feed import ChatFeed
 from app.ui.math_markdown import MathMarkdown
+from app.ui.run_binding import RunBinding
 from app.ui.shared.page import MARKDOWN_EXTRAS, disabled_page, empty_state, footer_notice
 
 logger = logging.getLogger(__name__)
@@ -92,9 +91,11 @@ class EasySessionScreen:
         # 진행 중인 발언의 마지막 생각 블록. 텍스트 추가 스트리밍 시 전체를 다시 그리지 않고 이 블록만 갱신합니다.
         self.live_text: Dict[str, MathMarkdown] = {}
 
-        self.subscribed: Optional[TurnRun] = None
-        self.subscription: Optional["asyncio.Queue[Dict[str, Any]]"] = None
-        self.consumer: Optional[asyncio.Task] = None
+        # 백그라운드 토론의 구독. 화면이 사라지면 구독만 끊기고 토론은 계속됩니다.
+        self.binding = RunBinding(
+            self.client, self.apply,
+            alive=lambda: self.feed is not None and self.feed.alive, name="easy page",
+        )
 
     # ------------------------------------------------------------ 구성
 
@@ -167,10 +168,9 @@ class EasySessionScreen:
             if run.plan_approval:
                 self.feed.set_plan_approval(dict(run.plan_approval))
                 self._ask_attention("수립된 계획에 대한 승인이 필요합니다.")
-            self.attach(run)
+            self.binding.attach(run)
         else:
             self.feed.set_unfinished_turn(self.unfinished)
-        self.client.on_delete(self.detach)
 
     @ui.refreshable_method
     def status_view(self) -> None:
@@ -380,7 +380,7 @@ class EasySessionScreen:
         self.status_view.refresh()
         self.tabs.set_value("loop")
         self.feed.set_busy(True, run.status_text, "진행 중")
-        self.attach(run)
+        self.binding.attach(run)
 
     async def resume(self, turn_id: str, mode: str) -> None:
         if self.feed is None or self.runner.is_running(self.session_id):
@@ -403,7 +403,7 @@ class EasySessionScreen:
         self.status_view.refresh()
         self.legend.refresh()
         self.feed.set_busy(True, run.status_text, "재개")
-        self.attach(run)
+        self.binding.attach(run)
 
     async def interject(self, text: str) -> None:
         if not self.runner.interject(self.session_id, text):
@@ -448,44 +448,6 @@ class EasySessionScreen:
         elif accepted and decision == "approve":
             self.tabs.set_value("loop")
         return accepted
-
-    # ------------------------------------------------------------ 구독
-
-    def attach(self, run: TurnRun) -> None:
-        self.detach()
-        if run.status != "running":
-            return
-        self.subscribed = run
-        self.subscription = run.subscribe()
-        self.consumer = asyncio.create_task(self._consume(run, self.subscription))
-
-    def detach(self) -> None:
-        if self.subscribed is not None and self.subscription is not None:
-            self.subscribed.unsubscribe(self.subscription)
-        if self.consumer is not None and not self.consumer.done():
-            self.consumer.cancel()
-        self.subscribed = self.subscription = self.consumer = None
-
-    async def _consume(self, run: TurnRun, queue: "asyncio.Queue[Dict[str, Any]]") -> None:
-        try:
-            while True:
-                event = await queue.get()
-                if self.client.is_deleted or self.feed is None or not self.feed.alive:
-                    break
-                try:
-                    with self.client:
-                        await self.apply(event)
-                except RuntimeError as exc:
-                    logger.debug("Stopped feeding a closed easy page: %s", exc)
-                    break
-                if event.get("type") == EventType.RUN_FINISHED:
-                    break
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Easy page event consumer stopped: %s", exc, exc_info=True)
-        finally:
-            run.unsubscribe(queue)
 
     async def apply(self, event: Dict[str, Any]) -> None:
         change = self.timeline.apply(event)

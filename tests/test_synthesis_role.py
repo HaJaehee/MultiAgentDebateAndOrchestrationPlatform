@@ -181,7 +181,7 @@ def test_the_screen_appends_instead_of_replacing():
     import io
     from pathlib import Path
 
-    source = io.open(Path(__file__).resolve().parents[1] / "app" / "ui" / "app.py", encoding="utf-8").read()
+    source = "".join(p.read_text(encoding="utf-8") for p in sorted((Path(__file__).resolve().parents[1] / "app" / "ui" / "expert").glob("*.py")))
     assert 'artifact_viewer.add_artifacts(event.get("artifacts", []))' in source
     assert 'formatted_arts = snapshot["artifacts"]' not in source
     assert 'merge_artifacts(formatted_arts, snapshot["artifacts"])' in source

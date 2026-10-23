@@ -207,7 +207,7 @@ def test_the_easy_pages_are_mounted_before_nicegui():
 
 
 def test_the_expert_header_links_to_the_easy_pages_left_of_the_stack_badge():
-    source = (ROOT / "app" / "ui" / "app.py").read_text(encoding="utf-8")
+    source = (ROOT / "app" / "ui" / "expert" / "chrome.py").read_text(encoding="utf-8")
     link = source.find('ui.button("쉬운 화면"')
     assert link != -1, "전문가 화면 머리말에 '쉬운 화면' 버튼이 있어야 합니다"
     assert "ui.navigate.to(EASY_HOME)" in source[link:link + 200], "버튼은 /trial/easy 로 이동해야 합니다"

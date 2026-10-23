@@ -39,7 +39,7 @@ def test_the_splitter_does_not_echo_drag_values_back():
 
 
 def test_the_main_screen_uses_the_quiet_splitter():
-    source = io.open(ROOT / "app" / "ui" / "app.py", encoding="utf-8").read()
+    source = "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "app" / "ui" / "expert").glob("*.py")))
     assert "QuietSplitter(" in source
     assert "ui.splitter(" not in source, "되돌림과 끄는 동안의 고정이 빠진 스플리터가 다시 들어오면 안 됩니다"
 
@@ -69,7 +69,7 @@ def test_frozen_panels_clip_instead_of_growing_a_scrollbar():
 
 
 def test_the_main_screen_loads_the_freeze_and_image_scripts():
-    source = io.open(ROOT / "app" / "ui" / "app.py", encoding="utf-8").read()
+    source = "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "app" / "ui" / "expert").glob("*.py")))
     assert "SPLITTER_FREEZE_JS" in source and "MERMAID_IMAGE_JS" in source
 
 

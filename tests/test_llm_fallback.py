@@ -761,7 +761,7 @@ def test_the_card_shows_a_badge_from_the_record_while_streaming_and_after():
     assert 'self._set_fallback(info, msg.get("llm_meta"))' in inspect.getsource(ChatFeed._finalize_streaming_message)
     assert "def mark_fallback" in source
     # 세 화면이 흘러나오는 카드에 붙입니다.
-    for path in ("app/ui/app.py", "app/trial/pages/session.py", "app/easy/pages/session.py"):
+    for path in ("app/ui/expert/events.py", "app/trial/pages/session.py", "app/easy/pages/session.py"):
         text = (ms_root() / path).read_text(encoding="utf-8")
         assert 'mark_fallback(event.get("message_id", ""), event.get("llm_meta"))' in text, path
 
