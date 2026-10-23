@@ -165,8 +165,11 @@ hidden by imports inside functions:
 
 ### 6.7. Planned but not done
 
+The first two were decided against on 2026-10-24; they are recorded here so they are not taken up again by
+mistake.
+
 | Plan item | State |
 | :--- | :--- |
-| Move the agent draft and catalog out of the screens (P4) | Not done. The roster's `agent_admin.py` imports `easy.builder` (`AgentDraft`, `agent_key_for`), `easy.catalog` (`server_options`, `skill_options`) and `easy.pages.build` (`FormBuilderChat`); the layering test allows the expert UI this. `FormBuilderChat` is itself a screen component; the draft and catalog are the candidates to move. |
-| Move applying roster changes to `conf.json` and the lock rules into a service without NiceGUI (P5) | Not done. They are still methods of `AgentRosterControl`, and `test_agent_admin.py` and `test_roster_lock.py` still replace `ui.notify`. |
+| Move the agent draft and catalog out of the screens (P4) | Not doing (decided 2026-10-24). The roster's `agent_admin.py` imports `easy.builder` (`AgentDraft`, `agent_key_for`), `easy.catalog` (`server_options`, `skill_options`) and `easy.pages.build` (`FormBuilderChat`); the layering test allows the expert UI this. `FormBuilderChat` is itself a screen component; the draft and catalog would have been the pieces to move. |
+| Move applying roster changes to `conf.json` and the lock rules into a service without NiceGUI (P5) | Not doing (decided 2026-10-24). They are still methods of `AgentRosterControl`, and `test_agent_admin.py` and `test_roster_lock.py` still replace `ui.notify`. |
 | Make `agents/llm.py` an `agents/llm/` package (P6) | Done as sibling modules instead (`llm_request`, `llm_recovery`, `llm_tool_calls`, `llm_context`, `llm_budget`, `llm_tools`, `llm_types`, `llm_fingerprint`, `reasoning`, `connection`). Why this was chosen over a package was not recorded. As it stands, `LLMCaller` is still defined in `app/agents/llm.py`, the path the MADOWarGame driver imports, so nothing has to be re-exported. |
