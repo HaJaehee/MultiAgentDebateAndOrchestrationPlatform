@@ -140,7 +140,7 @@ def _request(body: bytes) -> Request:
 
 @pytest.mark.asyncio
 async def test_the_endpoint_records_and_answers_204(tmp_path: Path, monkeypatch):
-    from app.main import diagnostics_client
+    from app.api import diagnostics_client
 
     reset_client_rate_limit()
     monkeypatch.setattr(diagnostics, "diagnostics_dir", lambda: tmp_path)
@@ -152,9 +152,10 @@ async def test_the_endpoint_records_and_answers_204(tmp_path: Path, monkeypatch)
 
 
 def test_health_reports_the_loop_summary():
-    src = io.open(ROOT / "app" / "main.py", encoding="utf-8").read()
-    assert '"event_loop": loop_health()' in src
-    assert "start_loop_watchdog()" in src and "await stop_loop_watchdog()" in src
+    api = io.open(ROOT / "app" / "api.py", encoding="utf-8").read()
+    main = io.open(ROOT / "app" / "main.py", encoding="utf-8").read()
+    assert '"event_loop": loop_health()' in api
+    assert "start_loop_watchdog()" in main and "await stop_loop_watchdog()" in main
 
 
 # ================================================================ 페이지 스크립트
