@@ -95,5 +95,13 @@
 
 | 단계 | 상태 | 비고 |
 | :--- | :--- | :--- |
-| 선행 정리 | 진행 전 | |
-| P0 ~ P8 | 진행 전 | |
+| 선행 정리 | 완료 | PairSlide 연동 제거, MCP 가짜 도구 폴백 제거 |
+| P0 | 완료 | `test_public_surface.py`, `test_layering.py` |
+| P1 | 완료 | 재내보내기·중복·미사용 import 정리, `__init__` 경량화 |
+| P2 | 완료 | `app/events.py`, `orchestration/turn_run.py` (리듀서 표) |
+| P3 | 완료 | engine 3,033 → 495줄, context·recording·speech·conversation·turn_setup, phases 분할 |
+| P4 | 완료 | `app/routes.py`, `ui/shared/page.py`, `ui/run_binding.py`, `ui/expert/` |
+| P5 | 완료 | `roster/`·`chat_feed/` 패키지 (mixin) |
+| P6 | 완료 | llm.py 3,064 → 974줄, `connection.py` 로 순환 해소 |
+| P7 | 남음 | 시도 후 되돌림. 경계 분석은 끝남: paths ← env ← schema ← loader ← editors, 규칙 문법은 `app/tool_rules.py` 로. 주의: `PROJECT_ROOT` 는 `parents[2]`, `.env` 읽기·`PYTHON_BIN` 기본값은 env 모듈 import 시점에, `tests/test_easy_builder.py` 가 `_config` 를 직접 저장·복원 |
+| P8 | 남음 | AppServices·APIRouter, 구조·테스트 문서와 위키 갱신 |
