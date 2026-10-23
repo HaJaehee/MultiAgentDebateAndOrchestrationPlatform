@@ -104,7 +104,6 @@ the host copies it into the workspace (`.mado/skills/<name>/`) and the agent run
 | sandbox `execute_python_code` / `run_python_file` | `exec(code)` + whatever the code scan finds |
 | sandbox `install_python_packages` | flagged execution (it brings in outside code) |
 | fetch `fetch` | `net(host)` |
-| PairSlide `slide_*` / `sheet_write_table` | read or write (paths are PairSlide-relative, not resolved) |
 | any tool on a remote server not on this PC | + `net(host of the server)` |
 
 Relative paths resolve against the session workspace; a leading `./workspace/` is stripped, the way the

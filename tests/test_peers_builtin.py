@@ -22,14 +22,11 @@ from app.config import (
     PEERS_TOOL_PREFIX,
     RootConfig,
     add_mcp_server_to_conf_file,
-    load_config,
     read_conf_file,
     set_agent_allowed_mcp_servers_in_conf_file,
     write_conf_file,
 )
 from app.ui.components.roster import peers_chip_tooltip, peers_users, unknown_tool_servers
-
-ROOT = Path(__file__).resolve().parents[1]
 
 SAMPLE = {
     "mcp_servers": {"filesystem": {"command": "node", "args": ["server.js"]}},
@@ -107,16 +104,3 @@ def test_a_config_that_declares_a_peers_server_is_rejected():
             "agents": {"orchestrator": {"name": "O", "role": "R"}},
             "mcp_servers": {PEERS_TOOL_PREFIX: {"command": "node"}},
         })
-
-
-# --------------------------------------------------------------- 예시 설정
-
-
-def test_example_config_no_longer_ships_pair_slide():
-    """PairSlide 는 별도 프로젝트라 예시 설정에 싣지 않습니다 (연동 코드는 그대로입니다)."""
-    cfg = load_config(ROOT / "conf.example.json")
-
-    assert "pair_slide" not in cfg.mcp_servers
-    assert "slide_writer" not in cfg.agents
-    text = (ROOT / "conf.example.json").read_text(encoding="utf-8")
-    assert "pair_slide" not in text and "PairSlide" not in text

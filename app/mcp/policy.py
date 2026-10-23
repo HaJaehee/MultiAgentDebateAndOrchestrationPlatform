@@ -13,7 +13,7 @@ Claude Code · Zed · Antigravity 의 도구 권한에서 가져온 것들입니
   deny 규칙은 그 뒤에도 그대로 이깁니다 (Claude Code 와 같은 뜻).
 
 세 제품 모두 MCP 도구는 도구 단위로만 규칙을 겁니다. MADO 는 도구가 전부 MCP 이고
-기본 서버(filesystem · git · memory · sandbox · fetch · PairSlide)의 인자 모양을 알므로,
+기본 서버(filesystem · git · memory · sandbox · fetch)의 인자 모양을 알므로,
 그 서버들은 인자 단위까지 봅니다 (`KNOWN_TOOLS`). 모르는 서버는 도구 단위입니다.
 
 이 모듈은 순수합니다 — 판정에 필요한 것은 전부 인자로 받습니다. 사람에게 묻고
@@ -359,23 +359,6 @@ KNOWN_TOOLS: Dict[str, ToolKind] = {
     "sequentialthinking": ToolKind(STATE),
     # fetch (mcp-server-fetch)
     "fetch": ToolKind(NET, url_arg="url"),
-    # PairSlide (pair_slide). 문서는 PairSlide 쪽 저장소에 있고, 경로 인자는 그쪽
-    # 기준이라 작업 공간 경로로 풀지 않습니다.
-    "slide_read": ToolKind(READ),
-    "slide_comments": ToolKind(READ),
-    "slide_history": ToolKind(READ),
-    "slide_list": ToolKind(READ),
-    "slide_open": ToolKind(WRITE),
-    "slide_set": ToolKind(WRITE),
-    "slide_add": ToolKind(WRITE),
-    "slide_delete": ToolKind(WRITE),
-    "slide_save": ToolKind(WRITE),
-    "slide_load": ToolKind(WRITE),
-    "slide_export": ToolKind(WRITE),
-    "slide_export_html": ToolKind(WRITE),
-    "slide_resolve_comment": ToolKind(WRITE),
-    "slide_restore": ToolKind(WRITE),
-    "sheet_write_table": ToolKind(WRITE),
 }
 
 
@@ -728,7 +711,6 @@ def hard_refusal(
     profile: CallProfile,
     tool_name: str,
     arguments: Mapping[str, Any],
-    available_tools: Iterable[str],
     workspace: Path,
     install_root: Optional[Path] = None,
     protected_files: Sequence[Path] = (),
@@ -740,7 +722,7 @@ def hard_refusal(
     거부는 `denied` 입니다. 둘 다 어떤 설정으로도 풀면 안 되고, 여기서 먼저 걸러야
     결국 실패할 호출에 승인 카드를 띄우지 않습니다.
     """
-    binary = binary_write_refusal(tool_name, arguments, available_tools)
+    binary = binary_write_refusal(tool_name, arguments)
     if binary:
         return binary, "error"
     reason = hard_block(profile, workspace, install_root, protected_files)

@@ -30,15 +30,12 @@ class _RecordingClient:
         return "wrote it"
 
 
-def _manager(with_slides: bool = True) -> tuple:
+def _manager() -> tuple:
     manager = MCPManager({})
     client = _RecordingClient()
     for name in ("write_file", "read_file"):
         manager._tool_lookup[f"filesystem__{name}"] = (client, name)  # noqa: SLF001
         manager._tool_lookup[name] = (client, name)  # noqa: SLF001
-    if with_slides:
-        for name in ("slide_open", "slide_add", "slide_export", "sheet_write_table"):
-            manager._tool_lookup[f"pair_slide__{name}"] = (client, name)  # noqa: SLF001
     manager.clients["filesystem"] = client  # type: ignore[assignment]
     return manager, client
 
@@ -54,19 +51,17 @@ async def test_write_file_with_pptx_path_is_refused():
 
     assert status == "error"
     assert client.calls == [], "서버까지 갔습니다 — 깨진 파일이 이미 만들어졌습니다"
-    assert "pair_slide__slide_open" in output, "대안 도구를 지목하지 않으면 모델이 같은 짓을 반복합니다"
     assert "REFUSED" in output
 
 
 @pytest.mark.asyncio
-async def test_xlsx_refusal_points_at_the_sheet_tool():
+async def test_xlsx_refusal_suggests_csv():
     manager, _ = _manager()
     output, status = await manager.execute_tool(
         "sandbox__write_workspace_file", {"filename": "report.xlsx", "content": "a,b"}
     )
     assert status == "error"
-    assert "pair_slide__sheet_write_table" in output
-    assert "slide_open" not in output, "스프레드시트인데 발표자료 도구를 권하고 있습니다"
+    assert "CSV" in output
 
 
 @pytest.mark.asyncio
@@ -77,13 +72,13 @@ async def test_appending_text_to_a_pptx_is_refused_too():
         "sandbox__append_workspace_file", {"filename": "deck.pptx", "content": "<slide/>"}
     )
     assert status == "error"
-    assert "pair_slide__slide_open" in output
+    assert "REFUSED" in output
 
 
 @pytest.mark.asyncio
-async def test_refusal_without_slide_tools_tells_it_to_write_markdown():
-    """pair_slide 를 꺼 둔 배포에서 모델이 '만들었다' 고 거짓 보고하는 것을 막습니다."""
-    manager, _ = _manager(with_slides=False)
+async def test_pptx_refusal_tells_it_to_write_markdown():
+    """모델이 '만들었다' 고 거짓 보고하는 것을 막습니다."""
+    manager, _ = _manager()
 
     output, status = await manager.execute_tool(
         "filesystem__write_file", {"path": "deck.pptx", "content": "x"}
@@ -92,7 +87,6 @@ async def test_refusal_without_slide_tools_tells_it_to_write_markdown():
     assert status == "error"
     assert "마크다운" in output
     assert "만들었다고 말하지 마십시오" in output
-    assert "pair_slide__" not in output, "없는 도구를 부르라고 시키고 있습니다"
 
 
 @pytest.mark.asyncio
@@ -131,31 +125,12 @@ def _tools(*names):
     return [{"type": "function", "function": {"name": n}} for n in names]
 
 
-def test_the_guidance_tells_the_agent_to_read_what_people_wrote():
-    """코멘트는 사람 → 에이전트 통로입니다.
-
-    읽으라고 시키지 않으면 편지함만 달아 놓고 수신자에게 알려 주지 않은 꼴이
-    되어, 사람은 대답 없는 곳에 계속 적게 됩니다.
-    """
-    text = binary_file_guidance(_tools(
-        "pair_slide__slide_open",
-        "pair_slide__slide_comments",
-        "pair_slide__slide_resolve_comment",
-    ))
-
-    assert "pair_slide__slide_comments" in text
-    assert "pair_slide__slide_resolve_comment" in text, "닫는 법까지 알려 줘야 합니다"
-
-
-def test_without_the_comment_tool_the_prompt_does_not_grow():
+def test_without_a_write_tool_the_prompt_does_not_grow():
     """도구가 없으면 한 글자도 늘리지 않습니다 — 이 파일의 다른 지침들과 같은 규율."""
-    text = binary_file_guidance(_tools("pair_slide__slide_open"))
-
-    assert "slide_open" in text
-    assert "부탁" not in text
+    assert binary_file_guidance(_tools("filesystem__read_file")) is None
 
 
-def test_with_no_deck_tool_at_all_it_says_it_cannot():
+def test_with_a_write_tool_it_says_it_cannot():
     """도구가 없을 때 '만들었다' 고 말하는 것이 원래의 버그였습니다."""
     text = binary_file_guidance(_tools("filesystem__write_file"))
 

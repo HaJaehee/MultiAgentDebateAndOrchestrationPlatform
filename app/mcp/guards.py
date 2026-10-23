@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Iterable, Mapping, Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 # 텍스트로는 만들 수 없는 문서 형식. OOXML(.pptx/.xlsx/.docx) 은 XML 을 담은 ZIP
 # 컨테이너이고, PDF 와 구형 OLE 형식(.ppt/.xls/.doc) 도 마찬가지로 바이너리입니다.
@@ -33,11 +33,6 @@ PATH_ARGUMENT_KEYS = (
     "target", "target_file", "uri", "dest", "destination", "output_path",
 )
 
-# 거부 문구에서 대안으로 지목할 발표자료 · 스프레드시트 도구들 (conf 키 `pair_slide`).
-_SLIDE_ENTRY_TOOLS = ("slide_open", "slide_add", "slide_export")
-_SHEET_ENTRY_TOOLS = ("sheet_write_table",)
-
-_PRESENTATION_EXTENSIONS = frozenset({".pptx", ".potx", ".ppt", ".ppsx"})
 _SPREADSHEET_EXTENSIONS = frozenset({".xlsx", ".xlsm", ".xltx", ".xls"})
 
 
@@ -60,25 +55,7 @@ def _binary_target(arguments: Mapping[str, Any]) -> Optional[Tuple[str, str]]:
     return None
 
 
-def _find_available(available_tools: Iterable[str], tails: Iterable[str]) -> list:
-    """주어진 이름 꼬리를 가진 도구의 **전체 이름** 목록. 런타임에 실제로 있는 것만."""
-    wanted = tuple(tails)
-    found = []
-    for name in available_tools or ():
-        tail = _tool_tail(str(name))
-        if tail in wanted and str(name) not in found:
-            found.append(str(name))
-    # `_tool_lookup` 은 정규화된 이름(`pair_slide__slide_open`)과 맨이름을 둘 다
-    # 들고 있습니다. 모델에게는 서버가 붙은 쪽을 보여 줍니다 — 모호하지 않으니까요.
-    qualified = [n for n in found if "__" in n]
-    return qualified or found
-
-
-def binary_write_refusal(
-    tool_name: str,
-    arguments: Any,
-    available_tools: Iterable[str] = (),
-) -> Optional[str]:
+def binary_write_refusal(tool_name: str, arguments: Any) -> Optional[str]:
     """텍스트 쓰기 도구로 바이너리 문서를 만들려는 호출을 막습니다.
 
     막는 이유는 단순합니다. `.pptx` 는 XML 을 담은 ZIP 컨테이너인데 `write_file` 은
@@ -107,12 +84,6 @@ def binary_write_refusal(
         return None
     path, ext = target
 
-    slide_tools = _find_available(available_tools, _SLIDE_ENTRY_TOOLS)
-    sheet_tools = _find_available(available_tools, _SHEET_ENTRY_TOOLS)
-    wants_deck = ext in _PRESENTATION_EXTENSIONS
-    wants_sheet = ext in _SPREADSHEET_EXTENSIONS
-    usable = slide_tools if wants_deck else (sheet_tools if wants_sheet else [])
-
     head = (
         f"REFUSED - 아무것도 쓰이지 않았습니다.\n"
         f"'{path}' 는 {ext} 파일입니다. .pptx / .xlsx / .docx / .pdf 는 텍스트가 아니라 "
@@ -121,25 +92,8 @@ def binary_write_refusal(
         f"결과는 같습니다."
     )
 
-    if usable:
-        if wants_deck:
-            plan = (
-                f"대신 이렇게 하세요: {', '.join(f'`{n}`' for n in usable)}.\n"
-                f"next_action: `{usable[0]}` 을 파일명과 제목으로 부른 뒤, 슬라이드를 "
-                f"한 호출에 한 장씩 추가하고 마지막에 저장하세요. "
-                f"이 파일에 대해 `{tool_name}` 을 다시 부르지 마십시오."
-            )
-        else:
-            plan = (
-                f"대신 이렇게 하세요: {', '.join(f'`{n}`' for n in usable)}.\n"
-                f"next_action: `{usable[0]}` 에 열 이름과 행 데이터를 넘겨 표를 쓰세요. "
-                f"이 파일에 대해 `{tool_name}` 을 다시 부르지 마십시오."
-            )
-        return f"{head}\n\n{plan}"
-
-    # 대안 도구가 이 런타임에 없을 때. 여기서 정직한 실패를 지시하지 않으면,
-    # 모델은 만들지 못한 파일을 만들었다고 보고합니다.
-    alt = "마크다운(.md)" if wants_deck else "CSV(.csv)"
+    # 여기서 정직한 실패를 지시하지 않으면, 모델은 만들지 못한 파일을 만들었다고 보고합니다.
+    alt = "CSV(.csv)" if ext in _SPREADSHEET_EXTENSIONS else "마크다운(.md)"
     return (
         f"{head}\n\n"
         f"이 환경에는 {ext} 파일을 만들 수 있는 도구가 없습니다.\n"

@@ -655,13 +655,12 @@ class MCPManager:
         meta = self.tool_meta(tool_name)
         if meta is None:
             # 모르는 도구는 아래에서 "Unknown tool" 로 끝납니다. 다만 바이너리 쓰기 거부는
-            # 대안 도구를 짚어 주므로 그쪽 안내가 더 쓸모 있습니다.
-            binary = binary_write_refusal(tool_name, arguments, self._tool_lookup.keys())
+            # 무엇을 대신 할지 알려 주므로 그쪽 안내가 더 쓸모 있습니다.
+            binary = binary_write_refusal(tool_name, arguments)
             return (binary, "error") if binary else None
         profile = profile_call(meta, arguments, self.workspace)
         return hard_refusal(
-            profile, tool_name, arguments, self._tool_lookup.keys(), self.workspace,
-            PROJECT_ROOT, protected_files(),
+            profile, tool_name, arguments, self.workspace, PROJECT_ROOT, protected_files(),
         )
 
     async def execute_tool(
