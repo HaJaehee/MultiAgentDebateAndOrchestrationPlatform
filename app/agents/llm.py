@@ -3,7 +3,7 @@
 시스템 프롬프트를 짓고, 도구 루프를 돌리고(도구 호출 → 보안 판정 → 실행 → 관측), 한도에 닿으면 사람에게
 묻거나 마무리합니다. 엔드포인트에 닿지 못하면 `LLMUnavailableError` 를 올리고, 대신 답을 지어내지 않습니다.
 
-곁가지는 옆 모듈에 있습니다: 사고 과정(`reasoning`), 컨텍스트 창 맞춤(`llm_context`), 한도 안내
+곁가지는 옆 모듈에 있습니다: 요청 만들기(`llm_request`), 사고 과정(`reasoning`), 컨텍스트 창 맞춤(`llm_context`), 한도 안내
 (`llm_budget`), 도구 이름·쓰기 지침(`llm_tools`), 요청 지문(`llm_fingerprint`), 응답 되살리기
 (`llm_recovery`), 도구 호출 처리(`llm_tool_calls`), 예외와 콜백 형식(`llm_types`), 전역 모델 폴백
 (`llm_fallback`), 서버 전체 동시 요청 상한(`llm_gate`).
@@ -20,12 +20,7 @@ import litellm
 from app.agents import llm_fallback
 from app.agents.base import Agent
 from app.agents.connection import SERVER_ERROR, classify
-from app.agents.consultation import (
-    PEERS_TOOL_PREFIX,
-    consultation_guidance,
-    consultation_tools_for,
-    is_consultation_tool,
-)
+from app.agents.consultation import consultation_tools_for, is_consultation_tool
 from app.agents.llm_budget import (
     BUDGET_EXTENDED_INSTRUCTION,
     completion_budget_report,
@@ -57,16 +52,11 @@ from app.agents.llm_recovery import (
     find_leaked_tool_call,
     leaked_tool_call_notice,
 )
+from app.agents.llm_request import RequestBuilderMixin
 from app.agents.llm_tool_calls import ToolCallMixin
-from app.agents.llm_tools import (
-    binary_file_guidance,
-    file_writing_guidance,
-    memory_search_tool,
-    memory_write_tool,
-)
+from app.agents.llm_tools import memory_search_tool, memory_write_tool
 from app.agents.llm_types import BudgetArbiter, ContextArbiter, LLMUnavailableError, SpeechCheckpoint
-from app.agents.reasoning import strip_reasoning_trace
-from app.agents.skills import is_skill_tool, skill_guidance, skill_tools_for
+from app.agents.skills import is_skill_tool, skill_tools_for
 from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
 
@@ -75,8 +65,6 @@ logger = logging.getLogger(__name__)
 # Suppress litellm verbose logging
 litellm.suppress_debug_info = True
 
-# Placeholder key for endpoints that require no authentication (Ollama, vLLM, LM Studio...)
-LOCAL_API_KEY_PLACEHOLDER = "sk-no-key-required"
 
 
 # ---------------------------------------------------------------- 도구 예산 고지
@@ -178,7 +166,7 @@ _SPEECH_PROGRESS: "contextvars.ContextVar[Optional[_SpeechProgress]]" = contextv
 )
 
 
-class LLMCaller(AnswerRecoveryMixin, ToolCallMixin):
+class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin):
     """Executes LLM completions with an MCP tool-calling loop.
 
     호출이 실패하면 `LLMUnavailableError` 를 올립니다. 대체 응답을 만들어 내지 않습니다.
@@ -192,58 +180,7 @@ class LLMCaller(AnswerRecoveryMixin, ToolCallMixin):
         # 않았을 때의 폴백입니다.
         self.mcp_manager = mcp_manager or get_runtime_pool().default_runtime()
 
-    def build_system_prompt(
-        self,
-        agent: Agent,
-        custom_instructions: str = "",
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> str:
-        """System prompt = persona + sequential thinking + file/skill rules + session instructions.
 
-        세션 지침을 가장 마지막에 배치하는 이유는 해당 지시가 가장 구체적이기 때문입니다. 파일 작성 및 스킬 관련
-        지침을 그 앞쪽에 배치하여, 사용자가 세션 지침으로 다른 방식을 지정하면 해당 지시가 우선하도록 구성합니다.
-
-        결정 장부는 여기 넣지 않습니다. 라운드마다 바뀌는 글이 시스템 프롬프트에 있으면
-        그 뒤 전체가 프롬프트 캐시에서 빠집니다 (`place_ledger_last`).
-        """
-        parts = [agent.system_prompt]
-
-        st = agent.sequential_thinking
-        if st.enabled and st.mode in ("prompt", "mcp"):
-            parts.append(st.render_prompt())
-            if st.mode == "mcp":
-                parts.append(
-                    f"각 사고 단계는 반드시 '{st.mcp_server}' MCP 서버의 sequentialthinking 도구를 호출해 기록한 뒤 진행하세요."
-                )
-
-        guidance = file_writing_guidance(tools)
-        if guidance:
-            parts.append(guidance)
-
-        binary = binary_file_guidance(tools)
-        if binary:
-            parts.append(binary)
-
-        skills = skill_guidance(tools)
-        if skills:
-            parts.append(skills)
-
-        consultation = consultation_guidance(tools)
-        if consultation:
-            parts.append(consultation)
-
-        if custom_instructions:
-            parts.append(f"[Session Custom Instructions]:\n{custom_instructions}")
-
-        return "\n\n".join(p for p in parts if p)
-
-    def resolve_tool_servers(self, agent: Agent) -> List[str]:
-        """MCP servers this agent may use, including the sequential-thinking server when required."""
-        servers = [s for s in agent.allowed_mcp_servers if s != PEERS_TOOL_PREFIX]
-        st = agent.sequential_thinking
-        if st.enabled and st.mode == "mcp" and st.mcp_server not in servers:
-            servers.append(st.mcp_server)
-        return servers
 
     async def call_agent(
         self,
@@ -514,96 +451,8 @@ class LLMCaller(AnswerRecoveryMixin, ToolCallMixin):
 
         return self._apply_show_steps(agent, content), logs
 
-    def _apply_show_steps(self, agent: Agent, content: str) -> str:
-        """Strips the reasoning steps when sequential_thinking.show_steps is disabled.
 
-        `show_steps = true` 여도 사고 과정은 **다음 발언자의 프롬프트에는** 실리지
-        않습니다 (`strip_reasoning_trace`). 여기서 정하는 것은 기록과 화면에
-        무엇을 남길지입니다.
-        """
-        st = agent.sequential_thinking
-        if not content or not st.enabled or st.show_steps:
-            return content
-        return strip_reasoning_trace(content)
 
-    def build_completion_kwargs(
-        self,
-        agent: Agent,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: str = "auto",
-    ) -> Dict[str, Any]:
-        """Maps the agent configuration onto LiteLLM completion parameters.
-
-        `tool_choice` 는 도구를 넘기되 **부르지는 못하게** 해야 하는 자리를 위해
-        열어 둡니다 (`"none"`). 자세한 사연은 `_wrap_up_without_tools` 에 있습니다.
-        """
-        kwargs: Dict[str, Any] = {
-            "model": agent.model,
-            "messages": messages,
-            "temperature": agent.temperature,
-            "max_tokens": effective_max_tokens(agent),
-        }
-
-        # Endpoint / credentials
-        api_key = (agent.api_key or "").strip()
-        if not api_key and agent.api_base:
-            # Keyless local servers still need a non-empty value for OpenAI-compatible clients
-            api_key = LOCAL_API_KEY_PLACEHOLDER
-        if api_key:
-            kwargs["api_key"] = api_key
-        if agent.api_base:
-            kwargs["api_base"] = agent.api_base
-        if agent.api_version:
-            kwargs["api_version"] = agent.api_version
-        if agent.provider:
-            kwargs["custom_llm_provider"] = agent.provider
-
-        # Sampling & transport options
-        if agent.top_p is not None:
-            kwargs["top_p"] = agent.top_p
-        if agent.timeout:
-            kwargs["timeout"] = agent.timeout
-        if agent.num_retries:
-            kwargs["num_retries"] = agent.num_retries
-        if agent.drop_params:
-            kwargs["drop_params"] = True
-        if agent.extra_headers:
-            kwargs["extra_headers"] = dict(agent.extra_headers)
-        if agent.extra_body:
-            kwargs["extra_body"] = dict(agent.extra_body)
-
-        # Native (provider-side) sequential thinking
-        st = agent.sequential_thinking
-        if st.enabled and st.mode == "native":
-            if st.reasoning_effort:
-                kwargs["reasoning_effort"] = st.reasoning_effort
-            if st.thinking_budget_tokens:
-                kwargs["thinking"] = {"type": "enabled", "budget_tokens": st.thinking_budget_tokens}
-                # Anthropic extended thinking requires temperature = 1
-                if "claude" in agent.model.lower() or "anthropic" in agent.model.lower():
-                    kwargs["temperature"] = 1.0
-
-        if tools:
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = tool_choice
-
-        return kwargs
-
-    def _compose_content(self, agent: Agent, message: Any) -> str:
-        """Merges provider-side reasoning traces (native thinking) with the answer text."""
-        content = getattr(message, "content", None) or ""
-        if isinstance(content, list):  # some providers return content blocks
-            content = "\n".join(
-                block.get("text", "") if isinstance(block, dict) else str(block) for block in content
-            )
-
-        st = agent.sequential_thinking
-        reasoning = getattr(message, "reasoning_content", None) or ""
-        if st.enabled and st.mode == "native" and st.show_steps and reasoning:
-            content = f"> **[Sequential Thinking]**\n>\n> {reasoning.strip().replace(chr(10), chr(10) + '> ')}\n\n{content}"
-
-        return content
 
     # ------------------------------------------------------------ 한 판 호출
 

@@ -1,6 +1,7 @@
 import pytest
 from app.agents.base import Agent
-from app.agents.llm import LOCAL_API_KEY_PLACEHOLDER, LLMCaller
+from app.agents.llm_request import LOCAL_API_KEY_PLACEHOLDER
+from app.agents.llm import LLMCaller
 from app.config import RootConfig, resolve_env_vars
 
 

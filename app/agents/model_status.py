@@ -61,6 +61,7 @@ from app.agents.connection import (
     global_entry,
 )
 from app.agents.llm_gate import get_llm_gate
+from app.agents.llm_request import LOCAL_API_KEY_PLACEHOLDER
 from app.config import AgentConfig, RootConfig, get_config
 
 logger = logging.getLogger(__name__)
@@ -168,7 +169,7 @@ def probe_kwargs(target: ModelTarget, timeout_seconds: float = PROBE_TIMEOUT_SEC
     }
     api_key = (target.api_key or "").strip()
     if not api_key and target.api_base:
-        api_key = llm_module.LOCAL_API_KEY_PLACEHOLDER
+        api_key = LOCAL_API_KEY_PLACEHOLDER
     if api_key:
         kwargs["api_key"] = api_key
     if target.api_base:

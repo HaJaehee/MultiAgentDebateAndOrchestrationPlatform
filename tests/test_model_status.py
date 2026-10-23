@@ -23,6 +23,7 @@ import pytest
 from app.agents import connection as conn, llm as llm_module
 from app.agents import model_status as ms
 from app.agents.llm_gate import LLMGate
+from app.agents.llm_request import LOCAL_API_KEY_PLACEHOLDER
 from app.config import RootConfig
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -123,7 +124,7 @@ def test_probe_request_is_as_light_as_it_can_be():
 
 def test_keyless_endpoints_get_the_same_placeholder_key_as_real_calls():
     kwargs = ms.probe_kwargs(make_target(api_key=None))
-    assert kwargs["api_key"] == llm_module.LOCAL_API_KEY_PLACEHOLDER
+    assert kwargs["api_key"] == LOCAL_API_KEY_PLACEHOLDER
     assert "api_key" not in ms.probe_kwargs(make_target(api_key=None, api_base=None, model="ollama/llama3"))
 
 
