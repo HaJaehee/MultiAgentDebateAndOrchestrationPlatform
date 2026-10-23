@@ -26,6 +26,7 @@ from app.ui.components.chat_feed.common import (
 )
 from app.ui.components.chat_feed.feed import ChatFeed
 from app.ui.math_markdown import render_markdown
+from app.ui.shared.page import MARKDOWN_EXTRAS
 
 
 @pytest.mark.parametrize("content", [
@@ -318,34 +319,64 @@ def test_exact_comes_before_prevent():
 # Shift+Enter 로 나눈 줄은 저장까지는 그대로 가는데, 카드가 마크다운으로 그리면서 한 줄로
 # 붙었습니다. 빈 줄 없는 줄바꿈은 마크다운에서 같은 문단이고, 브라우저는 그것을 공백으로
 # 보여 주기 때문입니다. 오케스트레이터 계획의 `**1. 이름**` 바로 아래 `- 지시` 도 목록이
-# 되지 못하고 제목 줄에 붙었습니다.
+# 되지 못하고 제목 줄에 붙었습니다. 체험·쉬운 화면의 요청 말풍선·도우미 대화·합의 상자도
+# 같았습니다.
+
+NEWLINE_EXTRAS = {"break-on-newline", "cuddled-lists"}
+EVERY_SCREEN = pytest.mark.parametrize(
+    "extras", [FEED_MARKDOWN_EXTRAS, MARKDOWN_EXTRAS], ids=["feed", "trial-easy"],
+)
 
 
-def _card_html(content: str) -> str:
-    return render_markdown(content, " ".join(FEED_MARKDOWN_EXTRAS))
+def _html(content: str, extras) -> str:
+    return render_markdown(content, " ".join(extras))
 
 
-def test_a_line_break_the_user_typed_stays_a_line_break():
-    html = _card_html("첫째 줄: 요구사항입니다.\n둘째 줄: 제약입니다.")
+@EVERY_SCREEN
+def test_a_line_break_the_user_typed_stays_a_line_break(extras):
+    html = _html("첫째 줄: 요구사항입니다.\n둘째 줄: 제약입니다.", extras)
 
     assert "요구사항입니다.<br" in html
 
 
-def test_a_list_right_under_a_line_is_a_list():
-    html = _card_html("**1. Red 정찰 UAV 운용관**\n- `list_own_units` 로 점검하십시오.\n- 둘째 지시")
+@EVERY_SCREEN
+def test_a_list_right_under_a_line_is_a_list(extras):
+    html = _html("**1. Red 정찰 UAV 운용관**\n- `list_own_units` 로 점검하십시오.\n- 둘째 지시", extras)
 
     assert "<strong>1. Red 정찰 UAV 운용관</strong></p>" in html
     assert html.count("<li>") == 2
 
 
+@EVERY_SCREEN
 @pytest.mark.parametrize("content", [
     "| a | b |\n| --- | --- |\n| 1 | 2 |",
     "```python\ndef f():\n    return 1\n```",
     "1. 하나\n2. 둘\n3. 셋",
     "첫 문단.\n\n둘째 문단.",
 ])
-def test_tables_code_lists_and_paragraphs_look_the_same_as_before(content):
-    assert _card_html(content) == render_markdown(content, " ".join(ui.markdown.default_extras))
+def test_tables_code_lists_and_paragraphs_look_the_same_as_before(extras, content):
+    before = [e for e in extras if e not in NEWLINE_EXTRAS]
+
+    assert _html(content, extras) == _html(content, before)
+
+
+def test_the_feed_extras_are_the_defaults_plus_line_breaks():
+    assert set(FEED_MARKDOWN_EXTRAS) == set(ui.markdown.default_extras) | NEWLINE_EXTRAS
+
+
+def test_every_markdown_in_the_trial_and_easy_screens_uses_the_shared_extras():
+    """요청 말풍선, 도우미 대화, 합의·미합의 상자, 결과 — 같은 글이 화면마다 다르게 보이지 않게."""
+    app_dir = Path(chat_feed_package.__file__).parents[3]
+    calls = []
+    for package in ("trial", "easy"):
+        for path in (app_dir / package).rglob("*.py"):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "MathMarkdown":
+                    extras = next((k.value for k in node.keywords if k.arg == "extras"), None)
+                    calls.append((path.relative_to(app_dir).as_posix(), getattr(extras, "id", None)))
+
+    assert calls, "체험·쉬운 화면에서 MathMarkdown 을 찾지 못했습니다"
+    assert [c for c in calls if c[1] != "MARKDOWN_EXTRAS"] == []
 
 
 def test_every_markdown_in_the_feed_uses_the_feed_extras():

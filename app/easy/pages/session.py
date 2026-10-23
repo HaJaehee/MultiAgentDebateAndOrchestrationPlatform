@@ -241,7 +241,7 @@ class EasySessionScreen:
         if speech.kind == USER:
             with ui.column().classes("easy-bubble easy-bubble-me p-3 gap-1 w-full"):
                 ui.label("🎯 요청 과제").classes("easy-tag text-indigo-200")
-                MathMarkdown(speech.text).classes("text-sm")
+                MathMarkdown(speech.text, extras=MARKDOWN_EXTRAS).classes("text-sm")
             return
         if speech.kind == ERROR:
             with ui.row().classes("trial-box-warn p-3 w-full"):

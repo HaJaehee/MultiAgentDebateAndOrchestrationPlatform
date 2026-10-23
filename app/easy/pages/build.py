@@ -35,7 +35,7 @@ from app.easy.pages.common import Viewer, agent_avatar, easy_header, easy_setup,
 from app.orchestration.runner import get_debate_runner
 from app.routes import EASY_BUILD, EASY_HOME, EASY_RUN
 from app.ui.math_markdown import MathMarkdown
-from app.ui.shared.page import disabled_page, footer_notice
+from app.ui.shared.page import MARKDOWN_EXTRAS, disabled_page, footer_notice
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ class BuilderScreen:
     def _bubble(self, text: str, *, me: bool) -> MathMarkdown:
         with ui.column().classes(f"easy-bubble {'easy-bubble-me self-end' if me else ''} p-3 gap-1 max-w-full"):
             ui.label("User" if me else "도우미").classes("easy-tag text-slate-400")
-            return MathMarkdown(text).classes("text-sm")
+            return MathMarkdown(text, extras=MARKDOWN_EXTRAS).classes("text-sm")
 
     def _card(self) -> None:
         with ui.card().classes("trial-card w-full p-4 gap-3"):
@@ -339,7 +339,7 @@ class FormBuilderChat(BuilderScreen):
         tone = "self-end bg-indigo-950 border-indigo-800" if me else "bg-slate-800/60 border-slate-700"
         with ui.column().classes(f"rounded-lg border {tone} p-3 gap-1 max-w-full"):
             ui.label("User" if me else "도우미").classes("text-[11px] font-semibold text-slate-400")
-            return MathMarkdown(text).classes("text-sm")
+            return MathMarkdown(text, extras=MARKDOWN_EXTRAS).classes("text-sm")
 
     def read_card(self) -> AgentDraft:
         return self.draft

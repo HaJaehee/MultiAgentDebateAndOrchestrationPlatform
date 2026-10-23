@@ -18,7 +18,12 @@ from app.ui.mermaid_export import MERMAID_EXPORT_JS, MERMAID_IMAGE_JS
 from app.ui.theme import CUSTOM_CSS
 
 # 발언 본문을 그릴 때 켜는 마크다운 확장 (체험·쉬운 화면의 결과와 발언).
-MARKDOWN_EXTRAS = ["fenced-code-blocks", "tables", "mermaid", "cuddled-lists"]
+#
+# 대화 피드의 `FEED_MARKDOWN_EXTRAS` 와 같은 이유로 `break-on-newline`·`cuddled-lists` 를 켭니다.
+# 빠지면 빈 줄 없는 줄바꿈이 화면에서 공백이 되어, 여러 줄로 쓴 요청이 한 줄로 붙고
+# 글 줄 바로 아래 `- 항목` 이 목록이 되지 못합니다. 이 화면들은 다이어그램을 본문에서
+# 그리므로 `mermaid` 가 더 있습니다.
+MARKDOWN_EXTRAS = ["fenced-code-blocks", "tables", "mermaid", "cuddled-lists", "break-on-newline"]
 
 VISITOR_CSS = """
 .trial-page { max-width: 1180px; margin: 0 auto; width: 100%; }

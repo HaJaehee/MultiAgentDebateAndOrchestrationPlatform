@@ -139,6 +139,12 @@ inquiries). The originals ship inside `app/`, so both packaging scripts carry th
 requests (plan or tool) switch the page to the "전체 기록" tab, where the existing cards are. The beginner
 pages do not draw cards of their own.
 
+Everything these pages render as Markdown outside that feed — the request bubble, the builder conversation,
+plans, steps, results, and the trial's agreed / open boxes — uses `MARKDOWN_EXTRAS`
+([ui/shared/page.py](file:///d:/MultiAgentDebateOrchestration/app/ui/shared/page.py)). It includes
+`break-on-newline` and `cuddled-lists`, so a request written over several lines keeps its lines and a list
+written right under a line stays a list (see [UI Components §1.3](file:///d:/MultiAgentDebateOrchestration/wiki/ui/components.md)).
+
 ## 5. Verification
 
 - `tests/test_easy_loop.py`: step ordering, reloaded sessions, approval records, tool labels.

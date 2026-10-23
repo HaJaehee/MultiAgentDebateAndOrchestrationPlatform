@@ -24,8 +24,10 @@ a `pair_slide` server or `slide_writer` agent keeps loading; nothing special is 
 **Line breaks in chat cards are kept.** A user message split with Shift+Enter was shown on one line, and an
 orchestrator plan's `**1. Name**` followed directly by `- instruction` showed the instruction glued to the
 title instead of as a list. The stored text was always intact; the cards rendered single line breaks as
-spaces. Speech cards and the plan approval card now render with `break-on-newline` and `cuddled-lists`.
-→ [UI Components §1.3](ui/components.md)
+spaces. Speech cards and the plan approval card now render with `break-on-newline` and `cuddled-lists`, and so
+do the trial and beginner pages (the request bubble, the agent builder conversation, the agreed / open boxes,
+plans, steps and results).
+→ [UI Components §1.3](ui/components.md) · [Beginner Pages §4](ui/beginner-pages.md)
 
 **The code base was reorganized for maintenance; behaviour is unchanged.** The plan and its progress are in
 `docs/refactoring-plan.md`.

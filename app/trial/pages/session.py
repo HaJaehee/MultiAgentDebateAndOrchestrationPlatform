@@ -270,11 +270,15 @@ class TrialSessionScreen:
                     if boxes["agreed"]:
                         with ui.column().classes("trial-box-ok p-3 gap-1"):
                             ui.label("합의된 사항").classes("text-xs font-semibold text-emerald-300")
-                            MathMarkdown(boxes["agreed"]).classes("text-sm text-emerald-100")
+                            MathMarkdown(boxes["agreed"], extras=MARKDOWN_EXTRAS).classes(
+                                "text-sm text-emerald-100"
+                            )
                     if boxes["open"]:
                         with ui.column().classes("trial-box-warn p-3 gap-1"):
                             ui.label("미합의 쟁점").classes("text-xs font-semibold text-amber-300")
-                            MathMarkdown(boxes["open"]).classes("text-sm text-amber-100")
+                            MathMarkdown(boxes["open"], extras=MARKDOWN_EXTRAS).classes(
+                                "text-sm text-amber-100"
+                            )
 
             # 산출물 뷰어는 싣지 않습니다. 엔진이 턴마다 남기는 산출물은 이 합성 발언 그 자체
             # ("최종 결론")와 기계용 요약(JSON)이라, 초심자에게는 같은 글이 두 번 보일 뿐입니다.
