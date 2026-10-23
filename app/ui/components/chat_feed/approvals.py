@@ -14,6 +14,7 @@ from app.ui.components.chat_feed.common import (
     APPROVAL_CARD_CLASSES,
     COUNTDOWN_CLASSES,
     DECISION_BUTTON_SIZE,
+    FEED_MARKDOWN_EXTRAS,
     PLAN_CARD_CLASSES,
     PLAN_COMMENT_HINT,
     PLAN_DONE_WHEN_HINT,
@@ -235,7 +236,9 @@ class ApprovalCardsMixin:
                     with ui.expansion("계획 본문 보기", icon="article", value=True).classes(
                         "w-full text-xs text-slate-300"
                     ):
-                        MathMarkdown(plan_body).classes("text-xs text-slate-200")
+                        MathMarkdown(plan_body, extras=FEED_MARKDOWN_EXTRAS).classes(
+                            "text-xs text-slate-200"
+                        )
 
                 for task in info.get("tasks") or []:
                     if not isinstance(task, dict) or not task.get("agent"):

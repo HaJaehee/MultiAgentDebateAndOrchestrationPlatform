@@ -325,6 +325,13 @@ the persona editor — because two copies would drift on how a value is picked o
   silently do nothing while reporting success. [app/ui/clipboard.py](file:///d:/MultiAgentDebateOrchestration/app/ui/clipboard.py)
   falls back to a hidden textarea and `execCommand('copy')`; the artifact viewer's copy button uses
   the same helper.
+- **Line breaks**: speech cards and the plan approval card render with `FEED_MARKDOWN_EXTRAS`
+  ([common.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/chat_feed/common.py)), which adds
+  `break-on-newline` and `cuddled-lists` to NiceGUI's defaults. With the defaults alone, a single line break
+  stays inside one paragraph and the browser shows it as a space: lines typed with Shift+Enter ran together,
+  and a plan's `**1. Name**` followed directly by `- instruction` lost its list and joined the title line.
+  Tables, code blocks, numbered lists and blank-line paragraphs render as before. Display maths (`$$…$$`) on
+  its own line gets a line break before and after it.
 
 ### 1.3.1. Streaming without taking the page down (v0.7.2)
 

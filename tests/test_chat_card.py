@@ -9,17 +9,23 @@
 글에 버튼이 하나 더 붙는 것이고, 그건 눈에 거슬리는 정도입니다.
 """
 
+import ast
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from nicegui import ui
 
+import app.ui.components.chat_feed as chat_feed_package
 from app.ui.components.chat_feed.common import (
     CLAMP_MIN_CHARS,
     CLAMP_MIN_NEWLINES,
+    FEED_MARKDOWN_EXTRAS,
     SUBMIT_KEY_EVENT,
     is_clampable,
 )
 from app.ui.components.chat_feed.feed import ChatFeed
+from app.ui.math_markdown import render_markdown
 
 
 @pytest.mark.parametrize("content", [
@@ -305,3 +311,50 @@ def test_exact_comes_before_prevent():
     modifiers = _key_spec(SUBMIT_KEY_EVENT)["modifiers"]
 
     assert modifiers.index("exact") < modifiers.index("prevent")
+
+
+# --------------------------------------------------------------- 카드 본문의 줄바꿈
+#
+# Shift+Enter 로 나눈 줄은 저장까지는 그대로 가는데, 카드가 마크다운으로 그리면서 한 줄로
+# 붙었습니다. 빈 줄 없는 줄바꿈은 마크다운에서 같은 문단이고, 브라우저는 그것을 공백으로
+# 보여 주기 때문입니다. 오케스트레이터 계획의 `**1. 이름**` 바로 아래 `- 지시` 도 목록이
+# 되지 못하고 제목 줄에 붙었습니다.
+
+
+def _card_html(content: str) -> str:
+    return render_markdown(content, " ".join(FEED_MARKDOWN_EXTRAS))
+
+
+def test_a_line_break_the_user_typed_stays_a_line_break():
+    html = _card_html("첫째 줄: 요구사항입니다.\n둘째 줄: 제약입니다.")
+
+    assert "요구사항입니다.<br" in html
+
+
+def test_a_list_right_under_a_line_is_a_list():
+    html = _card_html("**1. Red 정찰 UAV 운용관**\n- `list_own_units` 로 점검하십시오.\n- 둘째 지시")
+
+    assert "<strong>1. Red 정찰 UAV 운용관</strong></p>" in html
+    assert html.count("<li>") == 2
+
+
+@pytest.mark.parametrize("content", [
+    "| a | b |\n| --- | --- |\n| 1 | 2 |",
+    "```python\ndef f():\n    return 1\n```",
+    "1. 하나\n2. 둘\n3. 셋",
+    "첫 문단.\n\n둘째 문단.",
+])
+def test_tables_code_lists_and_paragraphs_look_the_same_as_before(content):
+    assert _card_html(content) == render_markdown(content, " ".join(ui.markdown.default_extras))
+
+
+def test_every_markdown_in_the_feed_uses_the_feed_extras():
+    """발언 카드와 계획 승인 카드의 본문이 같은 규칙으로 그려져야 같은 글이 같게 보입니다."""
+    calls = []
+    for path in Path(chat_feed_package.__file__).parent.glob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "MathMarkdown":
+                extras = next((k.value for k in node.keywords if k.arg == "extras"), None)
+                calls.append((path.name, getattr(extras, "id", None)))
+
+    assert sorted(calls) == [("approvals.py", "FEED_MARKDOWN_EXTRAS"), ("cards.py", "FEED_MARKDOWN_EXTRAS")]

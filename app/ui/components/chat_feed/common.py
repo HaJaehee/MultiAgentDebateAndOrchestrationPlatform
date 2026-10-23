@@ -74,6 +74,17 @@ INTERJECT_PLACEHOLDER = "토론 진행 중 — 지금 전송하시면 다음 발
 SUBMIT_KEY_EVENT = "keydown.enter.exact.prevent"
 
 
+# 발언 카드와 계획 승인 카드의 마크다운 확장.
+#
+# NiceGUI 기본값(`fenced-code-blocks`, `tables`)만 쓰면 빈 줄 없는 줄바꿈이 같은 문단 안에
+# 남아 화면에서 공백이 됩니다. 유저가 Shift+Enter 로 나눈 줄이 한 줄로 붙고, 오케스트레이터
+# 계획의 `**1. 이름**` 바로 다음 줄 `- 지시` 는 목록이 되지 못하고 제목 줄에 붙었습니다.
+# `break-on-newline` 은 그 줄바꿈을 `<br>` 로, `cuddled-lists` 는 글 줄 바로 아래 목록을
+# 목록으로 그립니다. 표·코드 블록·번호 목록·문단 나눔은 그대로이고, 원문(`content`)과 복사도
+# 그대로입니다.
+FEED_MARKDOWN_EXTRAS = ["fenced-code-blocks", "tables", "cuddled-lists", "break-on-newline"]
+
+
 # 접힌 카드가 보여주는 줄 수. 값 자체는 theme.py 의 `.chat-body-clamped` 가
 # 정하고, 여기서는 문구에만 씁니다.
 CLAMP_LINES = 3

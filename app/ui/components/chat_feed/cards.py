@@ -15,6 +15,7 @@ from app.orchestration.state import FALLBACK_BADGE, fallback_sentence
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.components.chat_feed.common import (
     CLAMP_LINES,
+    FEED_MARKDOWN_EXTRAS,
     OUTCOME_STYLES,
     SCROLL_TO_BOTTOM_PX,
     _card_classes,
@@ -393,7 +394,7 @@ class CardsMixin:
             )
             with body:
                 # 수식(`$…$`, `\(…\)` 등)은 MathML 로 그립니다 (`app/ui/math_markdown.py`).
-                md = MathMarkdown(content)
+                md = MathMarkdown(content, extras=FEED_MARKDOWN_EXTRAS)
 
             tool_container = ui.column().classes("w-full mt-2 gap-1")
             if tool_calls:

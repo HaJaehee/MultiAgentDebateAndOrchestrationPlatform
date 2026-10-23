@@ -21,6 +21,12 @@ prevents broken files and false "created" reports on its own — and now always 
 (CSV for spreadsheets) and say that the requested format could not be produced. A `conf.json` that still declares
 a `pair_slide` server or `slide_writer` agent keeps loading; nothing special is done for them.
 
+**Line breaks in chat cards are kept.** A user message split with Shift+Enter was shown on one line, and an
+orchestrator plan's `**1. Name**` followed directly by `- instruction` showed the instruction glued to the
+title instead of as a list. The stored text was always intact; the cards rendered single line breaks as
+spaces. Speech cards and the plan approval card now render with `break-on-newline` and `cuddled-lists`.
+→ [UI Components §1.3](ui/components.md)
+
 **The code base was reorganized for maintenance; behaviour is unchanged.** The plan and its progress are in
 `docs/refactoring-plan.md`.
 - The engine (3,033 → about 500 lines) only assembles and owns a turn's life. Recording, speeches, conversation
