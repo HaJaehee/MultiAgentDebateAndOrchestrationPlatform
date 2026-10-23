@@ -40,20 +40,18 @@ from app.mcp.policy import (
     RISK_LABELS,
     CallProfile,
     Policy,
-    Rule,
     Verdict,
     evaluate,
     denial_covers,
     grant_covers,
     narrow_rules,
     normalize_mode,
-    parse_rule,
-    parse_rules,
     profile_call,
     refusal_text,
     stricter_mode,
     tool_always_denied,
 )
+from app.tool_rules import Rule, parse_rule, parse_rules
 
 logger = logging.getLogger(__name__)
 

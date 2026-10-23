@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from app import config as config_module
+from app.config import loader as config_module
 from app.agents import pool as pool_module
 from app.config import AgentConfig, get_config, load_config, read_conf_file, write_conf_file
 from app.database.session import get_session_factory, init_db

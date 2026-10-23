@@ -28,12 +28,12 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
-from app.mcp.exec_scan import describe as describe_scan
-from app.mcp.exec_scan import iter_mentions, scan_python, url_host
+from app.mcp.exec_scan import describe as describe_scan, iter_mentions, scan_python, url_host
 from app.mcp.guards import binary_write_refusal
+from app.tool_rules import PATH_KINDS, PATH_RANK, WINDOWS_ABS_RE, Rule, parse_rules
 
 # ---------------------------------------------------------------------------
 # 모드와 위험 등급
@@ -117,112 +117,6 @@ def stricter_mode(*modes: Optional[str]) -> str:
 # ---------------------------------------------------------------------------
 # 규칙
 # ---------------------------------------------------------------------------
-
-PATH_KINDS = ("read", "write", "delete")
-RULE_KINDS = PATH_KINDS + ("exec", "net", "mcp")
-# 경로 행위의 세기. 제한(deny·ask)은 위로, 허용은 아래로 번집니다 — `read(.env)` 를
-# 막으면 `.env` 쓰기도 막히고, `write(src/**)` 를 허용하면 그 읽기도 허용됩니다.
-_PATH_RANK = {"read": 0, "write": 1, "delete": 2}
-
-_RULE_RE = re.compile(r"^\s*([a-z]+)\s*(?:\((.*)\))?\s*$", re.S)
-_WINDOWS_ABS_RE = re.compile(r"^[A-Za-z]:/")
-
-
-def _glob_regex(glob: str) -> "re.Pattern[str]":
-    """경로 glob → 정규식. `**` 는 폴더를 넘나들고, `*` 와 `?` 는 한 폴더 안입니다.
-
-    대소문자를 가리지 않습니다. 윈도우 파일 시스템이 가리지 않으므로, 가리면
-    `read(**/.ENV)` 가 `.env` 를 놓칩니다 (거부 규칙에서는 그 놓침이 곧 구멍입니다).
-    """
-    text = glob.replace("\\", "/")
-    out: List[str] = []
-    i = 0
-    while i < len(text):
-        if text.startswith("**/", i):
-            out.append("(?:.*/)?")
-            i += 3
-        elif text.startswith("**", i):
-            out.append(".*")
-            i += 2
-        elif text[i] == "*":
-            out.append("[^/]*")
-            i += 1
-        elif text[i] == "?":
-            out.append("[^/]")
-            i += 1
-        else:
-            out.append(re.escape(text[i]))
-            i += 1
-    return re.compile("^" + "".join(out) + "$", re.IGNORECASE)
-
-
-@dataclass(frozen=True)
-class Rule:
-    """`kind(pattern)` 한 줄. 원문(`text`)이 곧 화면과 conf.json 에 적히는 모양입니다."""
-
-    text: str
-    kind: str
-    pattern: str = ""
-    regex: Optional["re.Pattern[str]"] = None
-    absolute: bool = False
-
-    @property
-    def matches_all(self) -> bool:
-        return self.pattern in ("", "*", "**")
-
-
-def parse_rule(text: str) -> Rule:
-    """규칙 한 줄을 읽습니다. 틀리면 무엇이 틀렸는지 적은 ValueError."""
-    raw = str(text or "").strip()
-    match = _RULE_RE.match(raw)
-    if not match:
-        raise ValueError(
-            f"규칙 '{raw}' 을 읽을 수 없습니다. `read(경로)`, `write(경로)`, `delete(경로)`, "
-            f"`exec`, `net(호스트)`, `mcp(서버/도구)` 모양으로 적으세요."
-        )
-    kind, pattern = match.group(1), (match.group(2) or "").strip()
-    if kind not in RULE_KINDS:
-        raise ValueError(f"규칙 '{raw}' 의 '{kind}' 는 없는 행위입니다 ({', '.join(RULE_KINDS)} 중 하나).")
-
-    regex: Optional["re.Pattern[str]"] = None
-    absolute = False
-    if pattern.startswith("regex:"):
-        if kind == "mcp":
-            raise ValueError(f"규칙 '{raw}': mcp 규칙은 regex: 대신 `서버/도구` glob 을 씁니다.")
-        try:
-            regex = re.compile(pattern[len("regex:"):], re.IGNORECASE | re.S)
-        except re.error as exc:
-            raise ValueError(f"규칙 '{raw}' 의 정규식이 틀렸습니다: {exc}") from exc
-    elif kind == "exec" and pattern not in ("", "*"):
-        raise ValueError(
-            f"규칙 '{raw}': exec 는 `exec` 또는 `exec(regex:정규식)` 으로만 씁니다 "
-            f"(코드는 glob 으로 가를 수 없습니다)."
-        )
-    elif kind in PATH_KINDS and pattern not in ("", "*", "**"):
-        normalized = os.path.expanduser(pattern).replace("\\", "/")
-        absolute = normalized.startswith("/") or bool(_WINDOWS_ABS_RE.match(normalized))
-        if normalized.startswith("./"):
-            normalized = normalized[2:]
-        regex = _glob_regex(normalized)
-    elif kind == "mcp" and pattern and "/" not in pattern:
-        pattern = f"{pattern}/*"
-    return Rule(text=raw, kind=kind, pattern=pattern, regex=regex, absolute=absolute)
-
-
-def parse_rules(texts: Iterable[str]) -> List[Rule]:
-    """여러 줄을 읽습니다. 하나라도 틀리면 ValueError (틀린 줄을 전부 적습니다)."""
-    rules: List[Rule] = []
-    problems: List[str] = []
-    for text in texts or ():
-        if not str(text or "").strip():
-            continue
-        try:
-            rules.append(parse_rule(text))
-        except ValueError as exc:
-            problems.append(str(exc))
-    if problems:
-        raise ValueError("\n".join(problems))
-    return rules
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +317,7 @@ def resolve_path(raw: str, workspace: Path, base: Optional[str] = None) -> Tuple
     ws_posix = _as_posix(str(ws))
 
     candidate = Path(text)
-    if not candidate.is_absolute() and not _WINDOWS_ABS_RE.match(_as_posix(text)):
+    if not candidate.is_absolute() and not WINDOWS_ABS_RE.match(_as_posix(text)):
         rel = _as_posix(text)
         while rel.startswith("./"):
             rel = rel[2:]
@@ -609,7 +503,7 @@ def rule_matches_action(rule: Rule, action: Action, restrictive: bool) -> bool:
     if rule.kind in PATH_KINDS:
         if action.kind not in PATH_KINDS:
             return False
-        rule_rank, action_rank = _PATH_RANK[rule.kind], _PATH_RANK[action.kind]
+        rule_rank, action_rank = PATH_RANK[rule.kind], PATH_RANK[action.kind]
         if restrictive and action_rank < rule_rank:
             return False
         if not restrictive and action_rank > rule_rank:

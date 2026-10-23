@@ -13,8 +13,8 @@
 - 화면 패키지끼리는 서로 가져다 쓰지 않습니다. 함께 쓰는 것은 `app.ui.shared` 와
   `app.ui.components` 에 둡니다.
 
-`KNOWN_VIOLATIONS` 는 리팩터링(docs/refactoring-plan.md) 중에 아직 남은 위반입니다. 줄이기만
-하고 늘리지 않습니다. 고쳐서 사라진 항목이 목록에 남아 있으면 그것도 실패로 알립니다.
+`KNOWN_VIOLATIONS` 는 알고도 남겨 둔 위반입니다 (지금은 없습니다). 줄이기만 하고 늘리지 않습니다.
+고쳐서 사라진 항목이 목록에 남아 있으면 그것도 실패로 알립니다.
 """
 
 from __future__ import annotations
@@ -48,6 +48,9 @@ RULES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("app.mcp", SCREENS + ("app.main", "app.orchestration", "app.agents")),
     ("app.database", SCREENS + ("app.main", "app.orchestration", "app.agents", "app.mcp")),
     ("app.config", SCREENS + ("app.main", "app.orchestration", "app.agents", "app.mcp", "app.database")),
+    # 도구 규칙 문법은 설정과 도구 보안 판정이 함께 기대는 바닥입니다.
+    ("app.tool_rules", SCREENS + ("app.main", "app.config", "app.orchestration", "app.agents", "app.mcp",
+                                  "app.database")),
     # 엔진은 조립만 합니다. 단계 실행기와 서비스는 엔진을 되부르지 않습니다.
     ("app.orchestration.phases", ("app.orchestration.engine", "app.orchestration.runner")),
     ("app.orchestration.context", ("app.orchestration.engine", "app.orchestration.phases")),
@@ -70,9 +73,7 @@ RULES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
 NO_NICEGUI = ENGINE_SIDE
 
 # 아직 남은 위반: (가져오는 모듈, 가져오는 모듈). 줄이기만 합니다.
-KNOWN_VIOLATIONS: Set[Tuple[str, str]] = {
-    ("app.config", "app.mcp"),  # 도구 규칙 문법 (P7)
-}
+KNOWN_VIOLATIONS: Set[Tuple[str, str]] = set()
 
 
 def _module_name(path: Path) -> str:

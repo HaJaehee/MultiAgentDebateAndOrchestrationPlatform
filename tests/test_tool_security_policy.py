@@ -34,8 +34,6 @@ from app.mcp.policy import (
     grant_covers,
     hard_block,
     narrow_rules,
-    parse_rule,
-    parse_rules,
     profile_call,
     resolve_path,
     server_environment,
@@ -43,6 +41,7 @@ from app.mcp.policy import (
     tool_always_denied,
     tool_outcome,
 )
+from app.tool_rules import parse_rule, parse_rules
 
 # 글자로만 다루므로 실제로 있을 필요는 없습니다. 운영체제의 절대 경로 모양만 따릅니다.
 ROOT = Path(os.path.abspath("mado-install"))
