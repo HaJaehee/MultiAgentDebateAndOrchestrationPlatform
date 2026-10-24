@@ -12,12 +12,14 @@ import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from types import SimpleNamespace
 
 from app.config import TrialConfig
 from app.database.models import Base
+from app.timestamps import as_utc
 from app.trial import auth, web
 from app.trial import models as trial_models  # noqa: F401 - 테이블 등록
 from app.trial.auth import (
@@ -151,6 +153,144 @@ async def test_resetting_or_changing_the_pin_signs_every_old_login_out(db_factor
     await _login(db_factory, "choi", "5678", "5678")
     async with db_factory() as db:
         assert await user_from_cookie(db, old) is None, "새 PIN 을 정한 뒤에도 옛 쿠키가 살아나면 안 됩니다"
+
+
+# ------------------------------------------------------------------ 최초·마지막 로그인
+#
+# 쿠키가 7일 동안 살아 있어, 다시 온 방문자는 PIN 을 치지 않고 들어옵니다. 예전에는 PIN 을 칠
+# 때만 마지막 로그인을 적어서, 계속 드나드는 사람의 "마지막 로그인" 이 처음 로그인한 무렵에
+# 멈춰 있었습니다.
+
+FIRST = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
+
+
+async def _stored(factory, name):
+    async with factory() as db:
+        return await auth.find_user(db, name)
+
+
+@pytest.mark.asyncio
+async def test_the_first_login_stays_and_every_pin_login_moves_the_last(db_factory):
+    await _login(db_factory, "윤서", "1234", "1234", now=FIRST)
+    later = FIRST + timedelta(days=2)
+
+    await _login(db_factory, "윤서", "1234", now=later)
+
+    user = await _stored(db_factory, "윤서")
+    assert as_utc(user.created_at) == FIRST
+    assert as_utc(user.last_login_at) == later
+
+
+@pytest.mark.asyncio
+async def test_coming_back_with_the_saved_login_counts_as_a_login(db_factory):
+    await _login(db_factory, "윤서", "1234", "1234", now=FIRST)
+    back = FIRST + timedelta(days=3)
+
+    async with db_factory() as db:
+        await auth.record_saved_login(db, await auth.find_user(db, "윤서"), now=back)
+
+    user = await _stored(db_factory, "윤서")
+    assert as_utc(user.last_login_at) == back
+    assert as_utc(user.created_at) == FIRST
+
+
+@pytest.mark.asyncio
+async def test_moving_between_pages_does_not_rewrite_the_login_every_time(db_factory):
+    """관리 화면은 분 단위입니다. 1분 안의 화면 이동마다 DB 에 쓰지 않습니다."""
+    await _login(db_factory, "윤서", "1234", "1234", now=FIRST)
+    soon = FIRST + timedelta(seconds=auth.LOGIN_RECORD_SECONDS - 1)
+    later = FIRST + timedelta(seconds=auth.LOGIN_RECORD_SECONDS)
+
+    async with db_factory() as db:
+        user = await auth.find_user(db, "윤서")
+        await auth.record_saved_login(db, user, now=soon)
+        assert as_utc((await _stored(db_factory, "윤서")).last_login_at) == FIRST
+        await auth.record_saved_login(db, user, now=later)
+
+    assert as_utc((await _stored(db_factory, "윤서")).last_login_at) == later
+
+
+@pytest.mark.asyncio
+async def test_a_visitor_who_returns_with_the_cookie_gets_a_new_last_login(login_app, db_factory, monkeypatch):
+    client, _ = login_app
+    done = await client.post("/trial/login", data={"name": "한결", "pin": "1234", "pin_confirm": "1234"})
+    client.cookies.set(TRIAL_COOKIE, done.headers["set-cookie"].split(";")[0].split("=", 1)[1])
+    first = as_utc((await _stored(db_factory, "한결")).created_at)
+    back = first + timedelta(days=1)
+    monkeypatch.setattr(auth, "_now", lambda: back)
+
+    # 저장된 로그인이 있으면 로그인 화면은 PIN 을 묻지 않고 넘깁니다 — 그것도 로그인입니다.
+    assert (await client.get("/trial/login")).status_code == 303
+
+    user = await _stored(db_factory, "한결")
+    assert as_utc(user.last_login_at) == back
+    assert as_utc(user.created_at) == first
+
+
+# ------------------------------------------------------------------ DB 인젝션
+#
+# 방문자가 적은 이름은 바인딩 매개변수로만 DB 에 갑니다. PIN 은 DB 에 가지 않고(해시만 저장),
+# 쿠키의 id 는 서명을 확인한 뒤 기본 키 조회로만 씁니다. SQL 처럼 보이는 글자는 글자일 뿐입니다.
+
+SQL_PAYLOADS = [
+    "' OR '1'='1",
+    "x'; DROP TABLE trial_users; --",
+    '" OR ""="',
+    "피해자'--",
+    "피해자' OR name_key LIKE '%",
+    "1; DELETE FROM trial_users",
+    "%",
+    "_",
+]
+
+
+async def _count_users(factory) -> int:
+    async with factory() as db:
+        return (await db.execute(select(func.count()).select_from(trial_models.TrialUserModel))).scalar_one()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", SQL_PAYLOADS)
+async def test_sql_in_a_name_is_only_a_name(db_factory, payload):
+    victim = (await _login(db_factory, "피해자", "1234", "1234")).user
+
+    # 처음 보는 이름이라 등록 확인을 물을 뿐, 다른 사람으로 들어가지 않습니다.
+    assert (await _login(db_factory, payload, "1234")).status == "confirm"
+    outcome = await _login(db_factory, payload, "9999", "9999")
+
+    assert outcome.status == "ok"
+    assert outcome.user.id != victim.id and outcome.user.name == clean_name(payload)
+    assert (await _stored(db_factory, "피해자")).id == victim.id, "테이블과 다른 사람의 행은 그대로입니다"
+    assert await _count_users(db_factory) == 2
+
+
+@pytest.mark.asyncio
+async def test_sql_in_a_pin_does_not_open_the_account(db_factory):
+    await _login(db_factory, "피해자", "1234", "1234")
+    for payload in ("' OR '1'='1", "1234' --", "x' OR 1=1; --"):
+        assert (await _login(db_factory, "피해자", payload)).status == "wrong"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("user_id", ["' OR '1'='1", "x' OR 1=1 --", "%"])
+async def test_even_a_signed_cookie_carrying_sql_finds_no_one(db_factory, user_id):
+    """서명 키가 새어 id 칸에 SQL 을 넣어도, id 는 기본 키로 찾을 값일 뿐입니다."""
+    user = (await _login(db_factory, "피해자", "1234", "1234")).user
+    forged = auth.get_signer().issue(user_id, pin_stamp(user.pin_hash))
+    async with db_factory() as db:
+        assert await user_from_cookie(db, forged) is None
+
+
+@pytest.mark.asyncio
+async def test_the_login_form_treats_sql_as_a_new_name(login_app, db_factory):
+    client, _ = login_app
+    await client.post("/trial/login", data={"name": "피해자", "pin": "1234", "pin_confirm": "1234"})
+
+    attempt = await client.post("/trial/login", data={"name": "' OR '1'='1", "pin": "1234"})
+
+    assert attempt.status_code == 200 and 'name="pin_confirm"' in attempt.text, "새 이름으로 등록 확인을 묻습니다"
+    assert "set-cookie" not in attempt.headers
+    assert await _count_users(db_factory) == 1
 
 
 def test_the_pin_stamp_changes_with_the_hash():

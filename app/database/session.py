@@ -1,6 +1,7 @@
 import ctypes
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 from typing import AsyncGenerator, Optional
@@ -182,6 +183,26 @@ def get_session_factory(db_url: str = "sqlite+aiosqlite:///./multiagent.db") -> 
     return _sessionmaker
 
 
+# 앱에서 SQL 을 문자열로 잇는 곳은 아래 스키마 보강뿐입니다. 테이블·컬럼 이름과 컬럼 정의는
+# 바인딩 매개변수가 될 수 없어 문장에 그대로 들어가므로, 값은 이 파일의 상수(`_ADDED_COLUMNS`)만
+# 쓰고, 그래도 모양이 어긋나면 실행하지 않습니다. 나머지는 모두 ORM 이나 바인딩 매개변수를 씁니다.
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_DDL = re.compile(r"[A-Za-z0-9_ ()'\[\],.]*")
+
+
+def _identifier(name: str) -> str:
+    if not _IDENTIFIER.fullmatch(name):
+        raise ValueError(f"Not a plain SQL identifier: {name!r}")
+    return name
+
+
+def _column_ddl(ddl: str) -> str:
+    """`TEXT NOT NULL DEFAULT '[]'` 같은 컬럼 정의만 받습니다 (`;`·주석·따옴표 짝 어긋남 거절)."""
+    if not _DDL.fullmatch(ddl) or "--" in ddl or ddl.count("'") % 2:
+        raise ValueError(f"Not a plain column definition: {ddl!r}")
+    return ddl
+
+
 async def _add_missing_columns(conn) -> None:
     """기존 DB 에 없는 컬럼을 추가합니다 (SQLite 기준, 멱등)."""
     for table, columns in _ADDED_COLUMNS.items():
@@ -190,11 +211,13 @@ async def _add_missing_columns(conn) -> None:
         )
         if exists.first() is None:
             continue  # create_all 이 방금 만든 최신 스키마
-        result = await conn.execute(text(f"PRAGMA table_info({table})"))
+        result = await conn.execute(text(f"PRAGMA table_info({_identifier(table)})"))
         present = {row[1] for row in result}
         for column, ddl in columns.items():
             if column not in present:
-                await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+                await conn.execute(text(
+                    f"ALTER TABLE {_identifier(table)} ADD COLUMN {_identifier(column)} {_column_ddl(ddl)}"
+                ))
                 logger.info(f"Migrated schema: added {table}.{column}")
 
 

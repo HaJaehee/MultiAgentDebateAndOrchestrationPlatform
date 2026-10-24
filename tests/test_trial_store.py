@@ -205,3 +205,16 @@ async def test_usage_is_counted_from_the_records(db):
     assert (a.sessions, a.completed, a.unfinished) == (2, 1, 1)
     assert a.average_seconds == 180
     assert {p.name: p.sessions for p in report.people} == {"kim": 2, "lee": 1}
+
+
+@pytest.mark.asyncio
+async def test_the_report_shows_the_first_and_the_last_login_apart(db):
+    """관리 화면의 '최초 로그인 시간' 과 '마지막 로그인 시간'. 예전에는 마지막 것 하나뿐이었습니다."""
+    kim = await _user(db, "kim")
+    kim.created_at = T0
+    kim.last_login_at = T0 + timedelta(days=3)
+    await db.commit()
+
+    person = (await usage_report(db)).people[0]
+
+    assert (person.first_login_at, person.last_login_at) == (T0, T0 + timedelta(days=3))

@@ -31,6 +31,7 @@ from app.trial.auth import (
     get_ip_throttle,
     issue_cookie,
     login_or_register,
+    record_saved_login,
     user_from_cookie,
 )
 
@@ -48,10 +49,16 @@ def is_owner(request: Request) -> bool:
 
 
 async def current_visitor(request: Request) -> Optional[Visitor]:
-    """쿠키가 가리키는 방문자. 없거나 풀렸으면 None."""
+    """쿠키가 가리키는 방문자. 없거나 풀렸으면 None.
+
+    저장된 로그인으로 들어온 것도 로그인이므로 마지막 로그인 시각을 적습니다 (`record_saved_login`).
+    """
     async with get_session_factory()() as db:
         user = await user_from_cookie(db, request.cookies.get(TRIAL_COOKIE))
-        return Visitor(user.id, user.name) if user is not None else None
+        if user is None:
+            return None
+        await record_saved_login(db, user)
+        return Visitor(user.id, user.name)
 
 
 def _safe_next(value: Optional[str]) -> str:

@@ -143,7 +143,8 @@ def _person_row(person: UserUsage, body) -> None:
             if not person.has_pin:
                 status.append("PIN 초기화됨")
             ui.label(
-                f"대화 {person.sessions}개 · 마지막 로그인 {local_time(person.last_login_at) or '-'}"
+                f"대화 {person.sessions}개 · 최초 로그인 시간 {local_time(person.first_login_at) or '-'}"
+                f" · 마지막 로그인 시간 {local_time(person.last_login_at) or '-'}"
                 + (f" · {' · '.join(status)}" if status else "")
             ).classes("text-xs text-slate-500")
         with ui.row().classes("gap-1"):

@@ -370,3 +370,20 @@ This is why an existing `multiagent.db` can be carried across upgrades without a
 Note the deliberate asymmetry: `config_snapshot` is nullable because `NULL` carries meaning
 ("locked before this column existed"), while the appearance columns default to `''` because "not
 chosen" and "no row yet" want the same behaviour.
+
+### SQL is never built from strings (injection)
+
+Everything a person types — a trial visitor's name, search text, session titles — reaches the database
+only through the ORM or bound parameters. The trial login, for example, compares the visitor's name key
+with `TrialUserModel.name_key == …`; the PIN never reaches SQL (only its scrypt hash is stored), and the
+user id in the login cookie is used, after its signature is checked, only as a primary key (`db.get`). A
+name such as `' OR '1'='1` is just a name: it asks to be registered like any new name.
+
+The one place that does put text into SQL is this backfill, because table and column names cannot be bound
+parameters. They come only from `_ADDED_COLUMNS` in the same file, and `_identifier()` /
+`_column_ddl()` refuse anything that is not a plain identifier or a plain column definition (no `;`,
+comments or unbalanced quotes) before the statement runs.
+[tests/test_sql_strings.py](file:///d:/MultiAgentDebateOrchestration/tests/test_sql_strings.py) fails if
+code anywhere in `app/` passes an f-string, `+`, `%` or `.format()` string to `text()` / `execute()`
+outside this function and the connection `PRAGMA busy_timeout`; the trial login cases are in
+`tests/test_trial_auth.py`.

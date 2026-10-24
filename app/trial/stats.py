@@ -45,6 +45,7 @@ class UserUsage:
     user_id: str
     name: str
     sessions: int = 0
+    first_login_at: Optional[datetime] = None
     last_login_at: Optional[datetime] = None
     locked_until: Optional[datetime] = None
     has_pin: bool = True
@@ -137,7 +138,8 @@ async def usage_report(db: AsyncSession, *, feedback_limit: int = 30) -> UsageRe
         (
             UserUsage(
                 user_id=u.id, name=u.name, sessions=sessions_per_user.get(u.id, 0),
-                last_login_at=as_utc(u.last_login_at), locked_until=as_utc(u.locked_until),
+                first_login_at=as_utc(u.created_at), last_login_at=as_utc(u.last_login_at),
+                locked_until=as_utc(u.locked_until),
                 has_pin=bool(u.pin_hash),
             )
             for u in users

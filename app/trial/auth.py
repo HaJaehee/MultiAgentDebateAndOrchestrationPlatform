@@ -21,6 +21,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import logging
 import os
 import re
 import secrets
@@ -34,14 +35,20 @@ from pathlib import Path
 from typing import Callable, Deque, Dict, Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import DATA_DIR
 from app.timestamps import as_utc
 from app.trial.models import TrialUserModel
 
+logger = logging.getLogger(__name__)
+
 TRIAL_COOKIE = "mado_trial"
 LOGIN_SECONDS = 7 * 24 * 60 * 60
+# 저장된 로그인(쿠키)으로 다시 들어온 것을 마지막 로그인으로 적는 최소 간격. 관리 화면은 분 단위로
+# 보여 주므로, 화면을 옮길 때마다 쓰지 않고 1분에 한 번이면 충분합니다.
+LOGIN_RECORD_SECONDS = 60
 CLOCK_SKEW_SECONDS = 300
 
 MAX_NAME_LENGTH = 40
@@ -259,6 +266,12 @@ def _now() -> datetime:
 
 
 async def find_user(db: AsyncSession, name: str) -> Optional[TrialUserModel]:
+    """이름으로 방문자를 찾습니다.
+
+    방문자가 적은 글자는 바인딩 매개변수로만 DB 에 갑니다 (ORM 의 `==` 비교). SQL 문장을 문자열로
+    잇지 않으므로 `' OR '1'='1` 같은 이름도 그 글자 그대로의 이름일 뿐입니다. PIN 은 DB 에 가지
+    않고(해시만 저장), 쿠키의 id 는 서명을 확인한 뒤 기본 키 조회(`db.get`)로만 씁니다.
+    """
     result = await db.execute(select(TrialUserModel).where(TrialUserModel.name_key == name_key(name)))
     return result.scalar_one_or_none()
 
@@ -299,7 +312,8 @@ async def login_or_register(
             return LoginOutcome("mismatch", "입력하신 두 PIN 번호가 일치하지 않습니다. 다시 입력해 주십시오.")
         digest = await asyncio.to_thread(hash_pin, pin)
         if user is None:
-            user = TrialUserModel(name=name, name_key=name_key(name), pin_hash=digest)
+            # 등록은 첫 로그인에서만 일어나므로 등록 시각이 곧 최초 로그인 시각입니다.
+            user = TrialUserModel(name=name, name_key=name_key(name), pin_hash=digest, created_at=now)
             db.add(user)
         else:
             user.pin_hash = digest
@@ -325,6 +339,26 @@ async def login_or_register(
     await db.commit()
     left = MAX_PIN_FAILURES - user.failed_count
     return LoginOutcome("wrong", f"PIN 번호가 일치하지 않습니다. {left}번 더 틀리면 접속이 제한됩니다.")
+
+
+async def record_saved_login(db: AsyncSession, user: TrialUserModel, *, now: Optional[datetime] = None) -> None:
+    """저장된 로그인(쿠키)으로 들어온 것도 로그인으로 적습니다.
+
+    쿠키가 7일 동안 살아 있어, 다시 온 방문자는 PIN 을 치지 않고 바로 들어옵니다. 예전에는
+    PIN 을 칠 때만 `last_login_at` 을 적어서, 계속 드나드는 사람의 "마지막 로그인" 이 처음
+    로그인한 무렵에 멈춰 있었습니다. 화면을 옮길 때마다 쓰지 않도록 `LOGIN_RECORD_SECONDS` 에
+    한 번만 적고, 적지 못해도(DB 잠김 등) 들어오는 것은 막지 않습니다.
+    """
+    now = now or _now()
+    last = as_utc(user.last_login_at)
+    if last is not None and timedelta(0) <= now - last < timedelta(seconds=LOGIN_RECORD_SECONDS):
+        return
+    user.last_login_at = now
+    try:
+        await db.commit()
+    except SQLAlchemyError as exc:
+        await db.rollback()
+        logger.warning(f"Could not record the trial login of {user.id}: {exc}")
 
 
 def issue_cookie(user: TrialUserModel) -> str:

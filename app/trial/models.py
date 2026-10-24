@@ -32,7 +32,9 @@ class TrialUserModel(Base):
     pin_hash: Mapped[str] = mapped_column(Text, default="")
     failed_count: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 최초 로그인. 등록은 첫 로그인에서만 일어나므로 등록 시각과 같습니다.
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    # 마지막 로그인. PIN 로그인과, 저장된 로그인(쿠키)으로 다시 들어온 때 (`auth.record_saved_login`).
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

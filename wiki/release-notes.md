@@ -29,6 +29,19 @@ do the trial and beginner pages (the request bubble, the agent builder conversat
 plans, steps and results).
 → [UI Components §1.3](ui/components.md) · [Beginner Pages §4](ui/beginner-pages.md)
 
+**The trial console shows a visitor's first and last login, and the last one is now right.** The login cookie
+lasts seven days, so a returning visitor goes straight in without the PIN — and `last_login_at` was written
+only when the PIN was typed, so for anyone who kept coming back "마지막 로그인" stayed near their first login.
+Entering the trial pages with the saved login now counts as a login too (written at most once a minute).
+The operator console shows `최초 로그인 시간` (the registration, which only a first login creates) and
+`마지막 로그인 시간`.
+
+**The trial login is pinned against SQL injection.** It already sent the visitor's name only as a bound
+parameter, kept the PIN out of SQL, and looked the cookie id up as a primary key; tests now try injection
+strings in the name, the PIN, a signed cookie and the login form. The only SQL built from strings in the app —
+the schema backfill — checks its table and column names before running, and a test fails if string-built SQL
+appears anywhere else. → [Database Schema §3](architecture/database-schema.md)
+
 **An open card has copy and collapse buttons at its end too.** They used to be only at the top, so finishing a
 long speech meant scrolling back up to collapse or copy it. Collapsing from the end brings the card's head back
 into view. While any card is open, the status bar also offers `카드 모두 접기` (collapse all) next to
