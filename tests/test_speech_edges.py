@@ -25,7 +25,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.agents.base import Agent
-from app.agents.llm import CONTEXT_WIDENED_INSTRUCTION, LLMCaller
+from app.agents.llm import LLMCaller
+from app.agents.llm_loop import CONTEXT_WIDENED_INSTRUCTION
 from app.agents.pool import AgentPool
 from app.config import AgentConfig
 from app.database.models import Base, MessageModel, SpeechDraftModel, ToolCallRecordModel

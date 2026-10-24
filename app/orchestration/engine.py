@@ -14,7 +14,8 @@ from typing import Dict, List, Optional
 from sqlalchemy import delete, select
 
 from app.agents.consultation import consultation_scope
-from app.agents.llm import SPEECH_STATE_VERSION, LLMCaller
+from app.agents.llm import LLMCaller
+from app.agents.llm_loop import SPEECH_STATE_VERSION
 from app.agents.llm_gate import LLM_HOLDER
 from app.agents.pool import AgentPool, get_agent_pool
 from app.config import resolve_workspace_dir

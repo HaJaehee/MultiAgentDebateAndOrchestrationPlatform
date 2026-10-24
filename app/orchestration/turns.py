@@ -46,7 +46,7 @@ from app.database.models import (
     TurnModel,
     utc_now,
 )
-from app.agents.llm import SPEECH_STATE_VERSION
+from app.agents.llm_loop import SPEECH_STATE_VERSION
 from app.orchestration.graph import Activation, GraphScheduler, GraphSpec
 from app.orchestration.graph_run import OUTPUT_PORTS
 from app.timestamps import _as_datetime

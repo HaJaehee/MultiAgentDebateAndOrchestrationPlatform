@@ -171,7 +171,7 @@ class SpeechDraftModel(Base):
     graph_node_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     # 발언이 실제로 시작된 시각. 이어 간 발언의 카드는 처음 시작한 시각부터 셉니다.
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-    # 도구 루프의 상태 (`app/agents/llm.py` 의 `SPEECH_STATE_VERSION`)와, 그 발언이 이미 기록한
+    # 도구 루프의 상태 (`app/agents/llm_loop.py` 의 `SPEECH_STATE_VERSION`)와, 그 발언이 이미 기록한
     # 도구 호출의 id (`tool_record_ids`).
     state: Mapped[Any] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)

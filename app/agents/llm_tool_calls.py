@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 class ToolCallMixin:
-    """도구 호출 처리. 도구 루프 자체(`_run_litellm_loop`)는 `LLMCaller` 의 것입니다."""
+    """도구 호출 처리. 도구 루프 자체는 `llm_loop.ToolLoopMixin` 의 것입니다."""
 
     @staticmethod
     def _parse_tool_call(tc: Any) -> Tuple[str, Dict[str, Any], str, bool]:

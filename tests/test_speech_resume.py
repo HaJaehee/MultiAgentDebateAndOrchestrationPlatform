@@ -22,11 +22,11 @@ from sqlalchemy import select
 
 import app.agents.llm as llm_module
 from app.agents.base import Agent
-from app.agents.llm import (
+from app.agents.llm import LLMCaller
+from app.agents.llm_loop import (
     RESUMED_SPEECH_NOTICE,
     SPEECH_STATE_VERSION,
     UNKNOWN_TOOL_RESULT,
-    LLMCaller,
     close_open_tool_calls,
 )
 from app.database.models import (
