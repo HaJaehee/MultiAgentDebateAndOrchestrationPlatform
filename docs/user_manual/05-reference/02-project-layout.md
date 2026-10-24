@@ -81,7 +81,8 @@ app/
 │   ├── personas.py                  415   세션별 페르소나·외형, 구성 스냅샷
 │   ├── skills.py                    733   스킬 스캔·도구·지침·스크립트 복사
 │   ├── consultation.py              458   동료 자문 peers__consult_agent
-│   ├── llm.py                       974   LLMCaller: 호출과 도구 루프
+│   ├── llm.py                       460   LLMCaller: 호출, 폴백 판단, 한 판 호출
+│   ├── llm_loop.py                  629   도구 루프 (ToolLoop 상태 + 단계별 함수)
 │   ├── llm_request.py               168   시스템 프롬프트·LiteLLM 인자
 │   ├── llm_tool_calls.py            278   도구 호출 한 번: 읽기·판정·실행·기록
 │   ├── llm_recovery.py              568   잘린 답·빈 답·새어 나온 도구 호출 되살리기
@@ -105,11 +106,11 @@ app/
 │   └── exec_scan.py                 343   실행 전 코드 검사
 │
 ├── orchestration/
-│   ├── engine.py                    496   조립과 턴 수명 (run_turn · resume_turn)
+│   ├── engine.py                    497   조립과 턴 수명 (run_turn · resume_turn)
 │   ├── context.py                    51   EngineContext — 서비스가 함께 쓰는 것
 │   ├── turn_setup.py                239   턴 구성·참여자·도구 게이트
 │   ├── recording.py                 627   TurnRecorder — 기록, 재시도, data/unsaved/
-│   ├── speech.py                    583   SpeechRunner — 발언 스트리밍·확정, 한도 쪽지
+│   ├── speech.py                    711   SpeechRunner — 발언 받기·기록·확정 (조각 묶음·초안은 _ChunkStream·_Speech)
 │   ├── conversation.py              560   ConversationMemory — 맥락·요약·장부
 │   ├── context_memory.py            595   대화 기억 규칙 (LLM 을 부르지 않음)
 │   ├── phases/base.py                27   단계 실행기 바탕
@@ -135,7 +136,7 @@ app/
 │
 ├── database/
 │   ├── models.py                    317   SQLAlchemy ORM
-│   └── session.py                   217   비동기 엔진·세션 팩토리, init_db, 컬럼 이관
+│   └── session.py                   240   비동기 엔진·세션 팩토리, init_db, 컬럼 이관
 │
 ├── easy/                              비엔지니어 화면 /trial/easy (ADR-029)
 ├── trial/                             체험 서버 /trial
@@ -145,7 +146,7 @@ app/
     ├── expert/page.py               740   전문가 화면 ExpertPage
     ├── expert/events.py             504   이벤트별 화면 반영
     ├── expert/chrome.py             104   머리 줄, 정보 창
-    ├── shared/page.py               114   체험·쉬운 화면 공용 틀
+    ├── shared/page.py               119   체험·쉬운 화면 공용 틀
     ├── personas_page.py             347   /personas/{id}
     ├── graph_page.py                430   /graphs/{id} 그래프 편집
     ├── theme.py                     494   색·아이콘·파비콘
@@ -155,7 +156,7 @@ app/
     ├── diagnostics_script.py        120   브라우저 진단 보고 스크립트
     ├── math_markdown.py             266   LaTeX → MathML 마크다운
     ├── components/roster/         3,593   로스터 패널 (control · session_settings · agent_cards · mcp_panel · agent_admin · agent_dialogs · skills_panel · graph_row · common)
-    ├── components/chat_feed/      2,203   토론 피드 (feed · cards · approvals · decisions · mentions · common)
+    ├── components/chat_feed/      2,283   토론 피드 (feed · cards · approvals · decisions · mentions · common)
     ├── components/sidebar.py        746   세션 목록
     ├── components/artifact_viewer.py   377   산출물 탭, 복사·다운로드
     ├── components/agent_appearance.py   257   카드 색·아이콘 편집기
@@ -166,7 +167,7 @@ app/
     └── components/quiet_splitter.py    98   드래그가 가벼운 스플리터
 ```
 
-총 45,612줄.
+총 46,014줄.
 
 ---
 
@@ -181,7 +182,7 @@ app/
 | 발언 맥락·요약·결정 장부 | `orchestration/conversation.py` (규칙은 `context_memory.py`) |
 | 새 토론 이벤트 | `events.py` 에 이름 → 스냅샷은 `orchestration/turn_run.py`, 전문가 화면은 `ui/expert/events.py` |
 | LLM 호출 파라미터 | `agents/llm_request.py` (`build_completion_kwargs`) |
-| 도구 루프 | `agents/llm.py` (`_run_litellm_loop`) · 도구 호출 한 번은 `agents/llm_tool_calls.py` |
+| 도구 루프 | `agents/llm_loop.py` (`_run_litellm_loop` 와 단계 함수) · 도구 호출 한 번은 `agents/llm_tool_calls.py` |
 | MCP 서버 다루는 방식 | `mcp/manager.py` · 작업 공간별 런타임은 `mcp/pool.py` |
 | 도구 보안 규칙 | 문법은 `tool_rules.py`, 판정은 `mcp/policy.py` |
 | 발언 카드 모양 | `ui/components/chat_feed/cards.py` |

@@ -23,7 +23,8 @@ call_agent(agent, messages, custom_instructions, session_id)
    │
    ├─ 5. is_live 상태 확인 ────────▶ False인 경우 즉시 LLMUnavailableError 발생
    │
-   ├─ 6. _run_litellm_loop()       도구 호출 루프 (최대 max_tool_iterations 회)
+   ├─ 6. _run_litellm_loop()       도구 호출 루프 (최대 max_tool_iterations 회, agents/llm_loop.py)
+   │      판마다: 창 맞추기 → 한도 안내 → LLM 한 판 → 답 마무리 또는 도구 실행 → 상한이면 확장 요청
    │
    └─ 7. _apply_show_steps()       show_steps=false인 경우 추론 과정을 숨기고 결론만 추출
           │

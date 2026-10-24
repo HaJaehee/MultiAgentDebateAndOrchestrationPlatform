@@ -68,6 +68,16 @@ into view. While any card is open, the status bar also offers `카드 모두 접
   are pinned by another.
 → [Module Boundaries](architecture/module-boundaries.md) · [Architecture Overview §4](architecture/overview.md)
 
+**The two longest functions on the speaking path were split; behaviour is unchanged.** The 400-line tool loop
+moved to `app/agents/llm_loop.py` and became a `ToolLoop` state object plus one method per step (fit the
+context, announce limits, settle an answer, run a tool round, extend the budget); `llm.py` is now 460 lines.
+`SpeechRunner.speak` (383 lines) reads as receive → record → publish, with its stream batching and draft
+handling in two small classes. Before the change, eight untested branches were pinned by
+`tests/test_speech_edges.py`, and scripted golden-master runs (every message sent to the model, callback,
+checkpoint, event and DB row) came out byte-for-byte identical after it. The names the MADOWarGame driver
+uses did not move. → [Module Boundaries §6.8](architecture/module-boundaries.md) ·
+[LLM Integration §2](agents/llm-integration.md)
+
 ## v1.4
 
 **Orchestration engine split into phase executors.** The planning, debate and synthesis phases moved out of

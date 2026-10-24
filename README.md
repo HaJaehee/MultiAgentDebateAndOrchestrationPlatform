@@ -140,7 +140,8 @@ MultiAgentDebateOrchestration/
 │   │   ├── base.py           # Agent 모델, 카드 색상·아이콘 해석 및 폴백
 │   │   ├── personas.py       # 세션별 페르소나 해석·저장·고정
 │   │   ├── skills.py         # 스킬 디렉터리 스캔 및 에이전트별 스킬 도구 (skills__load_skill 등)
-│   │   ├── llm.py            # LiteLLM 호출기와 도구 루프 (곁가지는 llm_request · llm_recovery · llm_tool_calls · llm_context · llm_budget · llm_tools · reasoning)
+│   │   ├── llm.py            # LiteLLM 호출기 (곁가지는 llm_request · llm_recovery · llm_tool_calls · llm_context · llm_budget · llm_tools · reasoning)
+│   │   ├── llm_loop.py       # 도구 루프 (ToolLoop 상태와 단계별 함수)
 │   │   ├── llm_gate.py       # 서버 전역 LLM 동시 요청 상한 제어 및 대기열 관리 (app.llm_concurrency)
 │   │   ├── connection.py     # 모델 연결 묶기와 실패 분류
 │   │   ├── model_status.py   # 모델 연결 상태 확인 (가벼운 확인 요청·결과판)

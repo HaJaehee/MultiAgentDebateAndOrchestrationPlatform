@@ -34,7 +34,7 @@ flowchart LR
 
 ## 2. The Multi-Turn Tool Calling Loop & Real-Time Streaming
 
-When an agent has access to MCP tools, [`_run_litellm_loop()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) runs an autonomous observation-thought loop up to `max_tool_iterations` (default: 30):
+When an agent has access to MCP tools, [`_run_litellm_loop()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm_loop.py) runs an autonomous observation-thought loop up to `max_tool_iterations` (default: 30):
 
 ```mermaid
 sequenceDiagram
@@ -56,6 +56,21 @@ sequenceDiagram
 
     Caller-->>Caller: Return Final Text & Tool Logs
 ```
+
+The loop lives in [app/agents/llm_loop.py](file:///d:/MultiAgentDebateOrchestration/app/agents/llm_loop.py) as `ToolLoopMixin`, part of
+`LLMCaller`. Everything it carries from round to round — the messages as sent, the call limit, the
+effective context window, the text segments so far, the tool logs, leak retries — is one `ToolLoop` object.
+The same object is what each checkpoint saves (`snapshot`) and what a resumed speech restores (`restore`),
+so the two cannot drift apart. One round is a fixed sequence of steps:
+
+| Step | Method |
+| :--- | :--- |
+| Fit the context window; the first time history would be dropped, ask the user | `_fit_loop_context` |
+| Tell the model how many calls are left and how full the context is | `_announce_loop_limits` |
+| One LLM call | `_complete_once` → `_complete_unthrottled` (the override point of the MADOWarGame driver) |
+| No tool calls: finish the answer (a tool call leaked into the text → `_handle_leaked_tool_call`) | `_settle_answer` |
+| Tool calls: run them in order, judging, executing and recording each | `_run_tool_round` → `_run_one_tool` |
+| Limit reached: ask for more calls, otherwise wrap up without tools | `_extend_tool_budget` |
 
 ### Key Behaviors:
 1. **Observation Feedback**: The tool output is appended to the message context with `role: "tool"`. The LLM observes the real output (or error message) and refines its reasoning in the next iteration.

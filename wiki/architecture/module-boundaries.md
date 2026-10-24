@@ -132,7 +132,7 @@ Three large classes were split by concern into files of mixins, and the class it
 
 | Class | Defined in | Mixin files |
 | :--- | :--- | :--- |
-| `LLMCaller` | [agents/llm.py](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) | `llm_request` · `llm_recovery` · `llm_tool_calls` |
+| `LLMCaller` | [agents/llm.py](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) | `llm_request` · `llm_recovery` · `llm_tool_calls` · `llm_loop` |
 | `AgentRosterControl` | [ui/components/roster/control.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/control.py) | `session_settings` · `agent_cards` · `mcp_panel` · `agent_admin` · `agent_dialogs` · `skills_panel` · `graph_row` |
 | `ChatFeed` | [ui/components/chat_feed/feed.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/chat_feed/feed.py) | `cards` · `approvals` · `decisions` · `mentions` |
 
@@ -173,3 +173,31 @@ mistake.
 | Move the agent draft and catalog out of the screens (P4) | Not doing (decided 2026-10-24). The roster's `agent_admin.py` imports `easy.builder` (`AgentDraft`, `agent_key_for`), `easy.catalog` (`server_options`, `skill_options`) and `easy.pages.build` (`FormBuilderChat`); the layering test allows the expert UI this. `FormBuilderChat` is itself a screen component; the draft and catalog would have been the pieces to move. |
 | Move applying roster changes to `conf.json` and the lock rules into a service without NiceGUI (P5) | Not doing (decided 2026-10-24). They are still methods of `AgentRosterControl`, and `test_agent_admin.py` and `test_roster_lock.py` still replace `ui.notify`. |
 | Make `agents/llm.py` an `agents/llm/` package (P6) | Done as sibling modules instead (`llm_request`, `llm_recovery`, `llm_tool_calls`, `llm_context`, `llm_budget`, `llm_tools`, `llm_types`, `llm_fingerprint`, `reasoning`, `connection`). Why this was chosen over a package was not recorded. As it stands, `LLMCaller` is still defined in `app/agents/llm.py`, the path the MADOWarGame driver imports, so nothing has to be re-exported. |
+
+### 6.8. The two longest functions, split (2026-10-24)
+
+After the restructuring, the two longest functions on the speaking path were still whole:
+`_run_litellm_loop` (400 lines) and `SpeechRunner.speak` (383 lines, the old `engine._speak`). Both were
+split into steps with behaviour unchanged.
+
+- **Tool loop** — moved to `agents/llm_loop.py` (`ToolLoopMixin`) first, in a commit that only moves, so
+  `llm.py` stays under 1,000 lines (974 → 460). Its eleven local variables became one `ToolLoop`, which is
+  also the checkpoint format. Steps: [LLM Integration §2](file:///d:/MultiAgentDebateOrchestration/wiki/agents/llm-integration.md).
+- **Speech** — `speak()` keeps its signature and reads as receive → record → publish. The closures that
+  shared its local variables became two small classes: `_ChunkStream` (batching stream chunks) and `_Speech`
+  (the speech's id, tool records, draft and the callbacks handed to the tool loop).
+- **Unchanged for the MADOWarGame driver**: `LLMCaller` in `app/agents/llm.py`, `_complete_unthrottled`
+  and `_emit_chunk` (checked by `tests/test_public_surface.py` and the driver's own tests).
+
+How the absence of a behaviour change was checked:
+
+1. **Branch tests first.** `tests/test_speech_edges.py` pins eight branches no test went through
+   (a failing checkpoint, a widened context window, wrap-up at the context limit, a broken budget arbiter,
+   trimmed-context events, a failing draft save, a failing post-process, a tool record saved with the
+   speech). It was committed and passing before any code moved.
+2. **Golden master.** Scripted scenarios — 21 for the loop, 19 for the speech — recorded everything that
+   leaves each function: every message sent to the model, tool choice, chunks, callbacks, checkpoints,
+   events, DB rows, the returned value or exception. The recordings after the move and after each split
+   were byte-for-byte identical to the one before. Together with the test suite, these scenarios executed
+   every statement of both functions before the split, and of every new step after it.
+3. The full test suite and the MADOWarGame driver tests.
