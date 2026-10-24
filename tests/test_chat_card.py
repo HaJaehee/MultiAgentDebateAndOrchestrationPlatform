@@ -142,7 +142,7 @@ def test_a_card_drawn_open_does_not_pause_the_feed():
     feed._apply_clamp(card, collapsed=False)   # 그리는 쪽이 하는 일
 
     assert card["collapsed"] is False
-    assert feed._user_expanded == set()
+    assert feed._user_expanded == {}
     assert feed.following is True
 
 
@@ -247,6 +247,59 @@ def test_collapsing_the_last_open_card_mid_debate_follows_the_stream_instead(scr
     assert card["collapsed"] is True
     assert feed.following is True
     assert scripts == []
+
+
+def test_collapse_all_closes_every_card_the_reader_opened():
+    feed = _feed()
+    first, second = _card("m1"), _card("m2")
+    feed._toggle_card(first)
+    feed._toggle_card(second)
+
+    feed._collapse_all_cards()
+
+    assert first["collapsed"] is True and second["collapsed"] is True
+    assert feed._user_expanded == {}
+    assert feed.following is True
+
+
+def test_collapse_all_leaves_a_card_being_written_open():
+    """생성 중인 카드는 펼친 채 그려지는 것이 기본입니다. 다 쓰면 스스로 접힙니다."""
+    feed = _feed()
+    opened, streaming = _card("m1"), _card("m2")
+    feed._toggle_card(opened)
+    feed._apply_clamp(streaming, collapsed=False)   # 그리는 쪽이 하는 일
+
+    feed._collapse_all_cards()
+
+    assert opened["collapsed"] is True
+    assert streaming["collapsed"] is False
+
+
+def test_collapse_all_does_not_undo_a_manual_scroll():
+    """카드를 접었다고 사람이 올려 둔 화면을 끌어내리지 않습니다 (하나씩 접을 때와 같습니다)."""
+    feed = _feed()
+    feed._toggle_card(_card("m1"))
+    feed._handle_manual_scroll()
+
+    feed._collapse_all_cards()
+
+    assert feed.following is False
+
+
+def test_the_collapse_all_button_shows_only_while_cards_are_open():
+    feed = _feed()
+    feed.collapse_all_button = _Shown()
+    card = _card("m1")
+
+    feed._toggle_card(card)
+    assert feed.collapse_all_button.visible is True
+
+    feed._toggle_card(card)
+    assert feed.collapse_all_button.visible is False
+
+    feed._toggle_card(card)
+    feed._collapse_all_cards()
+    assert feed.collapse_all_button.visible is False
 
 
 def test_the_footer_never_unfolds_a_card(scripts):

@@ -276,7 +276,10 @@ the persona editor — because two copies would drift on how a value is picked o
     way to look back through output that was still pouring in.
   While paused, an amber button in the status bar names the reason — `맨 아래로 (N개 펼침)` or
   `맨 아래로 · 따라가기 재개` — and clicking it clears what it can: a manual scroll, never the
-  reader's open cards.
+  reader's open cards. To its left, `카드 모두 접기` appears while any card is user-expanded and collapses
+  all of them at once (`_collapse_all_cards`; `_user_expanded` maps each id to its card state for this).
+  Cards being streamed stay open. Following resumes unless the reader had also scrolled by hand, and during
+  a debate the feed then drops to the bottom, as when the last card is collapsed one by one.
 - **Reaching the actual bottom**: scrolling uses `scroll_to(pixels=SCROLL_TO_BOTTOM_PX)` — a
   number larger than any transcript, which the browser clamps — and never `percent=1.0`.
   Quasar converts a percentage using its own *cached* content height, which does not yet

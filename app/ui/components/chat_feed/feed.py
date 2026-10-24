@@ -6,7 +6,7 @@
 
 import logging
 import time
-from typing import Any, Callable, Coroutine, Dict, Optional, Set
+from typing import Any, Callable, Coroutine, Dict, Optional
 
 from nicegui import ui
 
@@ -137,12 +137,13 @@ class ChatFeed(MentionUploadMixin, DecisionBarsMixin, ApprovalCardsMixin, CardsM
         self._busy_since: Optional[float] = None
         self._status_text: str = ""
 
-        # 사용자가 직접 펼쳐 둔 카드의 message id. 하나라도 있으면 자동 스크롤을
-        # 멈춥니다 — 읽는 중에 화면이 밑으로 끌려가면 읽을 수가 없습니다.
+        # 사용자가 직접 펼쳐 둔 카드 (message id → `_render_card` 의 카드 상태). 하나라도
+        # 있으면 자동 스크롤을 멈춥니다 — 읽는 중에 화면이 밑으로 끌려가면 읽을 수가 없습니다.
+        # 카드 상태까지 들고 있는 것은 "카드 모두 접기" 가 그것을 접어야 하기 때문입니다.
         # 스트리밍 카드는 펼쳐진 채로 그려지지만 여기 들어오지 않습니다. 그건
         # 사람이 편 것이 아니라 기본 상태이고, 그것까지 세면 토론이 도는 동안
         # 자동 스크롤이 영영 꺼집니다.
-        self._user_expanded: Set[str] = set()
+        self._user_expanded: Dict[str, Dict[str, Any]] = {}
         # 그래프 토론 발언에 붙는 노드 배지 ("구현 · 2회차"). 이름은 화면이 그 대화의 그래프에서 줍니다.
         self._node_badges = NodeBadges()
         # 사람이 직접 스크롤을 움직였는지. 카드를 접고 나서도 쏟아지는 출력을
@@ -156,6 +157,7 @@ class ChatFeed(MentionUploadMixin, DecisionBarsMixin, ApprovalCardsMixin, CardsM
         # 실제 그리기는 화면의 시계(`_flush_streams`)가 모아서 합니다.
         self._stream_dirty: bool = False
         self._scroll_settle_forced: bool = False
+        self.collapse_all_button: Optional[ui.button] = None
         self.follow_button: Optional[ui.button] = None
 
     @property
@@ -187,6 +189,15 @@ class ChatFeed(MentionUploadMixin, DecisionBarsMixin, ApprovalCardsMixin, CardsM
                         self.elapsed_badge = ui.badge("", color="indigo-9").props("dense text-[12px]")
                         self.elapsed_badge.set_visibility(False)
                     with ui.row().classes("items-center gap-2 flex-shrink-0"):
+                        # 펼쳐 둔 카드가 있을 때만 보입니다. 여러 개를 펼쳐 읽은 뒤 하나씩 찾아가
+                        # 접지 않아도 되게 — 다 접히면 자동 스크롤도 함께 풀립니다.
+                        self.collapse_all_button = (
+                            ui.button("카드 모두 접기", icon="unfold_less",
+                                      on_click=self._collapse_all_cards)
+                            .props("flat dense no-caps color=slate-4 size=12px")
+                            .tooltip("직접 펼쳐 두신 카드를 모두 세 줄로 접습니다. 생성 중인 발언은 그대로 둡니다.")
+                        )
+                        self.collapse_all_button.set_visibility(False)
                         self.follow_button = (
                             ui.button("맨 아래로", icon="vertical_align_bottom",
                                       on_click=self._handle_follow)

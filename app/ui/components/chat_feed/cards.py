@@ -265,11 +265,15 @@ class CardsMixin:
 
         말없이 멈추면 이번에는 "스크롤이 고장 났다" 가 됩니다. 멈춘 이유를 문구에
         적는 것도 그래서입니다 — 펼친 카드 때문이라면 접으면 풀리고, 스크롤을
-        움직여서라면 이 버튼이 풀어 줍니다.
+        움직여서라면 이 버튼이 풀어 줍니다. 곁의 "카드 모두 접기" 도 같은 장부를 보므로
+        여기서 함께 맞춥니다.
         """
+        expanded = len(self._user_expanded)
+        collapse_all = self.collapse_all_button
+        if collapse_all is not None and not collapse_all.is_deleted:
+            collapse_all.set_visibility(expanded > 0)
         if self.follow_button is None or self.follow_button.is_deleted:
             return
-        expanded = len(self._user_expanded)
         self.follow_button.set_visibility(not self.following)
         if expanded:
             self.follow_button.set_text(f"맨 아래로 ({expanded}개 펼침)")
@@ -508,13 +512,27 @@ class CardsMixin:
         if not msg_id or not is_clampable(info.get("content", "")):
             return
         if collapsed:
-            self._user_expanded.discard(msg_id)
+            self._user_expanded.pop(msg_id, None)
         else:
-            self._user_expanded.add(msg_id)
+            self._user_expanded[msg_id] = info
 
         self._refresh_follow_button()
         # 마지막 펼침을 접었다면 다시 흐름을 따라가겠다는 뜻입니다. 생성 중일
         # 때만 곧바로 내려갑니다 — 멈춰 있는 화면을 임의로 움직이지 않습니다.
+        if self.following and self._active_streams:
+            self._scroll_to_bottom()
+
+    def _collapse_all_cards(self) -> None:
+        """사람이 펼쳐 둔 카드를 한꺼번에 접습니다 (상태 줄의 "카드 모두 접기").
+
+        생성 중인 카드는 건드리지 않습니다. 펼친 채 그려지는 것이 기본 상태이고, 다 쓰면
+        스스로 접힙니다. 펼침 때문에 멈췄던 자동 스크롤은 함께 풀리고, 생성 중이면 하나씩
+        접을 때와 같이 맨 아래로 내려갑니다. 직접 움직인 스크롤은 그대로 둡니다.
+        """
+        for info in list(self._user_expanded.values()):
+            self._apply_clamp(info, collapsed=True)
+        self._user_expanded.clear()
+        self._refresh_follow_button()
         if self.following and self._active_streams:
             self._scroll_to_bottom()
 
