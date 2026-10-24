@@ -167,6 +167,100 @@ def test_switching_sessions_forgets_the_expanded_cards():
     assert feed.following is True
 
 
+# --------------------------------------------------------------- 카드 끝의 복사·접기
+#
+# 펼친 긴 카드는 다 읽은 자리가 카드의 끝인데, 복사·접기 버튼은 머리에만 있었습니다.
+# 같은 두 버튼을 끝에도 두되, 보이는 것은 접을 수 있는 카드가 펼쳐져 있을 때뿐입니다.
+
+
+class _Shown:
+    """`set_visibility` 만 흉내 내는 화면 요소."""
+
+    is_deleted = False
+
+    def __init__(self):
+        self.visible = None
+
+    def set_visibility(self, visible):
+        self.visible = visible
+
+
+def _card_with_footer(msg_id: str, content: str = LONG_ENOUGH, collapsed: bool = True):
+    return {
+        **_card(msg_id, content, collapsed),
+        "footer": _Shown(),
+        "card": SimpleNamespace(id=7, is_deleted=False),
+    }
+
+
+@pytest.fixture
+def scripts(monkeypatch):
+    sent = []
+    monkeypatch.setattr(ui, "run_javascript", lambda code, **_kwargs: sent.append(code))
+    return sent
+
+
+def test_the_footer_shows_only_while_a_long_card_is_open():
+    feed = _feed()
+    card = _card_with_footer("m1")
+
+    feed._apply_clamp(card, collapsed=True)
+    assert card["footer"].visible is False
+
+    feed._apply_clamp(card, collapsed=False)
+    assert card["footer"].visible is True
+
+
+def test_a_short_card_has_no_footer():
+    """한 줄짜리 발언 끝에 버튼 두 개가 더 붙으면 카드보다 버튼이 큽니다."""
+    feed = _feed()
+    card = _card_with_footer("m1", content="이견 없습니다.")
+
+    feed._apply_clamp(card, collapsed=False)
+
+    assert card["footer"].visible is False
+
+
+def test_collapsing_from_the_footer_brings_the_card_back_into_view(scripts):
+    """끝에서 접으면 줄어든 만큼 아래 글이 올라와, 방금 읽던 카드가 화면 위로 사라집니다."""
+    feed = _feed()
+    card = _card_with_footer("m1")
+    feed._toggle_card(card)
+
+    feed._collapse_from_footer(card)
+
+    assert card["collapsed"] is True
+    assert card["footer"].visible is False
+    assert feed.following is True
+    assert scripts == ["getHtmlElement(7)?.scrollIntoView({block: 'nearest'})"]
+
+
+def test_collapsing_the_last_open_card_mid_debate_follows_the_stream_instead(scripts):
+    """마지막 펼침을 접으면 피드가 흐름을 다시 따라갑니다 — 그때는 맨 아래가 볼 곳입니다."""
+    feed = _feed()
+    feed._active_streams["m9"] = {}
+    card = _card_with_footer("m1")
+    feed._toggle_card(card)
+
+    feed._collapse_from_footer(card)
+
+    assert card["collapsed"] is True
+    assert feed.following is True
+    assert scripts == []
+
+
+def test_the_footer_never_unfolds_a_card(scripts):
+    """끝의 버튼은 접기 전용입니다. 이미 접힌 카드에서 눌려도 펼치지 않습니다."""
+    feed = _feed()
+    card = _card_with_footer("m1", collapsed=True)
+
+    feed._collapse_from_footer(card)
+
+    assert card["collapsed"] is True
+    assert feed.following is True
+    assert scripts == []
+
+
 # --------------------------------------------------------------- 직접 스크롤
 #
 # 펼침만 보던 때는, 카드를 접는 순간 스크롤이 다시 실시간 출력에 묶였습니다. 그

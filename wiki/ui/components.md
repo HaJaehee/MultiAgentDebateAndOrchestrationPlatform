@@ -325,6 +325,12 @@ the persona editor — because two copies would drift on how a value is picked o
   silently do nothing while reporting success. [app/ui/clipboard.py](file:///d:/MultiAgentDebateOrchestration/app/ui/clipboard.py)
   falls back to a hidden textarea and `execCommand('copy')`; the artifact viewer's copy button uses
   the same helper.
+- **Buttons at the end of an open card**: a long card that is open also has copy and collapse buttons at its
+  bottom, below the tool accordions — the reader finishes at the end of the card, and the buttons used to be
+  only at the top. They show only while a collapsible card is open (`_apply_clamp`). Collapsing from the bottom
+  scrolls the card's head back into view (`scrollIntoView({block: 'nearest'})`); otherwise the text below rises
+  by the height that was removed and the card just read disappears above the screen. When that collapse closes
+  the last open card during a debate, the feed resumes following the stream instead.
 - **Line breaks**: speech cards and the plan approval card render with `FEED_MARKDOWN_EXTRAS`
   ([common.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/chat_feed/common.py)), which adds
   `break-on-newline` and `cuddled-lists` to NiceGUI's defaults. With the defaults alone, a single line break

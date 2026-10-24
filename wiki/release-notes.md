@@ -29,6 +29,10 @@ do the trial and beginner pages (the request bubble, the agent builder conversat
 plans, steps and results).
 → [UI Components §1.3](ui/components.md) · [Beginner Pages §4](ui/beginner-pages.md)
 
+**An open card has copy and collapse buttons at its end too.** They used to be only at the top, so finishing a
+long speech meant scrolling back up to collapse or copy it. Collapsing from the end brings the card's head back
+into view. → [UI Components §1.3](ui/components.md)
+
 **The code base was reorganized for maintenance; behaviour is unchanged.** The plan and its progress are in
 `docs/refactoring-plan.md`.
 - The engine (3,033 → about 500 lines) only assembles and owns a turn's life. Recording, speeches, conversation

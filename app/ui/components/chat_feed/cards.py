@@ -402,6 +402,20 @@ class CardsMixin:
                     for tc in tool_calls:
                         self._render_tool_accordion(tc)
 
+            # 펼친 긴 카드의 끝에도 복사·접기를 둡니다. 다 읽은 자리는 카드의 끝인데 버튼이
+            # 머리에만 있어, 접거나 복사하려면 긴 글을 다시 거슬러 올라가야 했습니다.
+            # 보이는 때는 `_apply_clamp` 가 정합니다 — 접을 수 있는 카드가 펼쳐져 있을 때만.
+            footer = ui.row().classes("w-full justify-end items-center gap-1 mt-1 no-wrap")
+            with footer:
+                ui.button(
+                    icon="content_copy", on_click=lambda: self._copy_card(info)
+                ).props("flat dense round size=12px color=slate-4").tooltip(
+                    "해당 발언을 클립보드에 복사합니다."
+                )
+                ui.button(
+                    icon="unfold_less", on_click=lambda: self._collapse_from_footer(info)
+                ).props("flat dense round size=12px color=slate-4").tooltip(f"{CLAMP_LINES}줄만 보기")
+
         info.update({
             # 펼쳐 둔 카드를 세려면 카드마다 이름표가 있어야 합니다.
             "id": msg.get("id", ""),
@@ -412,6 +426,7 @@ class CardsMixin:
             "expand_btn": expand_btn,
             "expand_tip": expand_tip,
             "tool_container": tool_container,
+            "footer": footer,
             "failed_badge": failed_badge,
             "fallback_badge": fallback_badge,
             "fallback_tip": fallback_tip,
@@ -476,6 +491,10 @@ class CardsMixin:
         if tool_container is not None and not tool_container.is_deleted:
             tool_container.set_visibility(not collapsed)
 
+        footer = info.get("footer")
+        if footer is not None and not footer.is_deleted:
+            footer.set_visibility(clampable and not collapsed)
+
         info["collapsed"] = collapsed
 
     def _toggle_card(self, info: Dict[str, Any]) -> None:
@@ -498,6 +517,23 @@ class CardsMixin:
         # 때만 곧바로 내려갑니다 — 멈춰 있는 화면을 임의로 움직이지 않습니다.
         if self.following and self._active_streams:
             self._scroll_to_bottom()
+
+    def _collapse_from_footer(self, info: Dict[str, Any]) -> None:
+        """카드 끝의 접기. 접은 뒤 카드 머리가 화면에 보이게 합니다.
+
+        긴 카드를 끝에서 접으면 줄어든 길이만큼 아래 내용이 올라와, 방금 읽던 카드가
+        화면 위로 사라집니다. 다만 이것으로 마지막 펼침이 접혀 피드가 흐름을 다시
+        따라가게 됐다면(`_toggle_card` 가 이미 맨 아래로 보냈습니다) 그쪽을 따릅니다.
+        """
+        if info.get("collapsed"):
+            return
+        self._toggle_card(info)
+        if self.following and self._active_streams:
+            return
+        card = info.get("card")
+        if card is None or card.is_deleted:
+            return
+        ui.run_javascript(f"getHtmlElement({card.id})?.scrollIntoView({{block: 'nearest'}})")
 
     def _copy_card(self, info: Dict[str, Any]) -> None:
         """이 발언을 클립보드에 넣습니다.
