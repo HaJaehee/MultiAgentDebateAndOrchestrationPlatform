@@ -55,8 +55,23 @@ class ChatFeed(MentionUploadMixin, DecisionBarsMixin, ApprovalCardsMixin, CardsM
         upload_destination: Optional[Callable[[], str]] = None,
         on_resume_turn: Optional[Callable[[str, str], Coroutine[None, None, None]]] = None,
         on_discard_turn: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
+        on_open_turn_changes: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
+        on_user_question: Optional[Callable[[str, str], Coroutine[None, None, bool]]] = None,
+        on_fork_turn: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
+        on_draft_skill: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
     ):
         self.on_send_message = on_send_message
+        # 한 턴이 작업 공간에서 바꾼 파일을 보고 되돌리는 창을 여는 쪽 (턴 id). 주어지지 않으면 결론 카드에
+        # 파일 칩이 붙지 않습니다 (`set_turn_actions`).
+        self.on_open_turn_changes = on_open_turn_changes
+        # 에이전트의 질문에 답하는 쪽 (질문 id, 답 — 빈 답은 건너뛰기) → 받아들여졌는가. 주어지지 않으면 카드가 없습니다.
+        self.on_user_question = on_user_question
+        # 이 턴까지로 갈라 새 대화를 만드는 쪽 (턴 id, `app/session_fork.py`). 주어지지 않으면 단추가 없습니다.
+        self.on_fork_turn = on_fork_turn
+        # 이 턴의 결론으로 스킬 초안을 만드는 쪽 (턴 id, `app/orchestration/skill_draft.py`). 없으면 단추도 없습니다.
+        self.on_draft_skill = on_draft_skill
+        # 그려진 카드 (message id → `_render_card` 의 카드 상태). 다 그린 뒤에 카드에 무엇을 붙일 때 찾습니다.
+        self._cards_by_id: Dict[str, Dict[str, Any]] = {}
         # 끊긴 턴 (ADR-024). (턴 id, "finish"·"continue") 와 (턴 id). 주어지지 않으면 안내 줄도 없습니다.
         self.on_resume_turn = on_resume_turn
         self.on_discard_turn = on_discard_turn
@@ -531,6 +546,7 @@ class ChatFeed(MentionUploadMixin, DecisionBarsMixin, ApprovalCardsMixin, CardsM
             # 남겨 두면 사람은 무언가 고장 났다고 생각합니다.
             self.set_budget_request(None)
             self.set_approvals([])
+            self.set_questions([])
             self.set_plan_approval(None)
         if self.status_spinner:
             self.status_spinner.set_visibility(busy)
@@ -626,6 +642,7 @@ class ChatFeed(MentionUploadMixin, DecisionBarsMixin, ApprovalCardsMixin, CardsM
     def clear(self) -> None:
         self._node_badges.reset()
         self._active_streams.clear()
+        self._cards_by_id.clear()
         self._stop_pending = False
         # 카드가 사라지므로 펼침 기억도 함께 버립니다. 남겨 두면 다음 대화가
         # 있지도 않은 카드 때문에 자동 스크롤이 꺼진 채로 시작합니다.

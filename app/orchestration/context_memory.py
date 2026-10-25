@@ -467,6 +467,51 @@ def parse_ledger(content: str, max_chars: int = LEDGER_MAX_CHARS) -> Optional[st
     return clip_chars(ledger, max_chars, "- …(장부가 길어 뒷부분을 생략했습니다)")
 
 
+# 장부 칸에서 "비어 있음" 으로 읽는 항목. 프롬프트는 `- 없음` 을 쓰라고 하지만, 모델이 조금씩 바꿔 씁니다.
+_EMPTY_ITEMS = {"없음", "없음.", "해당 없음", "none", "n/a", "-"}
+
+
+def ledger_items(ledger: str, title: str) -> Optional[List[str]]:
+    """장부의 한 칸(`## title`)에 적힌 항목들. 칸이 없으면 None, `- 없음` 뿐이면 빈 목록.
+
+    항목은 `- ` 나 `* ` 로 시작하는 줄입니다. 들여 쓴 줄은 앞 항목의 덧붙임으로 보고 세지 않습니다.
+    """
+    items: Optional[List[str]] = None
+    for line in (ledger or "").splitlines():
+        if line.startswith("## "):
+            if items is not None:
+                break
+            if line[3:].strip() == title:
+                items = []
+            continue
+        if items is None or not line.startswith(("- ", "* ")):
+            continue
+        text = line[2:].strip()
+        if text and text.lower() not in _EMPTY_ITEMS:
+            items.append(text)
+    return items
+
+
+def ledger_converged(previous: str, current: str) -> bool:
+    """두 라운드 연달아 미해결 쟁점이 없고, 이번 라운드에 결정이 더 늘지 않았는가 (v1.5 합의 판정).
+
+    결정 문장 자체는 비교하지 않습니다. 장부는 갱신될 때마다 모델이 다시 쓰므로, 같은 결정도 표현이
+    조금씩 바뀝니다. 그래서 "쟁점이 두 번 연달아 비었고, 새 결정이 나오지 않았다" 만 봅니다. 칸을 읽지
+    못하면(장부 형식이 아니면) 수렴하지 않은 것으로 봅니다 — 일찍 끝내는 쪽이 틀리는 편이 더 비쌉니다.
+    """
+    open_before, open_now = ledger_items(previous, "미해결 쟁점"), ledger_items(current, "미해결 쟁점")
+    decided_before, decided_now = ledger_items(previous, "결정 사항"), ledger_items(current, "결정 사항")
+    if None in (open_before, open_now, decided_before, decided_now):
+        return False
+    return not open_before and not open_now and len(decided_now) <= len(decided_before)
+
+
+def open_issue_count(ledger: str) -> Optional[int]:
+    """장부의 미해결 쟁점 수. 장부가 없거나 그 칸이 없으면 None (모름)."""
+    items = ledger_items(ledger, "미해결 쟁점")
+    return None if items is None else len(items)
+
+
 # ---------------------------------------------------------------- 3. 요약
 
 

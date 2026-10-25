@@ -48,6 +48,14 @@ class AgentRosterControl(SessionSettingsMixin, AgentCardsMixin, McpPanelMixin, A
         self.selected_agents: Dict[str, bool] = {}
         self.strategy_name: str = DEFAULT_STRATEGY
         self.max_rounds: int = 3
+        # 결정 장부가 수렴하면 남은 라운드를 건너뛸지, 턴 토큰 예산(0 = 없음) (v1.5).
+        self.converge_early: bool = True
+        self.token_budget: int = 0
+        self.converge_switch: Optional[ui.switch] = None
+        # 전문가가 발언 도중 나에게 물을 수 있는지 (`ask__ask_user`, v1.5). 새 대화는 켠 채로 만듭니다.
+        self.ask_user: bool = True
+        self.ask_switch: Optional[ui.switch] = None
+        self.budget_input: Optional[ui.number] = None
         # 병렬 지시 전략에서 한 라운드에 동시에 띄울 에이전트 수의 상한.
         # 다른 전략에서는 쓰이지 않으므로 그 전략일 때만 화면에 나옵니다.
         self.parallel_limit: int = 3
@@ -413,6 +421,36 @@ class AgentRosterControl(SessionSettingsMixin, AgentCardsMixin, McpPanelMixin, A
                             min=1, max=5, step=1, value=self.max_rounds, on_change=self._on_rounds_change
                         ).props("dark label color=indigo-4").classes("w-20")
                         self.rounds_label = ui.badge(str(self.max_rounds), color="indigo-7").props("dense")
+                        # 라운드 수는 상한입니다. 합의되면 그 전에 끝날 수 있다는 것을 바로 옆에 둡니다.
+                        self.converge_switch = ui.switch(
+                            "합의되면 일찍 끝내기", value=self.converge_early, on_change=self._on_converge_change,
+                        ).props("dense dark color=indigo-4").classes("text-xs text-slate-300")
+                        self.converge_switch.tooltip(
+                            "라운드를 마칠 때마다 쓰는 결정 장부에 미해결 쟁점이 두 라운드 연달아 없고 새 결정도 "
+                            "나오지 않으면, 남은 라운드를 건너뛰고 결론을 냅니다. 피드에 그 사실이 남습니다. "
+                            "그래프 토론에는 쓰이지 않습니다 (게이트가 끝을 정합니다)."
+                        )
+                        self.ask_switch = ui.switch(
+                            "에이전트 질문 받기", value=self.ask_user, on_change=self._on_ask_user_change,
+                        ).props("dense dark color=violet-4").classes("text-xs text-slate-300")
+                        self.ask_switch.tooltip(
+                            "전문가가 발언 도중 요청이 모호하면 나에게 짧게 묻습니다 (한 턴에 3번까지). 피드에 질문 카드가 "
+                            "뜨고, 5분 안에 답이 없으면 가정을 밝히고 진행합니다. 답은 다음 발언자들도 봅니다."
+                        )
+
+                    # 턴 토큰 예산 — 한 턴이 쓸 토큰(입력+출력)의 상한. 넘으면 다음 라운드 경계에서 결론으로 갑니다.
+                    with ui.row().classes("items-center gap-2 min-w-[180px]"):
+                        ui.icon("data_usage", size="xs").classes("text-sky-400")
+                        ui.label("토큰 예산:").classes("text-xs font-semibold text-slate-300")
+                        self.budget_input = ui.number(
+                            value=self.token_budget or None, min=0, step=10000, format="%.0f",
+                            placeholder="없음", on_change=self._on_token_budget_change,
+                        ).props("outlined dense dark").classes("w-28 text-xs")
+                        self.budget_input.tooltip(
+                            "한 턴에 쓸 토큰(입력+출력)의 상한. 넘으면 다음 라운드 경계에서 남은 라운드를 "
+                            "건너뛰고 지금까지의 토론으로 결론을 냅니다. 비우거나 0 이면 상한이 없습니다. "
+                            "발언 카드와 세션 카드에서 실제로 쓴 양을 볼 수 있습니다."
+                        )
 
                     # 도구 보안 모드 (`app/mcp/policy.py`). 대화마다 고르고, 토론 중에 바꾸면
                     # 진행 중인 턴에도 다음 도구 호출부터 걸립니다.
@@ -683,6 +721,9 @@ class AgentRosterControl(SessionSettingsMixin, AgentCardsMixin, McpPanelMixin, A
         max_rounds: int,
         instructions: str,
         parallel_limit: int = 3,
+        converge_early: bool = True,
+        token_budget: int = 0,
+        ask_user: bool = False,
         session_id: Optional[str] = None,
         workspace_dir: str = "",
         personas_locked: bool = False,
@@ -706,6 +747,9 @@ class AgentRosterControl(SessionSettingsMixin, AgentCardsMixin, McpPanelMixin, A
         self.strategy_name = resolve_strategy_name(strategy)
         self.max_rounds = max_rounds
         self.parallel_limit = max(1, int(parallel_limit or 3))
+        self.converge_early = bool(converge_early)
+        self.token_budget = max(0, int(token_budget or 0))
+        self.ask_user = bool(ask_user)
         self.tool_mode = tool_mode or ""
         self.set_tool_rules(tool_grants, tool_denials)
         self.custom_instructions = instructions
@@ -723,6 +767,12 @@ class AgentRosterControl(SessionSettingsMixin, AgentCardsMixin, McpPanelMixin, A
             self.rounds_slider.value = max_rounds
         if self.parallel_input:
             self.parallel_input.value = self.parallel_limit
+        if self.converge_switch:
+            self.converge_switch.value = self.converge_early
+        if self.budget_input:
+            self.budget_input.value = self.token_budget or None
+        if self.ask_switch:
+            self.ask_switch.value = self.ask_user
         if self.tool_mode_select:
             # conf.json 의 기본 모드가 바뀌었을 수 있으니 목록도 새로 그립니다.
             self.tool_mode_select.set_options(self._tool_mode_options(), value=self.tool_mode)

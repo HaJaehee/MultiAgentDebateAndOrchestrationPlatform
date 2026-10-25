@@ -20,6 +20,7 @@ from nicegui import ui
 
 from app.about import APP_NAME, APP_VERSION
 from app.agents.pool import get_agent_pool
+from app import mcp_server
 from app.api import router as api_router
 from app.config import DEFAULT_CONFIG_PATH, get_config
 from app.database.session import get_session_factory, init_db
@@ -31,6 +32,7 @@ from app.orchestration.turns import mark_interrupted_turns
 from app.security import AccessMiddleware, get_access_control
 from app.trial import setup_trial
 from app.ui.expert.page import create_ui
+from app.ui.compare_page import create_compare_page
 from app.ui.graph_page import create_graph_page
 from app.ui.personas_page import create_personas_page
 from app.ui.theme import FAVICON_SVG
@@ -131,7 +133,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     agent_pool = get_agent_pool()
     logger.info(f"Agent Pool ready with {len(agent_pool.list_all())} agents.")
 
+    # 5. MADO 를 MCP 서버로 (`/mcp`, `app/mcp_server.py`). streamable HTTP 세션 관리자가 앱과 함께 돕니다.
+    exits = contextlib.AsyncExitStack()
+    await exits.enter_async_context(mcp_server.running())
+
     yield
+
+    await exits.aclose()
 
     logger.info("Shutting down MADO: Multi-Agent Debate & Orchestration Platform...")
 
@@ -164,14 +172,16 @@ server = FastAPI(
 )
 
 
-# 2. HTTP 엔드포인트 (`/api/*`, `/agent-icon`)
+# 2. HTTP 엔드포인트 (`/api/*`, `/agent-icon`)와 MCP 서버 (`/mcp`)
 server.include_router(api_router)
+mcp_server.mount(server)
 
 
 # 3. Build NiceGUI Application
 create_ui()
 create_personas_page()
 create_graph_page()
+create_compare_page()
 # 체험 서버 (app/trial). 켜져 있지 않으면 화면은 "꺼져 있음" 만 보이고 방문자 통로는 닫혀 있습니다.
 # 로그인 폼이 FastAPI 경로라 `ui.run_with` 보다 먼저 붙입니다.
 trial_gate = setup_trial(server)

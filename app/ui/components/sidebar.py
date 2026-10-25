@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Sequence
 from nicegui import background_tasks, ui
 from sqlalchemy import desc, func, select, delete
+from app.agents.llm_usage import usage_line
 from app.agents.pool import get_agent_pool
 from app.database.models import (
     TURN_UNFINISHED,
@@ -16,6 +17,7 @@ from app.database.models import (
     ToolCallRecordModel,
     TurnModel,
 )
+from app.database.search import SearchHit, search_sessions
 from app.database.session import get_session_factory
 from app.export import build_session_markdown, safe_filename
 from app.timestamps import to_local, as_utc
@@ -24,7 +26,9 @@ from app.orchestration.runner import get_debate_runner
 from app.config import ORCHESTRATOR_KEY
 from app.events import TURN_END_EVENTS, EventType
 from app.orchestration.strategies import get_strategy
-from app.session_ops import continue_session
+from app.orchestration.turns import usage_by_session
+from app.session_ops import continue_session, forget_checkpoints
+from app.routes import compare_url
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +229,11 @@ class SessionSidebar:
         self.sort_select: Optional[ui.select] = None
         self.sort_direction_btn: Optional[ui.button] = None
         self.sort_direction_tip: Optional[ui.tooltip] = None
+        # 대화 검색 (`app/database/search.py`). 검색어가 있는 동안 목록 자리에 결과를 보여 줍니다.
+        self.search_query: str = ""
+        self.search_input: Optional[ui.input] = None
+        # 검색 결과의 발언을 여는 쪽 (세션 id, 발언 id). 화면이 그 대화를 열고 그 카드로 내려갑니다.
+        self.on_open_message: Optional[Callable[[str, str], Coroutine[None, None, None]]] = None
 
     # ------------------------------------------------------------------ 수명
 
@@ -270,6 +279,13 @@ class SessionSidebar:
                 ).props("unelevated color=indigo-6 no-caps").classes("w-full mb-3 font-semibold shadow-md text-xs py-2")
 
                 ui.separator().classes("bg-slate-800 mb-2.5")
+
+                # 제목과 발언에서 찾습니다. 낱말을 여럿 적으면 모두 들어 있는 것만 나옵니다.
+                self.search_input = ui.input(
+                    placeholder="대화 검색 (제목·발언)", on_change=self._on_search_change,
+                ).props("dense outlined dark clearable debounce=350").classes("w-full mb-2 text-xs")
+                with self.search_input.add_slot("prepend"):
+                    ui.icon("search", size="xs").classes("text-slate-400")
 
                 with ui.row().classes("w-full items-center justify-between no-wrap mb-2 px-1 gap-1"):
                     ui.label("세션 목록").classes("text-xs font-semibold text-slate-400 tracking-wider")
@@ -378,6 +394,10 @@ class SessionSidebar:
         """
         if not self.alive:
             return
+        # 검색 중이면 목록 대신 결과를 다시 찾습니다. 토론 이벤트가 목록을 새로 그려도 검색이 풀리지 않게.
+        if self.search_query:
+            await self._render_search()
+            return
 
         async with self.session_factory() as db:
             stmt = select(SessionModel).order_by(desc(SessionModel.updated_at))
@@ -391,6 +411,7 @@ class SessionSidebar:
             unfinished = set((await db.execute(
                 select(TurnModel.session_id).where(TurnModel.status.in_(TURN_UNFINISHED))
             )).scalars().all())
+            usage_totals = await usage_by_session(db)
         sessions = sort_sessions(
             sessions, self.sort, started=started_times, completed=completed_times,
         )
@@ -466,7 +487,11 @@ class SessionSidebar:
                                     to_local(started).strftime("%m-%d %H:%M") if started
                                     else "시작 전"
                                 )
-                            ui.label(date_str).classes("text-[12px]")
+                            date_label = ui.label(date_str).classes("text-[12px]")
+                            # 이 대화의 모든 턴에서 쓴 토큰·LLM 시간. 카드 한 줄에는 자리가 없어 툴팁에 둡니다.
+                            used = usage_line(usage_totals.get(s.id))
+                            if used:
+                                date_label.tooltip(f"누적 LLM 사용량: {used}")
 
                             agents_count = active_agent_count(s, graph_keys)
                             ui.badge(f"{agents_count} Agents", color="slate-700").props("dense text-[11px] text-color=grey-3")
@@ -485,8 +510,17 @@ class SessionSidebar:
                                 "세션 전체 대화 내역을 마크다운 파일로 저장합니다."
                             )
 
+                            if (s.forked_from or {}).get("session_id"):
+                                # 갈라 만든 대화: 원본과 나란히 봅니다 (`/compare`).
+                                ui.button(
+                                    icon="compare",
+                                    on_click=lambda _, sid=s.id: ui.navigate.to(compare_url(sid), new_tab=True),
+                                ).props("flat round dense size=10px color=amber-3").tooltip(
+                                    f"원본 '{(s.forked_from or {}).get('title', '')}' 과 나란히 비교합니다 (새 탭)."
+                                )
+
                             continue_btn = ui.button(
-                                icon="fork_right",
+                                icon="keyboard_double_arrow_right",
                                 on_click=lambda _, sid=s.id: self._continue_session(sid),
                             ).props("flat round dense size=10px color=amber-4")
                             if is_running:
@@ -498,14 +532,61 @@ class SessionSidebar:
                                 )
                             else:
                                 continue_btn.tooltip(
-                                    "이어서 새 세션 시작 — 작업 공간, 지식 그래프, 에이전트 구성 및 "
-                                    "이전 결론을 인계받고 대화 컨텍스트를 초기화합니다."
+                                    "새 대화로 이어가기 — 작업 공간, 지식 그래프, 에이전트 구성 및 "
+                                    "이전 결론을 인계받고 대화 컨텍스트를 초기화합니다. (한 턴에서 기록째로 "
+                                    "갈라 보려면 그 턴 결론 카드의 갈라 보기 단추를 쓰십시오.)"
                                 )
 
                             ui.button(
                                 icon="delete",
                                 on_click=lambda _, sid=s.id: self._show_delete_dialog(sid),
                             ).props("flat round dense size=10px color=red-4").tooltip("삭제")
+
+    # ------------------------------------------------------------------ 검색
+
+    async def _on_search_change(self, e) -> None:
+        self.search_query = (e.value or "").strip()
+        await self.refresh_list()
+
+    async def _render_search(self) -> None:
+        query = self.search_query
+        async with self.session_factory() as db:
+            hits = await search_sessions(db, query)
+        # 찾는 사이에 검색어가 바뀌었거나 페이지가 사라졌으면 그리지 않습니다.
+        if not self.alive or query != self.search_query:
+            return
+        self.container.clear()
+        with self.container:
+            ui.label(
+                f"'{query}' 검색 결과 {len(hits)}건" if hits else f"'{query}' 이(가) 들어 있는 대화가 없습니다."
+            ).classes("text-[12px] text-slate-400 px-1")
+            for hit in hits:
+                self._render_hit(hit)
+
+    def _render_hit(self, hit: SearchHit) -> None:
+        is_active = hit.session_id == self.current_session_id
+        card_classes = (
+            "w-full p-2.5 rounded-lg cursor-pointer box-border "
+            + ("bg-indigo-950/90 border-2 border-indigo-400" if is_active
+               else "bg-slate-800/70 hover:bg-slate-800 border border-slate-700/60")
+        )
+        with ui.card().classes(card_classes).on("click", lambda _, h=hit: self._open_hit(h)):
+            with ui.row().classes("w-full items-center justify-between no-wrap gap-1"):
+                ui.label(hit.title or "Untitled Debate").classes("text-xs font-semibold truncate min-w-0")
+                if hit.matches:
+                    ui.badge(f"{hit.matches}건", color="slate-700").props("dense text-[11px]")
+            if hit.snippet:
+                with ui.row().classes("w-full gap-1 no-wrap mt-1"):
+                    ui.label(f"{hit.sender_name}:").classes("text-[11px] text-indigo-300 flex-shrink-0")
+                    ui.label(hit.snippet).classes("text-[11px] text-slate-300 leading-snug break-all")
+            else:
+                ui.label("제목에서 찾았습니다").classes("text-[11px] text-slate-500")
+
+    async def _open_hit(self, hit: SearchHit) -> None:
+        if hit.message_id and self.on_open_message is not None:
+            await self.on_open_message(hit.session_id, hit.message_id)
+        else:
+            await self._select_session(hit.session_id)
 
     async def _continue_session(self, session_id: str) -> None:
         """컨텍스트만 비운 새 대화로 이어갑니다.
@@ -580,6 +661,7 @@ class SessionSidebar:
                     "graph_snapshot": session_obj.graph_snapshot,
                     "created_at": session_obj.created_at,
                     "updated_at": session_obj.updated_at,
+                    "usage": (await usage_by_session(db, session_id)).get(session_id),
                 }
 
                 res_m = await db.execute(
@@ -716,6 +798,7 @@ class SessionSidebar:
                     await db.execute(delete(MessageModel).where(MessageModel.session_id == session_id))
                     await db.execute(delete(ArtifactModel).where(ArtifactModel.session_id == session_id))
                     await db.execute(delete(SpeechDraftModel).where(SpeechDraftModel.session_id == session_id))
+                    await forget_checkpoints(db, session_id)
                     await db.execute(delete(TurnModel).where(TurnModel.session_id == session_id))
                     await db.execute(delete(SessionModel).where(SessionModel.id == session_id))
                     await db.commit()

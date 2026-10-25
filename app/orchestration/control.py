@@ -55,10 +55,19 @@ TOOL_BUDGET_EXTENSION_STEP = 15
 CONTEXT_WIDEN_FALLBACK_RATIO = 0.5
 
 
+def asks_human(control: Optional["TurnControl"]) -> bool:
+    """이 턴에서 사람에게 물을 수 있는가 (쪽지를 띄우고 답을 기다릴 수 있는가)."""
+    return control is not None and control.attended
+
+
 class TurnControl:
     """한 턴에 대한 정지 요청과 개입 메모를 담아 두는 우편함."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, attended: bool = True) -> None:
+        # 사람이 이 턴을 지켜보며 답할 수 있는가. API·MCP 로 시작한 턴은 기본으로 아닙니다 (`app/api.py`).
+        # 아니면 묻는 쪽지(계획 승인, 도구 승인, 한도)를 띄우지 않고 "물어볼 사람이 없을 때" 의 규칙을
+        # 따릅니다 — 정지와 개입 메모는 그대로 받습니다. 판단은 `asks_human` 한 곳에서 합니다.
+        self.attended = attended
         self._stop_requested = False
         self._notes: List[str] = []
         # 개입 메모와 함께 온 스킬 지정 (전문가 키 → 스킬). 메모와 같은 때에 꺼내 갑니다.
@@ -143,7 +152,8 @@ class TurnControl:
         """
         return [
             r for r in self._decisions.values()
-            if not r.resolved and not isinstance(r, (ToolApprovalRequest, PlanApprovalRequest))
+            if not r.resolved
+            and not isinstance(r, (ToolApprovalRequest, PlanApprovalRequest, UserQuestionRequest))
         ]
 
     @property
@@ -341,6 +351,42 @@ class TurnControl:
                     raise ValueError(problem)
             scope = cleaned
         return request.answer(decision, scope=scope, reason=reason, approver=approver)
+
+    # -------------------------------------------------- 에이전트의 질문 (v1.5)
+
+    @property
+    def pending_questions(self) -> List["UserQuestionRequest"]:
+        """답을 기다리는 에이전트의 질문 전부 (들어온 순서)."""
+        return [r for r in self._decisions.values() if not r.resolved and isinstance(r, UserQuestionRequest)]
+
+    async def ask_user_question(
+        self,
+        *,
+        agent_key: str,
+        agent_name: str,
+        question: str,
+        options: List[str],
+        timeout: float,
+        on_open=None,
+    ) -> "UserQuestionRequest":
+        """에이전트의 질문을 사람에게 보이고 답을 기다립니다 (`app/agents/ask_user.py`).
+
+        기다림이 끝나면 `answer` 가 채워져 있습니다. 비어 있으면 답이 없었던 것입니다 (시간 초과, 건너뛰기,
+        정지). 이미 정지를 요청한 턴에는 묻지 않습니다.
+        """
+        request = UserQuestionRequest(
+            request_id=uuid.uuid4().hex, agent_key=agent_key, agent_name=agent_name,
+            payload={"question": question, "options": list(options)},
+        )
+        await self._ask(request, timeout, on_open)
+        return request
+
+    def resolve_user_question(self, request_id: str, answer: str, *, approver: str = "") -> bool:
+        """질문에 답합니다. 빈 답은 "건너뛰기" 입니다. 이미 답이 났거나 없는 질문이면 False."""
+        request = self._decisions.get(request_id)
+        if not isinstance(request, UserQuestionRequest) or request.resolved:
+            return False
+        return request.reply(answer, outcome="answered" if (answer or "").strip() else "skipped", approver=approver)
 
     # -------------------------------------------------- 계획 승인
 
@@ -604,6 +650,43 @@ class PlanApprovalRequest(DecisionRequest):
 
     def describe(self) -> dict:
         return {**super().describe(), "decision": self.decision}
+
+
+class UserQuestionRequest(DecisionRequest):
+    """에이전트가 사람에게 묻는 질문 하나 (`ask__ask_user`).
+
+    같은 우편함·같은 기다림을 쓰되 답의 모양이 글입니다. 답이 없어도(시간 초과·건너뛰기·정지) 발언은
+    끊기지 않습니다 — 에이전트는 가정을 밝히고 진행합니다.
+    """
+
+    def __init__(self, *, request_id: str, agent_key: str, agent_name: str,
+                 payload: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(
+            request_id=request_id, kind="user_question", agent_key=agent_key,
+            agent_name=agent_name, limit=0, used=0, tool_calls=0, payload=payload,
+        )
+        self.answer: str = ""
+        self.approver: str = ""          # local | remote
+
+    @property
+    def answerable(self) -> bool:
+        return True
+
+    def reply(self, answer: str, *, outcome: str, approver: str = "") -> bool:
+        if self._decided.is_set():
+            return False
+        self.answer = (answer or "").strip()
+        self.approver = approver
+        self.outcome = outcome  # answered | skipped | timeout | stopped
+        self._decided.set()
+        return True
+
+    def resolve(self, extra: int, outcome: str) -> bool:
+        """한도 쪽지의 답 모양으로 들어온 것 (정지·시간 초과). 답 없음입니다."""
+        return self.reply("", outcome="timeout" if outcome == "timeout" else "stopped")
+
+    def describe(self) -> dict:
+        return {**super().describe(), "outcome": self.outcome}
 
 
 # 예전 이름. 도구 예산 전용이던 시절의 import 를 깨뜨리지 않습니다.

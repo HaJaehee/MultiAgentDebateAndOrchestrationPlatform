@@ -17,6 +17,7 @@ from app.mcp.policy import OUTCOME_LABELS, describe_verdict, tool_outcome
 from app.orchestration.graph_run import NodeBadges, node_labels
 from app.orchestration.state import FALLBACK_BADGE, fallback_sentence
 from app.orchestration.strategies import get_strategy
+from app.agents.llm_usage import usage_line
 from app.timestamps import speech_time_text, to_local
 
 # 발언 종류별 머리표. 누가 무슨 자격으로 말했는지가 한눈에 보여야 합니다.
@@ -125,6 +126,10 @@ def build_session_markdown(
         ("참여 에이전트", ", ".join(agents) if agents else "-"),
         ("작업 공간", str(session.get("workspace_dir") or "(기본값)")),
     ]
+    # 이 대화의 모든 턴에서 쓴 토큰·LLM 시간 (`turns.usage`). 이 기록 이전의 턴은 빠져 있습니다.
+    used = usage_line(session.get("usage"))
+    if used:
+        meta.append(("LLM 사용량 (누적)", used))
     # 동시 실행 상한은 병렬 지시 전략에서만 읽히는 값입니다. 순차로 돈 대화에
     # 적어 두면 문서가 있지도 않은 설정을 있는 것처럼 말하게 됩니다.
     strategy = get_strategy(session.get("strategy"))
@@ -175,8 +180,10 @@ def build_session_markdown(
         if node_badge:
             header += f" — 노드 “{node_badge}”"
         out.append(header)
-        if stamp:
-            out += ["", f"*{stamp}*"]
+        # 이 발언의 토큰·LLM 시간 (`llm_meta.usage`). 시각 줄 뒤에 붙입니다.
+        used = usage_line((msg.get("llm_meta") or {}).get("usage")) if isinstance(msg.get("llm_meta"), dict) else ""
+        if stamp or used:
+            out += ["", f"*{' · '.join(part for part in (stamp, used) if part)}*"]
         # 이 에이전트의 모델이 아니라 전역 기본 모델이 대신 쓴 발언이면 그 사실을 본문 앞에 적습니다 (ADR-030).
         answered_by = fallback_sentence(msg.get("llm_meta"))
         if answered_by:

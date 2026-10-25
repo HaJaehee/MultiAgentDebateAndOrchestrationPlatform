@@ -2,12 +2,18 @@
 
 화면은 NiceGUI(웹소켓)로 돌고, 여기 있는 것은 상태 확인·진단 보고·아이콘처럼 HTTP 로 받는 편이 나은
 것들입니다. 접근 제어는 앱 바깥 계층(`app/security.py` 의 `AccessMiddleware`)이 모든 경로에 똑같이 겁니다.
+
+`/api/sessions/...` 는 화면 없이 토론을 돌리는 길입니다 (v1.5, `app/headless.py`). 서버 PC 에서는 그냥 부르고,
+다른 PC 에서는 주인 토큰을 `Authorization: Bearer` 로 보냅니다.
 """
 
 import asyncio
+import json
+from typing import List, Optional
 
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.about import APP_VERSION_LABEL, AUTHOR, AUTHOR_EMAIL
@@ -18,7 +24,9 @@ from app.config import PROJECT_ROOT, get_config, resolve_agent_icon
 from app.database.models import SessionModel
 from app.database.session import get_session_factory
 from app.diagnostics import MAX_CLIENT_REPORT_BYTES, loop_health, parse_client_body, record_client_report
+from app import headless
 from app.mcp.pool import get_runtime_pool
+from app.orchestration.strategies import DEFAULT_STRATEGY
 
 router = APIRouter()
 
@@ -186,3 +194,87 @@ async def list_skills():
             for s in skills
         ],
     }
+
+
+# --------------------------------------------------------------------- 화면 없는 토론 (v1.5)
+
+
+class NewSessionBody(BaseModel):
+    title: str = ""
+    strategy: str = DEFAULT_STRATEGY
+    max_rounds: int = 3
+    agents: Optional[List[str]] = Field(default=None, description="참여 에이전트 키. 비우면 켜진 에이전트 전부")
+    custom_instructions: str = ""
+    workspace_dir: str = ""
+    converge_early: bool = True
+    token_budget: int = 0
+
+
+class TurnBody(BaseModel):
+    prompt: str
+    # 사람이 화면에서 승인 카드에 답할 것인가. 아니면 묻지 않고 "물어볼 사람이 없을 때" 의 규칙을 따릅니다.
+    attended: bool = False
+
+
+def _error(exc: headless.HeadlessError) -> JSONResponse:
+    return JSONResponse({"error": str(exc)}, status_code=exc.status)
+
+
+@router.get("/api/sessions")
+async def api_list_sessions(limit: int = 50):
+    return {"sessions": await headless.list_sessions(limit)}
+
+
+@router.post("/api/sessions", status_code=201)
+async def api_create_session(body: NewSessionBody):
+    try:
+        return await headless.create_session(**body.model_dump())
+    except headless.HeadlessError as exc:
+        return _error(exc)
+
+
+@router.post("/api/sessions/{session_id}/turns", status_code=202)
+async def api_start_turn(session_id: str, body: TurnBody):
+    try:
+        return await headless.start_turn(session_id, body.prompt, attended=body.attended)
+    except headless.HeadlessError as exc:
+        return _error(exc)
+
+
+@router.post("/api/sessions/{session_id}/stop")
+async def api_stop_turn(session_id: str):
+    return {"session_id": session_id, "stop_requested": headless.stop_turn(session_id)}
+
+
+@router.get("/api/sessions/{session_id}/status")
+async def api_turn_status(session_id: str):
+    try:
+        return await headless.turn_status(session_id)
+    except headless.HeadlessError as exc:
+        return _error(exc)
+
+
+@router.get("/api/sessions/{session_id}/result")
+async def api_turn_result(session_id: str, wait: float = 0):
+    """마지막 턴의 결과. `wait` 초만큼 진행 중인 턴이 끝나기를 기다린 뒤 답합니다 (최대 600)."""
+    try:
+        if wait > 0:
+            await headless.wait_for_turn(session_id, min(wait, 600.0))
+        return await headless.turn_result(session_id)
+    except headless.HeadlessError as exc:
+        return _error(exc)
+
+
+@router.get("/api/sessions/{session_id}/events")
+async def api_turn_events(session_id: str):
+    """진행 중인 턴의 이벤트를 Server-Sent Events 로. 처음에 `snapshot`, 끝에 `run_finished`."""
+
+    async def stream():
+        async for event in headless.events(session_id):
+            if event is None:
+                yield ": keepalive\n\n"
+                continue
+            payload = json.dumps(event, ensure_ascii=False, default=str)
+            yield f"event: {event.get('type', 'message')}\ndata: {payload}\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})

@@ -1,4 +1,4 @@
-"""토론 피드 — 승인 카드: 도구 실행 승인과 계획 승인(ADR-028).
+"""토론 피드 — 승인 카드: 도구 실행 승인과 계획 승인(ADR-028), 그리고 에이전트의 질문(v1.5).
 
 `ChatFeed` 의 일부입니다 (`feed.py`). 상태는 그 클래스가 가집니다.
 """
@@ -24,6 +24,7 @@ from app.ui.components.chat_feed.common import (
     PLAN_TASK_GAP,
     PLAN_TASK_HINT,
     PLAN_TOGGLE_PROPS,
+    QUESTION_CARD_CLASSES,
     RISK_BADGE_COLORS,
     background_paint,
     toggled_visibility,
@@ -37,11 +38,78 @@ class ApprovalCardsMixin:
     """승인 카드: 도구 실행 승인과 계획 승인(ADR-028)."""
 
     def set_approvals(self, requests: Optional[List[Dict[str, Any]]]) -> None:
-        """승인 카드를 통째로 다시 그립니다 (새로고침한 화면의 스냅샷 복원)."""
-        for request_id in list(self._approval_cards):
-            self.remove_approval(request_id)
+        """승인 카드를 통째로 다시 그립니다 (새로고침한 화면의 스냅샷 복원). 질문 카드는 그대로 둡니다."""
+        for request_id, entry in list(self._approval_cards.items()):
+            if entry.get("kind") != "question":
+                self.remove_approval(request_id)
         for request in requests or []:
             self.add_approval(request)
+
+    # -------------------------------------------------- 에이전트의 질문 (v1.5)
+
+    def set_questions(self, questions: Optional[List[Dict[str, Any]]]) -> None:
+        """질문 카드를 통째로 다시 그립니다 (새로고침한 화면의 스냅샷 복원)."""
+        for request_id, entry in list(self._approval_cards.items()):
+            if entry.get("kind") == "question":
+                self.remove_approval(request_id)
+        for question in questions or []:
+            self.add_question(question)
+
+    def add_question(self, info: Dict[str, Any]) -> None:
+        """에이전트의 질문 한 장. 선택지를 누르거나 직접 적어 답하고, 건너뛸 수도 있습니다."""
+        request_id = str(info.get("id") or "")
+        if not request_id or request_id in self._approval_cards or self.on_user_question is None:
+            return
+        if not self.alive or self.approval_column is None or self.approval_column.is_deleted:
+            return
+        entry: Dict[str, Any] = {"info": dict(info), "kind": "question", "expire_text": "답 없이 진행"}
+        with self.approval_column:
+            with ui.column().classes(QUESTION_CARD_CLASSES) as card:
+                with ui.row().classes("w-full items-center gap-2 flex-nowrap"):
+                    ui.icon("contact_support", size="sm").classes("text-violet-300 flex-shrink-0")
+                    ui.label(f"{info.get('agent_name', '에이전트')} 의 질문").classes(
+                        "font-semibold text-violet-100 min-w-0 truncate"
+                    )
+                    ui.space()
+                    entry["countdown"] = ui.label("").classes(f"{COUNTDOWN_CLASSES} text-violet-300")
+                MathMarkdown(str(info.get("question") or ""), extras=FEED_MARKDOWN_EXTRAS).classes(
+                    "w-full text-violet-50"
+                )
+                options = [str(o) for o in info.get("options") or [] if str(o).strip()]
+                if options:
+                    with ui.row().classes("w-full gap-1 flex-wrap"):
+                        for option in options:
+                            ui.button(
+                                option, on_click=lambda _e, rid=request_id, o=option: self._answer_question(rid, o),
+                            ).props(f"outline dense no-caps color=violet-3 {DECISION_BUTTON_SIZE}")
+                answer = ui.input(label="직접 답하기 — Enter 로 보냅니다").props(
+                    "outlined dense dark"
+                ).classes("w-full text-xs")
+                answer.on(
+                    "keydown.enter", lambda _e, rid=request_id, box=answer: self._answer_question(rid, box.value or "")
+                )
+                entry["answer"] = answer
+                with ui.row().classes("w-full items-center gap-1 justify-end"):
+                    ui.button(
+                        "답하기", icon="send",
+                        on_click=lambda _e, rid=request_id, box=answer: self._answer_question(rid, box.value or ""),
+                    ).props(f"unelevated dense no-caps color=violet-7 {DECISION_BUTTON_SIZE}")
+                    ui.button(
+                        "건너뛰기", icon="skip_next",
+                        on_click=lambda _e, rid=request_id: self._answer_question(rid, ""),
+                    ).props(f"flat dense no-caps color=violet-3 {DECISION_BUTTON_SIZE}").tooltip(
+                        "답하지 않습니다. 에이전트는 어떤 가정으로 진행하는지 밝히고 계속합니다."
+                    )
+        entry["card"] = card
+        self._approval_cards[request_id] = entry
+        self.approval_column.set_visibility(True)
+        self._tick_approval_countdowns()
+
+    async def _answer_question(self, request_id: str, answer: str) -> None:
+        if request_id not in self._approval_cards or self.on_user_question is None:
+            return
+        if await self.on_user_question(request_id, str(answer or "").strip()):
+            self.remove_approval(request_id)
 
     def remove_approval(self, request_id: Optional[str]) -> None:
         """답이 난 카드를 걷습니다."""
@@ -188,7 +256,8 @@ class ApprovalCardsMixin:
                 label.set_text("")
                 continue
             remaining = int(opened_at + wait_seconds - time.time())
-            label.set_text("자동 거부" if remaining <= 0 else f"{remaining}초 후 자동 거부")
+            expire = str(entry.get("expire_text") or "자동 거부")
+            label.set_text(expire if remaining <= 0 else f"{remaining}초 후 {expire}")
 
     def set_plan_approval(self, info: Optional[Dict[str, Any]]) -> None:
         """계획 승인 카드를 띄우거나(`info`) 걷습니다(None).

@@ -82,6 +82,8 @@ LOCKOUT_SECONDS = 15 * 60
 
 LOGIN_PATH = "/login"
 LOGOUT_PATH = "/logout"
+# 원격에서 쿠키 대신 `Authorization: Bearer <토큰>` 을 받는 경로 (화면 없는 호출: REST API, MCP 서버).
+BEARER_PATHS = ("/api/", "/mcp")
 MAX_LOGIN_BODY = 4096
 
 # 루프백 요청에 받는 Host 이름. 그 밖의 이름으로 루프백에 오면 DNS 리바인딩으로 봅니다.
@@ -497,6 +499,14 @@ def _cookie(headers: Dict[str, str], name: str) -> Optional[str]:
     return None
 
 
+def _bearer(headers: Dict[str, str]) -> Optional[str]:
+    """`Authorization: Bearer <토큰>` 의 토큰. 없거나 다른 방식이면 None."""
+    scheme, _, value = headers.get("authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not value.strip():
+        return None
+    return value.strip()
+
+
 def _safe_next(value: Optional[str]) -> str:
     """로그인 뒤 돌아갈 곳. 이 서버 안의 경로만 받습니다 (`//evil` 같은 외부 주소 차단)."""
     if not value or not value.startswith("/") or value.startswith("//") or "\\" in value:
@@ -634,6 +644,23 @@ class AccessMiddleware:
         if control.status.enabled and control.cookie_valid(_cookie(headers, COOKIE_NAME)):
             _mark_viewer(scope, VIEWER_OWNER)
             await self.app(scope, receive, send)
+            return
+
+        # 화면 없는 호출(스크립트·다른 에이전트의 MCP 클라이언트)은 쿠키 대신 같은 주인 토큰을
+        # `Authorization: Bearer` 로 보냅니다 (v1.5). `/api/*` 와 `/mcp` 에서만 받고, 틀리면 로그인과
+        # 같은 실패 잠금에 셉니다.
+        bearer = _bearer(headers)
+        if bearer is not None and control.status.enabled and path.startswith(BEARER_PATHS):
+            if control.locked_for(ip):
+                await self._deny(scope, send, 429, "too many failed attempts")
+                return
+            if control.check_token(bearer):
+                control.record_success(ip)
+                _mark_viewer(scope, VIEWER_OWNER)
+                await self.app(scope, receive, send)
+                return
+            control.record_failure(ip, user_agent=headers.get("user-agent", ""))
+            await self._deny(scope, send, 401, "invalid token")
             return
 
         # 체험 서버가 켜져 있으면 토큰 없는 원격 접속은 방문자입니다. 주인 토큰이 없어도

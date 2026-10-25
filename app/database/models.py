@@ -32,6 +32,16 @@ class SessionModel(Base):
     # 터지고, 그 실패는 "에이전트가 응답하지 못했다" 로 나타납니다. 상한을 넘는
     # 지시는 버리지 않고 순차적으로 밀려 실행됩니다.
     parallel_limit: Mapped[int] = mapped_column(Integer, default=3)
+    # 결정 장부가 수렴하면(미해결 쟁점 없음이 두 라운드 연속, 새 결정 없음) 남은 라운드를 건너뛰고 결론으로
+    # 갑니다 (v1.5). 그래프 토론은 게이트가 끝을 정하므로 읽지 않습니다.
+    converge_early: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # 턴 하나가 쓸 토큰(입력+출력)의 상한. 넘으면 다음 라운드 경계에서 결론으로 갑니다. 0 이면 상한 없음.
+    token_budget: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 전문가가 발언 도중 사람에게 물을 수 있는지 (`ask__ask_user`, v1.5). 질문 카드가 있는 전문가 화면이 만드는
+    # 대화만 켭니다 — 기본이 꺼져 있어야 카드가 없는 화면(체험·쉬운 화면)의 토론이 답 없는 질문을 기다리지 않습니다.
+    ask_user: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # 다른 대화의 한 턴에서 갈라 만든 대화면 그 출처 `{"session_id", "turn_id", "title"}` (v1.5). 아니면 NULL.
+    forked_from: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     active_agents: Mapped[List[str]] = mapped_column(JSON, default=list)
     # 이 대화의 로스터를 마지막으로 저장할 때 **존재하던** 에이전트 전부.
     #
@@ -135,6 +145,18 @@ class TurnModel(Base):
     # 합성에 들어갈 때 정지(사람의 정지 요청)로 덜 논의된 턴이었는지. 합성 도중에 끊긴 턴을
     # 이어 갈 때 합성 지시와 합의 판정이 이 값을 씁니다 — 정지 요청 자체는 메모리에만 있었습니다.
     stopped_early: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # 이 턴의 LLM 토큰·호출 시간 합 (`app/agents/llm_usage.Usage` 모양). 발언과 보조 호출을 모두 셉니다.
+    # 단계가 바뀔 때마다 고쳐 적으므로, 실패하거나 끊긴 턴에도 그때까지의 값이 남습니다.
+    usage: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    # 작업 공간 체크포인트 (`app/workspace_checkpoint.py`): `{"start": 커밋, "end": 커밋, "changed": 바뀐 파일 수}`.
+    # 커밋은 작업 공간 저장소의 `refs/mado/turns/<턴 id>/{start,end}` 에도 달려 있습니다. git 이 없거나
+    # 작업 공간이 저장소가 아니면 NULL.
+    checkpoint: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    # 턴이 끝났을 때의 대화 기억 (`decision_ledger`·`ledger_through_id`·`transcript_summary`·`summary_through_id`).
+    # 대화의 기억은 늘 마지막 턴의 것이라, 이 턴에서 갈라 볼 때(`app/session_fork.py`) 그때의 기억을 여기서 읽습니다.
+    memory: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    # 사람이 이 턴의 결론에 매긴 평가 `{"score": 1 | -1, "note": "...", "at": ISO 시각}` (비교 화면, v1.5).
+    rating: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -226,10 +248,13 @@ class MessageModel(Base):
     # 세울 때 기록을 문장이 아니라 이것으로 읽습니다 — 지명·분배는 누가 불렸고 무엇을 맡았는지를
     # 값으로 함께 적습니다. 화면에 보이는 문장은 `content` 에 그대로 있습니다.
     turn_meta: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
-    # 이 발언을 **실제로 쓴 모델**이 에이전트에 정해 둔 모델과 다를 때만 채웁니다 (`llm.fallback`, ADR-030):
-    # `{"fallback": true, "model": 답한 모델, "intended_model": 정해 둔 모델, "reason": 실패 갈래, …}`.
-    # 대화의 스냅샷에는 정해 둔 모델만 있으므로, 누가 답했는지는 발언마다 여기에 적습니다. 주소와 키는
-    # 담지 않습니다. 그 밖의 발언은 NULL.
+    # 모델 쪽 기록. 두 가지를 담습니다.
+    # * 이 발언을 **실제로 쓴 모델**이 에이전트에 정해 둔 모델과 다를 때 (`llm.fallback`, ADR-030):
+    #   `{"fallback": true, "model": 답한 모델, "intended_model": 정해 둔 모델, "reason": 실패 갈래, …}`.
+    #   대화의 스냅샷에는 정해 둔 모델만 있으므로, 누가 답했는지는 발언마다 여기에 적습니다. 주소와 키는
+    #   담지 않습니다.
+    # * 이 발언의 토큰·호출 시간 `"usage": {...}` (`app/agents/llm_usage.Usage` 모양).
+    # 둘 다 없는 기록(사람 발언, 지명 결과, 이 칸 이전의 발언)은 NULL.
     llm_meta: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
 
     session: Mapped["SessionModel"] = relationship("SessionModel", back_populates="messages")

@@ -3,6 +3,7 @@
 import logging
 from typing import Any, Callable, Coroutine, Dict, List, Tuple
 
+from app.agents.llm_usage import Usage, format_tokens, usage_line
 from app.timestamps import format_duration, speech_time_text, speech_timing, to_local
 
 
@@ -142,6 +143,10 @@ DECISION_STYLES = {
 APPROVAL_CARD_CLASSES = (
     "w-full gap-1.5 px-3 py-2 rounded-lg text-xs border bg-sky-950/50 border-sky-700/70"
 )
+# 에이전트의 질문 카드 (v1.5). 승인이 아니라 대답이라 보라색으로 구분합니다.
+QUESTION_CARD_CLASSES = (
+    "w-full gap-1.5 px-3 py-2 rounded-lg text-xs border bg-violet-950/50 border-violet-600/70"
+)
 # 계획 승인 카드 (ADR-028). 도구 승인(하늘색)·한도 쪽지(앰버·주황)와 다른 물음이라 초록으로 구분합니다.
 PLAN_CARD_CLASSES = (
     "w-full gap-2 px-3 py-2 rounded-lg text-xs border bg-emerald-950/40 border-emerald-700/70"
@@ -259,11 +264,36 @@ def unfinished_turn_text(info: Dict[str, Any]) -> str:
 def card_time_text(msg: Dict[str, Any]) -> Tuple[str, str]:
     """발언 카드에 적을 시각 한 줄과 툴팁. 시각이 전혀 없으면 둘 다 빈 문자열.
 
+    발언의 토큰 수(`llm_meta.usage`)를 알면 한 줄 끝에 합계를, 툴팁에 입력·출력·LLM 시간을 붙입니다
+    (`card_usage_text`).
+
     카드는 한 대화 안에서 위아래로 이어 읽으므로 **시각만** 짧게 적고, 날짜까지
     붙은 전체 시각은 툴팁에 둡니다 (저장 문서와 같은 문구 — `speech_time_text`).
     시작과 끝의 날짜가 다르면 끝쪽에만 날짜를 붙입니다. 자정을 넘긴 발언에서
     `23:59:50 → 00:00:12` 만 적으면 거꾸로 흐른 것처럼 보입니다.
     """
+    label, full = _card_clock_text(msg)
+    if not label:
+        return "", ""
+    short, detail = card_usage_text(msg)
+    if short:
+        label += f" · {short}"
+    if detail:
+        full = f"{full} · {detail}" if full else detail
+    return label, full
+
+
+def card_usage_text(msg: Dict[str, Any]) -> Tuple[str, str]:
+    """카드의 사용량: 한 줄에 붙일 `토큰 13.4k` 와 툴팁의 `입력 … · 출력 … · LLM …초`. 모르면 빈 문자열."""
+    meta = msg.get("llm_meta")
+    usage = Usage.of(meta.get("usage")) if isinstance(meta, dict) else Usage()
+    if usage.empty:
+        return "", ""
+    short = f"토큰 {format_tokens(usage.total_tokens)}" if usage.total_tokens else ""
+    return short, usage_line(usage)
+
+
+def _card_clock_text(msg: Dict[str, Any]) -> Tuple[str, str]:
     t = speech_timing(msg)
     started, finished = t["started"], t["finished"]
     if started is None and finished is None:

@@ -15,7 +15,7 @@ from app.agents.llm_context import context_budget, estimate_tokens
 from app.agents.llm_tools import memory_search_tool
 from app.agents.reasoning import strip_reasoning_trace
 from app.agents.skills import skill_tools_for, with_designated_skills
-from app.database.models import SessionModel
+from app.database.models import SessionModel, TurnModel
 from app.events import EventCallback, EventType
 from app.orchestration import context_memory as memory, plan_gate
 from app.orchestration.context import EngineContext
@@ -124,18 +124,21 @@ class ConversationMemory:
         긴급 종료(`session_ops.discard_turn`)는 턴 도중의 취소라 여기까지 오지 않습니다.
         그래서 지워진 발언을 반영한 장부가 남지 않습니다.
         """
-        values = {
+        remembered = {
             "decision_ledger": state.decision_ledger,
             "ledger_through_id": memory.through_id(state.messages, state.ledger_through),
             "transcript_summary": state.transcript_summary if state.summary_through else "",
             "summary_through_id": memory.through_id(state.messages, state.summary_through),
-            # 기억을 적었다고 대화 목록에서 "방금 바뀐 대화" 로 올라가지 않게 합니다.
-            "updated_at": SessionModel.updated_at,
         }
+        # 기억을 적었다고 대화 목록에서 "방금 바뀐 대화" 로 올라가지 않게 합니다.
+        values = {**remembered, "updated_at": SessionModel.updated_at}
         try:
             await db.execute(
                 update(SessionModel).where(SessionModel.id == state.session_id).values(**values)
             )
+            # 이 턴이 끝났을 때의 기억도 턴에 남깁니다 — 이 턴에서 갈라 볼 때 씁니다 (`app/session_fork.py`).
+            if state.turn_id:
+                await db.execute(update(TurnModel).where(TurnModel.id == state.turn_id).values(memory=remembered))
             await db.commit()
         except asyncio.CancelledError:
             raise

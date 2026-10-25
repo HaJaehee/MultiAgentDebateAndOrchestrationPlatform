@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from app.agents.base import Agent
+from app.agents.ask_user import is_ask_tool
 from app.agents.consultation import is_consultation_tool
 from app.agents.llm_budget import (
     BUDGET_EXTENDED_INSTRUCTION,
@@ -558,7 +559,7 @@ class ToolLoopMixin:
             # 해당 도구 호출 시 정상적으로 보안 판정을 받게 됩니다.)
             gate = (
                 None
-                if (is_skill_tool(fn_name) or is_consultation_tool(fn_name))
+                if (is_skill_tool(fn_name) or is_consultation_tool(fn_name) or is_ask_tool(fn_name))
                 else await self._check_tool_gate(
                     loop.tool_gate, agent, fn_name, fn_args, loop.mcp or self.mcp_manager,
                 )

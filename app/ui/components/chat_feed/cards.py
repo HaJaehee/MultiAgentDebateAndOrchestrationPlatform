@@ -375,6 +375,25 @@ class CardsMixin:
                         ui.badge(node_badge, color="teal-10").props("dense text-[12px]").classes(
                             "text-teal-100"
                         ).tooltip("그래프 토론에서 해당 발언을 생성한 노드입니다.")
+                    # 이 턴이 작업 공간에서 바꾼 파일 (결론 카드에만, `set_turn_actions` 가 보이게 합니다).
+                    changes_btn = ui.button(
+                        icon="folder_open", on_click=lambda: self._open_turn_changes(info),
+                    ).props("flat dense no-caps size=12px color=teal-4")
+                    with changes_btn:
+                        changes_tip = ui.tooltip("")
+                    changes_btn.set_visibility(False)
+                    # 이 턴까지로 갈라 다른 전략·참여자로 다시 돌려 봅니다 (결론 카드에만).
+                    fork_btn = ui.button(
+                        icon="call_split", on_click=lambda: self._fork_turn(info),
+                    ).props("flat dense round size=12px color=amber-4")
+                    fork_btn.tooltip("이 턴까지로 갈라 새 대화를 만듭니다 — 전략·참여자·모델을 바꿔 다시 돌려 보고 비교합니다.")
+                    fork_btn.set_visibility(False)
+                    # 이 턴에서 정한 규칙을 스킬로 저장합니다 (결론 카드에만).
+                    skill_btn = ui.button(
+                        icon="auto_stories", on_click=lambda: self._draft_skill(info),
+                    ).props("flat dense round size=12px color=teal-4")
+                    skill_btn.tooltip("이 턴에서 정한 규칙을 스킬로 저장합니다 — 초안을 고친 뒤 꺼진 채로 저장합니다.")
+                    skill_btn.set_visibility(False)
                     if round_num > 0:
                         # 그래프 토론의 라운드는 단계입니다 (상태 줄의 "N단계" 와 같은 수).
                         round_word = "Step" if msg.get("graph_node_id") else "Round"
@@ -436,13 +455,73 @@ class CardsMixin:
             "fallback_tip": fallback_tip,
             "time_label": time_label,
             "time_tip": time_tip,
+            "changes_btn": changes_btn,
+            "changes_tip": changes_tip,
+            "fork_btn": fork_btn,
+            "skill_btn": skill_btn,
             "started_at": msg.get("started_at"),
             "msg_type": msg_type,
             "collapsed": False,
         })
         self._set_fallback(info, msg.get("llm_meta"))
         self._apply_clamp(info, collapsed=not streaming)
+        if info["id"]:
+            self._cards_by_id[info["id"]] = info
         return info
+
+    def reveal_message(self, message_id: str) -> bool:
+        """그 발언의 카드를 펼쳐 화면 가운데로 가져오고 잠깐 테를 두릅니다 (검색 결과에서 왔을 때). 없으면 False."""
+        info = self._cards_by_id.get(message_id)
+        card = info.get("card") if info else None
+        if card is None or card.is_deleted:
+            return False
+        if info.get("collapsed"):
+            self._toggle_card(info)
+        # 사람이 고른 자리로 갑니다. 새 발언이 와도 맨 아래로 끌려가지 않게 따라가기를 멈춥니다.
+        self._scroll_detached = True
+        self._refresh_follow_button()
+        card.classes(add="ring-2 ring-amber-400")
+        ui.run_javascript(f'getHtmlElement({card.id})?.scrollIntoView({{block: "center", behavior: "smooth"}})')
+        ui.timer(2.5, lambda: card.is_deleted or card.classes(remove="ring-2 ring-amber-400"), once=True)
+        return True
+
+    def set_turn_actions(self, message_id: Optional[str], turn_id: str, changed: Optional[int] = None) -> None:
+        """결론 카드에 그 턴의 단추를 붙입니다: 갈라 보기, 그리고 바뀐 파일이 있으면 '이 턴이 바꾼 파일 N개' 칩."""
+        if not self.alive or not message_id or not turn_id:
+            return
+        info = self._cards_by_id.get(message_id) or self._active_streams.get(message_id)
+        if not info:
+            return
+        info["turn_id"] = turn_id
+        fork = info.get("fork_btn")
+        if fork is not None and not fork.is_deleted:
+            fork.set_visibility(self.on_fork_turn is not None)
+        skill = info.get("skill_btn")
+        if skill is not None and not skill.is_deleted:
+            skill.set_visibility(self.on_draft_skill is not None and info.get("msg_type") != "error")
+        button = info.get("changes_btn")
+        if button is None or button.is_deleted or self.on_open_turn_changes is None:
+            return
+        button.set_text(f"{changed}" if changed else "")
+        tip = info.get("changes_tip")
+        if tip is not None and not tip.is_deleted:
+            tip.set_text(f"이 턴이 작업 공간에서 바꾼 파일 {changed}개 — 눌러서 보고, 필요하면 되돌립니다.")
+        button.set_visibility(bool(changed))
+
+    async def _draft_skill(self, info: Dict[str, Any]) -> None:
+        turn_id = info.get("turn_id")
+        if turn_id and self.on_draft_skill is not None:
+            await self.on_draft_skill(turn_id)
+
+    async def _fork_turn(self, info: Dict[str, Any]) -> None:
+        turn_id = info.get("turn_id")
+        if turn_id and self.on_fork_turn is not None:
+            await self.on_fork_turn(turn_id)
+
+    async def _open_turn_changes(self, info: Dict[str, Any]) -> None:
+        turn_id = info.get("turn_id")
+        if turn_id and self.on_open_turn_changes is not None:
+            await self.on_open_turn_changes(turn_id)
 
     @staticmethod
     def _set_fallback(info: Dict[str, Any], llm_meta: Any) -> None:

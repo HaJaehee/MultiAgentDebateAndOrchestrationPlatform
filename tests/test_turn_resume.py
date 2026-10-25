@@ -287,7 +287,7 @@ async def test_finishing_an_interrupted_turn_synthesizes_only_what_was_said():
     report = next(a for a in artifacts if a.title.endswith("최종 결론"))
     assert "서버 중단" in report.content and "1회 재개" in report.content
     summary = json.loads(next(a for a in artifacts if a.artifact_type == "json").content)
-    assert summary["consensus_reached"] is False
+    assert summary["completed_cleanly"] is False
     assert summary["resumed_count"] == 1 and summary["interrupted"] is True
     assert summary["participating_agents"] == ["orchestrator", "architect", "coder"]
     assert summary["total_rounds"] == 1

@@ -14,7 +14,8 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
 
 from sqlalchemy import delete, update
 
-from app.agents import llm_fallback
+from app.agents import llm_fallback, llm_usage
+from app.agents.ask_user import QUESTION_WAIT_SECONDS, Asker, asking
 from app.agents.base import Agent
 from app.agents.llm_types import LLMUnavailableError
 from app.agents.skills import with_designated_skills
@@ -23,7 +24,7 @@ from app.database.models import MessageModel, SpeechDraftModel, ToolCallRecordMo
 from app.events import EventCallback, EventType
 from app.orchestration import turns
 from app.orchestration.context import EngineContext
-from app.orchestration.control import TurnControl
+from app.orchestration.control import TurnControl, asks_human
 from app.orchestration.recording import TurnRecorder
 from app.orchestration.state import DebateMessage, DebateState
 
@@ -149,6 +150,9 @@ class _Speech:
         # 도구 루프가 한 판을 마칠 때마다 이어 갈 수 있는 상태를 초안으로 남깁니다 (ADR-025).
         # 도구를 부르지 않는 발언은 한 번도 불리지 않으므로 초안이 생기지 않습니다.
         self.draft_saved = draft is not None
+        # 이 발언의 토큰·호출 시간 (`llm_usage`). 다이어그램 교정 같은 후처리 호출도 이 발언 몫입니다.
+        # 끊긴 발언을 이어 가면 이어 간 뒤의 몫만 셉니다 (앞부분은 턴 합계에 남아 있습니다).
+        self.usage = llm_usage.Usage()
 
     def start_event(self) -> Dict[str, Any]:
         return {
@@ -246,6 +250,13 @@ class _Speech:
         if self.agent.key not in self.state.fallback_agent_keys:
             self.state.fallback_agent_keys.append(self.agent.key)
         return self.fallback_notices[-1].as_meta()
+
+    def llm_meta(self, final_type: str) -> Optional[Dict[str, Any]]:
+        """발언 기록의 `llm_meta`: 기본 모델이 대신 답한 사실과 이 발언의 사용량. 둘 다 없으면 None."""
+        meta = dict(self.fallback_meta(final_type) or {})
+        if not self.usage.empty:
+            meta["usage"] = self.usage.as_meta()
+        return meta or None
 
     def message_rows(
         self,
@@ -374,7 +385,7 @@ class SpeechRunner:
         상한은 `TOOL_ITERATION_CEILING` 을 넘길 수 없습니다. 확장은 폭주를
         늦추는 것이지 푸는 것이 아닙니다.
         """
-        if control is None:
+        if not asks_human(control):
             return None
 
         async def arbiter(info: Dict[str, Any]) -> int:
@@ -424,7 +435,7 @@ class SpeechRunner:
         2. **모델의 실제 한도를 넘겨 늘리지 않습니다.** `context_headroom()` 이
            조회한 여유가 상한입니다. 넘겨 올리면 깔끔한 트림이 400 으로 바뀝니다.
         """
-        if control is None:
+        if not asks_human(control):
             return None
 
         async def arbiter(info: Dict[str, Any]) -> Dict[str, Any]:
@@ -532,13 +543,14 @@ class SpeechRunner:
         if on_event:
             await on_event(speech.start_event())
 
-        content, tool_logs, final_type = await self._receive_speech(
-            speech, prompt_messages, custom_instructions, designated, control, post_process,
-        )
+        with llm_usage.measuring(speech.usage), self._asking(state, control, on_event):
+            content, tool_logs, final_type = await self._receive_speech(
+                speech, prompt_messages, custom_instructions, designated, control, post_process,
+            )
         # 실패로 끝났어도 예약된 조각이 확정본 뒤에 도착하면 안 됩니다.
         await speech.stream.drain()
 
-        llm_meta = speech.fallback_meta(final_type)
+        llm_meta = speech.llm_meta(final_type)
         # 응답이 끝난 시각. 실패로 끝난 발언도 여기서 잽니다 — 언제 포기했는지는
         # 그 자체로 쓸모 있는 기록입니다 (엔드포인트가 몇 초 만에 끊었는지, 한도까지
         # 버텼는지). 기록 락을 기다린 시간이 섞이지 않도록 락 **밖에서** 잽니다.
@@ -560,6 +572,39 @@ class SpeechRunner:
             speech, content=content, final_type=final_type, tool_logs=tool_logs,
             finished_at=finished_at, turn_started_at=turn_started_at, llm_meta=llm_meta,
         )
+
+    def _asking(self, state: DebateState, control: Optional[TurnControl], on_event: Optional[EventCallback]):
+        """이 발언에 `ask__ask_user` 를 줄지. 대화가 켰고, 사람이 지켜보는 턴일 때만 (`app/agents/ask_user.py`)."""
+        if not state.ask_user or not asks_human(control):
+            return nullcontext()
+        return asking(self.make_asker(control, on_event), state.questions_left)
+
+    @staticmethod
+    def make_asker(control: TurnControl, on_event: Optional[EventCallback]) -> Asker:
+        """에이전트의 질문을 질문 카드로 띄우고 답을 기다리는 함수.
+
+        답은 도구 결과로 그 에이전트에게 가고, 같은 문장을 개입 메모로도 남깁니다 — 다음 발언자부터 사람의
+        말로 고정 기록에 실려, 묻지 않은 에이전트도 같은 답을 따릅니다.
+        """
+        async def ask(agent: Agent, question: str, options: List[str]) -> Optional[str]:
+            async def _open(request) -> None:
+                if on_event:
+                    await on_event({"type": EventType.USER_QUESTION_REQUESTED, **request.describe()})
+
+            request = await control.ask_user_question(
+                agent_key=agent.key, agent_name=agent.name, question=question, options=options,
+                timeout=QUESTION_WAIT_SECONDS, on_open=_open,
+            )
+            if on_event:
+                await on_event({
+                    "type": EventType.USER_QUESTION_RESOLVED, "id": request.id, "agent_name": agent.name,
+                    "outcome": request.outcome, "answer": request.answer,
+                })
+            if request.answer:
+                control.add_note(f"[{agent.name} 의 질문에 대한 답]\n질문: {question}\n답: {request.answer}")
+            return request.answer or None
+
+        return ask
 
     async def _receive_speech(
         self,

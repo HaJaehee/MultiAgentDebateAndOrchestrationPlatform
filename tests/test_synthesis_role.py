@@ -116,7 +116,7 @@ async def test_an_empty_synthesis_is_a_failure_that_keeps_the_specialists_conclu
     assert state.error_message
     summary = next(a for a in state.artifacts if a.artifact_type == "json")
     assert '"synthesis_failed": true' in summary.content
-    assert '"consensus_reached": false' in summary.content
+    assert '"completed_cleanly": false' in summary.content
 
 
 # ------------------------------------------------------------------ 코드 산출물

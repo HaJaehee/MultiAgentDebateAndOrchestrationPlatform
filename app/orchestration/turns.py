@@ -47,6 +47,7 @@ from app.database.models import (
     utc_now,
 )
 from app.agents.llm_loop import SPEECH_STATE_VERSION
+from app.agents.llm_usage import Usage
 from app.orchestration.graph import Activation, GraphScheduler, GraphSpec
 from app.orchestration.graph_run import OUTPUT_PORTS
 from app.timestamps import _as_datetime
@@ -67,6 +68,8 @@ KIND_NOTE = "note"                  # 그 밖의 안내 (지명 실패, 그래�
 KIND_FAILURE = "failure"            # 발언이 예외로 끝났다는 안내 (병렬·그래프)
 KIND_INTERRUPTED = "interrupted"    # 서버 중단으로 발언이 끊겼다는 안내 (재개할 때 남김)
 KIND_SYNTHESIS = "synthesis"        # 턴을 마무리한 합성
+# 남은 라운드를 건너뛰고 결론으로 간다는 안내 (v1.5). 값: reason (`converged` · `budget`), round
+KIND_EARLY_END = "early_end"
 # 계획 승인 (ADR-028). 계획 발언 뒤, 토론이 시작되기 전에만 나옵니다.
 KIND_PLAN_REVISION = "plan_revision"  # 사람의 계획 수정 요청. 뒤따르는 계획이 앞의 것을 대신합니다
 KIND_APPROVAL = "plan_approval"       # 사람의 계획 승인. 값: plan_id, tasks, changes, approver
@@ -478,3 +481,37 @@ async def unfinished_turn(db, session_id: str) -> Optional[UnfinishedTurn]:
         can_continue=can_continue(str(config.get("strategy") or ""), turn.phase),
         can_finish=speeches > 0,
     )
+
+
+async def usage_by_session(db, session_id: Optional[str] = None) -> Dict[str, Usage]:
+    """대화마다 모든 턴의 토큰·LLM 시간 합 (`TurnModel.usage`). `session_id` 를 주면 그 대화만.
+
+    이 칸이 생기기 전의 턴은 빠집니다 — 모르는 값을 0 으로 더하지 않으려고, 그런 턴만 있는 대화는
+    결과에 없습니다.
+    """
+    stmt = select(TurnModel.session_id, TurnModel.usage).where(TurnModel.usage.is_not(None))
+    if session_id is not None:
+        stmt = stmt.where(TurnModel.session_id == session_id)
+    totals: Dict[str, Usage] = {}
+    for sid, raw in (await db.execute(stmt)).all():
+        usage = Usage.of(raw)
+        if usage.empty:
+            continue
+        totals.setdefault(sid, Usage()).add(usage)
+    return totals
+
+
+EARLY_END_CONVERGED = "converged"
+EARLY_END_BUDGET = "budget"
+
+
+def early_end(messages: Iterable[Any]) -> Optional[Tuple[str, int]]:
+    """이 턴이 남은 라운드를 건너뛰기로 했는가 — (`converged`·`budget`, 그 라운드). 아니면 None."""
+    for msg in messages:
+        if kind_of(msg) != KIND_EARLY_END:
+            continue
+        meta = _get(msg, "turn_meta") or {}
+        reason = meta.get("reason")
+        if reason in (EARLY_END_CONVERGED, EARLY_END_BUDGET):
+            return reason, int(meta.get("round") or _get(msg, "round_number") or 0)
+    return None

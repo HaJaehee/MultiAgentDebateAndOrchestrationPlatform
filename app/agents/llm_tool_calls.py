@@ -10,6 +10,7 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from app.agents.base import Agent
+from app.agents.ask_user import is_ask_tool, run_ask_tool
 from app.agents.consultation import is_consultation_tool, run_consultation_tool
 from app.agents.skills import (
     DESIGNATED_SKILL_NOTE,
@@ -161,6 +162,8 @@ class ToolCallMixin:
                     agent, fn_name, fn_args,
                     llm_caller=self,
                 )
+            elif is_ask_tool(fn_name):
+                output, status = await run_ask_tool(agent, fn_args)
             else:
                 output, status = await runtime.execute_tool(
                     fn_name, fn_args, scope=session_id, actor=agent.key

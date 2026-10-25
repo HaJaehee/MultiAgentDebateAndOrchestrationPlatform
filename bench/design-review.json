@@ -1,0 +1,13 @@
+{
+  "// 설명": [
+    "설계 검토 시나리오: 같은 요청을 세 전략으로 돌려 결론·토큰·시간을 비교합니다.",
+    "python -m app.bench run bench/design-review.json   (LLM 없이 흐름만: --dry-run)"
+  ],
+  "name": "설계 검토 — 주문 서비스 캐시",
+  "prompt": "초당 2천 건 조회가 들어오는 주문 조회 API 에 캐시를 넣으려 합니다. 캐시 위치(애플리케이션 메모리·Redis·CDN), 무효화 방식, 장애 시 동작을 정하고 위험을 정리해 주십시오. 코드는 쓰지 말고 설계만.",
+  "variants": [
+    {"label": "순차 3라운드", "strategy": "sequential_debate", "max_rounds": 3},
+    {"label": "디베이트 3라운드", "strategy": "adversarial_debate", "max_rounds": 3},
+    {"label": "병렬 지시 2라운드", "strategy": "parallel_dispatch", "max_rounds": 2}
+  ]
+}

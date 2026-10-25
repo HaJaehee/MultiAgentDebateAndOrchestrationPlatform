@@ -9,14 +9,17 @@ import asyncio
 import logging
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
+
+from app import workspace_checkpoint
 
 from app.agents.consultation import consultation_scope
 from app.agents.llm import LLMCaller
 from app.agents.llm_loop import SPEECH_STATE_VERSION
 from app.agents.llm_gate import LLM_HOLDER
+from app.agents.llm_usage import Usage, measuring
 from app.agents.pool import AgentPool, get_agent_pool
 from app.config import resolve_workspace_dir
 from app.database.models import (
@@ -157,15 +160,21 @@ class OrchestratorEngine:
             workspace = await self._session_workspace(session_id)
             await pool.acquire(workspace, holder=session_id)
             try:
-                return await self._run_turn(
-                    session_id, user_prompt, workspace, turn_id, on_event, control,
-                    skill_designations=skill_designations,
-                )
+                # 이 턴의 모든 LLM 호출을 셉니다 (`llm_usage`). 병렬 발언 태스크도 이 계량기를 물려받습니다.
+                with measuring() as usage:
+                    state = await self._run_turn(
+                        session_id, user_prompt, workspace, turn_id, on_event, control,
+                        skill_designations=skill_designations, usage=usage,
+                    )
             except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
                 raise
             except BaseException as exc:  # noqa: BLE001 - 적고 그대로 올립니다
                 await self.recorder.mark_turn_failed(turn_id, exc)
+                await self._close_checkpoint(workspace, turn_id, on_event)
                 raise
+            else:
+                await self._close_checkpoint(workspace, turn_id, on_event, state)
+                return state
             finally:
                 self.ctx.tool_gates.pop(session_id, None)
                 await pool.release(session_id, workspace)
@@ -205,12 +214,19 @@ class OrchestratorEngine:
         try:
             await pool.acquire(workspace, holder=session_id)
             try:
-                return await self._resume_turn(session_id, turn_id, mode, workspace, on_event, control)
+                with measuring() as usage:
+                    state = await self._resume_turn(
+                        session_id, turn_id, mode, workspace, on_event, control, usage=usage,
+                    )
             except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
                 raise
             except BaseException as exc:  # noqa: BLE001 - 적고 그대로 올립니다
                 await self.recorder.mark_turn_failed(turn_id, exc)
+                await self._close_checkpoint(workspace, turn_id, on_event)
                 raise
+            else:
+                await self._close_checkpoint(workspace, turn_id, on_event, state)
+                return state
             finally:
                 self.ctx.tool_gates.pop(session_id, None)
                 await pool.release(session_id, workspace)
@@ -227,6 +243,7 @@ class OrchestratorEngine:
         control: Optional[TurnControl] = None,
         *,
         skill_designations: Optional[Dict[str, List[str]]] = None,
+        usage: Optional[Usage] = None,
     ) -> DebateState:
         """`run_turn` 의 본문. 런타임은 이미 빌린 상태로 들어옵니다."""
         async with self.session_factory() as db:
@@ -247,6 +264,8 @@ class OrchestratorEngine:
             # 2. Initialize Debate State
             state = new_state(session_id, user_prompt, workspace, setup)
             state.turn_id = turn_id
+            if usage is not None:
+                state.usage = usage
 
             # 이전 턴의 대화 기록을 DB에서 로드하여 대화 맥락을 보존합니다.
             state.messages.extend(await self.recorder.load_history(db, session_id))
@@ -291,6 +310,11 @@ class OrchestratorEngine:
             turn_started_at = opening.started_at
             if on_event:
                 await on_event({"type": EventType.TURN_OPENED, "turn_id": turn_id, "resumed": False})
+
+            # 에이전트가 무엇이든 고치기 전의 작업 공간 (`app/workspace_checkpoint.py`).
+            start = await self._snapshot(workspace, turn_id, workspace_checkpoint.START)
+            if start:
+                await self.recorder.set_turn(db, state, checkpoint={"start": start})
 
             # 4. Phase 1: Master Orchestrator Goal Analysis & Planning
             plan_message = await self.planning_phase.plan(db, state, setup, on_event=on_event, control=control)
@@ -337,6 +361,8 @@ class OrchestratorEngine:
         workspace: Path,
         on_event: Optional[EventCallback],
         control: Optional[TurnControl],
+        *,
+        usage: Optional[Usage] = None,
     ) -> DebateState:
         """`resume_turn` 의 본문. 런타임은 이미 빌린 상태로 들어옵니다."""
         async with self.session_factory() as db:
@@ -365,6 +391,10 @@ class OrchestratorEngine:
 
             state = new_state(session_id, opening.content, workspace, setup)
             state.turn_id = turn_id
+            if usage is not None:
+                # 끊기기 전까지 쓴 만큼에서 이어 셉니다.
+                usage.add(Usage.of(turn.usage))
+                state.usage = usage
             state.messages = history
             state.turn_message_start = start
             self.conversation.load_memory(state, session_model)
@@ -485,6 +515,70 @@ class OrchestratorEngine:
                 control=control, on_event=on_event,
             )
             return state
+
+
+    # ------------------------------------------------------------ 작업 공간 체크포인트
+
+    @staticmethod
+    async def _snapshot(workspace: Path, turn_id: str, which: str) -> Optional[str]:
+        """작업 공간의 지금 모습을 이 턴의 `which`(start·end) 로 남깁니다. 못 남겨도 턴은 계속됩니다."""
+        try:
+            return await asyncio.to_thread(
+                workspace_checkpoint.snapshot, workspace, workspace_checkpoint.turn_ref(turn_id, which),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 체크포인트는 턴의 부산물입니다
+            logger.warning(f"Could not checkpoint the workspace {workspace} ({which} of turn {turn_id}): {exc}")
+            return None
+
+    async def _close_checkpoint(
+        self,
+        workspace: Path,
+        turn_id: str,
+        on_event: Optional[EventCallback],
+        state: Optional[DebateState] = None,
+    ) -> None:
+        """턴이 끝난 모습을 남기고, 시작과 견줘 바뀐 파일 수를 턴 기록에 적고 알립니다.
+
+        실패로 끝난 턴도 남깁니다 — 실패하기 전까지 고친 파일도 되돌릴 수 있어야 합니다. 시작 모습이
+        없으면(git 없음, 턴이 서기 전에 멈춤) 아무것도 하지 않습니다.
+        """
+        try:
+            start = await asyncio.to_thread(
+                workspace_checkpoint.resolve, workspace,
+                workspace_checkpoint.turn_ref(turn_id, workspace_checkpoint.START),
+            )
+            if not start:
+                return
+            end = await self._snapshot(workspace, turn_id, workspace_checkpoint.END)
+            if not end:
+                return
+            changed = await asyncio.to_thread(workspace_checkpoint.changes, workspace, start, end)
+            count = len(changed) if changed is not None else None
+            async with self.session_factory() as db:
+                await db.execute(
+                    update(TurnModel).where(TurnModel.id == turn_id)
+                    .values(checkpoint={"start": start, "end": end, "changed": count})
+                )
+                await db.commit()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 체크포인트는 턴의 부산물입니다
+            logger.warning(f"Could not close the workspace checkpoint of turn {turn_id}: {exc}")
+            return
+        if on_event:
+            synthesis: Any = None
+            if state is not None:
+                synthesis = next(
+                    (m for m in reversed(state.messages) if turns.kind_of(m) == turns.KIND_SYNTHESIS), None
+                )
+            await on_event({
+                "type": EventType.WORKSPACE_CHECKPOINTED,
+                "turn_id": turn_id,
+                "changed": count,
+                "message_id": synthesis.id if synthesis is not None else None,
+            })
 
 
 _orchestrator_engine: Optional[OrchestratorEngine] = None

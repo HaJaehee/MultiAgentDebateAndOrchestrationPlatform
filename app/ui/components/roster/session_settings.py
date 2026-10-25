@@ -359,6 +359,22 @@ class SessionSettingsMixin:
         if self.on_config_changed:
             ui.timer(0.01, self.on_config_changed, once=True)
 
+    def _on_converge_change(self, e) -> None:
+        self.converge_early = bool(e.value)
+        if self.on_config_changed:
+            ui.timer(0.01, self.on_config_changed, once=True)
+
+    def _on_ask_user_change(self, e) -> None:
+        self.ask_user = bool(e.value)
+        if self.on_config_changed:
+            ui.timer(0.01, self.on_config_changed, once=True)
+
+    def _on_token_budget_change(self, e) -> None:
+        # 비우면(`None`) 상한 없음입니다. 음수도 상한 없음으로 봅니다.
+        self.token_budget = max(0, int(e.value or 0))
+        if self.on_config_changed:
+            ui.timer(0.01, self.on_config_changed, once=True)
+
     def _on_rounds_change(self, e) -> None:
         self.max_rounds = int(e.value)
         if hasattr(self, "rounds_label") and self.rounds_label:

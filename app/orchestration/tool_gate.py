@@ -51,6 +51,7 @@ from app.mcp.policy import (
     stricter_mode,
     tool_always_denied,
 )
+from app.orchestration.control import asks_human
 from app.tool_rules import Rule, parse_rule, parse_rules
 
 logger = logging.getLogger(__name__)
@@ -280,7 +281,7 @@ class ToolGate:
                 _audit("rejected", verdict.risk, "repeat"),
             )
 
-        if self.control is None:
+        if not asks_human(self.control):
             return GateResult(
                 False,
                 refusal_text(tool_name, "확인이 필요한 호출인데 물어볼 유저가 없어 실행하지 않았습니다.\n"

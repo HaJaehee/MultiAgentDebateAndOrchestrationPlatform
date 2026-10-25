@@ -6,20 +6,22 @@
 곁가지는 옆 모듈에 있습니다: 도구 루프(`llm_loop`), 요청 만들기(`llm_request`), 사고 과정(`reasoning`), 컨텍스트 창 맞춤(`llm_context`), 한도 안내
 (`llm_budget`), 도구 이름·쓰기 지침(`llm_tools`), 요청 지문(`llm_fingerprint`), 응답 되살리기
 (`llm_recovery`), 도구 호출 처리(`llm_tool_calls`), 예외와 콜백 형식(`llm_types`), 전역 모델 폴백
-(`llm_fallback`), 서버 전체 동시 요청 상한(`llm_gate`).
+(`llm_fallback`), 서버 전체 동시 요청 상한(`llm_gate`), 토큰·시간 계측(`llm_usage`).
 """
 
 import asyncio
 import contextvars
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
 import litellm
 
-from app.agents import llm_fallback
+from app.agents import llm_fallback, llm_usage
 from app.agents.base import Agent
 from app.agents.connection import SERVER_ERROR, classify
+from app.agents.ask_user import ask_tools_for
 from app.agents.consultation import consultation_tools_for
 from app.agents.llm_context import fit_context_window, merge_consecutive_roles, place_ledger_last
 from app.agents.llm_fingerprint import request_fingerprint
@@ -287,7 +289,7 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         if tool_gate is not None:
             tools = tool_gate.filter_tools(agent.key, tools, mcp)
         # 스킬 도구는 발언이 진행될 때마다 스킬 디렉터리와 활성화 여부를 새로 조회하여 동적으로 생성합니다 (`app/agents/skills.py`).
-        tools = tools + skill_tools_for(agent) + consultation_tools_for(agent)
+        tools = tools + skill_tools_for(agent) + consultation_tools_for(agent) + ask_tools_for(agent)
 
         if resume_state is not None:
             # 끊긴 발언을 이어 갑니다. 모델이 보던 메시지를 그대로 씁니다 — 프롬프트를 다시 만들면
@@ -380,7 +382,12 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         progress = _SPEECH_PROGRESS.get()
         try:
             async with get_llm_gate().slot():
-                result = await self._complete_unthrottled(agent, messages, tools, on_chunk, tool_choice)
+                # 자리를 기다린 시간은 빼고, 모델이 답하는 데 걸린 시간만 잽니다 (`llm_usage`).
+                began = time.monotonic()
+                try:
+                    result = await self._complete_unthrottled(agent, messages, tools, on_chunk, tool_choice)
+                finally:
+                    llm_usage.note_call(time.monotonic() - began)
         except Exception:
             if progress is not None:
                 progress.llm_failed = True
@@ -416,6 +423,7 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
                         progress.streamed = True
                     await self._emit_chunk(on_chunk, content_delta)
             complete_response = litellm.stream_chunk_builder(chunks, messages=messages)
+            llm_usage.note_response(complete_response)
             return complete_response.choices[0].message, self._finish_reason(complete_response)
         except Exception as exc:
             # 이미 화면에 흘려보낸 조각이 있으면 비스트리밍으로 다시 부르지 않습니다.
@@ -440,6 +448,7 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
                 # 알려 주지 않을 때 유일하게 남는 단서입니다.
                 logger.error(request_fingerprint(agent, messages, tools, tool_choice))
                 raise
+            llm_usage.note_response(response)
             message = response.choices[0].message
             if message.content and on_chunk:
                 await self._emit_chunk(on_chunk, message.content)

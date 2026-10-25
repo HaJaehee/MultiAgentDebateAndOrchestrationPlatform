@@ -14,6 +14,7 @@ import asyncio
 import logging
 from typing import Any, Callable, Dict, List, Optional, Set
 
+from app.agents.llm_usage import usage_line
 from app.config import resolve_workspace_dir
 from app.events import DECISION_RESOLVED, Event, EventType
 from app.orchestration.control import TurnControl
@@ -101,6 +102,8 @@ class TurnRun:
         # 계획 승인 카드 (ADR-028). 한 턴에 많아야 하나입니다. 답할 수 있는 시간이 길어
         # (기본 10분) 그 사이 새로고침하거나 다른 화면에서 붙는 일이 흔하므로, 스냅샷에 둡니다.
         self.plan_approval: Optional[Dict[str, Any]] = None
+        # 에이전트가 사람에게 물은 질문 중 답을 기다리는 것 (`ask__ask_user`, v1.5). 새로고침한 화면도 같은 카드를 봅니다.
+        self.questions: List[Dict[str, Any]] = []
         # 승인을 기다리다 답이 없어 멈춰 둔 실행인지. 오류로 멈춘 것과 구분해 알립니다.
         self.parked: bool = False
 
@@ -396,6 +399,23 @@ class TurnRun:
         )
         self.round_info = "Approval"
 
+    @_reduces(EventType.USER_QUESTION_REQUESTED)
+    def _on_user_question_requested(self, event: Event) -> None:
+        card = _payload(event)
+        self.questions = [q for q in self.questions if q.get("id") != card.get("id")] + [card]
+        self.status_text = f"[{event.get('agent_name', '')}] 의 질문에 답을 기다립니다."
+        self.round_info = "Question"
+
+    @_reduces(EventType.USER_QUESTION_RESOLVED)
+    def _on_user_question_resolved(self, event: Event) -> None:
+        self.questions = [q for q in self.questions if q.get("id") != event.get("id")]
+        who = event.get("agent_name", "")
+        text = (f"[{who}] 질문에 답했습니다." if event.get("answer")
+                else f"[{who}] 질문에 답이 없어 가정을 밝히고 진행합니다.")
+        self.status_text = self._pending_prefix(text)
+        if not self.questions:
+            self.round_info = "Debating"
+
     @_reduces(EventType.TOOL_APPROVAL_RESOLVED)
     def _on_tool_approval_resolved(self, event: Event) -> None:
         self.approvals = [a for a in self.approvals if a.get("id") != event.get("id")]
@@ -576,6 +596,7 @@ class TurnRun:
         self.decision_request = None
         self.approvals = []
         self.plan_approval = None
+        self.questions = []
         failed = event.get("failed_agents") or []
         fallback = event.get("fallback_agents") or []
         if failed:
@@ -592,9 +613,16 @@ class TurnRun:
                 f"최종 보고서 합성을 완료했습니다."
             )
             self.round_info = "Stopped"
+        elif event.get("converged_round"):
+            self.status_text = f"Round {event['converged_round']} 에서 합의되어 일찍 마쳤고, 결론 합성을 완료했습니다."
+            self.round_info = "Done"
         else:
             self.status_text = "토론 및 최종 산출물 합성을 완료했습니다."
             self.round_info = "Done"
+        # 이 턴의 토큰·LLM 시간 (`usage`). 새로고침한 화면도 끝난 화면과 같은 줄을 봅니다.
+        used = usage_line(event.get("usage"))
+        if used:
+            self.status_text += f" · {used}"
 
     def _upsert(self, msg: Dict[str, Any]) -> None:
         msg_id = msg["id"]
@@ -623,6 +651,7 @@ class TurnRun:
             "decision_request": dict(self.decision_request) if self.decision_request else None,
             "tool_approvals": [dict(a) for a in self.approvals],
             "plan_approval": dict(self.plan_approval) if self.plan_approval else None,
+            "user_questions": [dict(q) for q in self.questions],
             "context_dropped": self.context_dropped,
             "decision_ledger": self.decision_ledger,
             "graph": self.graph.to_state() if self.graph is not None else None,

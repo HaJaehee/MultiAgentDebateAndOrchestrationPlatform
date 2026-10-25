@@ -2,6 +2,9 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
+from app.agents.ask_user import MAX_QUESTIONS_PER_TURN
+from app.agents.llm_usage import Usage
+
 
 class ArtifactItem(BaseModel):
     id: Optional[str] = None
@@ -48,7 +51,8 @@ class DebateMessage(BaseModel):
     graph_port: Optional[str] = None
     # 이 기록이 턴의 흐름에서 맡은 자리 (`MessageModel.turn_meta`, `app/orchestration/turns.py`).
     turn_meta: Optional[Dict[str, Any]] = None
-    # 전역 기본 모델이 대신 답한 발언이면 그 사실 (`MessageModel.llm_meta`). 그 밖에는 None.
+    # 모델 쪽 기록 (`MessageModel.llm_meta`): 전역 기본 모델이 대신 답했으면 그 사실(`fallback` 등),
+    # 이 발언의 토큰·호출 시간(`usage`, `app/agents/llm_usage.py`). 둘 다 없으면 None.
     llm_meta: Optional[Dict[str, Any]] = None
 
     @property
@@ -93,6 +97,14 @@ class DebateState(BaseModel):
     # 사용자가 남은 라운드를 건너뛰고 합성으로 넘어가도록 요청했는지. 합성
     # 프롬프트가 "덜 논의된 상태" 를 알고 쓰도록 여기에 남깁니다.
     stopped_early: bool = False
+    # 결정 장부가 수렴해 남은 라운드를 건너뛰었으면 그 라운드 (v1.5). 정지와 달리 덜 논의된 것이 아닙니다.
+    converged_round: Optional[int] = None
+    # 턴 토큰 예산을 다 써서 일찍 마쳤는지. `stopped_early` 와 함께 켜집니다 (덜 논의된 턴입니다).
+    budget_stopped: bool = False
+    # 전문가가 사람에게 물을 수 있는지와, 이번 턴에 남은 질문 수 (`app/agents/ask_user.py`). 남은 수는 한
+    # 칸짜리 목록이라 발언마다 서는 범위가 같은 값을 나눠 씁니다.
+    ask_user: bool = False
+    questions_left: List[int] = Field(default_factory=lambda: [MAX_QUESTIONS_PER_TURN])
     # 토론 도중 끼어든 사용자 개입 발언의 수.
     interjection_count: int = 0
     # 컨텍스트 창이 넘쳐 사람에게 물어본 결과. 한 턴에 한 번만 묻고 그 답을
@@ -131,3 +143,6 @@ class DebateState(BaseModel):
     status: str = "idle"  # 'idle', 'planning', 'debating', 'synthesizing', 'completed', 'error'
     current_speaker: Optional[str] = None
     error_message: Optional[str] = None
+    # 이번 턴의 LLM 사용량 계량기 (`llm_usage.measuring`). 발언과 보조 호출(장부·요약·라우팅)을 모두 셉니다.
+    # 이어 간 턴이면 끊기기 전까지의 값에서 이어 셉니다. 턴 기록(`TurnModel.usage`)에 남습니다.
+    usage: Usage = Field(default_factory=Usage)

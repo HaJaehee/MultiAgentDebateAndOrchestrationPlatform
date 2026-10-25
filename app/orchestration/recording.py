@@ -591,9 +591,15 @@ class TurnRecorder:
             await db.rollback()
 
     async def set_turn(self, db, state: DebateState, **values: Any) -> None:
-        """턴 기록의 단계·상태를 고칩니다. 못 적어도 턴은 계속됩니다 — 기록의 부산물이라."""
+        """턴 기록의 단계·상태를 고칩니다. 못 적어도 턴은 계속됩니다 — 기록의 부산물이라.
+
+        지금까지의 사용량(`state.usage`)도 함께 적습니다. 그래서 실패하거나 끊긴 턴에도 마지막으로 단계가
+        바뀐 때까지의 값이 남습니다.
+        """
         if not state.turn_id:
             return
+        if not state.usage.empty:
+            values.setdefault("usage", state.usage.as_meta())
         try:
             await db.execute(update(TurnModel).where(TurnModel.id == state.turn_id).values(**values))
             await db.commit()

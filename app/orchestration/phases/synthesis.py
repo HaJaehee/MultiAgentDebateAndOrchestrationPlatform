@@ -191,8 +191,11 @@ class SynthesisPhaseExecutor(PhaseExecutor):
         await self.recorder.set_turn(
             db, state, status=TURN_COMPLETED, phase="completed", finished_at=utc_now(),
         )
+        # 합의: 모두가 발언했고, 덜 논의되지 않았고, 결론이 나왔고, 마지막 장부에 미해결 쟁점이 없습니다.
+        # 장부를 읽지 못하면(형식이 아니면) 합의로 적지 않습니다.
         state.is_consensus_reached = (
             not state.failed_agent_keys and not state.stopped_early and not synthesis_failed
+            and memory.open_issue_count(state.decision_ledger) == 0
         )
         if state.failed_agent_keys:
             state.error_message = (
@@ -217,6 +220,13 @@ class SynthesisPhaseExecutor(PhaseExecutor):
                 "interrupted": state.interrupted,
                 "rounds_completed": state.current_round,
                 "max_rounds": state.max_rounds,
+                "usage": state.usage.as_meta(),
+                "converged_round": state.converged_round,
+                "synthesis_id": next(
+                    (m.id for m in reversed(state.messages) if turns.kind_of(m) == turns.KIND_SYNTHESIS), None
+                ),
+                "budget_stopped": state.budget_stopped,
+                "consensus": state.is_consensus_reached,
             })
 
     async def synthesis_prompt_with_notice(
@@ -342,17 +352,26 @@ class SynthesisPhaseExecutor(PhaseExecutor):
 
         early_stop = ""
         if state.stopped_early:
-            why = (
-                "서버가 다시 시작되어 토론이 예정보다 일찍 끊겼고, 유저가 지금까지의 논의로 "
-                "결론을 내도록 골랐습니다"
-                if state.interrupted else
-                "유저가 예정된 라운드보다 일찍 토론을 정지시켰습니다"
-            )
+            if state.interrupted:
+                why = (
+                    "서버가 다시 시작되어 토론이 예정보다 일찍 끊겼고, 유저가 지금까지의 논의로 "
+                    "결론을 내도록 골랐습니다"
+                )
+            elif state.budget_stopped:
+                why = "이번 턴의 토큰 예산을 다 써서 예정된 라운드보다 일찍 토론을 마쳤습니다"
+            else:
+                why = "유저가 예정된 라운드보다 일찍 토론을 정지시켰습니다"
             early_stop = (
                 f"\n[주의] {why} "
                 f"(진행: {state.current_round}/{state.max_rounds} 라운드). 남은 라운드에서 "
                 f"나왔을 의견을 추측해 채우지 말고, 지금까지 오간 논의만으로 정리하되 "
                 f"아직 검토되지 못한 쟁점을 보고서에 명시하세요.\n"
+            )
+        elif state.converged_round is not None:
+            early_stop = (
+                f"\n[참고] Round {state.converged_round} 에서 결정 장부가 수렴해(미해결 쟁점 없음, 새 결정 없음) "
+                f"남은 라운드를 건너뛰었습니다 (진행: {state.current_round}/{state.max_rounds} 라운드). "
+                f"덜 논의된 것이 아니라 합의로 마친 것이니 그렇게 정리하세요.\n"
             )
 
         missing = ""
@@ -722,10 +741,16 @@ class SynthesisPhaseExecutor(PhaseExecutor):
             "fallback_agents": list(state.fallback_agent_keys),
             "synthesis_failed": synthesis_failed,
             "total_messages": len(state.messages),
-            "consensus_reached": (
+            # 모두 발언했고, 덜 논의되지 않았고, 결론이 나왔는가. 장부의 합의 판정(`turn_completed`
+            # 의 `consensus`)은 이 요약을 만든 뒤에 마지막 장부로 정해지므로 여기에는 없습니다.
+            "completed_cleanly": (
                 not state.failed_agent_keys and not synthesis_failed and not state.stopped_early
             ),
         }
+        if state.converged_round is not None:
+            json_summary["converged_round"] = state.converged_round
+        if state.budget_stopped:
+            json_summary["budget_stopped"] = True
         if state.resumed_count:
             json_summary["resumed_count"] = state.resumed_count
             json_summary["paused_seconds"] = state.paused_seconds

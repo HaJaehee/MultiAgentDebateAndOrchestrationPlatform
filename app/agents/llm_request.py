@@ -7,6 +7,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from app.agents.base import Agent
+from app.agents.ask_user import ask_guidance
 from app.agents.consultation import PEERS_TOOL_PREFIX, consultation_guidance
 from app.agents.llm_context import effective_max_tokens
 from app.agents.llm_tools import binary_file_guidance, file_writing_guidance
@@ -62,6 +63,10 @@ class RequestBuilderMixin:
         consultation = consultation_guidance(tools)
         if consultation:
             parts.append(consultation)
+
+        asking = ask_guidance(tools)
+        if asking:
+            parts.append(asking)
 
         if custom_instructions:
             parts.append(f"[Session Custom Instructions]:\n{custom_instructions}")

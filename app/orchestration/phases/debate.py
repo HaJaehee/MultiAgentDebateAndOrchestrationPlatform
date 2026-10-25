@@ -2,6 +2,9 @@
 
 라운드를 돌리며 전략에 따라 발언 순서를 정하고(오케스트레이터 지명 포함), 라운드 사이에 결정 장부를
 갱신합니다. 병렬 지시 라운드는 `phases/parallel.py`, 그래프 토론은 `phases/graph.py` 가 맡습니다.
+
+라운드를 닫을 때(`_close_round`) 남은 라운드를 건너뛸지도 봅니다 (v1.5): 결정 장부가 수렴했거나
+(`context_memory.ledger_converged`), 턴 토큰 예산을 다 썼으면 그 사실을 기록하고 결론으로 갑니다.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from app.agents.base import Agent
 from app.agents.llm_types import LLMUnavailableError
 from app.events import EventCallback, EventType
+from app.orchestration import context_memory as memory
 from app.orchestration import turns
 from app.orchestration.artifacts import format_roster
 from app.orchestration.control import TurnControl
@@ -88,10 +92,17 @@ class DebatePhaseExecutor(PhaseExecutor):
         start_round, spoken, record = 1, set(), turns.RoundRecord()
         if resume:
             turn_messages = state.messages[state.turn_message_start:]
+            # 끊기기 전에 이미 남은 라운드를 건너뛰기로 했으면 토론은 끝난 것입니다.
+            early = turns.early_end(turn_messages)
+            if early is not None:
+                return early[0] == turns.EARLY_END_BUDGET
             last_round, spoken_keys = turns.round_progress(turn_messages)
             if last_round:
                 start_round, spoken = last_round, spoken_keys
                 record = turns.round_record(turn_messages, last_round)
+
+        # 직전 라운드를 닫으며 쓴 이번 턴의 장부. 수렴 판정은 두 라운드의 장부를 견줍니다.
+        round_ledger: Optional[str] = None
 
         for round_num in range(start_round, max_rounds + 1):
             resuming_round = resume and round_num == start_round
@@ -126,12 +137,12 @@ class DebatePhaseExecutor(PhaseExecutor):
                 if stopped_early:
                     break
                 if round_num < max_rounds and not (control is not None and control.stop_requested):
-                    await self.conversation.update_ledger(
-                        state=state,
-                        orchestrator=orchestrator_agent,
-                        on_event=on_event,
-                        reason=f"Round {round_num}",
+                    ending, round_ledger = await self._close_round(
+                        db, state, setup, round_num, on_event=on_event, previous=round_ledger,
                     )
+                    if ending is not None:
+                        stopped_early = ending == turns.EARLY_END_BUDGET
+                        break
                 continue
 
             if resuming_round and record.nominated is not None:
@@ -198,13 +209,79 @@ class DebatePhaseExecutor(PhaseExecutor):
                 break
 
             if round_num < max_rounds and not (control is not None and control.stop_requested):
-                await self.conversation.update_ledger(
-                    state=state,
-                    orchestrator=orchestrator_agent,
-                    on_event=on_event,
-                    reason=f"Round {round_num}",
+                ending, round_ledger = await self._close_round(
+                    db, state, setup, round_num, on_event=on_event, previous=round_ledger,
                 )
+                if ending is not None:
+                    stopped_early = ending == turns.EARLY_END_BUDGET
+                    break
         return stopped_early
+
+    async def _close_round(
+        self,
+        db: Any,
+        state: DebateState,
+        setup: "TurnSetup",
+        round_num: int,
+        *,
+        on_event: Optional[EventCallback],
+        previous: Optional[str],
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """라운드를 닫습니다: 결정 장부를 갱신하고, 남은 라운드를 건너뛸지 정합니다.
+
+        `(건너뛸 이유, 이번 라운드의 장부)`. 이유는 `turns.EARLY_END_*` 이거나 None 입니다. 장부를
+        갱신하지 못했으면 이번 라운드의 장부는 None 이고, 다음 라운드는 수렴을 판정하지 않습니다.
+
+        * 예산 — 턴 토큰 예산(`token_budget`)을 다 썼습니다. 정지처럼 덜 논의된 턴이 됩니다.
+        * 수렴 — 직전 라운드와 이번 라운드의 장부가 모두 미해결 쟁점 없음이고 결정이 더 늘지 않았습니다.
+          합의로 끝난 것이므로 덜 논의된 턴이 아닙니다.
+        """
+        updated = await self.conversation.update_ledger(
+            state=state, orchestrator=setup.orchestrator, on_event=on_event, reason=f"Round {round_num}",
+        )
+        current = state.decision_ledger if updated else None
+        remaining = setup.max_rounds - round_num
+        used = state.usage.total_tokens
+        if setup.token_budget and used >= setup.token_budget:
+            reason = turns.EARLY_END_BUDGET
+            state.budget_stopped = True
+            content = (
+                f"[토큰 예산] 이번 턴이 쓴 토큰이 {used:,} 으로 예산 {setup.token_budget:,} 에 닿았습니다. "
+                f"남은 {remaining}라운드를 건너뛰고 지금까지의 토론으로 결론을 냅니다."
+            )
+        elif (
+            setup.converge_early and current is not None and previous is not None
+            and memory.ledger_converged(previous, current)
+        ):
+            reason = turns.EARLY_END_CONVERGED
+            state.converged_round = round_num
+            content = (
+                f"[합의 판정] Round {round_num - 1}·{round_num} 의 결정 장부에 미해결 쟁점이 없고 새 결정도 "
+                f"나오지 않았습니다. 남은 {remaining}라운드를 건너뛰고 결론으로 갑니다."
+            )
+        else:
+            return None, current
+
+        logger.info(f"Session {state.session_id}: ending the debate after round {round_num} ({reason})")
+        await self.recorder.record_note(
+            db=db,
+            state=state,
+            on_event=on_event,
+            agent=setup.orchestrator,
+            round_number=round_num,
+            msg_type="orchestrator",
+            content=content,
+            kind=turns.KIND_EARLY_END,
+            data={"reason": reason, "round": round_num},
+        )
+        if on_event:
+            await on_event({
+                "type": EventType.DEBATE_ENDED_EARLY,
+                "reason": reason,
+                "round": round_num,
+                "max_rounds": setup.max_rounds,
+            })
+        return reason, current
 
     async def select_speakers(
         self,

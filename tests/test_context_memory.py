@@ -80,6 +80,9 @@ async def _make_session(max_rounds: int = 1, **columns) -> str:
     await init_db(DB_URL)
     factory = get_session_factory(DB_URL)
     sid = f"memory-{uuid.uuid4().hex[:8]}"
+    # 대역의 장부는 늘 "미해결 쟁점 없음" 이라 두 라운드 뒤에 수렴합니다. 여기 시험은 정해 둔 라운드를
+    # 끝까지 도는 동안의 기억을 보므로 조기 종료를 끕니다 (조기 종료는 test_converge_early.py).
+    columns.setdefault("converge_early", False)
     async with factory() as db:
         db.add(SessionModel(
             id=sid, title="Memory", strategy="sequential_debate", max_rounds=max_rounds,

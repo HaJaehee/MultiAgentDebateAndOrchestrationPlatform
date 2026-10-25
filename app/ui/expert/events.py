@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Dict, Optional
 
 from nicegui import ui
 
+from app.agents.llm_usage import usage_line
 from app.events import TURN_END_EVENTS, Event, EventType
 from app.orchestration.graph_run import GraphRunTracker, node_labels
 from app.ui.components.sidebar import event_changes_session_list
@@ -76,6 +77,20 @@ class ExpertEventView:
         r = event.get("round", 1)
         mr = event.get("max_rounds", 3)
         self.page.chat_feed.set_busy(True, f"Round {r}/{mr} 전문가 토론 진행 중...", f"Round {r}/{mr}")
+
+    @_handles(EventType.DEBATE_ENDED_EARLY)
+    async def _on_debate_ended_early(self, event: Event) -> None:
+        r, mr = event.get("round", 0), event.get("max_rounds", 0)
+        if event.get("reason") == "budget":
+            ui.notify(
+                f"턴 토큰 예산에 닿아 Round {r}/{mr} 에서 토론을 마치고 결론을 냅니다.",
+                type="warning", position="bottom-right",
+            )
+        else:
+            ui.notify(
+                f"Round {r}/{mr} 에서 합의되어 남은 라운드를 건너뛰고 결론을 냅니다.",
+                type="positive", position="bottom-right",
+            )
 
     @_handles(EventType.MESSAGE_STREAM_START)
     async def _on_message_stream_start(self, event: Event) -> None:
@@ -428,6 +443,9 @@ class ExpertEventView:
 
     @_handles(EventType.TURN_COMPLETED)
     async def _on_turn_completed(self, event: Event) -> None:
+        # 이 턴의 토큰·LLM 시간. 끝난 사유를 적는 상태 줄 끝에 붙입니다.
+        used = usage_line(event.get("usage"))
+        used = f" · {used}" if used else ""
         failed = event.get("failed_agents") or []
         fallback = event.get("fallback_agents") or []
         if fallback:
@@ -440,7 +458,9 @@ class ExpertEventView:
                 multi_line=True,
             )
         if failed:
-            self.page.chat_feed.set_busy(False, f"토론 완료 — 응답하지 못한 에이전트: {', '.join(failed)}", "Incomplete")
+            self.page.chat_feed.set_busy(
+                False, f"토론 완료 — 응답하지 못한 에이전트: {', '.join(failed)}{used}", "Incomplete",
+            )
             ui.notify(
                 f"일부 에이전트가 LLM 엔드포인트에 연결하지 못했습니다: {', '.join(failed)}",
                 type="warning",
@@ -449,7 +469,7 @@ class ExpertEventView:
         elif event.get("interrupted"):
             self.page.chat_feed.set_busy(
                 False,
-                "끊긴 턴을 지금까지의 발언으로 마무리하였습니다 (서버 중단으로 덜 논의됨).",
+                f"끊긴 턴을 지금까지의 발언으로 마무리하였습니다 (서버 중단으로 덜 논의됨).{used}",
                 "Resumed",
             )
             ui.notify(
@@ -462,7 +482,7 @@ class ExpertEventView:
             max_rounds = event.get("max_rounds", 0)
             self.page.chat_feed.set_busy(
                 False,
-                f"사용자 요청으로 정지됨 — {rounds}/{max_rounds} 라운드까지의 토론 내용으로 합성하였습니다.",
+                f"사용자 요청으로 정지됨 — {rounds}/{max_rounds} 라운드까지의 토론 내용으로 합성하였습니다.{used}",
                 "Stopped",
             )
             ui.notify(
@@ -470,10 +490,30 @@ class ExpertEventView:
                 type="info",
                 position="bottom-right",
             )
+        elif event.get("converged_round"):
+            self.page.chat_feed.set_busy(
+                False, f"Round {event['converged_round']} 에서 합의되어 일찍 마침 · 결론 합성 완료{used}", "Done",
+            )
         else:
-            self.page.chat_feed.set_busy(False, "토론 완료 및 최종 산출물 합성 완료", "Done")
+            self.page.chat_feed.set_busy(False, f"토론 완료 및 최종 산출물 합성 완료{used}", "Done")
+        # 결론 카드에 갈라 보기 단추를 붙입니다 (바뀐 파일 칩은 체크포인트 알림이 붙입니다).
+        self.page.chat_feed.set_turn_actions(event.get("synthesis_id"), event.get("turn_id") or "")
         # 첫 턴에서 페르소나가 고정되었으므로 편집 버튼을 잠금 상태로 바꿉니다.
         self.page.roster_control.set_personas_locked(True)
+
+    @_handles(EventType.USER_QUESTION_REQUESTED)
+    async def _on_user_question_requested(self, event: Event) -> None:
+        self.page.chat_feed.add_question({k: v for k, v in event.items() if k != "type"})
+        self.page.chat_feed.set_busy(True, f"[{event.get('agent_name', '')}] 의 질문에 답을 기다립니다.", "Question")
+
+    @_handles(EventType.USER_QUESTION_RESOLVED)
+    async def _on_user_question_resolved(self, event: Event) -> None:
+        # 다른 화면에서 답했거나 시간이 지났으면 이 화면의 카드도 걷습니다.
+        self.page.chat_feed.remove_approval(event.get("id"))
+
+    @_handles(EventType.WORKSPACE_CHECKPOINTED)
+    async def _on_workspace_checkpointed(self, event: Event) -> None:
+        self.page.chat_feed.set_turn_actions(event.get("message_id"), event.get("turn_id", ""), event.get("changed"))
 
     @_handles(EventType.RUN_FINISHED)
     async def _on_run_finished(self, event: Event) -> None:

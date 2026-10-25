@@ -17,13 +17,14 @@ from sqlalchemy import desc, select
 from app.agents.personas import effective_personas, resync_agent_configs, session_roster_agents
 from app.agents.skills import scan_skills
 from app.config import resolve_workspace_dir
-from app.database.models import ArtifactModel, MessageModel, SessionModel
+from app.database.models import ArtifactModel, MessageModel, SessionModel, TurnModel
 from app.database.session import get_session_factory
 from app.orchestration.graph_run import GraphRunTracker, last_graph_turn, node_labels
 from app.orchestration.runner import get_debate_runner
 from app.orchestration.strategies import resolve_strategy_name
-from app.orchestration.turns import unfinished_turn
+from app.orchestration.turns import KIND_SYNTHESIS, kind_of, unfinished_turn
 from app.security import is_loopback
+from app.session_fork import ForkError, fork_session
 from app.session_ops import discard_turn
 from app.ui.components.artifact_viewer import ArtifactViewer, merge_artifacts
 from app.ui.components.chat_feed.feed import ChatFeed
@@ -31,6 +32,8 @@ from app.ui.components.chat_feed.common import clip_reloaded_output
 from app.ui.components.quiet_splitter import SPLITTER_FREEZE_JS, QuietSplitter
 from app.ui.components.roster.control import AgentRosterControl
 from app.ui.components.sidebar import SessionSidebar, active_agent_count
+from app.ui.components.skill_draft_dialog import SkillDraftDialog
+from app.ui.components.turn_changes import TurnChangesDialog
 from app.ui.components.workspace_download import WorkspaceDownloadDialog
 from app.ui.diagnostics_script import CLIENT_DIAGNOSTICS_JS
 from app.ui.expert.chrome import build_about_dialog, build_header
@@ -80,6 +83,7 @@ class ExpertPage:
         )
 
         self.sidebar = SessionSidebar(self.on_session_selected, self.on_new_session)
+        self.sidebar.on_open_message = self.open_search_hit
         drawer = self.sidebar.build_ui()
 
         self.roster_control = AgentRosterControl(self.on_config_changed, self.on_resync_agents)
@@ -94,6 +98,19 @@ class ExpertPage:
             upload_destination=self.upload_destination,
             on_resume_turn=self.on_resume_turn,
             on_discard_turn=self.on_discard_turn,
+            on_open_turn_changes=self.open_turn_changes,
+            on_user_question=self.on_user_question,
+            on_fork_turn=self.on_fork_turn,
+            on_draft_skill=self.on_draft_skill,
+        )
+        # 결론으로 스킬 초안을 만드는 창. 초안은 토론과 같은 호출기로 씁니다 (바꿔 끼운 호출기도 그대로).
+        self.skill_draft = SkillDraftDialog(
+            self.session_factory, llm_caller=lambda: self.runner.engine.llm_caller,
+            on_saved=lambda: self.roster_control.refresh_skills(force=True),
+        )
+        # 한 턴이 바꾼 파일을 보고 되돌리는 창. 되돌리면 그 사실이 대화에 남으므로 피드를 다시 그립니다.
+        self.turn_changes = TurnChangesDialog(
+            self.session_factory, is_running=self.runner.is_running, on_reverted=self.reload_current_session,
         )
         # 작업 공간 파일 다운로드. 입력란 아래와 보고서 탭, 두 곳에서 같은 창을 엽니다.
         self.workspace_download = WorkspaceDownloadDialog(self.workspace_root)
@@ -186,6 +203,9 @@ class ExpertPage:
                 curr.strategy = self.roster_control.strategy_name
                 curr.max_rounds = self.roster_control.max_rounds
                 curr.parallel_limit = self.roster_control.parallel_limit
+                curr.converge_early = self.roster_control.converge_early
+                curr.token_budget = self.roster_control.token_budget
+                curr.ask_user = self.roster_control.ask_user
                 curr.tool_mode = self.roster_control.tool_mode
                 curr.custom_instructions = self.roster_control.custom_instructions
                 curr.workspace_dir = self.roster_control.workspace_dir
@@ -536,6 +556,63 @@ class ExpertPage:
         if run.status != "running":
             self.chat_feed.set_busy(False, run.status_text, run.round_info)
 
+    async def open_search_hit(self, session_id: str, message_id: str) -> None:
+        """검색 결과에서 고른 발언: 그 대화를 열고 그 카드로 내려갑니다."""
+        if session_id != self.current_session_id:
+            self.sidebar.current_session_id = session_id
+            await self.on_session_selected(session_id)
+            await self.sidebar.refresh_list()
+        if not self.chat_feed.reveal_message(message_id):
+            ui.notify("그 발언을 찾지 못했습니다 (지워졌을 수 있습니다).", type="warning", position="bottom-right")
+
+    async def on_user_question(self, request_id: str, answer: str) -> bool:
+        """에이전트의 질문에 답합니다. 이미 답이 났거나 토론이 끝났으면 카드를 걷고 알립니다."""
+        if not self.current_session_id:
+            return True
+        approver = "local" if self.viewer_is_local() else "remote"
+        if self.runner.resolve_user_question(self.current_session_id, request_id, answer, approver=approver):
+            return True
+        ui.notify("이미 답이 났거나 기다림이 끝난 질문입니다.", type="info", position="bottom-right")
+        return True
+
+    async def on_draft_skill(self, turn_id: str) -> None:
+        await self.skill_draft.open(self.current_session_id, turn_id)
+
+    async def on_fork_turn(self, turn_id: str) -> None:
+        """이 턴까지로 갈라 새 대화를 만들고 그 대화로 갑니다 (`app/session_fork.py`)."""
+        source = self.current_session_id
+        if not source:
+            return
+        if self.runner.is_running(source):
+            ui.notify("토론이 진행 중입니다. 턴이 끝난 뒤에 갈라 주십시오.", type="warning", position="bottom-right")
+            return
+        try:
+            async with self.session_factory() as db:
+                result = await fork_session(db, source, turn_id)
+        except ForkError as exc:
+            ui.notify(str(exc), type="warning", position="bottom-right")
+            return
+        where = (
+            "그 턴이 끝났을 때의 작업 공간을 따로 만들었습니다"
+            if result.from_snapshot else
+            "그 턴의 스냅샷이 없어 지금 작업 공간을 복사했습니다"
+        )
+        ui.notify(
+            f"'{result.title}' 대화를 만들었습니다 (발언 {result.messages}건). {where}: {result.workspace}. "
+            "전략·참여자·모델을 바꾼 뒤 요청을 보내고, 사이드바의 비교 단추로 원본과 나란히 보십시오.",
+            type="positive", position="bottom-right", multi_line=True, timeout=10000,
+        )
+        self.sidebar.current_session_id = result.session_id
+        await self.on_session_selected(result.session_id)
+        await self.sidebar.refresh_list()
+
+    async def open_turn_changes(self, turn_id: str) -> None:
+        await self.turn_changes.open(self.current_session_id, turn_id)
+
+    async def reload_current_session(self) -> None:
+        if self.current_session_id:
+            await self.load_session_state(self.current_session_id)
+
     async def on_discard_turn(self, turn_id: str) -> None:
         """끊긴 턴을 버립니다. 긴급 종료처럼 요청 글을 입력창으로 돌려줍니다."""
         if not self.current_session_id:
@@ -576,6 +653,11 @@ class ExpertPage:
                 strategy=self.roster_control.strategy_name,
                 max_rounds=self.roster_control.max_rounds,
                 parallel_limit=self.roster_control.parallel_limit,
+                converge_early=self.roster_control.converge_early,
+                token_budget=self.roster_control.token_budget,
+                # 다른 설정과 달리 지금 보던 대화에서 물려받지 않고 늘 켠 채로 시작합니다. 이 칸 이전의 대화는
+                # 모두 꺼져 있어(체험 화면을 위한 기본값) 물려받으면 새 대화도 영영 꺼진 채가 됩니다.
+                ask_user=True,
                 tool_mode=self.roster_control.tool_mode,
                 active_agents=self.roster_control.get_active_agent_keys(),
                 known_agents=self.roster_control.known_agent_keys(),
@@ -613,6 +695,9 @@ class ExpertPage:
                     strategy=resolve_strategy_name(s_obj.strategy),
                     max_rounds=s_obj.max_rounds or 3,
                     parallel_limit=s_obj.parallel_limit or 3,
+                    converge_early=bool(s_obj.converge_early),
+                    token_budget=s_obj.token_budget or 0,
+                    ask_user=bool(s_obj.ask_user),
                     tool_mode=s_obj.tool_mode or "",
                     tool_grants=list(s_obj.tool_grants or []),
                     tool_denials=list(s_obj.tool_denials or []),
@@ -668,6 +753,19 @@ class ExpertPage:
                     ] if hasattr(m, "tool_calls") and m.tool_calls else [],
                 })
 
+            # 턴마다 결론 카드 → (발언 id, 턴 id, 바뀐 파일 수). 체크포인트가 없는 턴은 파일 수가 None 입니다.
+            checkpoints = {
+                turn_id: checkpoint
+                for turn_id, checkpoint in (await db.execute(
+                    select(TurnModel.id, TurnModel.checkpoint).where(TurnModel.session_id == sid)
+                )).all()
+            }
+            turn_change_counts: List[Tuple[str, str, Optional[int]]] = [
+                (m.id, m.turn_id, (checkpoints[m.turn_id] or {}).get("changed"))
+                for m in messages_db
+                if m.turn_id in checkpoints and kind_of(m) == KIND_SYNTHESIS
+            ]
+
             # Load artifacts
             stmt_a = select(ArtifactModel).where(ArtifactModel.session_id == sid).order_by(ArtifactModel.created_at)
             res_a = await db.execute(stmt_a)
@@ -714,6 +812,9 @@ class ExpertPage:
 
         if formatted_msgs:
             self.chat_feed.render_all(formatted_msgs, streaming_ids=streaming_ids)
+            # 결론 카드마다 그 턴이 작업 공간에서 바꾼 파일 수 (`TurnModel.checkpoint`).
+            for message_id, turn_id, changed in turn_change_counts:
+                self.chat_feed.set_turn_actions(message_id, turn_id, changed)
         if formatted_arts:
             self.artifact_viewer.render_artifacts(formatted_arts)
 
@@ -729,6 +830,7 @@ class ExpertPage:
             # 곳을 잃지 않습니다.
             self.chat_feed.set_decision_request(snapshot.get("decision_request"))
             self.chat_feed.set_approvals(snapshot.get("tool_approvals"))
+            self.chat_feed.set_questions(snapshot.get("user_questions"))
             self.chat_feed.set_plan_approval(snapshot.get("plan_approval"))
             # 이번 턴에 갱신된 장부는 턴이 끝나야 DB 에 들어갑니다.
             if snapshot.get("decision_ledger") is not None:

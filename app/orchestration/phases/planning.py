@@ -21,7 +21,7 @@ from app.events import EventCallback, EventType
 from app.orchestration import context_memory as memory
 from app.orchestration import plan_gate, turns
 from app.orchestration.artifacts import format_roster
-from app.orchestration.control import TurnControl
+from app.orchestration.control import TurnControl, asks_human
 from app.orchestration.phases.base import PhaseExecutor
 from app.orchestration.state import DebateMessage, DebateState
 
@@ -156,7 +156,7 @@ class PlanningPhaseExecutor(PhaseExecutor):
         specialists = [a for a in setup.active_agents if a.key != "orchestrator"]
         if (
             not settings.enabled
-            or control is None
+            or not asks_human(control)
             or not specialists
             or plan_message is None
             or plan_message.msg_type == "error"

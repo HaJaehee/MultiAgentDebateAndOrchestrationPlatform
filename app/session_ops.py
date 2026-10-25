@@ -21,8 +21,12 @@
 작업 공간·지식 그래프·에이전트 구성·이전 결론은 따라옵니다.
 """
 
+import asyncio
 import logging
 import uuid
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from sqlalchemy import delete, func, select
@@ -38,6 +42,8 @@ from app.database.models import (
     TurnModel,
     utc_now,
 )
+from app import workspace_checkpoint
+from app.config import resolve_workspace_dir
 from app.mcp.manager import carry_over_memory_graph
 
 logger = logging.getLogger(__name__)
@@ -60,6 +66,94 @@ def _clean(ids: Iterable[str]) -> List[str]:
         if value and value not in seen:
             seen.append(value)
     return seen
+
+
+async def forget_checkpoints(db, session_id: str, turn_ids: Optional[Sequence[str]] = None) -> None:
+    """턴들의 작업 공간 체크포인트 이름을 지웁니다 (`app/workspace_checkpoint.py`). 주지 않으면 대화 전체.
+
+    턴을 버리거나 대화를 지울 때 부릅니다. 기록이 사라진 턴은 화면에서 되돌릴 수 없으므로, 저장소에 이름만
+    남겨 둘 이유가 없습니다. 못 지워도 기록 삭제는 계속됩니다.
+    """
+    stmt = select(TurnModel.id, TurnModel.config).where(
+        TurnModel.session_id == session_id, TurnModel.checkpoint.is_not(None),
+    )
+    if turn_ids is not None:
+        stmt = stmt.where(TurnModel.id.in_(list(turn_ids)))
+    by_workspace: Dict[Path, List[str]] = defaultdict(list)
+    for turn_id, config in (await db.execute(stmt)).all():
+        by_workspace[resolve_workspace_dir((config or {}).get("workspace_dir") or None)].append(turn_id)
+    for workspace, ids in by_workspace.items():
+        try:
+            await asyncio.to_thread(workspace_checkpoint.forget, workspace, ids)
+        except Exception as exc:  # noqa: BLE001 - 이름이 남아도 기록 삭제는 계속됩니다
+            logger.warning(f"Could not forget workspace checkpoints in {workspace}: {exc}")
+
+
+@dataclass
+class TurnChanges:
+    """한 턴이 작업 공간에서 바꾼 파일 (`app/workspace_checkpoint.py`)."""
+
+    turn_id: str
+    workspace: Path
+    start: str
+    end: str
+    files: List[workspace_checkpoint.FileChange]
+    started_at: Any = None
+    reverted_at: Optional[str] = None
+
+
+async def turn_changes(db, session_id: str, turn_id: str) -> Optional[TurnChanges]:
+    """그 턴의 체크포인트와 바뀐 파일. 체크포인트가 없거나(git 없음, 이 기능 이전의 턴) 읽지 못하면 None."""
+    turn = await db.get(TurnModel, turn_id)
+    if turn is None or turn.session_id != session_id or not isinstance(turn.checkpoint, dict):
+        return None
+    start, end = turn.checkpoint.get("start"), turn.checkpoint.get("end")
+    if not start or not end:
+        return None
+    workspace = resolve_workspace_dir((turn.config or {}).get("workspace_dir") or None)
+    files = await asyncio.to_thread(workspace_checkpoint.changes, workspace, start, end)
+    if files is None:
+        return None
+    return TurnChanges(
+        turn_id=turn_id, workspace=workspace, start=start, end=end, files=files,
+        started_at=turn.started_at, reverted_at=turn.checkpoint.get("reverted_at"),
+    )
+
+
+async def turn_file_diff(changes: TurnChanges, path: str) -> str:
+    return await asyncio.to_thread(workspace_checkpoint.file_diff, changes.workspace, changes.start, changes.end, path)
+
+
+async def revert_turn_files(db, session_id: str, turn_id: str) -> workspace_checkpoint.RevertResult:
+    """그 턴이 바꾼 파일을 턴 시작 때의 모습으로 되돌리고, 그 사실을 대화에 남깁니다.
+
+    기록은 MADO 의 안내(`system`)로 남습니다. 다음 턴의 에이전트가 "그 파일은 되돌려졌다" 를 알아야, 아직
+    있는 줄 알고 그 파일을 고치거나 인용하지 않습니다.
+    """
+    changes = await turn_changes(db, session_id, turn_id)
+    if changes is None:
+        return workspace_checkpoint.RevertResult(ok=False, error="이 턴에는 되돌릴 체크포인트가 없습니다.")
+    result = await asyncio.to_thread(workspace_checkpoint.revert, changes.workspace, changes.start, changes.end)
+    if not result.ok or not result.reverted:
+        return result
+
+    listed = ", ".join(f"`{c.path}`({c.label})" for c in result.reverted[:20])
+    more = f" 외 {len(result.reverted) - 20}개" if len(result.reverted) > 20 else ""
+    now = utc_now()
+    db.add(MessageModel(
+        session_id=session_id, sender_key="system", sender_name="MADO", sender_role="",
+        msg_type="system", round_number=0, started_at=now, finished_at=now,
+        turn_meta={"kind": "note", "reverted_turn": turn_id},
+        content=(
+            f"[작업 공간 되돌리기] 사람이 한 턴의 파일 변경 {len(result.reverted)}건을 그 턴이 시작하기 전의 "
+            f"모습으로 되돌렸습니다: {listed}{more}. 이 파일들은 지금 그 턴 이전의 내용입니다."
+        ),
+    ))
+    turn = await db.get(TurnModel, turn_id)
+    if turn is not None:
+        turn.checkpoint = {**(turn.checkpoint or {}), "reverted_at": now.isoformat()}
+    await db.commit()
+    return result
 
 
 async def discard_turn(
@@ -86,6 +180,7 @@ async def discard_turn(
     않아 조용히 남을 뿐입니다).
     """
     if turn_id:
+        await forget_checkpoints(db, session_id, [turn_id])
         await db.execute(delete(SpeechDraftModel).where(
             SpeechDraftModel.turn_id == turn_id,
             SpeechDraftModel.session_id == session_id,
@@ -249,6 +344,9 @@ async def continue_session(
         strategy=source.strategy,
         max_rounds=source.max_rounds,
         parallel_limit=source.parallel_limit,
+        converge_early=source.converge_early,
+        token_budget=source.token_budget,
+        ask_user=source.ask_user,
         active_agents=list(source.active_agents or []),
         known_agents=list(source.known_agents or []),
         custom_instructions=source.custom_instructions or "",

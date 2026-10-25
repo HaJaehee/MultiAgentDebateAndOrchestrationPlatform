@@ -91,13 +91,19 @@ class DebateRunner:
 
     def start(self, session_id: str, user_prompt: str,
               workspace: Optional[str] = None,
-              skill_designations: Optional[Dict[str, List[str]]] = None) -> TurnRun:
-        """토론을 백그라운드에서 시작합니다. 이미 돌고 있으면 그 실행을 돌려줍니다."""
+              skill_designations: Optional[Dict[str, List[str]]] = None,
+              *, attended: bool = True) -> TurnRun:
+        """토론을 백그라운드에서 시작합니다. 이미 돌고 있으면 그 실행을 돌려줍니다.
+
+        `attended=False` 는 답할 사람이 없는 턴입니다 (API·MCP 로 시작, `app/headless.py`). 묻는 쪽지를
+        띄우지 않습니다 (`control.asks_human`).
+        """
         existing = self._runs.get(session_id)
         if existing is not None and existing.status == "running":
             return existing
 
         run = TurnRun(session_id, user_prompt, workspace, event_bus=self.event_bus)
+        run.control.attended = attended
         self._runs[session_id] = run
 
         async def body(on_event) -> None:
@@ -300,6 +306,13 @@ class DebateRunner:
         return run.resolve_tool_approval(
             request_id, decision, scope=scope, reason=reason, approver=approver,
         )
+
+    def resolve_user_question(self, session_id: str, request_id: str, answer: str, *, approver: str = "") -> bool:
+        """에이전트의 질문에 답합니다. 빈 답은 건너뛰기입니다."""
+        run = self._runs.get(session_id)
+        if run is None or run.status != "running":
+            return False
+        return run.control.resolve_user_question(request_id, answer, approver=approver)
 
     def resolve_plan_approval(self, session_id: str, request_id: str, decision: str, *,
                               tasks: Optional[List[Dict[str, Any]]] = None, comment: str = "",

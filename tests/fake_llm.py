@@ -8,6 +8,7 @@
 import asyncio
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from app.agents import llm_usage
 from app.agents.base import Agent
 from app.agents.llm_types import LLMUnavailableError
 
@@ -64,6 +65,7 @@ class FakeLLMCaller:
         fail_keys: Optional[List[str]] = None,
         replies: Optional[Dict[str, str]] = None,
         tool_calls: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        usage: Optional[Dict[str, Any]] = None,
     ):
         # 이 키를 가진 에이전트는 엔드포인트가 죽은 것처럼 굴게 합니다.
         self.fail_keys = set(fail_keys or ())
@@ -71,6 +73,8 @@ class FakeLLMCaller:
         # 에이전트 키 -> 그 에이전트가 발언할 때마다 실행한 것으로 칠 도구 목록.
         # 실제 루프와 같은 방식으로, 같은 dict 를 콜백과 반환값에 함께 씁니다.
         self.tool_calls = tool_calls or {}
+        # 주면 호출마다 진짜 호출기처럼 사용량을 알립니다 (`llm_usage`): 이 `usage` 와 0.5초.
+        self.usage = usage
         self.calls: List[str] = []
         # 도구 예산을 다 쓴 척할 에이전트 키. 그 발언에서 `budget_arbiter` 를
         # 실제로 불러, 화면까지 이어지는 통로가 살아 있는지 확인합니다.
@@ -141,8 +145,12 @@ class FakeLLMCaller:
                 "used": agent.max_tool_iterations,
                 "tool_calls": agent.max_tool_iterations,
             }))
+        if self.usage is not None:
+            llm_usage.note_call(0.5)
         if agent.key in self.fail_keys:
             raise LLMUnavailableError(agent, "APIConnectionError: 500 Internal Server Error")
+        if self.usage is not None:
+            llm_usage.note_response({"usage": self.usage})
 
         tool_logs: List[Dict[str, Any]] = []
         for spec in self.tool_calls.get(agent.key, []):

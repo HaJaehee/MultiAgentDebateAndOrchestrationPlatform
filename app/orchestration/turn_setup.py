@@ -42,6 +42,11 @@ class TurnSetup:
     # 참여하지 않는 에이전트는 첫 턴에 고정한 스냅샷입니다 — 자문 상대를 고른 에이전트는 이번
     # 토론에 참여하지 않는 전문가에게도 물을 수 있습니다 (`peer_consultation.targets`).
     consult_pool: List[Agent] = field(default_factory=list)
+    # 결정 장부가 수렴하면 일찍 끝낼지, 턴 토큰 예산(0 = 없음) (v1.5).
+    converge_early: bool = True
+    token_budget: int = 0
+    # 전문가가 발언 도중 사람에게 물을 수 있는지 (`ask__ask_user`, v1.5).
+    ask_user: bool = False
 
     def config(self, workspace: Path) -> Dict[str, Any]:
         """턴 기록에 고정해 둘 구성 (`TurnModel.config`). 끊긴 턴은 이 구성으로 마칩니다."""
@@ -53,6 +58,9 @@ class TurnSetup:
             "custom_instructions": self.custom_instructions,
             "workspace_dir": str(workspace),
             "skill_designations": {k: list(v) for k, v in self.skill_designations.items()},
+            "converge_early": self.converge_early,
+            "token_budget": self.token_budget,
+            "ask_user": self.ask_user,
         }
 
 
@@ -92,6 +100,7 @@ def new_state(session_id: str, user_prompt: str, workspace: Path, setup: "TurnSe
         status="planning",
         memory_budget=setup.memory_budget,
         skill_designations={k: list(v) for k, v in setup.skill_designations.items()},
+        ask_user=setup.ask_user,
     )
 
 
@@ -114,6 +123,11 @@ def restore_turn_state(state: DebateState) -> None:
     state.current_round = max(
         (m.round_number for m in turn_messages if m.sender_key != "user"), default=0
     )
+    early = turns.early_end(turn_messages)
+    if early is not None:
+        reason, round_number = early
+        state.converged_round = round_number if reason == turns.EARLY_END_CONVERGED else None
+        state.budget_stopped = reason == turns.EARLY_END_BUDGET
 
 
 class TurnPreparer:
@@ -170,6 +184,9 @@ class TurnPreparer:
             active_keys = session_model.active_agents or ["orchestrator", "architect", "coder", "critic"]
             custom_instructions = session_model.custom_instructions or ""
             designations = skill_designations
+            converge_early = bool(session_model.converge_early)
+            token_budget = max(0, int(session_model.token_budget or 0))
+            ask_user = bool(session_model.ask_user)
         else:
             strategy_name = resolve_strategy_name(config.get("strategy"))
             max_rounds = int(config.get("max_rounds") or session_model.max_rounds or 3)
@@ -177,6 +194,9 @@ class TurnPreparer:
             active_keys = list(config.get("active_agents") or session_model.active_agents or [])
             custom_instructions = str(config.get("custom_instructions") or "")
             designations = config.get("skill_designations")
+            converge_early = bool(config.get("converge_early", True))
+            token_budget = max(0, int(config.get("token_budget") or 0))
+            ask_user = bool(config.get("ask_user", False))
 
         # 도구 보안: 이 대화의 모드와 "이 대화에서 허용·거부" 목록으로 문지기를 세웁니다.
         self.ctx.tool_gates[session_id] = ToolGate(
@@ -236,4 +256,7 @@ class TurnPreparer:
             memory_budget=memory_budget,
             skill_designations=clean_skill_designations(designations, active_keys),
             consult_pool=consult_pool,
+            converge_early=converge_early,
+            token_budget=token_budget,
+            ask_user=ask_user,
         )

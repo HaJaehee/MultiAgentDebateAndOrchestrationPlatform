@@ -239,6 +239,35 @@ def skills_root(config: Optional[RootConfig] = None) -> Path:
     return path if path.is_absolute() else PROJECT_ROOT / path
 
 
+def write_skill(name: str, text: str, config: Optional[RootConfig] = None) -> Path:
+    """새 스킬 폴더를 만들고 `SKILL.md` 를 씁니다 (토론 결과에서 만든 초안, v1.5). 쓴 파일 경로를 돌려줍니다.
+
+    있는 스킬을 덮어쓰지 않습니다 — 사람이 고쳐 둔 지침이 초안으로 사라지면 안 됩니다. 머리말의 `name` 은 폴더
+    이름과 같아야 하고 `description` 이 있어야 합니다 (`scan_skills` 가 읽는 규칙과 같습니다). 틀리면 `SkillError`.
+    """
+    folder_name = (name or "").strip()
+    if not SKILL_NAME_PATTERN.fullmatch(folder_name):
+        raise SkillError(
+            f"스킬 이름 '{name}' 은 쓸 수 없습니다. 영문·숫자·밑줄·하이픈으로 64자 이내, 영문이나 숫자로 시작해야 합니다."
+        )
+    meta, body = parse_skill_md(text)
+    if meta.get("name") != folder_name:
+        raise SkillError(f"머리말의 name('{meta.get('name')}')이 스킬 이름('{folder_name}')과 다릅니다.")
+    if not (meta.get("description") or "").strip():
+        raise SkillError("머리말에 description 이 없습니다. 에이전트는 이 한 줄을 보고 스킬을 고릅니다.")
+    if not body.strip():
+        raise SkillError("본문(지침)이 비어 있습니다.")
+    if len(text.encode("utf-8")) > MAX_SKILL_MD_BYTES:
+        raise SkillError(f"{SKILL_FILE} 가 너무 깁니다 ({MAX_SKILL_MD_BYTES // 1024} KB 이내).")
+    folder = skills_root(config) / folder_name
+    if folder.exists():
+        raise SkillError(f"같은 이름의 스킬이 이미 있습니다: {folder_name}. 다른 이름을 고르십시오.")
+    folder.mkdir(parents=True)
+    path = folder / SKILL_FILE
+    path.write_text(text.rstrip("\n") + "\n", encoding="utf-8")
+    return path
+
+
 def scan_skills(
     root: Optional[Path] = None, disabled: Optional[Iterable[str]] = None,
 ) -> List[Skill]:
