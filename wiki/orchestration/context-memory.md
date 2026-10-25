@@ -180,6 +180,35 @@ earlier one. What changes often therefore goes last:
 
 Anthropic needs explicit `cache_control` markers, which MADO does not send yet.
 
+### 2.6. Convergence: ending early (v1.5)
+
+The ledger is also the debate's convergence signal. After each round (except the last) the engine
+updates it anyway; `DebatePhaseExecutor._close_round` then compares it with the previous round's ledger
+**of the same turn** (`context_memory.ledger_converged`):
+
+* `미해결 쟁점` is empty in **both** ledgers, and
+* `결정 사항` did not grow (fewer is fine — items get merged).
+
+Decision wording is deliberately not compared: the model rewrites the ledger each time, so the same
+decision is phrased differently. A ledger whose sections cannot be read never counts as converged —
+ending too early costs more than one extra round. No extra LLM call is made.
+
+When it converges, the remaining rounds are skipped: an orchestrator note (`turn_meta.kind = early_end`,
+`reason = converged`), the event `debate_ended_early`, and a synthesis instruction saying the debate
+**concluded** (not "was cut short"). Round 1 can never converge (no earlier ledger in the turn), so a
+3-round debate can end after round 2. Parallel rounds are judged after their interim merge; graph
+debates are not affected (gates decide their end). Switch: roster `합의되면 일찍 끝내기`
+(`sessions.converge_early`, default on, frozen into the turn config).
+
+The same boundary checks the **turn token budget** (`sessions.token_budget`, 0 = none, roster
+`토큰 예산`): once the turn's input+output tokens ([usage](../agents/llm-integration.md#6-usage-metering-v15))
+reach it, the debate ends with `reason = budget` — which, unlike convergence, counts as stopped early.
+
+`is_consensus_reached` now means consensus: everyone spoke, nothing stopped the turn, the synthesis
+exists, **and the final ledger has no open issues**. The synthesis JSON's former `consensus_reached`
+(clean completion) is `completed_cleanly`. A resumed turn that had already ended early goes straight to
+synthesis (`turns.early_end`).
+
 ## 3. Persistence
 
 | Column (`sessions`) | Meaning |
@@ -201,6 +230,8 @@ Anthropic needs explicit `cache_control` markers, which MADO does not send yet.
 - **Continuing a session** (`continue_session`) carries the ledger with `ledger_through_id = NULL`; the
   summary stays behind, since it covers messages the new session does not have.
 - Old databases get the four columns through `_ADDED_COLUMNS`.
+- The same four values are also stored on the turn (`turns.memory`) when it completes, so a fork at an
+  earlier turn starts from that turn's memory ([Session Handoff §7](session-handoff.md)).
 
 ## 4. UI
 

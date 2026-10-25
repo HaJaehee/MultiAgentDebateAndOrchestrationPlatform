@@ -4,6 +4,53 @@ Change history for the MADO: Multi-Agent Debate & Orchestration Platform, newest
 entry links to the topic page carrying the full explanation — this file is an index of *what
 changed*, not a second copy of the documentation.
 
+## v1.5
+
+**Tokens and LLM time are measured.** Every LLM call is timed and its reported usage (input, output,
+cached input, reasoning) counted, per speech (`messages.llm_meta.usage`) and per turn (`turns.usage`,
+including the ledger, summary and routing calls). Speech cards show `토큰 13.4k` with the details in the
+tooltip, the end-of-turn status line and the export carry totals, and the sidebar tooltip shows a
+conversation's total. The override point `_complete_unthrottled` is unchanged; replacements report calls
+and time only. → [LLM Integration §6](agents/llm-integration.md)
+
+**Debates end when they have converged.** After each round the engine already rewrites the decision
+ledger; when two consecutive ledgers of the turn have no open issues and no new decisions, the remaining
+rounds are skipped, the feed says so and the synthesis is told the debate concluded. On by default
+(`합의되면 일찍 끝내기`); graph debates are unaffected. A turn token budget (`토큰 예산`) can end a debate
+the same way. `is_consensus_reached` now requires the final ledger to have no open issues; the synthesis
+JSON's `consensus_reached` is renamed `completed_cleanly`. → [Conversation Memory §2.6](orchestration/context-memory.md)
+
+**A turn's file changes can be seen and reverted.** The host snapshots the workspace at the start and end
+of every turn into `refs/mado/turns/…` without touching HEAD, branches or the index. The conclusion card's
+file chip lists the changed files with diffs; `이 턴 되돌리기` restores them, refusing files changed again
+since. → [Workspace Checkpoints](orchestration/workspace-checkpoints.md)
+
+**Conversation search.** The sidebar searches titles and speeches — FTS5 trigram for terms of three
+characters or more, `LIKE` for shorter ones — and opens the matching card. → [UI Components §1.1](ui/components.md)
+
+**Debates without a page: REST and an MCP server.** `/api/sessions/...` creates conversations, starts and
+stops turns, streams events (SSE) and returns results; `/mcp` offers the same as MCP tools, so Claude Code
+or another agent can use MADO as a debate team. Such turns are unattended (no approval cards, `ask` tool
+verdicts not run). Remote callers send the owner token as `Authorization: Bearer`. → [Headless API](operations/headless-api.md)
+
+**Specialists can ask the person.** With `에이전트 질문 받기` on, a specialist may ask a short question
+mid-speech (`ask__ask_user`, three per turn); a violet card waits five minutes, and the answer is shared
+with later speakers as the person's words. `ask` is now a reserved MCP server name. → [Ask the User](agents/ask-user.md)
+
+**Fork a conversation at a turn, and compare.** The conclusion card's fork button copies the
+conversation up to that turn — with the memory and workspace as they were then — into a new, unlocked
+conversation to replay with another strategy or model. `/compare` shows two conversations side by side
+with 👍/👎 per conclusion. The continue button is now `»` and its conversations end in `(이어서)`; forks end
+in `(갈래)`. → [Session Handoff §7](orchestration/session-handoff.md) · [UI Components §1.7](ui/components.md)
+
+**MADO Bench.** `python -m app.bench run bench/<scenario>.json` runs one request through several variants
+(strategy, rounds, participants, models) and writes a comparison table with tokens, time, early end, open
+issues, tool problems, files changed and ratings. `--dry-run` checks the pipeline without an LLM. Two
+example scenarios ship in `bench/`. → [Bench](operations/bench.md)
+
+**Skills from a debate.** The conclusion card's skill button drafts a `SKILL.md` from the turn's request,
+conclusion and ledger; after editing it is saved as a new skill, switched off. → [Skills §10](agents/skills.md)
+
 ## v1.4.1
 
 **An MCP server that cannot start no longer fakes its tools.** When a server failed to start, the client used to

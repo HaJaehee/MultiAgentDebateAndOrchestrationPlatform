@@ -673,3 +673,34 @@ The tools are now sent with `tool_choice: "none"`, which satisfies both requirem
 the tools are defined, and the model cannot call them. LiteLLM maps `"none"` onto each provider's
 equivalent. `build_completion_kwargs()` takes the choice as a parameter; every other call site
 still passes `"auto"`.
+
+---
+
+## 6. Usage Metering (v1.5)
+
+[app/agents/llm_usage.py](file:///d:/MultiAgentDebateOrchestration/app/agents/llm_usage.py) counts tokens and
+LLM time per speech and per turn, so cost, throughput and the effect of changes (early end, strategies,
+the [bench](../operations/bench.md)) can be measured.
+
+* **Where it is measured.** Every call goes through `_complete_once`: it times `_complete_unthrottled`
+  (after the concurrency slot is acquired — waiting for a slot is not LLM time) and counts the call, also
+  when it fails. The default `_complete_unthrottled` adds the response's `usage` (input, output, cached
+  input — OpenAI `prompt_tokens_details.cached_tokens` or Anthropic `cache_read_input_tokens` — and
+  reasoning tokens). The override point's signature and return value are unchanged; a replacement
+  (test doubles, MADOWarGame) reports calls and time but no tokens.
+* **Nested meters in a context variable.** The engine opens a turn meter (`measuring()`) around the whole
+  turn; `SpeechRunner.speak` opens one per speech inside it. A call adds to every open meter, so speech
+  tokens appear in both and auxiliary calls (plan tasks, routing, ledger, summary, gates, diagram repair
+  outside a speech) only in the turn total. Parallel speech tasks inherit the turn meter and keep their
+  own speech meter.
+* **Where it lands.** Speech: `messages.llm_meta.usage` (next to the fallback fields, which readers still
+  check by `fallback`). Turn: `turns.usage`, rewritten at every phase change so failed or interrupted
+  turns keep what they used; a resumed turn continues from it. Events: `turn_completed.usage`. Screens:
+  card time line and tooltip, the end-of-turn status line, the sidebar tooltip, the export, the compare
+  page and bench report. Nothing is written when nothing was reported.
+* **Accuracy.** Tokens are what the provider reports. When a streaming provider does not send usage,
+  LiteLLM's `stream_chunk_builder` counts with a tokenizer, which can differ slightly from the server.
+* **Turn token budget.** `sessions.token_budget` ends the debate at a round boundary once the turn total
+  reaches it ([Conversation Memory §2.6](../orchestration/context-memory.md)).
+
+Tests: `tests/test_llm_usage.py`.

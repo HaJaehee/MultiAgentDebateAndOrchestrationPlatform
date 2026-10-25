@@ -142,6 +142,8 @@ Declares external MCP server processes launched and monitored by the backend.
 | `env` | `dict[str, str]`| `{}` | Process environment variables injected into the child process. |
 | `enabled` | `bool` | `true` | When `false`, the server is skipped during startup. |
 
+Reserved names — rejected as `mcp_servers` keys because built-in host tools use them as prefixes: `skills` (`skills__load_skill`), `peers` (`peers__consult_agent`), `ask` (`ask__ask_user`, v1.5).
+
 > **Important**: Never use `npx` in air-gapped or offline production environments, as `npx` attempts to reach the npm registry if packages are not in the current working directory. Execute entrypoint scripts directly with `node` (e.g. `node ./mcp_node/node_modules/.../dist/index.js`).
 
 ### 2.5. `agents.<key>` Object

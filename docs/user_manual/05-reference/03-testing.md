@@ -3,7 +3,7 @@
 > 상위: [레퍼런스 개관](README.md) · 이전: [프로젝트 구조](02-project-layout.md)
 
 ```bash
-pytest -q               # 전체 테스트 스위트 실행 (2,020개 통과·2개 건너뜀, 약 65초 소요)
+pytest -q               # 전체 테스트 스위트 실행 (2,145개 통과·2개 건너뜀, 약 80초 소요)
 pytest -v tests/test_config.py
 pytest -k "snapshot"
 ```

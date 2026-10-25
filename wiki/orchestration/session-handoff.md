@@ -113,7 +113,7 @@ sequenceDiagram
 | Note text | [`build_handoff_note()`](file:///d:/MultiAgentDebateOrchestration/app/session_ops.py) |
 | Graph directory resolution | [`memory_graph_dir()`](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py) — finds whichever server declares `MEMORY_GRAPH_DIR`, so renaming the server key does not break it |
 | Graph copy | [`carry_over_memory_graph()`](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py) |
-| UI entry point | `⑂` button per session card in [`SessionSidebar`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/sidebar.py) |
+| UI entry point | `»` (새 대화로 이어가기) button per session card in [`SessionSidebar`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/sidebar.py) |
 
 `memory_graph_dir()` calls `RootConfig.mcp_servers_for_workspace()`, which mutates the `WORKSPACE_DIR` environment variable as an intentional side effect (child MCP processes inherit it). Because this call is read-only, it saves and restores the previous value — otherwise resolving a path would silently re-point the servers that are currently running.
 
@@ -121,6 +121,33 @@ sequenceDiagram
 
 ## 6. Constraints
 
-- **A running debate cannot be handed off.** The `⑂` button is disabled while `DebateRunner.is_running(session_id)` — the conclusion does not exist yet, so the note would be half empty.
+- **A running debate cannot be handed off.** The `»` button is disabled while `DebateRunner.is_running(session_id)` — the conclusion does not exist yet, so the note would be half empty.
 - **Title suffix does not stack.** Continuing a continued session yields `... (이어서)`, not `... (이어서) (이어서)`.
 - **Artifacts stay on the source.** They are referenced by title in the note; the new session produces its own.
+
+---
+
+## 7. Forking a conversation at a turn (v1.5)
+
+Continuing (above) **drops** the transcript and keeps the conclusion — the remedy for a full context.
+Forking is the opposite: it **keeps everything up to a chosen turn** and lets that point be replayed with
+another strategy, other participants or other models, then compared side by side.
+Code: [app/session_fork.py](file:///d:/MultiAgentDebateOrchestration/app/session_fork.py).
+
+| | Continue (`»`) | Fork (conclusion card, `call_split`) |
+| :--- | :--- | :--- |
+| Transcript | Not carried | Messages, tool records, artifacts and turn rows up to the turn, with new ids |
+| Memory | Ledger only | The ledger and summary **as they were when that turn ended** (`TurnModel.memory`; the session's own memory for the latest turn) |
+| Workspace | Same folder | A separate folder `<workspace>-fork-<id>` exported from that turn's `end` checkpoint ([Workspace Checkpoints](workspace-checkpoints.md)); without a checkpoint, a copy of the folder as it is now (the notice says so) |
+| Knowledge graph | Copied | Copied into the new folder's graph directory |
+| Lock | Unlocked | Unlocked — change models or participants before the next turn |
+| Title | `… (이어서)` | `… (갈래)`, and `forked_from = {session_id, turn_id, title}` |
+
+Ids that records use to point at each other (the plan an approval refers to, ledger and summary
+anchors, a turn's opening message) are remapped. Not carried: later turns, unfinished speech drafts,
+"이 대화에서 허용·거부" rules, workspace-revert notes (the fork's folder never had that revert), and the
+copied turns' checkpoints (the new folder has no such refs). An unfinished turn cannot be forked.
+
+The sidebar card of a fork has a compare button that opens `/compare?a=<original>&b=<fork>`
+([UI Components §1.7](../ui/components.md)); ratings given there feed the
+[bench](../operations/bench.md) report. Tests: `tests/test_session_fork.py`.

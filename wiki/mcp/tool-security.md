@@ -291,12 +291,21 @@ validated when the config loads; a bad line fails the load with every problem li
 
 ---
 
+## 9-b. Since v1.5
+
+- **Undo per turn** — the host snapshots the workspace at the start and end of every turn and a person
+  can revert one turn's file changes ([Workspace Checkpoints](../orchestration/workspace-checkpoints.md)).
+  This is the safety net that makes `auto` mode easier to choose; it is not a security boundary.
+- **Unattended turns** — turns started from the API, the MCP server or the bench have nobody to ask:
+  `ask` verdicts are not run (`rule = unattended`), as for any call without a gate owner
+  ([Headless API §2](../operations/headless-api.md)).
+- `ask__ask_user` is a host tool and skips the gate — it only asks the person a question.
+
 ## 10. Not in This Release
 
 - Editing `conf.json`'s rules and a security log view in the UI (the conversation's rules can be
   viewed and deleted — §7.1).
 - Marking fetched content as untrusted in the observation fed to the model.
-- Snapshots before overwriting (Claude Code's checkpoints).
 - OS-level isolation of the sandbox kernel (Windows Job Object / AppContainer, bubblewrap on Linux) —
   the real boundary for code execution.
 - Taint tracking: once a speech has read outside content, its network calls always ask.

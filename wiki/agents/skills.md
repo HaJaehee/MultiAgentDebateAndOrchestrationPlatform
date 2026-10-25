@@ -237,6 +237,26 @@ section so the orchestrator hands that part of the request to that specialist.
 
 ---
 
+## 10. Skills from a debate (v1.5)
+
+Rules a debate settles — requirements, decisions and why alternatives were rejected — live in its ledger
+and conclusion, but do not follow into the next conversation. The conclusion card's `auto_stories`
+button turns them into a skill ([app/orchestration/skill_draft.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/skill_draft.py)):
+
+1. A tool-less copy of the conversation's orchestrator writes a `SKILL.md` draft from the turn's request,
+   conclusion and the ledger as it was when that turn ended, shown the first lines of `mermaid-diagrams`
+   as a format example. Its answer is cleaned (fences, preface), and a name that breaks the folder-name
+   rule becomes `debate-rules-<date>`.
+2. The person edits name, description and body in a dialog.
+3. `save_draft` writes a **new** folder only (`skills.write_skill` refuses existing names, a name that
+   differs from the front matter, an empty description or body), then adds the skill to
+   `skills.disabled` in the active `conf.json`.
+
+The skill starts off: switch it on in the roster's 스킬 section and assign it on agent cards. Skills are
+live, so it is used from the next speech. Tests: `tests/test_skill_draft.py`.
+
+---
+
 ## Related pages
 
 - [Agent Pool & Roles](agent-pool-and-roles.md) · [Roster Editing](roster-editing.md)

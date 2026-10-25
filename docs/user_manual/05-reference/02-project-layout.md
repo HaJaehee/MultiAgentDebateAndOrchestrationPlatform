@@ -9,7 +9,7 @@
 ```text
 MultiAgentDebateOrchestration/
 ├── app/                      애플리케이션 소스
-├── tests/                    테스트 (2,020개)
+├── tests/                    테스트 (2,147개)
 ├── wiki/                     영문 기술 위키
 ├── docs/
 │   ├── user_manual/          이 문서 모음 (마크다운)
@@ -17,6 +17,8 @@ MultiAgentDebateOrchestration/
 │   └── render_user_manual.py 렌더러
 ├── mcp_servers/              포크한 MCP 서버 원본
 │   └── memory_scoped/        대화별 지식 그래프 (공식 서버의 포크)
+│
+├── bench/                    전략 비교 시나리오 (v1.5, python -m app.bench)
 │
 ├── conf.example.json         설정 템플릿 (저장소에 커밋)
 ├── conf.json                 실제 설정 (gitignore)
@@ -52,26 +54,31 @@ SQLite WAL 모드가 정상 동작하지 않아(데이터 파일 손상 위험) 
 ```text
 app/
 ├── about.py                          22   앱 이름·버전·저작자 (단일 출처)
-├── main.py                          238   조립: FastAPI 서버, lifespan(시작·종료 순서), 화면·라우터·접근 제어, CLI
-├── api.py                           188   HTTP 엔드포인트 /api/* · /agent-icon
-├── routes.py                         14   화면 주소 (체험·쉬운 화면)
-├── events.py                         86   토론 이벤트 이름표 EventType
+├── main.py                          248   조립: FastAPI 서버, lifespan(시작·종료 순서), 화면·라우터·접근 제어, CLI
+├── api.py                           280   HTTP 엔드포인트 /api/* · /agent-icon
+├── routes.py                         22   화면 주소 (체험·쉬운 화면)
+├── events.py                         90   토론 이벤트 이름표 EventType
 ├── tool_rules.py                    125   도구 보안 규칙 문법 (read(경로) · net(호스트) …)
 ├── timestamps.py                    176   발언·턴·보고서 시각 표기 (화면·문서·보고서 공용)
-├── session_ops.py                   391   세션 되돌리기·이어받기, 피드 기록 읽기
-├── export.py                        222   대화 → 마크다운 문서
+├── session_ops.py                   489   세션 되돌리기·이어받기, 피드 기록 읽기
+├── export.py                        229   대화 → 마크다운 문서
 ├── export_mermaid.py              1,618   Mermaid → StarUML·HTML 변환 (외부 의존 없음)
 ├── mermaid_lint.py                  491   다이어그램 문법 검사·복구
 ├── workspace_files.py               797   작업 공간 파일 목록·@언급·업로드·다운로드 (경로 안전장치)
 ├── diagnostics.py                   394   이벤트 루프 정체 스택·브라우저 끊김 보고
-├── security.py                      755   원격 접속 토큰, 접근 제어 미들웨어
+├── security.py                      782   원격 접속 토큰, 접근 제어 미들웨어
+├── headless.py                      250   화면 없이 토론 돌리기 (REST·MCP 공용) (v1.5)
+├── mcp_server.py                    179   MADO 를 MCP 서버로 /mcp (v1.5)
+├── workspace_checkpoint.py          323   턴 체크포인트·되돌리기·갈래 내보내기 (v1.5)
+├── session_fork.py                  275   대화 분기, 비교 데이터, 결론 평가 (v1.5)
+├── bench.py                         336   전략 비교 하네스 python -m app.bench (v1.5)
 ├── graph_store.py                   105   그래프 토론의 그래프 파일 data/graphs/
 │
 ├── config/
-│   ├── __init__.py                  129   공개 API (앱은 app.config 로 가져다 씀)
+│   ├── __init__.py                  131   공개 API (앱은 app.config 로 가져다 씀)
 │   ├── env.py                        96   .env 읽기, ${VAR} 치환
 │   ├── paths.py                     124   프로젝트 루트·데이터 폴더·작업 공간·아이콘 저장소
-│   ├── schema.py                    720   Pydantic 모델과 기본값
+│   ├── schema.py                    730   Pydantic 모델과 기본값
 │   ├── loader.py                    101   conf.json 읽기·쓰기, get_config 싱글턴
 │   └── editors.py                   680   화면에서 고친 값을 conf.json 에 되쓰기
 │
@@ -79,17 +86,19 @@ app/
 │   ├── base.py                      215   Agent 모델, 카드 색·아이콘
 │   ├── pool.py                       78   AgentPool 레지스트리
 │   ├── personas.py                  415   세션별 페르소나·외형, 구성 스냅샷
-│   ├── skills.py                    733   스킬 스캔·도구·지침·스크립트 복사
+│   ├── skills.py                    762   스킬 스캔·도구·지침·스크립트 복사
+│   ├── ask_user.py                  129   사람에게 묻기 ask__ask_user (v1.5)
 │   ├── consultation.py              458   동료 자문 peers__consult_agent
-│   ├── llm.py                       460   LLMCaller: 호출, 폴백 판단, 한 판 호출
-│   ├── llm_loop.py                  629   도구 루프 (ToolLoop 상태 + 단계별 함수)
-│   ├── llm_request.py               168   시스템 프롬프트·LiteLLM 인자
-│   ├── llm_tool_calls.py            278   도구 호출 한 번: 읽기·판정·실행·기록
+│   ├── llm.py                       469   LLMCaller: 호출, 폴백 판단, 한 판 호출
+│   ├── llm_loop.py                  630   도구 루프 (ToolLoop 상태 + 단계별 함수)
+│   ├── llm_request.py               173   시스템 프롬프트·LiteLLM 인자
+│   ├── llm_tool_calls.py            281   도구 호출 한 번: 읽기·판정·실행·기록
 │   ├── llm_recovery.py              568   잘린 답·빈 답·새어 나온 도구 호출 되살리기
 │   ├── llm_context.py               464   토큰 어림, 컨텍스트 창 맞춤
 │   ├── llm_budget.py                265   도구 상한·응답 한도 안내
 │   ├── llm_tools.py                 195   도구 이름 찾기, 파일 쓰기 지침
 │   ├── llm_fingerprint.py           101   거절 시 요청 지문
+│   ├── llm_usage.py                 169   토큰·LLM 시간 계측 (v1.5)
 │   ├── llm_types.py                  51   LLMUnavailableError, 콜백 형식
 │   ├── reasoning.py                  86   사고 과정 떼기·결론 찾기
 │   ├── llm_gate.py                  154   서버 전체 LLM 동시 요청 상한
@@ -106,48 +115,51 @@ app/
 │   └── exec_scan.py                 343   실행 전 코드 검사
 │
 ├── orchestration/
-│   ├── engine.py                    497   조립과 턴 수명 (run_turn · resume_turn)
+│   ├── engine.py                    591   조립과 턴 수명 (run_turn · resume_turn)
 │   ├── context.py                    51   EngineContext — 서비스가 함께 쓰는 것
-│   ├── turn_setup.py                239   턴 구성·참여자·도구 게이트
-│   ├── recording.py                 627   TurnRecorder — 기록, 재시도, data/unsaved/
-│   ├── speech.py                    711   SpeechRunner — 발언 받기·기록·확정 (조각 묶음·초안은 _ChunkStream·_Speech)
-│   ├── conversation.py              560   ConversationMemory — 맥락·요약·장부
-│   ├── context_memory.py            595   대화 기억 규칙 (LLM 을 부르지 않음)
+│   ├── turn_setup.py                262   턴 구성·참여자·도구 게이트
+│   ├── recording.py                 633   TurnRecorder — 기록, 재시도, data/unsaved/
+│   ├── speech.py                    756   SpeechRunner — 발언 받기·기록·확정 (조각 묶음·초안은 _ChunkStream·_Speech)
+│   ├── conversation.py              563   ConversationMemory — 맥락·요약·장부
+│   ├── context_memory.py            640   대화 기억 규칙 (LLM 을 부르지 않음)
 │   ├── phases/base.py                27   단계 실행기 바탕
 │   ├── phases/planning.py           348   1단계: 계획과 계획 승인
-│   ├── phases/debate.py             320   2단계: 라운드, 발언자 지명
+│   ├── phases/debate.py             397   2단계: 라운드, 발언자 지명
 │   ├── phases/parallel.py           388   병렬 지시 라운드
 │   ├── phases/graph.py              695   그래프 토론
 │   ├── phases/routing.py             92   지명·분배 응답 읽기
-│   ├── phases/synthesis.py          741   3단계: 합성, 다이어그램 수선, 산출물
+│   ├── phases/synthesis.py          766   3단계: 합성, 다이어그램 수선, 산출물
 │   ├── artifacts.py                 289   코드 블록·Mermaid 정규화, 로스터 글
 │   ├── strategies.py                307   토론 전략
 │   ├── graph.py                     541   그래프 모델·검증·스케줄러
 │   ├── graph_run.py                 304   그래프 실행 표시
+│   ├── skill_draft.py               143   결론에서 스킬 초안 (v1.5)
 │   ├── plan_gate.py                 430   계획 승인 규칙 (ADR-028)
-│   ├── tool_gate.py                 452   도구 보안 판정을 토론에 붙임
-│   ├── control.py                   610   정지·개입·한도·승인 제어 채널
-│   ├── turns.py                     480   턴 기록, 끊긴 턴 (ADR-024)
-│   ├── state.py                     133   DebateState · DebateMessage · ArtifactItem
-│   ├── runner.py                    375   DebateRunner — 백그라운드 턴 시작·끝
-│   ├── turn_run.py                  629   TurnRun — 턴 스냅샷 (이벤트별 리듀서)
+│   ├── tool_gate.py                 453   도구 보안 판정을 토론에 붙임
+│   ├── control.py                   693   정지·개입·한도·승인 제어 채널
+│   ├── turns.py                     517   턴 기록, 끊긴 턴 (ADR-024)
+│   ├── state.py                     148   DebateState · DebateMessage · ArtifactItem
+│   ├── runner.py                    388   DebateRunner — 백그라운드 턴 시작·끝
+│   ├── turn_run.py                  658   TurnRun — 턴 스냅샷 (이벤트별 리듀서)
 │   ├── event_bus.py                 114   구독자 큐 이벤트 버스
 │   └── worker.py                    168   태스크 워커 풀
 │
 ├── database/
-│   ├── models.py                    317   SQLAlchemy ORM
-│   └── session.py                   240   비동기 엔진·세션 팩토리, init_db, 컬럼 이관
+│   ├── search.py                    176   대화 검색 (FTS5 trigram + LIKE) (v1.5)
+│   ├── models.py                    342   SQLAlchemy ORM
+│   └── session.py                   258   비동기 엔진·세션 팩토리, init_db, 컬럼 이관
 │
 ├── easy/                              비엔지니어 화면 /trial/easy (ADR-029)
 ├── trial/                             체험 서버 /trial
 │
 └── ui/
     ├── run_binding.py                85   화면이 토론에 붙는 구독 (세 화면 공용)
-    ├── expert/page.py               740   전문가 화면 ExpertPage
-    ├── expert/events.py             504   이벤트별 화면 반영
+    ├── expert/page.py               842   전문가 화면 ExpertPage
+    ├── expert/events.py             544   이벤트별 화면 반영
     ├── expert/chrome.py             104   머리 줄, 정보 창
     ├── shared/page.py               119   체험·쉬운 화면 공용 틀
     ├── personas_page.py             347   /personas/{id}
+    ├── compare_page.py              162   /compare 대화 비교·평가 (v1.5)
     ├── graph_page.py                430   /graphs/{id} 그래프 편집
     ├── theme.py                     494   색·아이콘·파비콘
     ├── mermaid_export.py            407   다이어그램 내려받기 스크립트
@@ -155,19 +167,21 @@ app/
     ├── mention_input.py             221   입력창 @언급 창 (브라우저 스크립트)
     ├── diagnostics_script.py        120   브라우저 진단 보고 스크립트
     ├── math_markdown.py             266   LaTeX → MathML 마크다운
-    ├── components/roster/         3,593   로스터 패널 (control · session_settings · agent_cards · mcp_panel · agent_admin · agent_dialogs · skills_panel · graph_row · common)
-    ├── components/chat_feed/      2,283   토론 피드 (feed · cards · approvals · decisions · mentions · common)
-    ├── components/sidebar.py        746   세션 목록
+    ├── components/roster/         3,659   로스터 패널 (control · session_settings · agent_cards · mcp_panel · agent_admin · agent_dialogs · skills_panel · graph_row · common)
+    ├── components/chat_feed/      2,478   토론 피드 (feed · cards · approvals · decisions · mentions · common)
+    ├── components/sidebar.py        829   세션 목록
     ├── components/artifact_viewer.py   377   산출물 탭, 복사·다운로드
     ├── components/agent_appearance.py   257   카드 색·아이콘 편집기
     ├── components/model_status.py   143   모델 연결 상태 단추와 창
     ├── components/access_token.py   352   원격 접속 토큰 버튼
     ├── components/workspace_download.py   224   작업 공간 파일 다운로드 창
+    ├── components/turn_changes.py   155   턴이 바꾼 파일·되돌리기 창 (v1.5)
+    ├── components/skill_draft_dialog.py   97   스킬 초안 창 (v1.5)
     ├── components/graph_canvas.py   217   그래프 편집 캔버스
     └── components/quiet_splitter.py    98   드래그가 가벼운 스플리터
 ```
 
-총 46,014줄.
+총 49,738줄.
 
 ---
 
@@ -195,7 +209,15 @@ app/
 | 산출물 렌더링 | `ui/components/artifact_viewer.py` |
 | 내보내기 형식 | `export.py` |
 | 발언·보고서 시각 표기 | `timestamps.py` (화면·저장 문서·보고서가 모두 여기를 거칩니다) |
-| API 엔드포인트 | `api.py` |
+| API 엔드포인트 | `api.py` · 화면 없는 토론(REST·MCP 공용)은 `headless.py`, MCP 도구는 `mcp_server.py` |
+| 토큰·LLM 시간 계측 | `agents/llm_usage.py` |
+| 합의 판정·조기 종료 | 판정은 `orchestration/context_memory.py` (`ledger_converged`), 라운드 닫기는 `orchestration/phases/debate.py` (`_close_round`) |
+| 턴 체크포인트·되돌리기 | `workspace_checkpoint.py` · 화면은 `ui/components/turn_changes.py` |
+| 대화 검색 | `database/search.py` · 화면은 `ui/components/sidebar.py` |
+| 대화 분기·비교·평가 | `session_fork.py` · 화면은 `ui/compare_page.py` |
+| 에이전트의 질문 | `agents/ask_user.py` · 기다림은 `orchestration/control.py`, 카드는 `ui/components/chat_feed/approvals.py` |
+| 전략 비교 하네스 | `bench.py` · 시나리오는 루트의 `bench/` |
+| 결론에서 스킬 초안 | `orchestration/skill_draft.py` · 화면은 `ui/components/skill_draft_dialog.py` |
 | 버전·저작자 표기 | `about.py` (여기만 고치면 전부 따라옵니다) |
 | DB 스키마 | `database/models.py` |
 

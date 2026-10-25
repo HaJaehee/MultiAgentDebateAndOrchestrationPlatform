@@ -92,7 +92,8 @@ flowchart TD
 - `app/main.py` only assembles: the FastAPI server, its `lifespan`, the HTTP router, the NiceGUI pages, the trial and beginner pages, and the access middleware.
 - `lifespan` fixes the start order in one place: configuration (`get_config()`) → database (`init_db()`, then interrupted turns are marked) → the default workspace's MCP runtime (`MCPRuntimePool.warm_default()`) → the agent pool. Other workspaces get their own server group when a debate first needs them (see [Runtime Isolation](file:///d:/MultiAgentDebateOrchestration/wiki/mcp/runtime-isolation.md)).
 - Process-wide objects (config, DB engine, runtime pool, agent pool, engine, runner) are created by their own `get_*()` on first use. The DB engine is bound to the address of its **first** caller, so a script that drives the app from outside calls `get_config(config_path=…)` and `init_db(…)` before anything else.
-- `app/api.py` holds the HTTP endpoints (`/api/health`, `/api/agents`, `/api/mcp`, `/api/skills`, `/api/sessions/{session_id}/personas`, `/api/diagnostics/client`, `/agent-icon`).
+- `app/api.py` holds the HTTP endpoints (`/api/health`, `/api/agents`, `/api/mcp`, `/api/skills`, `/api/sessions/{session_id}/personas`, `/api/diagnostics/client`, `/agent-icon`) and, since v1.5, the headless debate endpoints `/api/sessions/...`.
+- `app/mcp_server.py` (v1.5) mounts MADO itself as an MCP server at `/mcp`; its session manager runs inside `lifespan`. Both doors share [`app/headless.py`](file:///d:/MultiAgentDebateOrchestration/app/headless.py) — see [Headless API](../operations/headless-api.md).
 - On shutdown it cancels running debates first, then closes every runtime's MCP subprocesses.
 
 ### 4.2. Configuration Subsystem ([app/config/](file:///d:/MultiAgentDebateOrchestration/app/config/__init__.py))
@@ -148,6 +149,19 @@ flowchart TD
   - [ArtifactViewer](file:///d:/MultiAgentDebateOrchestration/app/ui/components/artifact_viewer.py): multi-tab viewer with syntax highlighting and Mermaid diagram rendering.
   - [PersonasPage](file:///d:/MultiAgentDebateOrchestration/app/ui/personas_page.py): session persona configuration editor.
 - Trial and beginner pages share the visitor-page frame in [ui/shared/page.py](file:///d:/MultiAgentDebateOrchestration/app/ui/shared/page.py); page addresses are in [app/routes.py](file:///d:/MultiAgentDebateOrchestration/app/routes.py).
+
+### 4.7-b. v1.5 modules
+| Module | Role |
+| :--- | :--- |
+| `app/agents/llm_usage.py` | Token and LLM-time meters per speech and turn ([LLM Integration §6](../agents/llm-integration.md)) |
+| `app/agents/ask_user.py` | `ask__ask_user` host tool ([Ask the User](../agents/ask-user.md)) |
+| `app/workspace_checkpoint.py` | Turn snapshots in the workspace repository, revert, export ([Workspace Checkpoints](../orchestration/workspace-checkpoints.md)) |
+| `app/database/search.py` | FTS5 trigram index and conversation search |
+| `app/headless.py`, `app/mcp_server.py` | Debates without a page: REST and MCP ([Headless API](../operations/headless-api.md)) |
+| `app/session_fork.py` | Forking a conversation at a turn, compare data, ratings ([Session Handoff §7](../orchestration/session-handoff.md)) |
+| `app/orchestration/skill_draft.py` | Skill drafts from a turn ([Skills §10](../agents/skills.md)) |
+| `app/bench.py` | Strategy comparison harness ([Bench](../operations/bench.md)) |
+| `app/ui/compare_page.py`, `app/ui/components/turn_changes.py`, `app/ui/components/skill_draft_dialog.py` | Compare page and the conclusion card's dialogs |
 
 ### 4.8. Module Boundaries
 Which package may import which is checked by a test. See [Module Boundaries](file:///d:/MultiAgentDebateOrchestration/wiki/architecture/module-boundaries.md), which also records the decisions of the v1.4.1 restructuring (§6).

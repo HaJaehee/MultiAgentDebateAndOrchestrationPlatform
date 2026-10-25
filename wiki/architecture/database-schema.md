@@ -257,7 +257,15 @@ request; every message and tool call of the turn points to it.
 | `stopped_early` | `BOOLEAN` | No | `0` | Set when synthesis starts after a stop request, so a turn cut during synthesis keeps that fact. |
 | `paused_seconds` / `resumed_count` | `INTEGER` | No | `0` | Time spent interrupted and times resumed; the report's elapsed time names them. |
 | `error` | `TEXT` | No | `''` | Why a `failed` turn stopped. |
+| `usage` | `JSON` | Yes | - | Tokens and LLM time of the whole turn (v1.5, [LLM Integration §6](../agents/llm-integration.md)). |
+| `checkpoint` | `JSON` | Yes | - | `{start, end, changed}` workspace snapshots (v1.5, [Workspace Checkpoints](../orchestration/workspace-checkpoints.md)); `reverted_at` once reverted. |
+| `memory` | `JSON` | Yes | - | Ledger and summary (with anchors) when the turn completed — used to fork at this turn (v1.5). |
+| `rating` | `JSON` | Yes | - | A person's 👍/👎 and note from the compare page (v1.5). |
 | `started_at` / `updated_at` / `finished_at` | `DATETIME` | | | Turn timestamps. |
+
+Sessions gained `converge_early` (default on), `token_budget` (0 = none), `ask_user` (default off; the
+expert page creates conversations with it on) and `forked_from` (v1.5). `messages.llm_meta` now also
+carries the speech's `usage`.
 
 ### 2.7. `speech_drafts` Table ([SpeechDraftModel](file:///d:/MultiAgentDebateOrchestration/app/database/models.py))
 The in-progress state of a speech that uses tools, so an interrupted speech continues after its last
@@ -274,6 +282,13 @@ unfinished speech. Details in [Interrupted Turns §5](../orchestration/turn-reco
 | `updated_at` | `DATETIME` | No | `utc_now` | Last save. |
 
 ---
+
+### 2.8. `messages_fts` — search index (v1.5)
+
+An external-content FTS5 table over `messages.content` with the `trigram` tokenizer, kept in sync by
+`AFTER INSERT/UPDATE/DELETE` triggers and filled once (`rebuild`) when first created
+([app/database/search.py](file:///d:/MultiAgentDebateOrchestration/app/database/search.py)). Created by
+`init_db` for SQLite; if FTS5 or trigram is missing, search falls back to `LIKE` only.
 
 ## 3. Session Initialization & Connection Management
 
@@ -356,10 +371,12 @@ skipped entirely for a table `create_all` just created.
 _ADDED_COLUMNS = {
     "messages": {..., "turn_id": "VARCHAR(36)", "turn_meta": "JSON"},
     "tool_calls": {..., "turn_id": "VARCHAR(36)"},
-    "turns": {"stopped_early": "BOOLEAN NOT NULL DEFAULT 0"},
+    "turns": {"stopped_early": "BOOLEAN NOT NULL DEFAULT 0", "usage": "JSON", "checkpoint": "JSON",
+              "memory": "JSON", "rating": "JSON"},
     "sessions": {"personas_locked": ..., "workspace_dir": ..., "known_agents": ..., "parallel_limit": ...,
                  "decision_ledger": ..., "ledger_through_id": ..., "transcript_summary": ..., "summary_through_id": ...,
-                 "graph_id": ..., "graph_snapshot": ...},
+                 "graph_id": ..., "graph_snapshot": ..., "converge_early": ..., "token_budget": ...,
+                 "ask_user": ..., "forked_from": ...},
     "session_agents": {"config_snapshot": "TEXT",
                        "card_color": "VARCHAR(40) NOT NULL DEFAULT ''",
                        "icon_path": "TEXT NOT NULL DEFAULT ''"},

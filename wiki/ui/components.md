@@ -71,8 +71,19 @@ The web application workspace is organized into four primary UI components in [a
     keystroke in the instructions box too, so it does not redraw otherwise. Graphs shared by several
     conversations are read once per redraw. Tested in `tests/test_sidebar_agent_count.py`.
 - **Per-card actions**: ✏️ rename · 💾 export the whole conversation as Markdown ·
-  **⑂ continue in a fresh session** · 🗑 delete.
-- **⑂ Continue** (v0.5.0): creates a new conversation that inherits the workspace, the
+  **» continue in a fresh session** · 🗑 delete. A forked conversation (v1.5) also has a **compare**
+  button that opens it next to its original (§1.7, new tab).
+- **Search** (v1.5): a box above the list searches titles and speeches
+  ([app/database/search.py](file:///d:/MultiAgentDebateOrchestration/app/database/search.py)). Terms of
+  three characters or more use the SQLite FTS5 `trigram` index over `messages` (kept in sync by
+  triggers); shorter terms — common in Korean ("캐시", "보안") — use `LIKE`. All terms must appear in one
+  speech; failure notes are skipped; quotes and `%`/`_` are taken literally. While a query is typed the
+  list shows one row per conversation (newest match first) with the matching passage and the number of
+  matching speeches; title-only matches say so. Clicking a match opens the conversation, expands that
+  card, scrolls it to the centre and rings it briefly (`ChatFeed.reveal_message`), and stops auto-follow.
+  Events that redraw the list keep the search. The card's date tooltip shows the conversation's total
+  LLM usage (`turns.usage`).
+- **» Continue** (v0.5.0): creates a new conversation that inherits the workspace, the
   knowledge graph, the agent roster and the previous conclusion — clearing only the
   transcript. Disabled while that session's debate is running, because the conclusion does
   not exist yet. See
@@ -130,6 +141,12 @@ The web application workspace is organized into four primary UI components in [a
   registered strategy appears without touching the UI.
 - **Agent Cards**: Drag to reorder (writes `debate_priority` to `conf.json`); the ⋮ menu sets `debate_stance` and can disable or delete the agent.
 - **Max Rounds Slider**: Sets the maximum debate depth ($1$ to $10$ rounds).
+- **합의되면 일찍 끝내기** (v1.5, default on): ends the debate when two consecutive ledgers of the turn
+  have no open issues and no new decisions ([Conversation Memory §2.6](../orchestration/context-memory.md)).
+- **에이전트 질문 받기** (v1.5): specialists may ask the person a question mid-speech
+  ([Ask the User](../agents/ask-user.md)). New conversations start with it on.
+- **토큰 예산** (v1.5, empty = none): the turn concludes at the next round boundary once its input+output
+  tokens reach this number.
 - **동시 실행 (Parallel Limit)**: How many agents run at once inside one round, stored as
   `sessions.parallel_limit`. Shown **only** while the selected strategy declares
   `orchestrator_dispatches_parallel` — every other strategy runs one speaker at a time and would
@@ -771,6 +788,24 @@ header values that a provider echoes back in its error message.
 **The dialog.** Built once per page (like the about dialog). While a round runs, a 0.5 s timer redraws the rows
 so each one flips from `확인 중` as its answer arrives; the timer stops when the round ends or the dialog closes.
 
+### 1.3.9. Usage, turn actions and question cards (v1.5)
+
+- **Usage on cards.** A speech card's time line ends with `토큰 13.4k` when the speech's token count is
+  known; the tooltip adds `입력 … (캐시 …) · 출력 … · LLM …초` (`llm_meta.usage`,
+  [LLM Integration §6](../agents/llm-integration.md#6-usage-metering-v15)). The status line at the end of a
+  turn carries the turn total. Exports print the same line under each speech and the conversation total
+  in the header table.
+- **Conclusion card buttons** (`ChatFeed.set_turn_actions`), shown once the turn has ended:
+  `call_split` forks the conversation at this turn ([Session Handoff §7](../orchestration/session-handoff.md));
+  `auto_stories` drafts a skill from it ([Skills §10](../agents/skills.md)); `📁 N` (only when files
+  changed) opens the turn's changed files with diffs and `이 턴 되돌리기`
+  ([Workspace Checkpoints](../orchestration/workspace-checkpoints.md)). Live, they appear on
+  `turn_completed` (`synthesis_id`) and `workspace_checkpointed`; on reload, from the turn rows.
+- **Question cards** (violet, in the approval column): a specialist's question with option buttons, a
+  free-text box (Enter sends), `건너뛰기` and a countdown `N초 후 답 없이 진행`. Answered elsewhere or
+  timed out → the card is removed on `user_question_resolved`; restored from the snapshot
+  (`user_questions`) after a refresh; cleared when the turn ends.
+
 ### 1.4. Artifact Viewer ([app/ui/components/artifact_viewer.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/artifact_viewer.py))
 - **Tabs accumulate across turns.** `add_artifacts()` appends a finished turn's artifacts (skipping ids
   already shown) and opens that turn's report; `render_artifacts()` is only for rebuilding from a full
@@ -830,3 +865,11 @@ so each one flips from `확인 중` as its answer arrives; the timer stops when 
   - Vue Flow re-checks **every existing wire** with `is-valid-connection` whenever the edge list is
     replaced, and drops those that fail. The duplicate check must ignore the wire's own `id`; without
     that, connecting one new wire erased all the others.
+
+### 1.7. Compare Page ([app/ui/compare_page.py](file:///d:/MultiAgentDebateOrchestration/app/ui/compare_page.py)) (v1.5)
+
+`/compare?a=<id>&b=<id>` puts two conversations side by side: strategy, rounds, participants, status,
+early end, usage, files changed, the request, the last turn's conclusion and the decision ledger. Two
+selectors at the top pick other conversations. Given only a fork (`?a=<fork>`), the page puts its
+original on the left. Each side has 👍 / 👎 and a note for the last turn (`turns.rating`, click again to
+clear); the [bench](../operations/bench.md) report reads these ratings.

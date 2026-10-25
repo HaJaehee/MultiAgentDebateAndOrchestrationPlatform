@@ -211,27 +211,67 @@ MCP 서버별 연결 상태. `"enabled": false` 로 꺼 둔 서버도 함께 보
 
 ---
 
+## 화면 없이 토론 돌리기 — `/api/sessions/...` (v1.5)
+
+스크립트·CI·다른 에이전트가 화면 없이 토론을 시작하고 결과를 받아 가는 길입니다. 같은 대화를 화면으로
+열면 진행 중인 토론이 그대로 보입니다. 자세한 설명은 위키 `wiki/operations/headless-api.md`.
+
+| 요청 | 하는 일 |
+| :--- | :--- |
+| `GET /api/sessions?limit=50` | 최근 대화 목록 (id, 제목, 전략, 참여자, 진행 중 여부) |
+| `POST /api/sessions` | 대화를 만듭니다. 본문: `title`, `strategy`, `max_rounds`(1~10), `agents`(비우면 켜진 에이전트 전부), `custom_instructions`, `workspace_dir`, `converge_early`, `token_budget`. `201` |
+| `POST /api/sessions/{id}/turns` | 턴 시작: `{"prompt": "...", "attended": false}`. `202`, 이미 돌고 있으면 `409` |
+| `POST /api/sessions/{id}/stop` | 지금까지의 발언으로 결론을 내도록 정지 요청 |
+| `GET /api/sessions/{id}/status` | 진행 중이면 단계·상태 줄·사람의 답을 기다리는지, 아니면 마지막 턴의 상태 |
+| `GET /api/sessions/{id}/result?wait=0` | 마지막 턴의 결론·산출물·결정 장부·사용량·조기 종료·응답 없는 에이전트·바뀐 파일 수. `wait`(최대 600초)만큼 끝나기를 기다린 뒤 답합니다 |
+| `GET /api/sessions/{id}/events` | Server-Sent Events. 처음에 `snapshot`, 끝에 `run_finished`. 진행 중인 턴이 없으면 `idle` 하나 |
+
+오류는 `{"error": "..."}` 와 `400`(모르는 전략·에이전트, 그래프 토론, 빈 요청)·`404`·`409` 입니다.
+
+**답할 사람이 없는 턴.** 이 길로 시작한 턴은 기본으로 `attended=false` 입니다. 계획 승인 카드를 띄우지 않고,
+도구 보안이 "묻기" 로 판정한 호출은 실행하지 않으며, 한도에 닿으면 묻지 않고 마무리합니다. 사람이 화면에서
+카드에 답하겠다면 `"attended": true` 로 보냅니다.
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/sessions -H "Content-Type: application/json" -d "{\"max_rounds\": 2}"
+curl -s -X POST http://127.0.0.1:8000/api/sessions/<id>/turns -H "Content-Type: application/json" -d "{\"prompt\": \"...\"}"
+curl -s "http://127.0.0.1:8000/api/sessions/<id>/result?wait=300"
+```
+
+---
+
+## MADO 를 MCP 서버로 — `/mcp` (v1.5)
+
+같은 기능을 MCP 도구로 내놓습니다 (streamable HTTP). 도구: `list_agents`, `list_debates`, `start_debate`,
+`get_debate_status`, `get_debate_result`(기다리는 동안 진행 알림), `stop_debate`. `start_debate` 에
+`session_id` 를 주면 그 대화에서 이어 묻습니다.
+
+```bash
+claude mcp add --transport http mado http://127.0.0.1:8000/mcp
+```
+
+---
+
 ## 화면 경로
 
 | 경로 | 내용 |
 | :--- | :--- |
 | `/` | 메인 (사이드바 + 로스터 + 토론 피드 + 산출물 뷰어) |
 | `/personas/{session_id}` | 세션별 페르소나 편집 |
+| `/graphs/{graph_id}` | 그래프 토론 편집 |
+| `/compare?a=<id>&b=<id>` | 두 대화 나란히 비교, 결론 평가 (v1.5) |
 
 ---
 
 ## 인증
 
-내장 HTTP 엔드포인트에는 **자체 인증 계층이 제공되지 않습니다.** 기본 바인딩이 로컬 호스트(`127.0.0.1`)로 제한된 이유입니다. 사내망 또는 외부 네트워크에 바인딩할 경우 리버스 프록시(Nginx 등) 앞단에 인증 계층을 구성해야 합니다.
-
-```json
-"app": { "host": "0.0.0.0" }
-```
-
-이렇게 바꾸면 모든 인터페이스에 열립니다. 폐쇄망 안이라도 접근 통제를 앞단에
-두는 것을 권합니다.
-
----
+* **서버 PC(루프백)** 에서 오는 요청은 주인으로 보고 그냥 받습니다.
+* **다른 PC** 에서는 원격 접속 토큰(`.env` 의 `MADO_ACCESS_TOKEN`)이 있어야 합니다. 화면은 `/login` 에서
+  토큰으로 로그인한 쿠키(7일)로, `/api/*` 와 `/mcp` 는 같은 토큰을 `Authorization: Bearer <토큰>` 으로
+  보냅니다 (v1.5). 틀린 토큰은 로그인 실패와 같은 잠금에 셉니다 (잠긴 동안 `429`).
+* 토큰이 없으면 원격 접속은 막힙니다. 체험 서버를 켠 경우 방문자는 `/trial` 아래만 쓸 수 있고 `/api/*` 는
+  쓸 수 없습니다.
+* 다른 사이트의 페이지가 이 서버를 부르는 교차 출처 요청은 어디서 오든 거부합니다.
 
 ## 관련 문서
 

@@ -59,6 +59,12 @@ time. Every `call_agent()` in the turn is handed that runtime explicitly. See
 4. The Orchestrator deconstructs the request, identifies system constraints, and assigns specific responsibilities to each participating specialist. The planning prompt carries a **roster** of this turn's active specialists (the orchestrator excluded), built by `format_roster()`: one line per agent with name, role and MCP tool server names, e.g. `- Senior Python Engineer (Implementation) · 도구: filesystem`. System prompts are deliberately left out — a few dozen tokens per agent is enough to divide work, while personas cost thousands per call. Tool servers are listed so work that needs a tool (writing files) goes to an agent that has it; the sequential-thinking server is omitted because it does no work. The orchestrator is told to address each specialist by the listed name and not to assign roles outside the list. Previously the first-turn prompt hard-coded "(Architect, Coder, Critic)", so a session with a different roster had work handed to agents that did not exist, and later turns had no roster at all. Speaker selection and parallel dispatch use the same function with `with_keys=True`, since they return agent keys as JSON.
 5. The plan is streamed incrementally to the UI and committed to the database. Its position is kept in `state.plan_index` so later speakers get it pinned in their goal message.
 
+### v1.5 additions around the phases
+- **Usage**: the whole turn runs inside a usage meter; speeches open their own ([LLM Integration §6](../agents/llm-integration.md)).
+- **Checkpoints**: the workspace is snapshotted right after the request is recorded and again when the turn ends or fails ([Workspace Checkpoints](workspace-checkpoints.md)).
+- **Early end**: closing a round may skip the rest — converged ledger or turn token budget ([Conversation Memory §2.6](context-memory.md)).
+- **Unattended turns**: `TurnControl(attended=False)` (API, MCP, bench) asks nobody; see [Headless API §2](../operations/headless-api.md).
+
 ### Phase 2: Multi-Round Specialist Debate Loop
 For each round $r \in [1, \text{max\_rounds}]$:
 1. The active strategy (e.g. `sequential_debate`) determines the speaker order. Under `orchestrator_led` the orchestrator is asked, each round, which agents should speak.
@@ -117,7 +123,10 @@ string and goes out as JSON unchanged). Senders and receivers never spell an eve
 | `graph_started` / `graph_step_started` / `graph_gate_decided` / `graph_finished` | graph id, nodes and `spec` (the frozen graph, drawn by the overlay); `step`, `max_steps`, active `nodes`; `node_id`, `decision`, `reason`, `fallback`; `reason` (`end` · `idle` · `step_cap` · `stopped`) | Graph debate only. Status line shows the step and its nodes; gate verdicts and early stops toast. `round_started` is also sent per step. |
 | `ledger_update_started` / `ledger_updated` / `ledger_update_failed` | `reason`; `ledger` on success; `error` on failure | Status line; `ledger_updated` refreshes the roster's 결정 장부 panel; failure toasts and keeps the previous ledger. |
 | `context_summarizing` / `context_summarized` / `context_summary_failed` | `agent_name`; `messages` / `folded`, `total` / `error` | Status line and toasts. On failure the oldest messages are dropped as before. |
-| `turn_completed` | `status`, `failed_agents`, `error_message` | Re-enables user input and marks personas locked; names any agent that never answered. |
+| `debate_ended_early` | `reason` (`converged` · `budget`), `round`, `max_rounds` | v1.5. Toast; the remaining rounds are skipped ([Conversation Memory §2.6](context-memory.md)). |
+| `user_question_requested` / `user_question_resolved` | the question card (`id`, `agent_name`, `question`, `options`, `opened_at`, `wait_seconds`); `outcome`, `answer` | v1.5. Question card in the feed ([Ask the User](../agents/ask-user.md)). |
+| `turn_completed` | `status`, `failed_agents`, `error_message`, `usage`, `converged_round`, `budget_stopped`, `consensus`, `synthesis_id` | Re-enables user input and marks personas locked; names any agent that never answered; status line ends with the turn's usage; conclusion card gets its buttons. |
+| `workspace_checkpointed` | `turn_id`, `changed`, `message_id` | v1.5, after `turn_completed`. File chip on the conclusion card ([Workspace Checkpoints](workspace-checkpoints.md)). |
 | `run_finished` | `status` (`completed` / `failed` / `cancelled`), `error` | Emitted by `DebateRunner`, not the engine. Detaches the page's subscription. |
 
 ---
