@@ -91,7 +91,7 @@ async def forget_checkpoints(db, session_id: str, turn_ids: Optional[Sequence[st
 
 @dataclass
 class TurnChanges:
-    """한 턴이 작업 공간에서 바꾼 파일 (`app/workspace_checkpoint.py`)."""
+    """해당 턴 실행 중 작업 공간에서 변경된 파일 내역 (`app/workspace_checkpoint.py`)."""
 
     turn_id: str
     workspace: Path
@@ -103,7 +103,7 @@ class TurnChanges:
 
 
 async def turn_changes(db, session_id: str, turn_id: str) -> Optional[TurnChanges]:
-    """그 턴의 체크포인트와 바뀐 파일. 체크포인트가 없거나(git 없음, 이 기능 이전의 턴) 읽지 못하면 None."""
+    """해당 턴의 체크포인트 정보 및 변경 파일 목록을 조회합니다. 체크포인트가 없거나(git 미지원 또는 이전 턴) 조회 실패 시 None을 반환합니다."""
     turn = await db.get(TurnModel, turn_id)
     if turn is None or turn.session_id != session_id or not isinstance(turn.checkpoint, dict):
         return None
@@ -125,14 +125,14 @@ async def turn_file_diff(changes: TurnChanges, path: str) -> str:
 
 
 async def revert_turn_files(db, session_id: str, turn_id: str) -> workspace_checkpoint.RevertResult:
-    """그 턴이 바꾼 파일을 턴 시작 때의 모습으로 되돌리고, 그 사실을 대화에 남깁니다.
+    """해당 턴에서 변경된 파일들을 턴 시작 전 상태로 되돌리고(revert), 복원 내역을 시스템 메시지로 기록합니다.
 
-    기록은 MADO 의 안내(`system`)로 남습니다. 다음 턴의 에이전트가 "그 파일은 되돌려졌다" 를 알아야, 아직
-    있는 줄 알고 그 파일을 고치거나 인용하지 않습니다.
+    시스템 메시지(`system`)로 기록하여 다음 턴의 에이전트가 파일이 이전 상태로 복구되었음을 인지하고
+    정상적으로 작업을 이어갈 수 있도록 합니다.
     """
     changes = await turn_changes(db, session_id, turn_id)
     if changes is None:
-        return workspace_checkpoint.RevertResult(ok=False, error="이 턴에는 되돌릴 체크포인트가 없습니다.")
+        return workspace_checkpoint.RevertResult(ok=False, error="해당 턴에는 되돌릴 체크포인트가 없습니다.")
     result = await asyncio.to_thread(workspace_checkpoint.revert, changes.workspace, changes.start, changes.end)
     if not result.ok or not result.reverted:
         return result
@@ -145,8 +145,8 @@ async def revert_turn_files(db, session_id: str, turn_id: str) -> workspace_chec
         msg_type="system", round_number=0, started_at=now, finished_at=now,
         turn_meta={"kind": "note", "reverted_turn": turn_id},
         content=(
-            f"[작업 공간 되돌리기] 사람이 한 턴의 파일 변경 {len(result.reverted)}건을 그 턴이 시작하기 전의 "
-            f"모습으로 되돌렸습니다: {listed}{more}. 이 파일들은 지금 그 턴 이전의 내용입니다."
+            f"[작업 공간 되돌리기] 사용자가 해당 턴의 파일 변경 {len(result.reverted)}건을 턴 시작 전 "
+            f"상태로 되돌렸습니다: {listed}{more}. 해당 파일들은 턴 이전 상태로 복구되었습니다."
         ),
     ))
     turn = await db.get(TurnModel, turn_id)

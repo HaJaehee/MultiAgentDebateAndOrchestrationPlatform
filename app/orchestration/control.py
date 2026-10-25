@@ -56,7 +56,7 @@ CONTEXT_WIDEN_FALLBACK_RATIO = 0.5
 
 
 def asks_human(control: Optional["TurnControl"]) -> bool:
-    """이 턴에서 사람에게 물을 수 있는가 (쪽지를 띄우고 답을 기다릴 수 있는가)."""
+    """해당 턴에서 사용자 입력/응답을 요청할 수 있는지 확인합니다 (UI 대화형 세션 여부)."""
     return control is not None and control.attended
 
 
@@ -64,9 +64,8 @@ class TurnControl:
     """한 턴에 대한 정지 요청과 개입 메모를 담아 두는 우편함."""
 
     def __init__(self, *, attended: bool = True) -> None:
-        # 사람이 이 턴을 지켜보며 답할 수 있는가. API·MCP 로 시작한 턴은 기본으로 아닙니다 (`app/api.py`).
-        # 아니면 묻는 쪽지(계획 승인, 도구 승인, 한도)를 띄우지 않고 "물어볼 사람이 없을 때" 의 규칙을
-        # 따릅니다 — 정지와 개입 메모는 그대로 받습니다. 판단은 `asks_human` 한 곳에서 합니다.
+        # 사용자가 UI에서 이 턴을 대화형으로 모니터링하며 응답할 수 있는지 여부 (attended). API 및 MCP를 통한 헤드리스 실행은 기본 False입니다 (`app/api.py`).
+        # False인 경우 대화형 승인 다이얼로그(계획/도구 승인, 에이전트 질문 등)를 띄우지 않고 무인 실행 규칙을 따릅니다 (단, 외부 중단 및 개입 메모는 수신 가능).
         self.attended = attended
         self._stop_requested = False
         self._notes: List[str] = []
@@ -356,7 +355,7 @@ class TurnControl:
 
     @property
     def pending_questions(self) -> List["UserQuestionRequest"]:
-        """답을 기다리는 에이전트의 질문 전부 (들어온 순서)."""
+        """사용자 답변을 대기 중인 에이전트 질문 목록을 요청 순서대로 반환합니다."""
         return [r for r in self._decisions.values() if not r.resolved and isinstance(r, UserQuestionRequest)]
 
     async def ask_user_question(
@@ -369,10 +368,10 @@ class TurnControl:
         timeout: float,
         on_open=None,
     ) -> "UserQuestionRequest":
-        """에이전트의 질문을 사람에게 보이고 답을 기다립니다 (`app/agents/ask_user.py`).
+        """에이전트의 확인 질문을 사용자 화면에 게시하고 답변을 대기합니다 (`app/agents/ask_user.py`).
 
-        기다림이 끝나면 `answer` 가 채워져 있습니다. 비어 있으면 답이 없었던 것입니다 (시간 초과, 건너뛰기,
-        정지). 이미 정지를 요청한 턴에는 묻지 않습니다.
+        대기가 완료되면 `answer` 필드에 응답이 설정됩니다. 빈 문자열인 경우 답변 부재(시간 초과, 건너뛰기,
+        실행 중단 등)를 의미합니다. 이미 중단 요청된 턴에서는 질문을 게시하지 않습니다.
         """
         request = UserQuestionRequest(
             request_id=uuid.uuid4().hex, agent_key=agent_key, agent_name=agent_name,
@@ -653,10 +652,10 @@ class PlanApprovalRequest(DecisionRequest):
 
 
 class UserQuestionRequest(DecisionRequest):
-    """에이전트가 사람에게 묻는 질문 하나 (`ask__ask_user`).
+    """에이전트의 단일 사용자 질문 요청 (`ask__ask_user`).
 
-    같은 우편함·같은 기다림을 쓰되 답의 모양이 글입니다. 답이 없어도(시간 초과·건너뛰기·정지) 발언은
-    끊기지 않습니다 — 에이전트는 가정을 밝히고 진행합니다.
+    동일한 의사결정 요청 큐를 사용하며 텍스트 응답을 수신합니다. 답변이 없어도(시간 초과, 건너뛰기, 중단 등)
+    발언이 끊기지 않고 가정을 명시한 후 계속 진행됩니다.
     """
 
     def __init__(self, *, request_id: str, agent_key: str, agent_name: str,

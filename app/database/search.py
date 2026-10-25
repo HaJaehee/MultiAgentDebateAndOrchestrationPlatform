@@ -1,19 +1,19 @@
-"""대화 검색: 세션 제목과 발언 본문에서 낱말을 찾습니다 (v1.5).
+"""대화 세션 및 발언 전문 검색: 세션 제목과 발언 본문 통합 검색 (v1.5).
 
-대화가 쌓이면 "그때 캐시 무효화를 어떻게 정했더라" 를 찾을 길이 정렬뿐이었습니다. 여기서 제목과 발언을
-함께 찾아, 사이드바가 대화별로 한 줄씩(가장 최근에 맞은 발언 한 구절과 맞은 발언 수) 보여 줍니다.
+세션이 누적되었을 때 특정 의사결정 내역이나 키워드를 신속하게 탐색할 수 있도록 지원합니다.
+사이드바에서 세션 제목과 발언 본문을 통합 검색하며, 세션별로 최근 매칭된 발언 스니펫과 매칭 건수를 반환합니다.
 
-## 어떻게 찾나
+## 검색 전략
 
-* **세 글자 이상인 낱말** — SQLite FTS5 의 `trigram` 색인(`messages_fts`)으로 찾습니다. 형태소 분석기
-  없이 한국어 부분 일치가 되고, 새 의존성도 없습니다. 색인은 `messages` 의 트리거가 맞춰 두므로 발언을
-  기록·고치·지우는 어느 길로 가든 따라갑니다.
-* **두 글자 이하인 낱말** — trigram 은 세 글자보다 짧은 검색어를 찾지 못합니다. 한국어 낱말은 두
-  글자가 흔해("캐시", "보안") 이쪽은 `LIKE` 로 찾습니다. 개인 PC 의 대화 수백 건 규모에서는 충분히 빠릅니다.
-* 낱말이 여럿이면 모두 들어 있는 발언만 찾습니다(AND). 실패 안내(`error`)는 찾지 않습니다.
+* **3글자 이상 단어** — SQLite FTS5의 `trigram` 토크나이저 인덱스(`messages_fts`)를 사용합니다.
+  외부 형태소 분석기 의존성 없이 한국어/영문 부분 문자열 일치가 가능합니다.
+  인덱스는 `messages` 테이블 트리거를 통해 생성·수정·삭제 시 실시간 자동 동기화됩니다.
+* **2글자 이하 단어** — FTS5 trigram은 3글자 미만 검색어를 지원하지 않으므로("캐시", "보안" 등),
+  단문 키워드는 `LIKE` 연산자를 활용하여 검색합니다.
+* 다중 검색어 입력 시 모든 키워드를 포함하는 발언만 필터링합니다(AND). 시스템 오류 메시지(`msg_type="error"`)는 검색에서 제외됩니다.
 
-FTS5 나 trigram 이 없는 SQLite 면 모든 낱말을 `LIKE` 로 찾습니다 (`fts_available`). 검색어는 바인딩
-매개변수로만 SQL 에 갑니다 (`tests/test_sql_strings.py`).
+SQLite 환경에서 FTS5나 trigram을 지원하지 않는 경우 자동으로 `LIKE` 검색으로 대체됩니다 (`fts_available`).
+모든 검색어는 SQL 인젝션 방지를 위해 바인딩 파라미터로 안전하게 전달됩니다.
 """
 
 from __future__ import annotations
@@ -32,17 +32,17 @@ from app.timestamps import as_utc
 logger = logging.getLogger(__name__)
 
 FTS_TABLE = "messages_fts"
-# 이보다 짧은 낱말은 trigram 색인이 찾지 못합니다.
+# Trigram 인덱스 최소 글자 수 (이보다 짧은 단어는 LIKE 검색으로 처리)
 FTS_MIN_CHARS = 3
-# 한 번에 받는 낱말 수와 결과 수의 상한.
+# 최대 검색어 단어 수 및 최대 반환 세션 수
 MAX_TERMS = 6
 DEFAULT_LIMIT = 30
 SNIPPET_BEFORE, SNIPPET_AFTER = 40, 90
 LIKE_ESCAPE = "\\"
 EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
-# 색인은 `messages` 를 내용 테이블로 쓰는 외부 내용(external content) FTS5 표입니다. 본문을 두 번 저장하지
-# 않고, 아래 트리거가 발언의 추가·수정·삭제를 색인에 옮깁니다 (SQLite 문서의 external content 예와 같은 모양).
+# `messages` 테이블을 external content로 사용하는 FTS5 가상 테이블.
+# 본문 중복 저장을 방지하고 트리거를 통해 CUD 변경 사항을 인덱스에 실시간 반영합니다.
 _SCHEMA = (
     "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5("
     "content, content='messages', content_rowid='rowid', tokenize='trigram')",
@@ -68,7 +68,7 @@ fts_available = False
 
 
 async def ensure_search_index(conn: Any) -> None:
-    """색인과 트리거를 만들고, 처음 만들었으면 기존 발언으로 채웁니다. 못 만들면 `LIKE` 로만 찾습니다."""
+    """FTS5 인덱스 및 동기화 트리거를 생성하고 초기 데이터를 색인합니다. 미지원 환경에서는 LIKE 모드로 전환합니다."""
     global fts_available
     existed = (await conn.execute(text(_EXISTS), {"name": FTS_TABLE})).first() is not None
     try:
@@ -87,17 +87,17 @@ async def ensure_search_index(conn: Any) -> None:
 class SearchHit:
     session_id: str
     title: str
-    # 맞은 발언 (가장 최근 것). 제목만 맞았으면 None.
+    # 매칭된 가장 최근 발언 정보 (제목만 일치한 경우 None)
     message_id: Optional[str]
     sender_name: str
     snippet: str
     at: Optional[datetime]
-    # 이 대화에서 맞은 발언 수
+    # 해당 세션 내 매칭 발언 건수
     matches: int = 0
 
 
 def terms_of(query: str) -> List[str]:
-    """검색어를 낱말로. 겹치는 낱말은 한 번만, 많아야 `MAX_TERMS` 개."""
+    """입력된 검색 쿼리를 개별 키워드 리스트로 분리합니다 (중복 제거, 최대 MAX_TERMS개)."""
     return list(dict.fromkeys(w for w in (query or "").split() if w))[:MAX_TERMS]
 
 
@@ -107,12 +107,12 @@ def _like(term: str) -> str:
 
 
 def _phrase(term: str) -> str:
-    """FTS5 질의 문법에 걸리지 않도록 낱말 하나를 큰따옴표 구절로."""
+    """FTS5 특수문자 충돌을 방지하기 위해 단어를 안전한 구문(Phrase)으로 이스케이프합니다."""
     return '"' + term.replace('"', '""') + '"'
 
 
 def snippet_of(content: str, terms: List[str]) -> str:
-    """처음 맞은 낱말 앞뒤 한 구절. 줄바꿈과 겹친 공백은 하나로 접습니다."""
+    """첫 번째 매칭 키워드 주변의 텍스트 스니펫을 추출하고 줄바꿈/공백을 정규화합니다."""
     flat = re.sub(r"\s+", " ", content or "").strip()
     lower = flat.casefold()
     found = [i for i in (lower.find(t.casefold()) for t in terms) if i >= 0]
@@ -124,7 +124,7 @@ def snippet_of(content: str, terms: List[str]) -> str:
 
 
 async def search_sessions(db: Any, query: str, limit: int = DEFAULT_LIMIT) -> List[SearchHit]:
-    """제목이나 발언에 낱말이 모두 들어 있는 대화. 최근에 맞은 대화부터, 대화마다 한 건."""
+    """제목 또는 발언에 모든 키워드가 포함된 대화 세션 목록을 검색합니다."""
     terms = terms_of(query)
     if not terms:
         return []

@@ -95,8 +95,8 @@ class DebateRunner:
               *, attended: bool = True) -> TurnRun:
         """토론을 백그라운드에서 시작합니다. 이미 돌고 있으면 그 실행을 돌려줍니다.
 
-        `attended=False` 는 답할 사람이 없는 턴입니다 (API·MCP 로 시작, `app/headless.py`). 묻는 쪽지를
-        띄우지 않습니다 (`control.asks_human`).
+        `attended=False`는 대화형 사용자가 없는 무인 모드 턴입니다 (API/MCP 헤드리스 실행, `app/headless.py`).
+        대화형 승인 다이얼로그를 띄우지 않습니다 (`control.asks_human`).
         """
         existing = self._runs.get(session_id)
         if existing is not None and existing.status == "running":
@@ -308,7 +308,7 @@ class DebateRunner:
         )
 
     def resolve_user_question(self, session_id: str, request_id: str, answer: str, *, approver: str = "") -> bool:
-        """에이전트의 질문에 답합니다. 빈 답은 건너뛰기입니다."""
+        """에이전트의 확인 질문에 대한 사용자 답변을 전달합니다 (빈 문자열 전달 시 건너뛰기 처리)."""
         run = self._runs.get(session_id)
         if run is None or run.status != "running":
             return False

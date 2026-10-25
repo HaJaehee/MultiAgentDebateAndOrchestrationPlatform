@@ -1,12 +1,13 @@
-"""한 턴이 작업 공간에서 바꾼 파일을 보고 되돌리는 창 (v1.5).
+"""작업 공간 턴 파일 변경 내역(Diff) 조회 및 롤백 다이얼로그 (v1.5).
 
-결론 카드의 파일 칩(`ChatFeed.set_turn_actions`)을 누르면 열립니다. 바뀐 파일 목록에서 하나를 고르면 diff 를
-보여 주고, `이 턴 되돌리기` 로 그 턴이 바꾼 파일을 모두 턴 시작 전의 모습으로 돌립니다
+결론 카드의 파일 칩(`ChatFeed.set_turn_actions`)을 클릭하면 호출됩니다.
+변경된 파일 목록에서 항목을 선택하면 상세 diff를 확인할 수 있으며,
+`이 턴 되돌리기`를 통해 해당 턴에서 변경된 모든 파일을 턴 시작 전 상태로 안전하게 복원합니다
 (`app/workspace_checkpoint.py`, `app/session_ops.revert_turn_files`).
 
-* 그 대화가 도는 중이면 되돌릴 수 없습니다 — 에이전트가 같은 파일을 쓰는 중일 수 있습니다.
-* 턴이 끝난 뒤 같은 파일이 또 바뀌었으면 되돌리기를 거부하고 그 파일을 알려 줍니다.
-* 이미 되돌린 턴은 다시 되돌리지 않습니다 (그 사이의 변경을 덮어쓸 수 있습니다).
+* 해당 대화 세션이 실행 중인 동안에는 충돌 방지를 위해 되돌리기가 제한됩니다.
+* 턴 완료 이후 외부에서 추가로 수정된 파일이 발견되면 롤백을 중단하고 충돌 파일 목록을 안내합니다.
+* 이미 롤백된 턴은 중복 되돌리기를 수행하지 않습니다.
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ class TurnChangesDialog:
         async with self.session_factory() as db:
             changes = await turn_changes(db, session_id, turn_id)
         if changes is None:
-            ui.notify("이 턴의 작업 공간 체크포인트를 읽지 못했습니다.", type="warning", position="bottom-right")
+            ui.notify("해당 턴의 작업 공간 체크포인트를 불러오지 못했습니다.", type="warning", position="bottom-right")
             return
         self._build(session_id, changes)
 
@@ -53,14 +54,14 @@ class TurnChangesDialog:
         ):
             started = to_local(changes.started_at).strftime("%m-%d %H:%M") if changes.started_at else ""
             with ui.row().classes("w-full items-center justify-between no-wrap gap-3"):
-                ui.label(f"이 턴이 바꾼 파일 {len(changes.files)}개").classes(
+                ui.label(f"변경된 파일 목록 ({len(changes.files)}개)").classes(
                     "text-sm font-bold whitespace-nowrap flex-shrink-0"
                 )
                 ui.label(f"{started} 시작 · {changes.workspace}").classes(
                     "text-[12px] text-slate-400 font-mono truncate"
                 )
             if changes.reverted_at:
-                ui.label("이미 되돌린 턴입니다. 지금 작업 공간은 이 턴이 시작하기 전의 모습입니다.").classes(
+                ui.label("이미 변경 사항이 되돌려진 턴입니다. 작업 공간이 턴 시작 전 상태로 복원되어 있습니다.").classes(
                     "text-xs text-amber-300"
                 )
             with ui.row().classes("w-full no-wrap gap-3 items-stretch"):
@@ -78,7 +79,7 @@ class TurnChangesDialog:
                                     change.path
                                 )
                 with ui.column().classes("flex-1 min-w-0 gap-1"):
-                    title = ui.label("왼쪽에서 파일을 고르면 바뀐 내용을 보여 줍니다.").classes(
+                    title = ui.label("좌측 목록에서 파일을 선택하면 변경 내역(Diff)을 확인할 수 있습니다.").classes(
                         "text-xs text-slate-400"
                     )
                     with ui.scroll_area().classes("w-full h-[46vh] border border-slate-700 rounded"):
@@ -91,14 +92,14 @@ class TurnChangesDialog:
                 ).props("color=red-7 no-caps dense")
                 if running:
                     revert_btn.disable()
-                    revert_btn.tooltip("토론이 진행 중입니다. 턴이 끝난 뒤에 되돌리십시오.")
+                    revert_btn.tooltip("토론이 진행 중입니다. 턴이 완료된 후에 되돌려 주세요.")
                 elif changes.reverted_at:
                     revert_btn.disable()
                     revert_btn.tooltip("이미 되돌린 턴입니다.")
                 else:
                     revert_btn.tooltip(
-                        "이 턴이 만든 파일은 지우고, 고치거나 지운 파일은 턴 시작 전의 내용으로 되살립니다. "
-                        "턴이 끝난 뒤 같은 파일이 또 바뀌었으면 되돌리지 않습니다."
+                        "이 턴에서 생성된 파일은 삭제하고, 수정·삭제된 파일은 턴 시작 전 상태로 복원합니다. "
+                        "턴 완료 후 추가 수정된 파일이 있다면 롤백을 중단합니다."
                     )
                 ui.button("닫기", on_click=dialog.close).props("flat no-caps color=grey-4 dense")
         dialog.open()
@@ -111,14 +112,14 @@ class TurnChangesDialog:
         if viewer.is_deleted:
             return
         title.set_text(path)
-        viewer.set_content(text or "(내용 차이를 보여 줄 수 없습니다 — 이진 파일이거나 빈 파일입니다.)")
+        viewer.set_content(text or "(변경 내역을 표시할 수 없습니다 — 바이너리 파일이거나 빈 파일입니다.)")
 
     def _confirm_revert(self, parent: ui.dialog, session_id: str, changes: TurnChanges) -> None:
         with ui.dialog() as confirm, ui.card().classes("p-4 w-[420px] bg-slate-900 text-white border border-slate-700"):
-            ui.label("이 턴의 파일 변경을 되돌릴까요?").classes("text-sm font-bold")
+            ui.label("이 턴의 파일 변경 사항을 되돌리시겠습니까?").classes("text-sm font-bold")
             ui.label(
-                f"{len(changes.files)}개 파일을 이 턴이 시작하기 전의 모습으로 돌립니다. 대화 기록은 그대로 두고, "
-                "되돌렸다는 사실을 대화에 남겨 다음 턴의 에이전트가 알게 합니다."
+                f"{len(changes.files)}개 파일을 턴 시작 전 상태로 복원합니다. 대화 기록은 유지되며, "
+                "롤백 수행 사실이 시스템 메모로 기록되어 다음 턴 에이전트에게 전달됩니다."
             ).classes("text-xs text-slate-300")
 
             async def go() -> None:
@@ -132,24 +133,24 @@ class TurnChangesDialog:
 
     async def _revert(self, parent: ui.dialog, session_id: str, changes: TurnChanges) -> None:
         if self.is_running(session_id):
-            ui.notify("토론이 진행 중입니다. 턴이 끝난 뒤에 되돌리십시오.", type="warning", position="bottom-right")
+            ui.notify("토론이 진행 중입니다. 턴이 완료된 후에 되돌려 주세요.", type="warning", position="bottom-right")
             return
         async with self.session_factory() as db:
             result = await revert_turn_files(db, session_id, changes.turn_id)
         if result.drifted:
             shown = ", ".join(result.drifted[:5]) + (f" 외 {len(result.drifted) - 5}개" if len(result.drifted) > 5 else "")
             ui.notify(
-                f"턴이 끝난 뒤 다시 바뀐 파일이 있어 되돌리지 않았습니다: {shown}. "
-                "나중의 변경을 덮어쓰지 않으려는 것입니다.",
+                f"턴 완료 후 외부에서 추가로 수정된 파일이 있어 되돌리기를 중단했습니다: {shown}. "
+                "후속 변경 사항의 유실을 방지하기 위함입니다.",
                 type="warning", position="bottom-right", multi_line=True, timeout=10000,
             )
             return
         if not result.ok:
-            ui.notify(f"되돌리지 못했습니다: {result.error}", type="negative", position="bottom-right", multi_line=True)
+            ui.notify(f"되돌리기에 실패했습니다: {result.error}", type="negative", position="bottom-right", multi_line=True)
             return
         parent.close()
         ui.notify(
-            f"파일 {len(result.reverted)}개를 턴 시작 전의 모습으로 되돌렸습니다.",
+            f"파일 {len(result.reverted)}개를 턴 시작 전 상태로 성공적으로 되돌렸습니다.",
             type="positive", position="bottom-right",
         )
         await self.on_reverted()

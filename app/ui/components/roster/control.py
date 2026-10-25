@@ -52,7 +52,7 @@ class AgentRosterControl(SessionSettingsMixin, AgentCardsMixin, McpPanelMixin, A
         self.converge_early: bool = True
         self.token_budget: int = 0
         self.converge_switch: Optional[ui.switch] = None
-        # 전문가가 발언 도중 나에게 물을 수 있는지 (`ask__ask_user`, v1.5). 새 대화는 켠 채로 만듭니다.
+        # 전문가가 발언 도중 사용자에게 질문할 수 있는지 (`ask__ask_user`, v1.5). 새 대화 세션은 기본 활성화합니다.
         self.ask_user: bool = True
         self.ask_switch: Optional[ui.switch] = None
         self.budget_input: Optional[ui.number] = None
@@ -421,24 +421,25 @@ class AgentRosterControl(SessionSettingsMixin, AgentCardsMixin, McpPanelMixin, A
                             min=1, max=5, step=1, value=self.max_rounds, on_change=self._on_rounds_change
                         ).props("dark label color=indigo-4").classes("w-20")
                         self.rounds_label = ui.badge(str(self.max_rounds), color="indigo-7").props("dense")
-                        # 라운드 수는 상한입니다. 합의되면 그 전에 끝날 수 있다는 것을 바로 옆에 둡니다.
+                        # 라운드 수는 최대 상한이며, 합의 수렴 시 조기 종료될 수 있음을 바로 옆에 배치합니다.
                         self.converge_switch = ui.switch(
                             "합의되면 일찍 끝내기", value=self.converge_early, on_change=self._on_converge_change,
                         ).props("dense dark color=indigo-4").classes("text-xs text-slate-300")
                         self.converge_switch.tooltip(
-                            "라운드를 마칠 때마다 쓰는 결정 장부에 미해결 쟁점이 두 라운드 연달아 없고 새 결정도 "
-                            "나오지 않으면, 남은 라운드를 건너뛰고 결론을 냅니다. 피드에 그 사실이 남습니다. "
-                            "그래프 토론에는 쓰이지 않습니다 (게이트가 끝을 정합니다)."
+                            "각 라운드 종료 시 갱신되는 결정 장부에 2라운드 연속 미해결 쟁점이 없고 새로운 결정 사항이 "
+                            "추가되지 않아 수렴한 경우, 남은 라운드를 건너뛰고 조기 종료하여 결론을 합성합니다. "
+                            "그래프 토론에는 적용되지 않습니다 (게이트 조건으로 종료 판정)."
                         )
                         self.ask_switch = ui.switch(
                             "에이전트 질문 받기", value=self.ask_user, on_change=self._on_ask_user_change,
                         ).props("dense dark color=violet-4").classes("text-xs text-slate-300")
                         self.ask_switch.tooltip(
-                            "전문가가 발언 도중 요청이 모호하면 나에게 짧게 묻습니다 (한 턴에 3번까지). 피드에 질문 카드가 "
-                            "뜨고, 5분 안에 답이 없으면 가정을 밝히고 진행합니다. 답은 다음 발언자들도 봅니다."
+                            "전문가 에이전트가 발언 도중 요구사항이 모호할 때 사용자에게 확인 질문을 요청할 수 있습니다 (턴당 최대 3회). "
+                            "채팅 피드에 질문 카드가 표시되며, 5분 이내에 답변이 없으면 자체 가정을 명시하고 계속 진행합니다. "
+                            "답변 내용은 후속 발언자들에게도 공유됩니다."
                         )
 
-                    # 턴 토큰 예산 — 한 턴이 쓸 토큰(입력+출력)의 상한. 넘으면 다음 라운드 경계에서 결론으로 갑니다.
+                    # 턴 토큰 예산 — 해당 턴의 최대 소모 토큰(입력+출력) 한도. 도달 시 다음 라운드 경계에서 결론 합성으로 이동합니다.
                     with ui.row().classes("items-center gap-2 min-w-[180px]"):
                         ui.icon("data_usage", size="xs").classes("text-sky-400")
                         ui.label("토큰 예산:").classes("text-xs font-semibold text-slate-300")
@@ -447,9 +448,9 @@ class AgentRosterControl(SessionSettingsMixin, AgentCardsMixin, McpPanelMixin, A
                             placeholder="없음", on_change=self._on_token_budget_change,
                         ).props("outlined dense dark").classes("w-28 text-xs")
                         self.budget_input.tooltip(
-                            "한 턴에 쓸 토큰(입력+출력)의 상한. 넘으면 다음 라운드 경계에서 남은 라운드를 "
-                            "건너뛰고 지금까지의 토론으로 결론을 냅니다. 비우거나 0 이면 상한이 없습니다. "
-                            "발언 카드와 세션 카드에서 실제로 쓴 양을 볼 수 있습니다."
+                            "해당 턴에서 소모할 수 있는 최대 토큰(입력+출력) 한도입니다. 한도에 도달하면 다음 라운드 경계에서 "
+                            "남은 라운드를 건너뛰고 현재까지의 토론 내용을 바탕으로 결론을 합성합니다. "
+                            "비우거나 0으로 설정하면 상한이 없습니다. 발언 카드 및 세션 정보에서 실제 사용량을 확인할 수 있습니다."
                         )
 
                     # 도구 보안 모드 (`app/mcp/policy.py`). 대화마다 고르고, 토론 중에 바꾸면

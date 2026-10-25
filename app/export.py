@@ -126,7 +126,7 @@ def build_session_markdown(
         ("참여 에이전트", ", ".join(agents) if agents else "-"),
         ("작업 공간", str(session.get("workspace_dir") or "(기본값)")),
     ]
-    # 이 대화의 모든 턴에서 쓴 토큰·LLM 시간 (`turns.usage`). 이 기록 이전의 턴은 빠져 있습니다.
+    # 해당 세션 전체 턴의 누적 토큰 및 LLM 소요 시간 (`turns.usage`). 기능 도입 이전의 턴은 제외됩니다.
     used = usage_line(session.get("usage"))
     if used:
         meta.append(("LLM 사용량 (누적)", used))
@@ -180,7 +180,7 @@ def build_session_markdown(
         if node_badge:
             header += f" — 노드 “{node_badge}”"
         out.append(header)
-        # 이 발언의 토큰·LLM 시간 (`llm_meta.usage`). 시각 줄 뒤에 붙입니다.
+        # 개별 발언의 소모 토큰 및 LLM 소요 시간 (`llm_meta.usage`). 타임스탬프 라인 뒤에 병기합니다.
         used = usage_line((msg.get("llm_meta") or {}).get("usage")) if isinstance(msg.get("llm_meta"), dict) else ""
         if stamp or used:
             out += ["", f"*{' · '.join(part for part in (stamp, used) if part)}*"]

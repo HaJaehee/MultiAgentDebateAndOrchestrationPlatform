@@ -1,14 +1,14 @@
-"""화면 없이 토론을 돌리는 길: 대화 만들기, 턴 시작·정지, 상태·결과 읽기, 이벤트 받기 (v1.5).
+"""헤드리스(Headless) 토론 실행 코어: 세션 생성, 턴 시작·중단, 상태·결과 조회, 이벤트 스트리밍 (v1.5).
 
-REST(`app/api.py` 의 `/api/sessions/...`)와 MCP 서버(`app/mcp_server.py`)가 이 함수들을 함께 씁니다.
-스크립트·CI·다른 에이전트(Claude Code, IDE)가 MADO 를 "토론 팀" 하나로 부를 수 있게 하는 것이 목적입니다.
+REST API(`app/api.py`의 `/api/sessions/...`)와 MADO MCP 서버(`app/mcp_server.py`)에서 이 모듈의 함수를 공통 사용합니다.
+외부 스크립트, CI/CD, 타 AI 에이전트(Claude Code, Cursor 등)가 MADO를 '다중 에이전트 토론 팀' 도구로 활용할 수 있도록 지원합니다.
 
-* 턴은 화면에서 시작한 턴과 똑같이 `DebateRunner` 가 백그라운드에서 돌립니다. 같은 대화를 화면으로 열면
-  진행 중인 토론이 그대로 보이고, 화면에서 정지할 수도 있습니다.
-* **답할 사람이 없는 턴**: 기본으로 `attended=False` 로 시작합니다. 계획 승인 카드를 띄우지 않고, 도구 보안이
-  "묻기" 로 판정한 호출은 실행하지 않으며(`unattended`), 한도에 닿으면 묻지 않고 마무리합니다. 사람이 화면에서
-  답하겠다면 `attended=True` 로 시작합니다.
-* 결과는 기록(DB)에서 읽습니다. 그래서 서버가 다시 떠도, 다른 화면에서 시작한 턴이어도 같은 답입니다.
+* 턴은 웹 화면에서 시작된 턴과 동일하게 `DebateRunner`가 백그라운드에서 비동기 실행합니다. 동일 세션을 웹 화면에서 열면
+  진행 중인 토론이 실시간 표시되며 화면에서 수동 중단할 수도 있습니다.
+* **비대면(Unattended) 턴 실행**: 기본적으로 `attended=False` 모드로 실행됩니다. 계획 승인 단계를 건너뛰고 자동 진행하며,
+  도구 보안 정책상 "사용자 확인(Ask)" 대상 호출은 자동 차단(`unattended`)되고, 예산 한도 도달 시 별도 확인 없이 즉시 마무리합니다.
+  사용자가 웹 UI에서 직접 개입하고자 할 때만 `attended=True`로 실행합니다.
+* 결과 데이터는 데이터베이스로부터 조회하므로 서버 재기동이나 세션 재접속 후에도 동일한 상태가 일관되게 유지됩니다.
 """
 
 from __future__ import annotations
@@ -30,13 +30,13 @@ from app.orchestration import turns
 from app.orchestration.runner import get_debate_runner
 from app.orchestration.strategies import DEFAULT_STRATEGY, STRATEGY_MAP
 
-# 이벤트 흐름에서 이만큼 조용하면 연결이 살아 있다는 표시(빈 줄)를 보냅니다 (SSE 의 프록시·클라이언트 시간 초과).
+# SSE 스트림 유휴 시 연결 유지를 위한 하트비트(빈 줄) 전송 간격 (프록시/클라이언트 타임아웃 방지).
 KEEPALIVE_SECONDS = 15.0
 MAX_ROUNDS_LIMIT = 10
 
 
 class HeadlessError(ValueError):
-    """요청이 틀렸거나(400) 대상이 없거나(404) 지금은 할 수 없습니다(409). `status` 가 HTTP 상태입니다."""
+    """헤드리스 API 요청 오류 (잘못된 요청: 400, 대상 없음: 404, 충돌/진행 중: 409). `status`는 HTTP 상태 코드."""
 
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
@@ -48,7 +48,7 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
 
 
 def _clean_agents(keys: Optional[List[str]]) -> List[str]:
-    """참여할 에이전트. 주지 않으면 켜져 있는 모든 에이전트. 없는 키는 거절합니다. 오케스트레이터는 늘 들어갑니다."""
+    """참여 에이전트 목록을 검증합니다. 미지정 시 활성화된 전체 에이전트가 배정되며 오케스트레이터는 자동 포함됩니다."""
     pool = get_agent_pool()
     enabled = [a.key for a in pool.list_all() if getattr(a, "enabled", True)]
     if not keys:
@@ -56,7 +56,7 @@ def _clean_agents(keys: Optional[List[str]]) -> List[str]:
     else:
         unknown = [k for k in keys if pool.get(k) is None]
         if unknown:
-            raise HeadlessError(400, f"없는 에이전트입니다: {', '.join(unknown)} (있는 것: {', '.join(enabled)})")
+            raise HeadlessError(400, f"존재하지 않거나 비활성화된 에이전트입니다: {', '.join(unknown)} (사용 가능: {', '.join(enabled)})")
         chosen = list(dict.fromkeys(keys))
     if ORCHESTRATOR_KEY not in chosen:
         chosen = [ORCHESTRATOR_KEY] + chosen
@@ -74,16 +74,16 @@ async def create_session(
     converge_early: bool = True,
     token_budget: int = 0,
 ) -> Dict[str, Any]:
-    """대화를 만듭니다. 그래프 토론은 화면에서 그래프를 골라야 하므로 여기서는 만들 수 없습니다."""
-    # 새로 만드는 길이라 옛 이름(`LEGACY_STRATEGY_ALIASES`)은 받지 않고, 모르는 이름을 기본값으로 바꾸지도 않습니다.
+    """새 대화 세션을 생성합니다. 그래프 토론은 전용 편집기를 통해 생성해야 하므로 지원되지 않습니다."""
+    # 신규 생성이므로 레거시 별칭(`LEGACY_STRATEGY_ALIASES`)은 허용하지 않으며 정확한 전략 식별자를 요구합니다.
     name = (strategy or "").strip()
     chosen = STRATEGY_MAP.get(name)
     if chosen is None:
-        raise HeadlessError(400, f"없는 전략입니다: {strategy} (있는 것: {', '.join(STRATEGY_MAP)})")
+        raise HeadlessError(400, f"지원되지 않는 토론 전략입니다: {strategy} (지원 전략: {', '.join(STRATEGY_MAP)})")
     if chosen.runs_graph:
-        raise HeadlessError(400, "그래프 토론은 화면에서 그래프를 골라 만드십시오.")
+        raise HeadlessError(400, "그래프 기반 토론은 웹 UI에서 그래프를 선택하여 생성해야 합니다.")
     if not 1 <= int(max_rounds) <= MAX_ROUNDS_LIMIT:
-        raise HeadlessError(400, f"max_rounds 는 1~{MAX_ROUNDS_LIMIT} 이어야 합니다.")
+        raise HeadlessError(400, f"max_rounds 값은 1~{MAX_ROUNDS_LIMIT} 사이여야 합니다.")
     keys = _clean_agents(agents)
     sid = str(uuid.uuid4())
     async with get_session_factory()() as db:
@@ -120,32 +120,32 @@ async def list_sessions(limit: int = 50) -> List[Dict[str, Any]]:
 async def _session_or_404(db, session_id: str) -> SessionModel:
     session = await db.get(SessionModel, session_id)
     if session is None:
-        raise HeadlessError(404, f"없는 대화입니다: {session_id}")
+        raise HeadlessError(404, f"대화 세션을 찾을 수 없습니다: {session_id}")
     return session
 
 
 async def start_turn(session_id: str, prompt: str, *, attended: bool = False) -> Dict[str, Any]:
-    """턴을 백그라운드에서 시작하고 곧바로 돌아옵니다. 이미 돌고 있으면 409."""
+    """백그라운드에서 토론 턴을 시작하고 즉시 응답합니다. 이미 실행 중인 경우 409 반환."""
     prompt = (prompt or "").strip()
     if not prompt:
-        raise HeadlessError(400, "요청(prompt)이 비어 있습니다.")
+        raise HeadlessError(400, "사용자 요청 프롬프트(prompt)가 비어 있습니다.")
     runner = get_debate_runner()
     async with get_session_factory()() as db:
         session = await _session_or_404(db, session_id)
         workspace = session.workspace_dir or None
     if runner.is_running(session_id):
-        raise HeadlessError(409, "이 대화는 토론이 진행 중입니다. 끝난 뒤에 다시 시작하십시오.")
+        raise HeadlessError(409, "해당 대화 세션에서 이미 토론이 진행 중입니다. 완료 후 다시 시도해 주세요.")
     run = runner.start(session_id, prompt, workspace, attended=attended)
     return {"session_id": session_id, "status": run.status, "attended": attended}
 
 
 def stop_turn(session_id: str) -> bool:
-    """진행 중인 턴에 정지를 요청합니다 — 남은 라운드를 건너뛰고 지금까지로 결론을 냅니다."""
+    """진행 중인 턴의 중단을 요청합니다 — 잔여 라운드를 건너뛰고 현재까지의 논의를 바탕으로 결론을 합성합니다."""
     return get_debate_runner().request_stop(session_id)
 
 
 async def turn_status(session_id: str) -> Dict[str, Any]:
-    """지금 상태. 돌고 있으면 러너의 상태 줄을, 아니면 마지막 턴의 기록을 돌려줍니다."""
+    """세션의 현재 상태를 조회합니다. 진행 중인 경우 실시간 진행 상태를, 유휴 상태인 경우 최종 턴 기록을 반환합니다."""
     async with get_session_factory()() as db:
         await _session_or_404(db, session_id)
     run = get_debate_runner().get(session_id)
@@ -160,7 +160,7 @@ async def turn_status(session_id: str) -> Dict[str, Any]:
 
 
 async def turn_result(session_id: str) -> Dict[str, Any]:
-    """마지막 턴의 결과: 결론, 산출물, 결정 장부, 사용량, 일찍 끝났는지, 작업 공간에서 바뀐 파일 수."""
+    """최종 턴의 실행 결과를 조회합니다: 최종 결론, 생성된 아티팩트, 결정 장부, 토큰 사용량, 조기 종료 여부, 작업 공간 변경 파일 통계."""
     async with get_session_factory()() as db:
         session = await _session_or_404(db, session_id)
         turn = (await db.execute(
@@ -203,7 +203,7 @@ async def turn_result(session_id: str) -> Dict[str, Any]:
 
 
 async def wait_for_turn(session_id: str, timeout: float) -> bool:
-    """진행 중인 턴이 끝날 때까지 기다립니다. 끝났으면 True, 시간 안에 안 끝났으면 False."""
+    """진행 중인 턴이 완료될 때까지 대기합니다. 완료 시 True, 제한 시간 초과 시 False 반환."""
     run = get_debate_runner().get(session_id)
     if run is None or run.status != "running" or run.task is None:
         return True
@@ -211,7 +211,7 @@ async def wait_for_turn(session_id: str, timeout: float) -> bool:
         await asyncio.wait_for(asyncio.shield(run.task), timeout=timeout)
     except asyncio.TimeoutError:
         return False
-    except Exception:  # noqa: BLE001 - 실패도 "끝남" 입니다. 이유는 결과에 있습니다
+    except Exception:  # noqa: BLE001 - 예외 발생 시에도 실행 종료로 간주하며 상세 사유는 결과 조회에서 확인합니다
         return True
     return True
 
@@ -225,10 +225,9 @@ def _jsonable(event: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def events(session_id: str) -> AsyncIterator[Dict[str, Any]]:
-    """진행 중인 턴의 이벤트. 처음에 지금까지의 스냅샷(`snapshot`)을, 끝에 `run_finished` 를 보냅니다.
+    """진행 중인 턴의 이벤트를 실시간 스트리밍합니다. 초기 연결 시 `snapshot`, 완료 시 `run_finished`를 전송합니다.
 
-    돌고 있는 턴이 없으면 `idle` 하나를 보내고 끝납니다. 조용한 동안에는 `None` 을 내어 보내는 쪽이 연결
-    유지 표시를 보내게 합니다.
+    진행 중인 턴이 없으면 `idle` 이벤트를 전송하고 종료합니다. 유휴 구간에서는 하트비트 유지를 위해 `None`을 yield합니다.
     """
     run = get_debate_runner().get(session_id)
     if run is None or run.status != "running":

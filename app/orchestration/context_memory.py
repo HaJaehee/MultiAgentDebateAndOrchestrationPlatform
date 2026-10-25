@@ -467,14 +467,14 @@ def parse_ledger(content: str, max_chars: int = LEDGER_MAX_CHARS) -> Optional[st
     return clip_chars(ledger, max_chars, "- …(장부가 길어 뒷부분을 생략했습니다)")
 
 
-# 장부 칸에서 "비어 있음" 으로 읽는 항목. 프롬프트는 `- 없음` 을 쓰라고 하지만, 모델이 조금씩 바꿔 씁니다.
+# 결정 장부 섹션에서 빈 값(항목 없음)으로 인식할 텍스트 집합. 프롬프트 지침('- 없음') 외 모델 변형 표기를 포괄합니다.
 _EMPTY_ITEMS = {"없음", "없음.", "해당 없음", "none", "n/a", "-"}
 
 
 def ledger_items(ledger: str, title: str) -> Optional[List[str]]:
-    """장부의 한 칸(`## title`)에 적힌 항목들. 칸이 없으면 None, `- 없음` 뿐이면 빈 목록.
+    """결정 장부 내 특정 섹션(`## title`)의 항목 목록을 반환합니다. 섹션이 없으면 None, 빈 항목('- 없음' 등)만 있으면 빈 리스트를 반환합니다.
 
-    항목은 `- ` 나 `* ` 로 시작하는 줄입니다. 들여 쓴 줄은 앞 항목의 덧붙임으로 보고 세지 않습니다.
+    항목은 `- ` 또는 `* ` 로 시작하는 라인 기준이며, 들여쓰기된 라인은 이전 항목의 부가 설명으로 간주하여 제외합니다.
     """
     items: Optional[List[str]] = None
     for line in (ledger or "").splitlines():
@@ -493,11 +493,11 @@ def ledger_items(ledger: str, title: str) -> Optional[List[str]]:
 
 
 def ledger_converged(previous: str, current: str) -> bool:
-    """두 라운드 연달아 미해결 쟁점이 없고, 이번 라운드에 결정이 더 늘지 않았는가 (v1.5 합의 판정).
+    """2라운드 연속 미해결 쟁점이 없고, 이번 라운드에 새로운 결정 사항이 추가되지 않았는지 검사합니다 (v1.5 합의 수렴 조기 종료 판정).
 
-    결정 문장 자체는 비교하지 않습니다. 장부는 갱신될 때마다 모델이 다시 쓰므로, 같은 결정도 표현이
-    조금씩 바뀝니다. 그래서 "쟁점이 두 번 연달아 비었고, 새 결정이 나오지 않았다" 만 봅니다. 칸을 읽지
-    못하면(장부 형식이 아니면) 수렴하지 않은 것으로 봅니다 — 일찍 끝내는 쪽이 틀리는 편이 더 비쌉니다.
+    결정 문장의 텍스트 일치 여부는 비교하지 않습니다. 장부 갱신 시 LLM이 문장을 재작성하면서 어휘가 달라질 수 있으므로,
+    '2회 연속 미해결 쟁점 없음 및 새 결정 사항 미발생' 조건만 검사합니다. 섹션 파싱에 실패하면(비정형 형식) 수렴하지 않은
+    것으로 안전하게 처리합니다.
     """
     open_before, open_now = ledger_items(previous, "미해결 쟁점"), ledger_items(current, "미해결 쟁점")
     decided_before, decided_now = ledger_items(previous, "결정 사항"), ledger_items(current, "결정 사항")
@@ -507,7 +507,7 @@ def ledger_converged(previous: str, current: str) -> bool:
 
 
 def open_issue_count(ledger: str) -> Optional[int]:
-    """장부의 미해결 쟁점 수. 장부가 없거나 그 칸이 없으면 None (모름)."""
+    """결정 장부의 미해결 쟁점 개수를 반환합니다. 장부 또는 해당 섹션이 없으면 None을 반환합니다."""
     items = ledger_items(ledger, "미해결 쟁점")
     return None if items is None else len(items)
 

@@ -1,23 +1,22 @@
-"""작업 공간 체크포인트: 턴이 시작하고 끝날 때 작업 공간의 모습을 git 에 남깁니다 (v1.5).
+"""작업 공간 체크포인트: 턴 시작 및 종료 시 작업 공간 상태를 Git 스냅샷으로 기록 (v1.5).
 
-에이전트는 도구로 작업 공간의 파일을 만들고 고칩니다. 한 턴이 무엇을 바꿨는지 보고, 마음에 들지 않으면
-그 턴의 변경만 되돌릴 수 있어야 `auto` 도구 모드를 마음 놓고 씁니다. 작업 공간은 이미 git 저장소이므로
-(`app/mcp/manager.ensure_workspace`) 그 저장소에 스냅샷을 남깁니다.
+에이전트는 도구를 사용하여 작업 공간 내 파일을 생성하고 수정합니다. 각 턴에서 변경된 파일 내역을 확인하고,
+필요 시 해당 턴의 변경 사항만 안전하게 롤백할 수 있도록 Git 기반 스냅샷 기능을 제공합니다. 작업 공간은
+기본적으로 Git 저장소로 관리됩니다 (`app/mcp/manager.ensure_workspace`).
 
-**에이전트의 git 기록을 건드리지 않습니다.** 스냅샷은 HEAD 에도 브랜치에도 올라가지 않는 커밋이고,
-`refs/mado/turns/<턴 id>/start` · `end` 라는 따로 된 이름으로만 가리킵니다. 만들 때는 저장소의 인덱스를
-복사한 임시 인덱스(`GIT_INDEX_FILE`)를 써서, 에이전트가 `git add` 해 둔 것도 그대로 둡니다. 그래서
-`git log`·`git status` 에는 아무것도 보이지 않습니다.
+**사용자 및 에이전트의 기존 Git 작업 히스토리를 전혀 침범하지 않습니다.** 체크포인트 스냅샷 커밋은 일반 브랜치나
+HEAD에 등록되지 않으며, `refs/mado/turns/<턴 id>/start` 및 `end`라는 독립된 Git ref 네임스페이스로만 관리됩니다.
+스냅샷 생성 시 별도의 임시 인덱스(`GIT_INDEX_FILE`)를 격리 사용하므로, 에이전트가 `git add`한 기존 스테이징 내역이
+온전히 보존되며 `git log`나 `git status`에도 노출되지 않습니다.
 
-* 무엇을 담나 — `.gitignore` 를 따르고, 의존성·캐시 폴더(`node_modules`, `.venv`, `__pycache__` 등)와
-  런타임 임시 폴더(`.mado`)는 뺍니다. 다운로드 창이 훑지 않는 폴더와 같은 목록입니다 (`dist`·`build` 는
-  사용자가 만든 결과물일 수 있어 담습니다).
-* 되돌리기 — 그 턴에서 바뀐 파일만 턴 시작 때의 모습으로 돌립니다. 턴에서 생긴 파일은 지우고, 고치거나
-  지운 파일은 되살립니다. 턴이 끝난 뒤 같은 파일이 **또** 바뀌었으면(다음 턴, 같은 폴더를 쓰는 다른 대화,
-  사람의 손) 그 변경을 덮어쓰지 않도록 거부하고 그 파일을 알려 줍니다.
+* 대상 파일 필터링 — `.gitignore`를 준수하며, 외부 의존성 및 캐시 디렉터리(`node_modules`, `.venv`, `__pycache__` 등)와
+  런타임 임시 디렉터리(`.mado`)는 제외합니다. (사용자가 빌드한 산출물일 수 있는 `dist`, `build` 디렉터리는 포함)
+* 롤백(되돌리기) — 해당 턴에서 변경된 파일들만 턴 시작 전 상태로 복원합니다. 생성된 파일은 삭제하고, 수정·삭제된
+  파일은 원상 복구합니다. 턴 완료 후 외부나 후속 턴에서 동일 파일이 추가로 수정된 경우, 변경 사항 유실을 방지하기 위해
+  롤백을 안전하게 중단하고 충돌 파일 목록을 안내합니다.
 
-git 이 없거나 작업 공간이 저장소가 아니면 아무것도 하지 않습니다(None). 모두 이벤트 루프 밖에서 부르는
-동기 함수입니다 (`asyncio.to_thread`).
+Git 미설치 환경이거나 작업 공간이 Git 저장소가 아닌 경우 조용히 무시(None)합니다.
+본 모듈의 모든 함수는 비동기 이벤트 루프 외부(`asyncio.to_thread`)에서 안전하게 실행되도록 설계된 동기 함수입니다.
 """
 
 from __future__ import annotations
@@ -39,13 +38,13 @@ logger = logging.getLogger(__name__)
 REF_ROOT = "refs/mado/turns"
 START, END = "start", "end"
 
-# 스냅샷에서 빼는 폴더. 사용자가 만든 결과물일 수 있는 `dist`·`build` 는 담습니다.
+# 스냅샷 제외 대상 디렉터리 (`dist`, `build`는 사용자 산출물일 수 있으므로 보존)
 SNAPSHOT_EXCLUDED_DIRS = sorted(EXCLUDED_DIRS - {"dist", "build", ".git", ".hg", ".svn"})
 
-# 화면에 보여 줄 diff 한 건의 상한(글자). 큰 생성 파일 하나가 대화상자를 멈추지 않게 합니다.
+# Diff 텍스트 최대 글자 수 제한 (대용량 파일 Diff로 인한 UI 프리징 방지)
 MAX_DIFF_CHARS = 200_000
 
-# git 명령 하나의 시간 상한(초). 큰 작업 공간의 첫 스냅샷은 파일을 모두 해시하므로 넉넉히 둡니다.
+# Git 단일 명령어 타임아웃 (초 단위)
 GIT_TIMEOUT = 120
 
 _IDENTITY = {
@@ -70,7 +69,7 @@ class FileChange:
 class RevertResult:
     ok: bool
     reverted: List[FileChange] = field(default_factory=list)
-    # 턴이 끝난 뒤 또 바뀌어서 되돌리지 않은 파일. 있으면 `ok` 는 False 입니다.
+    # 턴 완료 후 외부에서 추가 수정되어 롤백이 보류된 충돌 파일 목록
     drifted: List[str] = field(default_factory=list)
     error: str = ""
 
@@ -105,7 +104,7 @@ def _error(proc: subprocess.CompletedProcess) -> str:
 
 
 def snapshot(workspace: str | Path, ref: Optional[str]) -> Optional[str]:
-    """작업 공간의 지금 모습을 커밋으로 만들고, `ref` 를 주면 그 이름을 답니다. 커밋 id, 못 하면 None."""
+    """현재 작업 공간 상태를 독립된 Git 커밋으로 스냅샷하고, `ref`가 지정된 경우 해당 참조를 생성합니다."""
     found = _repo(workspace)
     if found is None:
         return None
@@ -183,7 +182,7 @@ def file_diff(workspace: str | Path, start: str, end: str, path: str) -> str:
     proc = _git(git, root, "diff", "--no-renames", "--no-color", start, end, "--", path)
     text = (proc.stdout or b"").decode("utf-8", errors="replace")
     if len(text) > MAX_DIFF_CHARS:
-        text = text[:MAX_DIFF_CHARS] + f"\n… (diff 가 길어 {MAX_DIFF_CHARS:,}자에서 잘랐습니다)\n"
+        text = text[:MAX_DIFF_CHARS] + f"\n… (내용이 길어 최대 {MAX_DIFF_CHARS:,}자까지만 표시합니다)\n"
     return text
 
 
@@ -195,20 +194,20 @@ def revert(workspace: str | Path, start: str, end: str) -> RevertResult:
     """
     found = _repo(workspace)
     if found is None:
-        return RevertResult(ok=False, error="작업 공간이 git 저장소가 아니거나 git 을 찾지 못했습니다.")
+        return RevertResult(ok=False, error="작업 공간이 Git 저장소가 아니거나 Git 명령어를 찾을 수 없습니다.")
     git, root = found
     turn_changes = changes(root, start, end)
     if turn_changes is None:
-        return RevertResult(ok=False, error="이 턴의 스냅샷을 읽지 못했습니다.")
+        return RevertResult(ok=False, error="해당 턴의 체크포인트 스냅샷을 읽을 수 없습니다.")
     if not turn_changes:
         return RevertResult(ok=True)
 
     now = snapshot(root, None)
     if now is None:
-        return RevertResult(ok=False, error="지금 작업 공간의 모습을 읽지 못했습니다.")
+        return RevertResult(ok=False, error="현재 작업 공간의 상태를 읽을 수 없습니다.")
     later = changes(root, end, now)
     if later is None:
-        return RevertResult(ok=False, error="턴이 끝난 뒤의 변경을 확인하지 못했습니다.")
+        return RevertResult(ok=False, error="턴 종료 이후의 파일 변경 내역을 확인하지 못했습니다.")
     touched = {c.path for c in turn_changes}
     drifted = sorted(c.path for c in later if c.path in touched)
     if drifted:
@@ -222,7 +221,7 @@ def revert(workspace: str | Path, start: str, end: str) -> RevertResult:
             stdin="\0".join(restore).encode("utf-8"),
         )
         if proc.returncode != 0:
-            return RevertResult(ok=False, error=f"파일을 되살리지 못했습니다: {_error(proc)}")
+            return RevertResult(ok=False, error=f"파일 복원에 실패했습니다: {_error(proc)}")
     for change in turn_changes:
         if change.status != "A":
             continue
@@ -232,7 +231,7 @@ def revert(workspace: str | Path, start: str, end: str) -> RevertResult:
         try:
             target.unlink(missing_ok=True)
         except OSError as exc:
-            return RevertResult(ok=False, reverted=[], error=f"`{change.path}` 를 지우지 못했습니다: {exc}")
+            return RevertResult(ok=False, reverted=[], error=f"`{change.path}` 파일 삭제에 실패했습니다: {exc}")
         _remove_empty_parents(target.parent, root)
     return RevertResult(ok=True, reverted=list(turn_changes))
 

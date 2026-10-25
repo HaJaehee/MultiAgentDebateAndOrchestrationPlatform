@@ -143,7 +143,7 @@ DECISION_STYLES = {
 APPROVAL_CARD_CLASSES = (
     "w-full gap-1.5 px-3 py-2 rounded-lg text-xs border bg-sky-950/50 border-sky-700/70"
 )
-# 에이전트의 질문 카드 (v1.5). 승인이 아니라 대답이라 보라색으로 구분합니다.
+# 에이전트 사용자 질문 카드 (v1.5). 승인이 아닌 질의응답이므로 보라색 테마로 구분합니다.
 QUESTION_CARD_CLASSES = (
     "w-full gap-1.5 px-3 py-2 rounded-lg text-xs border bg-violet-950/50 border-violet-600/70"
 )
@@ -264,7 +264,7 @@ def unfinished_turn_text(info: Dict[str, Any]) -> str:
 def card_time_text(msg: Dict[str, Any]) -> Tuple[str, str]:
     """발언 카드에 적을 시각 한 줄과 툴팁. 시각이 전혀 없으면 둘 다 빈 문자열.
 
-    발언의 토큰 수(`llm_meta.usage`)를 알면 한 줄 끝에 합계를, 툴팁에 입력·출력·LLM 시간을 붙입니다
+    발언의 토큰 수(`llm_meta.usage`)가 측정된 경우 타임스탬프 줄에 토큰 합계를, 툴팁에 입력·출력·LLM 시간을 표시합니다
     (`card_usage_text`).
 
     카드는 한 대화 안에서 위아래로 이어 읽으므로 **시각만** 짧게 적고, 날짜까지
@@ -284,7 +284,7 @@ def card_time_text(msg: Dict[str, Any]) -> Tuple[str, str]:
 
 
 def card_usage_text(msg: Dict[str, Any]) -> Tuple[str, str]:
-    """카드의 사용량: 한 줄에 붙일 `토큰 13.4k` 와 툴팁의 `입력 … · 출력 … · LLM …초`. 모르면 빈 문자열."""
+    """카드의 사용량 요약: 타임스탬프용 간략 표기('토큰 13.4k') 및 상세 툴팁 문자열을 반환합니다."""
     meta = msg.get("llm_meta")
     usage = Usage.of(meta.get("usage")) if isinstance(meta, dict) else Usage()
     if usage.empty:

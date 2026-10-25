@@ -229,10 +229,10 @@ class SessionSidebar:
         self.sort_select: Optional[ui.select] = None
         self.sort_direction_btn: Optional[ui.button] = None
         self.sort_direction_tip: Optional[ui.tooltip] = None
-        # 대화 검색 (`app/database/search.py`). 검색어가 있는 동안 목록 자리에 결과를 보여 줍니다.
+        # 대화 세션 및 발언 검색 (`app/database/search.py`). 검색어 입력 시 목록 대신 검색 결과를 표시합니다.
         self.search_query: str = ""
         self.search_input: Optional[ui.input] = None
-        # 검색 결과의 발언을 여는 쪽 (세션 id, 발언 id). 화면이 그 대화를 열고 그 카드로 내려갑니다.
+        # 검색 결과 발언 선택 콜백 (세션 ID, 발언 ID). 해당 대화 세션을 열고 대상 발언 카드로 이동합니다.
         self.on_open_message: Optional[Callable[[str, str], Coroutine[None, None, None]]] = None
 
     # ------------------------------------------------------------------ 수명
@@ -280,9 +280,9 @@ class SessionSidebar:
 
                 ui.separator().classes("bg-slate-800 mb-2.5")
 
-                # 제목과 발언에서 찾습니다. 낱말을 여럿 적으면 모두 들어 있는 것만 나옵니다.
+                # 세션 제목과 에이전트 발언 본문을 통합 검색합니다. 공백으로 구분 시 AND 조건 적용.
                 self.search_input = ui.input(
-                    placeholder="대화 검색 (제목·발언)", on_change=self._on_search_change,
+                    placeholder="대화 세션 및 발언 검색", on_change=self._on_search_change,
                 ).props("dense outlined dark clearable debounce=350").classes("w-full mb-2 text-xs")
                 with self.search_input.add_slot("prepend"):
                     ui.icon("search", size="xs").classes("text-slate-400")
@@ -533,8 +533,8 @@ class SessionSidebar:
                             else:
                                 continue_btn.tooltip(
                                     "새 대화로 이어가기 — 작업 공간, 지식 그래프, 에이전트 구성 및 "
-                                    "이전 결론을 인계받고 대화 컨텍스트를 초기화합니다. (한 턴에서 기록째로 "
-                                    "갈라 보려면 그 턴 결론 카드의 갈라 보기 단추를 쓰십시오.)"
+                                    "이전 결론을 인계받고 대화 컨텍스트를 초기화합니다. (특정 턴의 기록 전체를 "
+                                    "새 세션으로 분기하려면 결론 카드의 분기(Fork) 버튼을 사용하세요.)"
                                 )
 
                             ui.button(
@@ -558,7 +558,7 @@ class SessionSidebar:
         self.container.clear()
         with self.container:
             ui.label(
-                f"'{query}' 검색 결과 {len(hits)}건" if hits else f"'{query}' 이(가) 들어 있는 대화가 없습니다."
+                f"'{query}' 검색 결과: {len(hits)}건" if hits else f"'{query}'에 대한 검색 결과가 없습니다."
             ).classes("text-[12px] text-slate-400 px-1")
             for hit in hits:
                 self._render_hit(hit)
@@ -580,7 +580,7 @@ class SessionSidebar:
                     ui.label(f"{hit.sender_name}:").classes("text-[11px] text-indigo-300 flex-shrink-0")
                     ui.label(hit.snippet).classes("text-[11px] text-slate-300 leading-snug break-all")
             else:
-                ui.label("제목에서 찾았습니다").classes("text-[11px] text-slate-500")
+                ui.label("세션 제목에서 일치").classes("text-[11px] text-slate-500")
 
     async def _open_hit(self, hit: SearchHit) -> None:
         if hit.message_id and self.on_open_message is not None:

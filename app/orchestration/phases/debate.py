@@ -3,8 +3,8 @@
 라운드를 돌리며 전략에 따라 발언 순서를 정하고(오케스트레이터 지명 포함), 라운드 사이에 결정 장부를
 갱신합니다. 병렬 지시 라운드는 `phases/parallel.py`, 그래프 토론은 `phases/graph.py` 가 맡습니다.
 
-라운드를 닫을 때(`_close_round`) 남은 라운드를 건너뛸지도 봅니다 (v1.5): 결정 장부가 수렴했거나
-(`context_memory.ledger_converged`), 턴 토큰 예산을 다 썼으면 그 사실을 기록하고 결론으로 갑니다.
+각 라운드 종료 시점(`_close_round`)에 조기 종료 조건을 평가합니다 (v1.5): 결정 장부가 수렴했거나
+(`context_memory.ledger_converged`), 턴 토큰 예산이 소진되었으면 이를 세션에 기록하고 조기 결론 합성으로 진행합니다.
 """
 
 from __future__ import annotations
@@ -101,7 +101,7 @@ class DebatePhaseExecutor(PhaseExecutor):
                 start_round, spoken = last_round, spoken_keys
                 record = turns.round_record(turn_messages, last_round)
 
-        # 직전 라운드를 닫으며 쓴 이번 턴의 장부. 수렴 판정은 두 라운드의 장부를 견줍니다.
+        # 직전 라운드 종료 시 갱신된 결정 장부. 수렴 판정은 두 라운드의 장부를 비교합니다.
         round_ledger: Optional[str] = None
 
         for round_num in range(start_round, max_rounds + 1):
@@ -227,14 +227,14 @@ class DebatePhaseExecutor(PhaseExecutor):
         on_event: Optional[EventCallback],
         previous: Optional[str],
     ) -> Tuple[Optional[str], Optional[str]]:
-        """라운드를 닫습니다: 결정 장부를 갱신하고, 남은 라운드를 건너뛸지 정합니다.
+        """라운드를 종료하고 결정 장부를 갱신한 뒤, 조기 종료 조건을 검사합니다.
 
-        `(건너뛸 이유, 이번 라운드의 장부)`. 이유는 `turns.EARLY_END_*` 이거나 None 입니다. 장부를
-        갱신하지 못했으면 이번 라운드의 장부는 None 이고, 다음 라운드는 수렴을 판정하지 않습니다.
+        반환값: (조기 종료 사유, 현재 라운드 결정 장부). 사유는 `turns.EARLY_END_*` 상수 또는 None입니다. 장부
+        갱신에 실패하면 현재 장부는 None이 되며, 다음 라운드에서 수렴 판정을 건너뜁니다.
 
-        * 예산 — 턴 토큰 예산(`token_budget`)을 다 썼습니다. 정지처럼 덜 논의된 턴이 됩니다.
-        * 수렴 — 직전 라운드와 이번 라운드의 장부가 모두 미해결 쟁점 없음이고 결정이 더 늘지 않았습니다.
-          합의로 끝난 것이므로 덜 논의된 턴이 아닙니다.
+        * 예산 초과(budget): 턴 토큰 예산(`token_budget`) 한도에 도달하여 조기 종료합니다 (미완료/불완전 논의 처리).
+        * 합의 수렴(converged): 직전 라운드와 현재 라운드의 결정 장부 모두 미해결 쟁점이 없고 추가 결정 사항이
+          발생하지 않아 조기 종료합니다 (합의 완료로 정상 처리).
         """
         updated = await self.conversation.update_ledger(
             state=state, orchestrator=setup.orchestrator, on_event=on_event, reason=f"Round {round_num}",
@@ -246,8 +246,8 @@ class DebatePhaseExecutor(PhaseExecutor):
             reason = turns.EARLY_END_BUDGET
             state.budget_stopped = True
             content = (
-                f"[토큰 예산] 이번 턴이 쓴 토큰이 {used:,} 으로 예산 {setup.token_budget:,} 에 닿았습니다. "
-                f"남은 {remaining}라운드를 건너뛰고 지금까지의 토론으로 결론을 냅니다."
+                f"[토큰 예산] 이번 턴에서 소모한 토큰이 {used:,}개로 설정 예산 {setup.token_budget:,}개에 도달했습니다. "
+                f"남은 {remaining}라운드를 건너뛰고 지금까지의 토론 내용을 바탕으로 결론을 합성합니다."
             )
         elif (
             setup.converge_early and current is not None and previous is not None
@@ -256,8 +256,8 @@ class DebatePhaseExecutor(PhaseExecutor):
             reason = turns.EARLY_END_CONVERGED
             state.converged_round = round_num
             content = (
-                f"[합의 판정] Round {round_num - 1}·{round_num} 의 결정 장부에 미해결 쟁점이 없고 새 결정도 "
-                f"나오지 않았습니다. 남은 {remaining}라운드를 건너뛰고 결론으로 갑니다."
+                f"[합의 판정] Round {round_num - 1}·{round_num}의 결정 장부에 미해결 쟁점이 없고 새로운 결정 사항도 "
+                f"추가되지 않았습니다. 남은 {remaining}라운드를 건너뛰고 결론 합성으로 진행합니다."
             )
         else:
             return None, current

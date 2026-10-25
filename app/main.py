@@ -133,7 +133,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     agent_pool = get_agent_pool()
     logger.info(f"Agent Pool ready with {len(agent_pool.list_all())} agents.")
 
-    # 5. MADO 를 MCP 서버로 (`/mcp`, `app/mcp_server.py`). streamable HTTP 세션 관리자가 앱과 함께 돕니다.
+    # 5. MADO MCP 서버 활성화 (`/mcp`, `app/mcp_server.py`). SSE 기반 스트리밍 HTTP 세션 관리자가 함께 구동됩니다.
     exits = contextlib.AsyncExitStack()
     await exits.enter_async_context(mcp_server.running())
 

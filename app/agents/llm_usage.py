@@ -1,20 +1,21 @@
-"""LLM 사용량 계측: 토큰과 호출 시간을 발언·턴 단위로 모읍니다.
+"""LLM 토큰 및 응답 시간 계측 모듈: 발언 및 턴 단위 사용량 집계 (v1.5).
 
-모든 LLM 호출은 `LLMCaller._complete_once` 를 지나갑니다. 거기서 호출 시간을, 기본 구현의
-`_complete_unthrottled` 에서 응답의 `usage` 를 **지금 열려 있는 계량기 모두에** 더합니다.
+모든 LLM 호출은 `LLMCaller._complete_once`를 경유합니다.
+해당 지점에서 호출 소요 시간을, 기본 구현인 `_complete_unthrottled`에서 응답의 `usage` 메타데이터를
+**현재 활성화된 모든 사용량 측정 컨텍스트(Meter)**에 누적합니다.
 
-계량기는 겹쳐 열립니다. 턴이 하나를 열고(`OrchestratorEngine`), 그 안에서 발언이 하나를 더
-엽니다(`SpeechRunner`). 그래서 발언의 토큰은 발언 계량기와 턴 계량기에 함께 들어가고, 장부·요약·
-라우팅 같은 보조 호출은 턴 계량기에만 들어갑니다. 보조 호출 몫은 턴 합계에서 발언 합계를 빼서
-얻습니다.
+측정기는 중첩(Nested) 컨텍스트로 동작합니다. 턴 실행 시 턴 단위 측정기가 활성화되고(`OrchestratorEngine`),
+그 내부에서 발언마다 발언 단위 측정기가 추가로 열립니다(`SpeechRunner`).
+따라서 전문가 발언에서 소모된 토큰은 발언 측정기와 턴 측정기 양쪽에 모두 누적되며,
+결정 장부 갱신, 중간 요약, 라우팅 등 보조 시스템 호출은 턴 측정기에만 반영됩니다.
+보조 호출의 소모량은 턴 전체 합계에서 각 발언 합계를 차감하여 정확히 산출할 수 있습니다.
 
-계량기 목록은 컨텍스트 변수에 둡니다. 도구 루프 곳곳에 인자를 늘리지 않으려는 것이고
-(`_SpeechProgress` 와 같은 방식), 병렬 발언 태스크는 만들어질 때 턴 계량기를 물려받고 자기
-발언 계량기는 자기 태스크 안에서만 봅니다.
+활성 측정기 스택은 `contextvars`로 격리 관리되므로 도구 루프 등에 불필요한 인자 전달을 방지하며,
+병렬 발언 태스크는 생성 시 상위 턴 측정기를 상속받고 발언 측정기는 각 태스크 내부에서 독립 격리됩니다.
 
-토큰 수는 Provider 가 알려 준 값입니다. 스트리밍 응답에 Provider 가 사용량을 싣지 않으면
-LiteLLM 이 토크나이저로 센 값이라 실제와 조금 다를 수 있습니다. `_complete_unthrottled` 를
-바꿔 끼운 호출기(테스트 대역, MADOWarGame)는 토큰을 알리지 않으므로 호출 수와 시간만 셉니다.
+토큰 집계는 각 LLM 프로바이더의 응답 메타데이터를 기반으로 합니다.
+스트리밍 응답에서 프로바이더가 실시간 토큰을 제공하지 않는 경우 LiteLLM의 추정 토크나이저 카운트가 적용될 수 있습니다.
+`_complete_unthrottled`를 재정의한 모의 호출기(테스트 대역, MADOWarGame)는 토큰 정보가 없을 경우 호출 횟수와 응답 시간만 계측합니다.
 """
 
 from __future__ import annotations
@@ -35,9 +36,9 @@ class Usage(BaseModel):
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    # 입력 중 프롬프트 캐시에서 읽은 몫 (입력에 이미 들어 있습니다)
+    # 프롬프트 캐시 적중 토큰 수 (prompt_tokens에 포함)
     cached_tokens: int = 0
-    # 출력 중 사고 과정의 몫 (출력에 이미 들어 있습니다)
+    # 추론/사고(Reasoning) 토큰 수 (completion_tokens에 포함)
     reasoning_tokens: int = 0
     calls: int = 0
     llm_seconds: float = 0.0
@@ -83,7 +84,7 @@ _METERS: "contextvars.ContextVar[Tuple[Usage, ...]]" = contextvars.ContextVar("m
 
 @contextmanager
 def measuring(meter: Optional[Usage] = None) -> Iterator[Usage]:
-    """이 블록 안의 LLM 호출을 `meter` 에 더합니다 (주지 않으면 새 계량기). 바깥 계량기에도 그대로 더해집니다."""
+    """지정된 `meter`에 LLM 호출 사용량을 누적하는 컨텍스트 매니저를 생성합니다."""
     meter = meter if meter is not None else Usage()
     token = _METERS.set(_METERS.get() + (meter,))
     try:
@@ -128,7 +129,7 @@ def usage_of(response: Any) -> Usage:
 
 
 def note_response(response: Any) -> None:
-    """응답 하나의 토큰을 열려 있는 계량기 모두에 더합니다."""
+    """단일 LLM 응답의 토큰 사용량을 활성화된 모든 측정 컨텍스트에 누적합니다."""
     meters = _METERS.get()
     if not meters:
         return
@@ -138,14 +139,14 @@ def note_response(response: Any) -> None:
 
 
 def note_call(seconds: float) -> None:
-    """LLM 호출 한 번(성공이든 실패든)과 걸린 시간을 더합니다."""
+    """단일 LLM 호출 횟수와 소요 시간을 활성 측정 컨텍스트에 누적합니다."""
     for meter in _METERS.get():
         meter.calls += 1
         meter.llm_seconds += max(0.0, seconds)
 
 
 def format_tokens(count: int) -> str:
-    """`12345` → `12.3k`. 화면과 저장 문서가 같은 표기를 씁니다."""
+    """토큰 수치를 축약 표기 형식으로 변환합니다 (`12345` → `12.3k`)."""
     if count >= 1_000_000:
         return f"{count / 1_000_000:.1f}M"
     if count >= 1_000:

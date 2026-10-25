@@ -1,11 +1,10 @@
-"""LLM 사용량 계측 (app/agents/llm_usage.py, v1.5).
+"""LLM 토큰 및 응답 시간 계측 테스트 (app/agents/llm_usage.py, v1.5).
 
-1. 응답의 `usage` 를 OpenAI 식·Anthropic 식 모두 읽는다.
-2. 계량기는 겹쳐 열린다. 안쪽(발언)의 호출은 바깥(턴)에도 들어가고, 블록을 나오면 더는 세지 않는다.
-3. 기본 호출기는 토큰과 시간을, 바꿔 끼운 `_complete_unthrottled` 는 호출 수와 시간만 센다.
-4. 발언 기록(`llm_meta.usage`)과 턴 기록(`turns.usage`)에 남고, 턴 합계는 보조 호출까지 센다.
-   사용량만 있는 `llm_meta` 를 기본 모델 대체로 읽지 않는다.
-5. 카드·저장 문서가 같은 표기를 쓴다.
+1. 프로바이더별 응답 규격(OpenAI, Anthropic) 사용량 파싱 검증.
+2. 중첩(Nested) 측정 컨텍스트 검증: 내부(발언) 호출 누적 및 외부(턴) 동시 반영, 컨텍스트 종료 후 계측 차단.
+3. 호출기 유형별 계측: 표준 호출기의 토큰/시간 측정 및 모의 호출기의 호출 횟수/시간 계측 검증.
+4. 발언 메타(`llm_meta.usage`) 및 턴 레코드(`turns.usage`) 영속화 검증 (보조 시스템 호출 포함).
+5. UI 카드 및 마크다운 내보내기 시 통일된 사용량 표기 검증.
 """
 
 import uuid
@@ -55,7 +54,7 @@ def test_meters_nest_and_stop_counting_when_closed():
             llm_usage.note_response({"usage": {"prompt_tokens": 10, "completion_tokens": 2}})
             llm_usage.note_call(2.0)
         llm_usage.note_response({"usage": {"prompt_tokens": 5, "completion_tokens": 1}})
-    llm_usage.note_call(9.0)  # 아무 계량기도 열려 있지 않습니다
+    llm_usage.note_call(9.0)  # 측정 컨텍스트(measuring)가 활성화되어 있지 않음
 
     assert (speech.prompt_tokens, speech.completion_tokens, speech.calls, speech.llm_seconds) == (10, 2, 1, 2.0)
     assert (turn.prompt_tokens, turn.completion_tokens, turn.calls, turn.llm_seconds) == (15, 3, 2, 3.0)

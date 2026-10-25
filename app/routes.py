@@ -9,12 +9,12 @@ TRIAL_LOGIN_PATH = "/trial/login"
 TRIAL_LOGOUT_PATH = "/trial/logout"
 TRIAL_ADMIN = "/trial/admin"
 
-# 대화 비교 (v1.5, `app/ui/compare_page.py`). 사이드바와 갈래 알림이 이 주소로 갑니다.
+# 세션 비교 페이지 경로 (v1.5, `app/ui/compare_page.py`). 사이드바 및 분기 알림 링크에서 사용됩니다.
 COMPARE_PAGE = "/compare"
 
 
 def compare_url(a: str, b: str = "") -> str:
-    """두 대화를 나란히 보는 주소. `b` 를 비우면 `a` 가 갈래일 때 원본이 반대쪽에 섭니다."""
+    """두 세션을 나란히 비교하는 페이지 URL을 반환합니다. `b` 를 생략하고 `a` 가 분기 세션인 경우 원본 세션이 반대쪽에 자동으로 배치됩니다."""
     return f"{COMPARE_PAGE}?a={a}" + (f"&b={b}" if b else "")
 
 EASY_HOME = "/trial/easy"

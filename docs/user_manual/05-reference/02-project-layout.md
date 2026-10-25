@@ -67,11 +67,11 @@ app/
 ├── workspace_files.py               797   작업 공간 파일 목록·@언급·업로드·다운로드 (경로 안전장치)
 ├── diagnostics.py                   394   이벤트 루프 정체 스택·브라우저 끊김 보고
 ├── security.py                      782   원격 접속 토큰, 접근 제어 미들웨어
-├── headless.py                      250   화면 없이 토론 돌리기 (REST·MCP 공용) (v1.5)
-├── mcp_server.py                    179   MADO 를 MCP 서버로 /mcp (v1.5)
-├── workspace_checkpoint.py          323   턴 체크포인트·되돌리기·갈래 내보내기 (v1.5)
-├── session_fork.py                  275   대화 분기, 비교 데이터, 결론 평가 (v1.5)
-├── bench.py                         336   전략 비교 하네스 python -m app.bench (v1.5)
+├── headless.py                      250   헤드리스 토론 실행 코어 (REST·MCP 공용) (v1.5)
+├── mcp_server.py                    179   내장 MCP 서버 엔드포인트 /mcp (v1.5)
+├── workspace_checkpoint.py          323   작업 공간 턴 체크포인트·롤백·분기 내보내기 (v1.5)
+├── session_fork.py                  275   대화 세션 분기(Fork), 비교 데이터 구성 및 결론 평가 (v1.5)
+├── bench.py                         336   전략 벤치마크 하네스 python -m app.bench (v1.5)
 ├── graph_store.py                   105   그래프 토론의 그래프 파일 data/graphs/
 │
 ├── config/
@@ -87,7 +87,7 @@ app/
 │   ├── pool.py                       78   AgentPool 레지스트리
 │   ├── personas.py                  415   세션별 페르소나·외형, 구성 스냅샷
 │   ├── skills.py                    762   스킬 스캔·도구·지침·스크립트 복사
-│   ├── ask_user.py                  129   사람에게 묻기 ask__ask_user (v1.5)
+│   ├── ask_user.py                  129   에이전트 사용자 질문 ask__ask_user (v1.5)
 │   ├── consultation.py              458   동료 자문 peers__consult_agent
 │   ├── llm.py                       469   LLMCaller: 호출, 폴백 판단, 한 판 호출
 │   ├── llm_loop.py                  630   도구 루프 (ToolLoop 상태 + 단계별 함수)
@@ -98,7 +98,7 @@ app/
 │   ├── llm_budget.py                265   도구 상한·응답 한도 안내
 │   ├── llm_tools.py                 195   도구 이름 찾기, 파일 쓰기 지침
 │   ├── llm_fingerprint.py           101   거절 시 요청 지문
-│   ├── llm_usage.py                 169   토큰·LLM 시간 계측 (v1.5)
+│   ├── llm_usage.py                 169   토큰 및 LLM 실행 시간 계측 (v1.5)
 │   ├── llm_types.py                  51   LLMUnavailableError, 콜백 형식
 │   ├── reasoning.py                  86   사고 과정 떼기·결론 찾기
 │   ├── llm_gate.py                  154   서버 전체 LLM 동시 요청 상한
@@ -133,7 +133,7 @@ app/
 │   ├── strategies.py                307   토론 전략
 │   ├── graph.py                     541   그래프 모델·검증·스케줄러
 │   ├── graph_run.py                 304   그래프 실행 표시
-│   ├── skill_draft.py               143   결론에서 스킬 초안 (v1.5)
+│   ├── skill_draft.py               143   결론 기반 스킬 초안 생성 (v1.5)
 │   ├── plan_gate.py                 430   계획 승인 규칙 (ADR-028)
 │   ├── tool_gate.py                 453   도구 보안 판정을 토론에 붙임
 │   ├── control.py                   693   정지·개입·한도·승인 제어 채널
@@ -145,7 +145,7 @@ app/
 │   └── worker.py                    168   태스크 워커 풀
 │
 ├── database/
-│   ├── search.py                    176   대화 검색 (FTS5 trigram + LIKE) (v1.5)
+│   ├── search.py                    176   대화 세션 및 발언 검색 (FTS5 trigram + LIKE) (v1.5)
 │   ├── models.py                    342   SQLAlchemy ORM
 │   └── session.py                   258   비동기 엔진·세션 팩토리, init_db, 컬럼 이관
 │
@@ -159,7 +159,7 @@ app/
     ├── expert/chrome.py             104   머리 줄, 정보 창
     ├── shared/page.py               119   체험·쉬운 화면 공용 틀
     ├── personas_page.py             347   /personas/{id}
-    ├── compare_page.py              162   /compare 대화 비교·평가 (v1.5)
+    ├── compare_page.py              162   /compare 대화 세션 비교 및 평가 (v1.5)
     ├── graph_page.py                430   /graphs/{id} 그래프 편집
     ├── theme.py                     494   색·아이콘·파비콘
     ├── mermaid_export.py            407   다이어그램 내려받기 스크립트
@@ -175,8 +175,8 @@ app/
     ├── components/model_status.py   143   모델 연결 상태 단추와 창
     ├── components/access_token.py   352   원격 접속 토큰 버튼
     ├── components/workspace_download.py   224   작업 공간 파일 다운로드 창
-    ├── components/turn_changes.py   155   턴이 바꾼 파일·되돌리기 창 (v1.5)
-    ├── components/skill_draft_dialog.py   97   스킬 초안 창 (v1.5)
+    ├── components/turn_changes.py   155   턴 파일 변경 내역(Diff) 및 롤백 창 (v1.5)
+    ├── components/skill_draft_dialog.py   97   스킬 초안 생성 및 편집 창 (v1.5)
     ├── components/graph_canvas.py   217   그래프 편집 캔버스
     └── components/quiet_splitter.py    98   드래그가 가벼운 스플리터
 ```
@@ -209,15 +209,15 @@ app/
 | 산출물 렌더링 | `ui/components/artifact_viewer.py` |
 | 내보내기 형식 | `export.py` |
 | 발언·보고서 시각 표기 | `timestamps.py` (화면·저장 문서·보고서가 모두 여기를 거칩니다) |
-| API 엔드포인트 | `api.py` · 화면 없는 토론(REST·MCP 공용)은 `headless.py`, MCP 도구는 `mcp_server.py` |
-| 토큰·LLM 시간 계측 | `agents/llm_usage.py` |
-| 합의 판정·조기 종료 | 판정은 `orchestration/context_memory.py` (`ledger_converged`), 라운드 닫기는 `orchestration/phases/debate.py` (`_close_round`) |
-| 턴 체크포인트·되돌리기 | `workspace_checkpoint.py` · 화면은 `ui/components/turn_changes.py` |
-| 대화 검색 | `database/search.py` · 화면은 `ui/components/sidebar.py` |
-| 대화 분기·비교·평가 | `session_fork.py` · 화면은 `ui/compare_page.py` |
-| 에이전트의 질문 | `agents/ask_user.py` · 기다림은 `orchestration/control.py`, 카드는 `ui/components/chat_feed/approvals.py` |
-| 전략 비교 하네스 | `bench.py` · 시나리오는 루트의 `bench/` |
-| 결론에서 스킬 초안 | `orchestration/skill_draft.py` · 화면은 `ui/components/skill_draft_dialog.py` |
+| API 엔드포인트 | `api.py` · 헤드리스 토론 실행은 `headless.py`, 내장 MCP 서버 도구는 `mcp_server.py` |
+| 토큰 및 LLM 실행 시간 계측 | `agents/llm_usage.py` |
+| 합의 판정 및 조기 종료 | 판정은 `orchestration/context_memory.py` (`ledger_converged`), 라운드 마감은 `orchestration/phases/debate.py` (`_close_round`) |
+| 턴 체크포인트 및 롤백 | `workspace_checkpoint.py` · 화면은 `ui/components/turn_changes.py` |
+| 대화 세션 및 발언 검색 | `database/search.py` · 화면은 `ui/components/sidebar.py` |
+| 세션 분기, 비교 및 결론 평가 | `session_fork.py` · 화면은 `ui/compare_page.py` |
+| 에이전트 사용자 질문 | `agents/ask_user.py` · 응답 대기는 `orchestration/control.py`, UI 카드는 `ui/components/chat_feed/approvals.py` |
+| 전략 비교 벤치마크 | `bench.py` · 테스트 시나리오는 루트 디렉터리의 `bench/` |
+| 결론 기반 스킬 초안 생성 | `orchestration/skill_draft.py` · 화면은 `ui/components/skill_draft_dialog.py` |
 | 버전·저작자 표기 | `about.py` (여기만 고치면 전부 따라옵니다) |
 | DB 스키마 | `database/models.py` |
 

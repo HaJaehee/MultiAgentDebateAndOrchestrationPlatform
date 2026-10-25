@@ -136,7 +136,7 @@ class ConversationMemory:
             await db.execute(
                 update(SessionModel).where(SessionModel.id == state.session_id).values(**values)
             )
-            # 이 턴이 끝났을 때의 기억도 턴에 남깁니다 — 이 턴에서 갈라 볼 때 씁니다 (`app/session_fork.py`).
+            # 해당 턴 완료 시점의 대화 기억을 턴 레코드에도 보관합니다 (세션 분기 시 과거 기억 복원용, `app/session_fork.py`).
             if state.turn_id:
                 await db.execute(update(TurnModel).where(TurnModel.id == state.turn_id).values(memory=remembered))
             await db.commit()

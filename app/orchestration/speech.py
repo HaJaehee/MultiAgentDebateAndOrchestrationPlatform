@@ -150,8 +150,8 @@ class _Speech:
         # 도구 루프가 한 판을 마칠 때마다 이어 갈 수 있는 상태를 초안으로 남깁니다 (ADR-025).
         # 도구를 부르지 않는 발언은 한 번도 불리지 않으므로 초안이 생기지 않습니다.
         self.draft_saved = draft is not None
-        # 이 발언의 토큰·호출 시간 (`llm_usage`). 다이어그램 교정 같은 후처리 호출도 이 발언 몫입니다.
-        # 끊긴 발언을 이어 가면 이어 간 뒤의 몫만 셉니다 (앞부분은 턴 합계에 남아 있습니다).
+        # 개별 발언의 소모 토큰 및 호출 소요 시간 (`llm_usage`). 다이어그램 보정 등 후처리 호출도 해당 발언 통계에 포함됩니다.
+        # 중단된 발언을 재개하는 경우 재개 이후 호출분만 측정합니다 (이전 사용량은 턴 누적 합계에 보존됨).
         self.usage = llm_usage.Usage()
 
     def start_event(self) -> Dict[str, Any]:
@@ -574,17 +574,17 @@ class SpeechRunner:
         )
 
     def _asking(self, state: DebateState, control: Optional[TurnControl], on_event: Optional[EventCallback]):
-        """이 발언에 `ask__ask_user` 를 줄지. 대화가 켰고, 사람이 지켜보는 턴일 때만 (`app/agents/ask_user.py`)."""
+        """해당 발언에 `ask__ask_user` 도구를 제공할지 결정합니다. 세션 설정에서 활성화되어 있고 대화형 모드(attended)일 때만 주입합니다 (`app/agents/ask_user.py`)."""
         if not state.ask_user or not asks_human(control):
             return nullcontext()
         return asking(self.make_asker(control, on_event), state.questions_left)
 
     @staticmethod
     def make_asker(control: TurnControl, on_event: Optional[EventCallback]) -> Asker:
-        """에이전트의 질문을 질문 카드로 띄우고 답을 기다리는 함수.
+        """에이전트의 확인 질문 카드를 피드에 띄우고 사용자 답변을 대기하는 핸들러를 생성합니다.
 
-        답은 도구 결과로 그 에이전트에게 가고, 같은 문장을 개입 메모로도 남깁니다 — 다음 발언자부터 사람의
-        말로 고정 기록에 실려, 묻지 않은 에이전트도 같은 답을 따릅니다.
+        답변은 도구 실행 결과로 해당 에이전트에 반환되며, 동일한 내용이 개입 메모로 등록되어 후속 발언자들에게도
+        고정 기록으로 공유됩니다.
         """
         async def ask(agent: Agent, question: str, options: List[str]) -> Optional[str]:
             async def _open(request) -> None:

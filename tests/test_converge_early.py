@@ -1,10 +1,10 @@
-"""합의 판정과 조기 종료 (v1.5).
+"""합의 판정과 조기 종료 검증 (v1.5).
 
-1. 장부의 칸을 읽는다. 칸이 없으면 모름(None), `- 없음` 이면 빈 칸이다.
-2. 두 라운드 연달아 미해결 쟁점이 없고 결정이 더 늘지 않았을 때만 수렴으로 본다. 읽지 못하면 수렴이 아니다.
-3. 수렴하면 남은 라운드를 건너뛰고, 그 사실을 기록·이벤트·결론 지시에 남긴다. 덜 논의된 턴이 아니다.
-4. 끄면 정해 둔 라운드를 끝까지 돈다. 쟁점이 남아 있으면 끝까지 돌고, 합의로 적지 않는다.
-5. 턴 토큰 예산에 닿으면 다음 라운드 경계에서 결론으로 간다. 이쪽은 덜 논의된 턴이다.
+1. 결정 장부의 섹션을 파싱한다. 섹션이 없으면 None, `- 없음` 표기 시 빈 목록으로 처리한다.
+2. 2라운드 연속 미해결 쟁점이 없고 새로운 결정 사항이 늘지 않았을 때만 수렴으로 판정한다 (파싱 실패 시 비수렴).
+3. 수렴 시 남은 라운드를 건너뛰고 조기 종료하며, 기록·이벤트·결론 합성 지시에 반영한다 (정상 합의 완료).
+4. 비활성화 시 설정된 라운드를 끝까지 진행한다. 미해결 쟁점이 남아있으면 끝까지 진행 후 합의로 판정하지 않는다.
+5. 턴 토큰 예산 초과 시 다음 라운드 경계에서 결론 합성으로 조기 종료한다 (불완전 종료).
 """
 
 import uuid
@@ -65,7 +65,7 @@ def test_ledger_converged(before, after, expected):
 
 
 class Recording(FakeLLMCaller):
-    """대역 + 마지막 결론 지시를 남기고, 장부를 바꿔 끼울 수 있습니다."""
+    """Mock LLM 호출기 — 마지막 결론 합성 프롬프트를 캡처하고 결정 장부 응답을 주입합니다."""
 
     def __init__(self, *, ledger: str = LEDGER_REPLY, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -116,7 +116,7 @@ async def test_a_converged_ledger_skips_the_remaining_rounds():
     caller = Recording()
     state, events, messages, turn = await _run(caller)
 
-    # 1라운드 뒤 장부는 견줄 앞 장부가 없고, 2라운드 뒤 장부가 1라운드 것과 견줘 수렴합니다.
+    # 1라운드 종료 시점에는 비교 대상 장부가 없고, 2라운드 종료 시점의 장부가 1라운드와 비교되어 수렴합니다.
     assert len(_speeches(messages)) == 2 * SPECIALISTS
     assert state.converged_round == 2 and state.current_round == 2
     assert not state.stopped_early and not state.budget_stopped
@@ -152,7 +152,7 @@ async def test_open_issues_keep_the_debate_going_and_are_not_consensus():
     state, events, messages, _turn = await _run(caller)
     assert len(_speeches(messages)) == 4 * SPECIALISTS
     assert state.converged_round is None
-    # 끝까지 깨끗이 돌았지만 마지막 장부에 쟁점이 남았으므로 합의로 적지 않습니다.
+    # 정상 완료되었으나 마지막 결정 장부에 쟁점이 남아있으므로 합의(consensus)로 판정하지 않습니다.
     assert not state.is_consensus_reached
     completed = next(e for e in events if e["type"] == "turn_completed")
     assert completed["consensus"] is False
@@ -181,7 +181,7 @@ async def test_the_token_budget_ends_the_debate_at_a_round_boundary():
                        usage={"prompt_tokens": 1000, "completion_tokens": 100})
     state, events, messages, turn = await _run(caller, token_budget=5000)
 
-    # 계획 1 + 1라운드 3 + 장부 1 = 5,500 토큰 > 5,000 → 1라운드를 닫으며 끝냅니다.
+    # 계획 1회 + 1라운드 3회 + 장부 갱신 1회 = 5,500 토큰 > 예산 5,000 → 1라운드 종료 후 조기 종료합니다.
     assert len(_speeches(messages)) == SPECIALISTS
     assert state.budget_stopped and state.stopped_early and not state.is_consensus_reached
     note = next(m for m in messages if turns.kind_of(m) == turns.KIND_EARLY_END)
@@ -201,7 +201,7 @@ async def test_parallel_rounds_converge_after_their_merge_too():
 
 @pytest.mark.asyncio
 async def test_graph_debates_ignore_it():
-    """그래프 토론은 라운드 루프를 타지 않으므로 수렴 판정이 끼어들 자리가 없습니다 (게이트가 끝을 정합니다)."""
+    """그래프 토론은 라운드 루프를 사용하지 않으므로 수렴 판정을 거치지 않습니다 (게이트 조건으로 종료 제어)."""
     from app.orchestration.phases.debate import DebatePhaseExecutor
     import inspect
 

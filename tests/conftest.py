@@ -43,11 +43,11 @@ def _no_real_mcp_processes(request, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_workspace_checkpoints(request, monkeypatch):
-    """작업 공간 체크포인트(`app/workspace_checkpoint.py`)를 남기지 않습니다.
+    """테스트 실행 시 작업 공간 체크포인트(`app/workspace_checkpoint.py`) 생성을 비활성화합니다.
 
-    대부분의 시험은 기본 작업 공간(`<루트>/workspace`)을 쓰는데, 그대로 두면 시험마다 개발 PC 의 그
-    저장소에 `refs/mado/turns/...` 가 쌓입니다. 체크포인트를 보는 시험은 `workspace_checkpoints` 를
-    받고 임시 저장소를 씁니다.
+    대부분의 단위 테스트는 기본 작업 공간(`<루트>/workspace`)을 사용하므로, 그대로 두면 로컬 git 저장소에
+    `refs/mado/turns/...` 참조가 불필요하게 누적됩니다. 체크포인트를 직접 검증하는 테스트에서는 `workspace_checkpoints` 를
+    주입하여 임시 git 저장소를 사용합니다.
     """
     if "workspace_checkpoints" in request.fixturenames:
         return
@@ -59,7 +59,7 @@ def _no_workspace_checkpoints(request, monkeypatch):
 
 @pytest.fixture
 def workspace_checkpoints():
-    """체크포인트를 실제로 남기는 시험이 받는 표식 (위 autouse 대역을 끕니다)."""
+    """체크포인트 동작을 실제로 검증하는 테스트를 위한 픽스처 (위 autouse 모킹을 비활성화)."""
     return True
 
 

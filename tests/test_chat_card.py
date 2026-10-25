@@ -527,7 +527,7 @@ def test_every_markdown_in_the_trial_and_easy_screens_uses_the_shared_extras():
 
 
 def test_every_markdown_in_the_feed_uses_the_feed_extras():
-    """발언 카드·계획 승인 카드·질문 카드의 본문이 같은 규칙으로 그려져야 같은 글이 같게 보입니다."""
+    """발언 카드, 계획 승인 카드, 사용자 질문 카드의 마크다운 본문 렌더링 규칙이 일관되게 적용되는지 검증합니다."""
     calls = []
     for path in Path(chat_feed_package.__file__).parent.glob("*.py"):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
@@ -537,6 +537,6 @@ def test_every_markdown_in_the_feed_uses_the_feed_extras():
 
     assert sorted(calls) == [
         ("approvals.py", "FEED_MARKDOWN_EXTRAS"),  # 계획 승인 카드
-        ("approvals.py", "FEED_MARKDOWN_EXTRAS"),  # 에이전트의 질문 카드 (v1.5)
+        ("approvals.py", "FEED_MARKDOWN_EXTRAS"),  # 에이전트 사용자 질문 카드 (v1.5)
         ("cards.py", "FEED_MARKDOWN_EXTRAS"),
     ]

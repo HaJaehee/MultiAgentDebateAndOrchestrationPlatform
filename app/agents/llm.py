@@ -382,7 +382,7 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         progress = _SPEECH_PROGRESS.get()
         try:
             async with get_llm_gate().slot():
-                # 자리를 기다린 시간은 빼고, 모델이 답하는 데 걸린 시간만 잽니다 (`llm_usage`).
+                # 게이트 대기 시간은 제외하고, 모델 응답 소요 시간만 측정합니다 (`llm_usage`).
                 began = time.monotonic()
                 try:
                     result = await self._complete_unthrottled(agent, messages, tools, on_chunk, tool_choice)

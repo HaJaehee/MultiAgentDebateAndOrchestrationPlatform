@@ -1,13 +1,14 @@
-"""토론 결과에서 스킬 초안 만들기 (v1.5).
+"""토론 결론 기반 스킬 초안 자동 생성 (v1.5).
 
-토론에서 정한 규칙(요구사항·결정·기각 이유)은 결정 장부와 결론에 남지만, 다음 대화에는 따라가지 않습니다. 그 규칙을
-스킬(`skills/<이름>/SKILL.md`, ADR-026)로 저장하면, 같은 종류의 일을 하는 에이전트가 필요할 때 불러 쓸 수 있습니다.
+토론에서 도출된 핵심 규칙(결정 사항, 제약 조건, 기각 사유)은 결정 장부와 최종 결론에 기록되지만,
+별도로 저장하지 않으면 다음 대화 세션에 유지되지 않습니다. 이를 재사용 가능한 스킬(`skills/<이름>/SKILL.md`, ADR-026)로
+저장하면 향후 유사 업무를 수행하는 에이전트가 필요할 때 동적으로 참조할 수 있습니다.
 
-* 초안은 도구를 뗀 오케스트레이터 사본이 그 턴의 요청·결론·결정 장부로 씁니다. 형식 예시로 기본 제공 스킬
-  (`mermaid-diagrams`)의 앞부분을 보여 줍니다.
-* 사람이 이름·설명·본문을 고친 뒤 저장합니다 (`save_draft`). 저장한 스킬은 **꺼진 채로** 둡니다 — 켜고 어느
-  에이전트에게 줄지는 로스터에서 사람이 정합니다. 스킬은 실시간이라 켜는 순간 다음 발언부터 쓰입니다.
-* 있는 스킬은 덮어쓰지 않습니다 (`skills.write_skill`).
+* 오케스트레이터 에이전트가 해당 턴의 사용자 요청, 최종 결론, 결정 장부를 종합 분석하여 표준 SKILL.md 규격에 맞게 초안을 작성합니다.
+  형식 예시로 기본 탑재 스킬(`mermaid-diagrams`)의 메타데이터 및 구조를 활용합니다.
+* 사용자가 스킬 이름, 설명, 지침 본문을 검토 및 수정한 후 저장합니다 (`save_draft`). 생성된 스킬은 안전을 위해
+  **비활성화 상태**로 등록되며, 로스터 관리 패널에서 활성화하고 대상 에이전트에 할당할 수 있습니다.
+* 기존 스킬을 덮어쓰지 않고 항상 새로운 고유 디렉터리로 저장합니다 (`skills.write_skill`).
 """
 
 from __future__ import annotations
@@ -92,7 +93,7 @@ def _slug(text: str) -> str:
 
 
 def parse_draft(content: str) -> SkillDraft:
-    """모델의 답에서 초안을 꺼냅니다. 머리말이 없거나 이름이 규칙에 맞지 않아도, 고칠 수 있는 초안으로 돌려줍니다."""
+    """LLM 응답 텍스트로부터 스킬 초안 객체를 파싱합니다. 프론트매터 누락이나 명명 규칙 불일치 시에도 보정하여 반환합니다."""
     text = _unfence(strip_reasoning_trace(content or ""))
     start = text.find("---")
     if start > 0:
@@ -113,17 +114,17 @@ async def _orchestrator(db: Any, session: SessionModel) -> Agent:
 
 
 async def draft_skill(db: Any, session_id: str, turn_id: str, *, llm_caller: Optional[LLMCaller] = None) -> SkillDraft:
-    """그 턴의 요청·결론·결정 장부로 스킬 초안을 씁니다. 결론이 없는 턴이면 ValueError."""
+    """해당 턴의 사용자 요청, 결론, 결정 장부를 분석하여 스킬 초안을 생성합니다."""
     session = await db.get(SessionModel, session_id)
     turn = await db.get(TurnModel, turn_id)
     if session is None or turn is None or turn.session_id != session_id:
-        raise ValueError("대화나 턴을 찾지 못했습니다.")
+        raise ValueError("해당 대화 세션 또는 턴을 찾을 수 없습니다.")
     messages = (await db.execute(
         select(MessageModel).where(MessageModel.turn_id == turn_id).order_by(MessageModel.created_at)
     )).scalars().all()
     synthesis = next((m for m in reversed(messages) if turns.kind_of(m) == turns.KIND_SYNTHESIS), None)
     if synthesis is None or synthesis.msg_type == "error" or not synthesis.content.strip():
-        raise ValueError("이 턴에는 결론이 없어 스킬로 정리할 것이 없습니다.")
+        raise ValueError("해당 턴에 생성된 결론이 없어 스킬 초안을 작성할 수 없습니다.")
     request = next((m.content for m in messages if turns.kind_of(m) == turns.KIND_OPENING), "")
     latest = (await db.execute(
         select(TurnModel.id).where(TurnModel.session_id == session_id).order_by(TurnModel.started_at.desc()).limit(1)
@@ -135,7 +136,7 @@ async def draft_skill(db: Any, session_id: str, turn_id: str, *, llm_caller: Opt
 
 
 def save_draft(draft: SkillDraft) -> Path:
-    """초안을 스킬로 저장하고 꺼 둡니다. 저장한 `SKILL.md` 경로. 형식이 틀리면 `SkillError`."""
+    """초안을 스킬 디렉터리에 저장하고 비활성화 상태로 등록합니다. 저장된 `SKILL.md` 경로를 반환합니다."""
     path = write_skill(draft.name, draft.text())
     config_path = active_config_path()
     if config_path is not None:

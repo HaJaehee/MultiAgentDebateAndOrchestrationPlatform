@@ -593,8 +593,8 @@ class TurnRecorder:
     async def set_turn(self, db, state: DebateState, **values: Any) -> None:
         """턴 기록의 단계·상태를 고칩니다. 못 적어도 턴은 계속됩니다 — 기록의 부산물이라.
 
-        지금까지의 사용량(`state.usage`)도 함께 적습니다. 그래서 실패하거나 끊긴 턴에도 마지막으로 단계가
-        바뀐 때까지의 값이 남습니다.
+        현재까지의 LLM 누적 사용량(`state.usage`)도 함께 저장하여, 실패하거나 중단된 턴에서도 직전 단계까지의
+        사용량 통계가 보존됩니다.
         """
         if not state.turn_id:
             return

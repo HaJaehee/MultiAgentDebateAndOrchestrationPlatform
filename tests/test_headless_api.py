@@ -1,10 +1,10 @@
-"""화면 없이 토론 돌리기: REST `/api/sessions/...`, MCP 서버 `/mcp`, Bearer 토큰 (v1.5).
+"""헤드리스(Headless) 토론 실행: REST `/api/sessions/...`, MCP 서버 `/mcp`, Bearer 토큰 인증 (v1.5).
 
-1. 대화를 만들고(잘못된 전략·에이전트·라운드는 400), 턴을 시작하고(202, 돌고 있으면 409), 결과를 기다려 받는다.
-2. API·MCP 로 시작한 턴은 답할 사람이 없는 턴이다 — 계획 승인이 켜져 있어도 기다리지 않는다.
-3. 이벤트는 SSE 로 — 처음에 `snapshot`, 끝에 `run_finished`.
-4. 원격 호출은 주인 토큰을 Bearer 로 보낸다. `/api/*` 와 `/mcp` 에서만 받고, 틀리면 실패 잠금에 센다.
-5. MADO 의 MCP 서버를 실제 MCP 클라이언트로 부른다 (도구 목록, 토론 시작, 결과).
+1. 세션을 생성하고(잘못된 전략·에이전트·라운드는 400), 턴을 시작하며(202, 중복 실행 시 409), 결과를 대기하여 수신한다.
+2. API·MCP로 시작한 턴은 비대면(unattended) 턴이므로 계획 승인이 설정되어 있어도 대기하지 않고 자동 진행한다.
+3. 이벤트는 SSE(Server-Sent Events) 스트림으로 전송된다 (초기 `snapshot`, 완료 시 `run_finished`).
+4. 원격 호출은 마스터 토큰을 `Authorization: Bearer` 헤더로 전달한다. `/api/*` 및 `/mcp`에서만 허용되며, 실패 시 계정 잠금 정책이 동일하게 적용된다.
+5. MADO 내장 MCP 서버를 실제 MCP 클라이언트로 호출하여 검증한다 (도구 목록 조회, 토론 시작, 결과 수신).
 """
 
 import json
@@ -73,7 +73,7 @@ async def test_create_start_and_read_the_result(runner, plan_approval):
         again = await c.post(f"/api/sessions/{sid}/turns", json={"prompt": "또"})
         assert again.status_code == 409
 
-        # 계획 승인이 켜져 있지만 답할 사람이 없는 턴이므로 기다리지 않고 끝납니다.
+        # 계획 승인이 설정되어 있어도 비대면(unattended) 턴이므로 대기 없이 완료됩니다.
         result = (await c.get(f"/api/sessions/{sid}/result", params={"wait": 20})).json()
         assert result["status"] == "completed", result
         assert "최종 합의 요약" in result["conclusion"]
@@ -93,7 +93,7 @@ async def test_create_start_and_read_the_result(runner, plan_approval):
 async def test_events_stream_from_snapshot_to_the_end(runner):
     async with _client(_app()) as c:
         sid = (await c.post("/api/sessions", json={"max_rounds": 1})).json()["session_id"]
-        # 돌고 있는 턴이 없으면 `idle` 하나로 끝납니다.
+        # 진행 중인 턴이 없으면 `idle` 이벤트 후 대기합니다.
         idle = await c.get(f"/api/sessions/{sid}/events")
         assert idle.headers["content-type"].startswith("text/event-stream")
         assert "event: idle" in idle.text
@@ -123,14 +123,14 @@ async def test_remote_callers_use_the_owner_token_as_a_bearer():
     good = {"Authorization": f"Bearer {TOKEN}"}
     assert await _remote(control, "/api/sessions", good) == 200
     assert await _remote(control, "/mcp", good) == 200
-    # 화면 경로는 Bearer 로 열지 않습니다 (브라우저는 로그인 쿠키로).
+    # 웹 화면 경로는 Bearer 인증을 지원하지 않으며 브라우저 로그인 쿠키를 요구합니다.
     assert await _remote(control, "/", {**good, "Accept": "text/html"}) == 303
     assert await _remote(control, "/api/sessions", {}) == 401
     for _ in range(MAX_FAILURES):
         assert await _remote(control, "/api/sessions", {"Authorization": "Bearer wrong-token"}) == 401
-    # 틀린 토큰은 로그인과 같은 잠금에 셉니다. 잠긴 동안은 맞는 토큰도 받지 않습니다.
+    # 잘못된 토큰을 반복 입력하면 로그인 실패 잠금 정책이 동일하게 적용됩니다.
     assert await _remote(control, "/api/sessions", good) == 429
-    # 원격 주인 접속이 꺼져 있으면(토큰 없음) Bearer 도 소용없습니다.
+    # 원격 접속이 비활성화된 경우(토큰 미설정) Bearer 헤더도 거부됩니다.
     assert await _remote(AccessControl(None), "/api/sessions", good) == 403
 
 

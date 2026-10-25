@@ -42,10 +42,10 @@ class TurnSetup:
     # 참여하지 않는 에이전트는 첫 턴에 고정한 스냅샷입니다 — 자문 상대를 고른 에이전트는 이번
     # 토론에 참여하지 않는 전문가에게도 물을 수 있습니다 (`peer_consultation.targets`).
     consult_pool: List[Agent] = field(default_factory=list)
-    # 결정 장부가 수렴하면 일찍 끝낼지, 턴 토큰 예산(0 = 없음) (v1.5).
+    # 결정 장부 수렴 시 조기 종료 여부 및 턴 토큰 예산 한도(0: 무제한) (v1.5).
     converge_early: bool = True
     token_budget: int = 0
-    # 전문가가 발언 도중 사람에게 물을 수 있는지 (`ask__ask_user`, v1.5).
+    # 전문가 에이전트의 사용자 질문 허용 여부 (`ask__ask_user`, v1.5).
     ask_user: bool = False
 
     def config(self, workspace: Path) -> Dict[str, Any]:

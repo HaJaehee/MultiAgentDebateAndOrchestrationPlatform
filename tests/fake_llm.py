@@ -73,7 +73,7 @@ class FakeLLMCaller:
         # 에이전트 키 -> 그 에이전트가 발언할 때마다 실행한 것으로 칠 도구 목록.
         # 실제 루프와 같은 방식으로, 같은 dict 를 콜백과 반환값에 함께 씁니다.
         self.tool_calls = tool_calls or {}
-        # 주면 호출마다 진짜 호출기처럼 사용량을 알립니다 (`llm_usage`): 이 `usage` 와 0.5초.
+        # 값을 지정하면 실제 LLM 호출기와 유사하게 사용량 메타데이터(`llm_usage`)를 기록합니다 (지정된 `usage` 및 0.5초 소요).
         self.usage = usage
         self.calls: List[str] = []
         # 도구 예산을 다 쓴 척할 에이전트 키. 그 발언에서 `budget_arbiter` 를

@@ -30,7 +30,7 @@ _ADDED_COLUMNS = {
         # 턴 기록 (ADR-024). 이 컬럼 이전의 기록은 NULL.
         "turn_id": "VARCHAR(36)",
         "turn_meta": "JSON",
-        # 전역 기본 모델이 대신 답한 사실과 발언의 토큰·호출 시간. 둘 다 없으면 NULL.
+        # 폴백 모델 응답 정보 및 발언별 토큰/호출 시간 메타데이터 (둘 다 없으면 NULL).
         "llm_meta": "JSON",
     },
     "sessions": {
@@ -41,12 +41,12 @@ _ADDED_COLUMNS = {
         "known_agents": "TEXT NOT NULL DEFAULT '[]'",
         # 병렬 지시 전략의 동시 실행 상한. 다른 전략에서는 읽히지 않습니다.
         "parallel_limit": "INTEGER NOT NULL DEFAULT 3",
-        # 합의되면 일찍 끝내기, 턴 토큰 예산 (v1.5).
+        # 합의 수렴 시 조기 종료 및 턴 토큰 예산 한도 (v1.5).
         "converge_early": "BOOLEAN NOT NULL DEFAULT 1",
         "token_budget": "INTEGER NOT NULL DEFAULT 0",
-        # 에이전트가 사람에게 묻기 (v1.5). 이 칸 이전의 대화는 끔.
+        # 에이전트의 사용자 질문 허용 여부 (v1.5, 이전 대화는 비활성화).
         "ask_user": "BOOLEAN NOT NULL DEFAULT 0",
-        # 갈라 만든 대화의 출처 (v1.5).
+        # 세션 분기(fork) 생성 시 원본 세션 및 턴 출처 정보 (v1.5).
         "forked_from": "JSON",
         # 대화 기억 (v0.8.3). 비어 있으면 장부·요약이 아직 없는 대화입니다.
         "decision_ledger": "TEXT NOT NULL DEFAULT ''",
@@ -73,11 +73,11 @@ _ADDED_COLUMNS = {
     "turns": {
         # 합성에 들어갈 때 정지로 덜 논의된 턴이었는지 (ADR-024 2단계).
         "stopped_early": "BOOLEAN NOT NULL DEFAULT 0",
-        # 턴의 토큰·호출 시간 합. 이 컬럼 이전의 턴은 NULL (모름).
+        # 턴별 누적 토큰 및 호출 소요 시간 총합 (이전 턴은 NULL).
         "usage": "JSON",
-        # 작업 공간 체크포인트. 이 컬럼 이전의 턴은 NULL (되돌릴 수 없음).
+        # 작업 공간 체크포인트 정보 (이전 턴은 NULL).
         "checkpoint": "JSON",
-        # 턴이 끝났을 때의 대화 기억과 사람의 평가 (v1.5).
+        # 턴 완료 시점의 대화 기억 스냅샷 및 사용자 평가 (v1.5).
         "memory": "JSON",
         "rating": "JSON",
     },
@@ -243,7 +243,7 @@ async def init_db(db_url: str = "sqlite+aiosqlite:///./multiagent.db") -> None:
             await _add_missing_columns(conn)
         await conn.run_sync(Base.metadata.create_all)
         if engine.dialect.name == "sqlite":
-            # 대화 검색의 전문 색인과, 그것을 발언에 맞춰 두는 트리거 (`app/database/search.py`).
+            # 세션 검색을 위한 FTS 전문 검색 색인 및 동기화 트리거 설정 (`app/database/search.py`).
             await ensure_search_index(conn)
 
 

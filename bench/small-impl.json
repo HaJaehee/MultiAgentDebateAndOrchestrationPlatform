@@ -1,14 +1,27 @@
 {
   "// 설명": [
-    "작은 구현 시나리오: 작업 공간에 CSV 를 깔고, 그것을 요약하는 스크립트를 만들게 합니다.",
-    "변형마다 seed 폴더의 사본을 작업 공간으로 씁니다. 바뀐 파일 수와 도구 실패 수를 함께 봅니다."
+    "소규모 구현 시나리오: 작업 공간의 CSV 데이터를 기반으로 요약 스크립트를 생성하고 실행합니다.",
+    "변형(variant)마다 seed 디렉터리의 복사본을 작업 공간으로 사용하며, 변경된 파일 수와 도구 호출 실패 횟수를 측정합니다."
   ],
-  "name": "작은 구현 — 매출 CSV 요약 스크립트",
+  "name": "소규모 구현 — 매출 CSV 요약 스크립트",
   "seed": "seeds/sales-csv",
-  "prompt": "작업 공간의 sales.csv 를 읽어 지역별 매출 합계와 월별 추이를 출력하는 파이썬 스크립트 summarize.py 를 만들고, 실행 결과를 README.md 에 적어 주십시오. 표준 라이브러리만 쓰십시오.",
+  "prompt": "작업 공간의 sales.csv 파일을 읽어 지역별 매출 합계와 월별 추이를 출력하는 파이썬 스크립트 summarize.py를 작성하고, 실행 결과를 README.md에 정리해 주십시오. 외부 라이브러리 없이 표준 라이브러리만 사용해야 합니다.",
   "variants": [
-    {"label": "순차 2라운드", "strategy": "sequential_debate", "max_rounds": 2},
-    {"label": "오케스트레이터 지명 2라운드", "strategy": "orchestrator_led", "max_rounds": 2},
-    {"label": "순차·조기종료 끔", "strategy": "sequential_debate", "max_rounds": 2, "converge_early": false}
+    {
+      "label": "순차 2라운드",
+      "strategy": "sequential_debate",
+      "max_rounds": 2
+    },
+    {
+      "label": "오케스트레이터 지명 2라운드",
+      "strategy": "orchestrator_led",
+      "max_rounds": 2
+    },
+    {
+      "label": "순차·조기종료 끔",
+      "strategy": "sequential_debate",
+      "max_rounds": 2,
+      "converge_early": false
+    }
   ]
 }

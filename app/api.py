@@ -3,8 +3,7 @@
 화면은 NiceGUI(웹소켓)로 돌고, 여기 있는 것은 상태 확인·진단 보고·아이콘처럼 HTTP 로 받는 편이 나은
 것들입니다. 접근 제어는 앱 바깥 계층(`app/security.py` 의 `AccessMiddleware`)이 모든 경로에 똑같이 겁니다.
 
-`/api/sessions/...` 는 화면 없이 토론을 돌리는 길입니다 (v1.5, `app/headless.py`). 서버 PC 에서는 그냥 부르고,
-다른 PC 에서는 주인 토큰을 `Authorization: Bearer` 로 보냅니다.
+`/api/sessions/...` 는 UI 없이 토론 세션을 실행하는 헤드리스 REST API 엔드포인트입니다 (v1.5, `app/headless.py`). 로컬 환경에서는 직접 호출 가능하며, 원격 환경에서는 마스터 토큰을 `Authorization: Bearer` 헤더로 전달합니다.
 """
 
 import asyncio
@@ -196,14 +195,14 @@ async def list_skills():
     }
 
 
-# --------------------------------------------------------------------- 화면 없는 토론 (v1.5)
+# --------------------------------------------------------------------- 헤드리스 토론 세션 API (v1.5)
 
 
 class NewSessionBody(BaseModel):
     title: str = ""
     strategy: str = DEFAULT_STRATEGY
     max_rounds: int = 3
-    agents: Optional[List[str]] = Field(default=None, description="참여 에이전트 키. 비우면 켜진 에이전트 전부")
+    agents: Optional[List[str]] = Field(default=None, description="참여 에이전트 키 목록. 비워둘 경우 활성화된 모든 에이전트가 참여합니다.")
     custom_instructions: str = ""
     workspace_dir: str = ""
     converge_early: bool = True
@@ -212,7 +211,7 @@ class NewSessionBody(BaseModel):
 
 class TurnBody(BaseModel):
     prompt: str
-    # 사람이 화면에서 승인 카드에 답할 것인가. 아니면 묻지 않고 "물어볼 사람이 없을 때" 의 규칙을 따릅니다.
+    # 사용자가 UI 화면에서 승인 및 질문에 응답할지 여부(attended). False인 경우 대화형 입력 없이 무인 모드로 실행됩니다.
     attended: bool = False
 
 

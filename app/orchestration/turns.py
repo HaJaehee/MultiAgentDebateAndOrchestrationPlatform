@@ -68,7 +68,7 @@ KIND_NOTE = "note"                  # 그 밖의 안내 (지명 실패, 그래�
 KIND_FAILURE = "failure"            # 발언이 예외로 끝났다는 안내 (병렬·그래프)
 KIND_INTERRUPTED = "interrupted"    # 서버 중단으로 발언이 끊겼다는 안내 (재개할 때 남김)
 KIND_SYNTHESIS = "synthesis"        # 턴을 마무리한 합성
-# 남은 라운드를 건너뛰고 결론으로 간다는 안내 (v1.5). 값: reason (`converged` · `budget`), round
+# 토론 조기 종료 및 결론 합성 전환 안내 메시지 유형 (v1.5). 값: reason (`converged` · `budget`), round
 KIND_EARLY_END = "early_end"
 # 계획 승인 (ADR-028). 계획 발언 뒤, 토론이 시작되기 전에만 나옵니다.
 KIND_PLAN_REVISION = "plan_revision"  # 사람의 계획 수정 요청. 뒤따르는 계획이 앞의 것을 대신합니다
@@ -484,10 +484,9 @@ async def unfinished_turn(db, session_id: str) -> Optional[UnfinishedTurn]:
 
 
 async def usage_by_session(db, session_id: Optional[str] = None) -> Dict[str, Usage]:
-    """대화마다 모든 턴의 토큰·LLM 시간 합 (`TurnModel.usage`). `session_id` 를 주면 그 대화만.
+    """세션별 전체 턴의 소모 토큰 및 LLM 소요 시간 누적 합(`TurnModel.usage`)을 반환합니다. `session_id` 를 지정하면 해당 세션만 조회합니다.
 
-    이 칸이 생기기 전의 턴은 빠집니다 — 모르는 값을 0 으로 더하지 않으려고, 그런 턴만 있는 대화는
-    결과에 없습니다.
+    해당 컬럼 도입 이전의 레거시 턴은 집계에서 제외됩니다 (데이터가 없는 세션은 결과 딕셔너리에 포함되지 않음).
     """
     stmt = select(TurnModel.session_id, TurnModel.usage).where(TurnModel.usage.is_not(None))
     if session_id is not None:
@@ -506,7 +505,7 @@ EARLY_END_BUDGET = "budget"
 
 
 def early_end(messages: Iterable[Any]) -> Optional[Tuple[str, int]]:
-    """이 턴이 남은 라운드를 건너뛰기로 했는가 — (`converged`·`budget`, 그 라운드). 아니면 None."""
+    """해당 턴에 조기 종료 이벤트가 발생했는지 확인하여 (`converged`·`budget`, 해당 라운드 번호) 튜플 또는 None을 반환합니다."""
     for msg in messages:
         if kind_of(msg) != KIND_EARLY_END:
             continue

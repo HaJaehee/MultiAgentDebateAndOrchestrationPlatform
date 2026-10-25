@@ -61,16 +61,16 @@ class ChatFeed(MentionUploadMixin, DecisionBarsMixin, ApprovalCardsMixin, CardsM
         on_draft_skill: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
     ):
         self.on_send_message = on_send_message
-        # 한 턴이 작업 공간에서 바꾼 파일을 보고 되돌리는 창을 여는 쪽 (턴 id). 주어지지 않으면 결론 카드에
-        # 파일 칩이 붙지 않습니다 (`set_turn_actions`).
+        # 턴별 작업 공간 파일 변경 조회 및 되돌리기 콜백 (턴 ID). 미지정 시 결론 카드에
+        # 파일 칩이 표시되지 않습니다 (`set_turn_actions`).
         self.on_open_turn_changes = on_open_turn_changes
-        # 에이전트의 질문에 답하는 쪽 (질문 id, 답 — 빈 답은 건너뛰기) → 받아들여졌는가. 주어지지 않으면 카드가 없습니다.
+        # 에이전트 사용자 질문 응답 콜백 (질문 ID, 답변 문자열 — 빈 문자열은 건너뛰기) → 성공 여부.
         self.on_user_question = on_user_question
-        # 이 턴까지로 갈라 새 대화를 만드는 쪽 (턴 id, `app/session_fork.py`). 주어지지 않으면 단추가 없습니다.
+        # 해당 턴 시점으로 세션을 분기(Fork)하는 콜백 (턴 ID, `app/session_fork.py`).
         self.on_fork_turn = on_fork_turn
-        # 이 턴의 결론으로 스킬 초안을 만드는 쪽 (턴 id, `app/orchestration/skill_draft.py`). 없으면 단추도 없습니다.
+        # 해당 턴의 결론 기반으로 스킬 초안을 생성하는 콜백 (턴 ID, `app/orchestration/skill_draft.py`).
         self.on_draft_skill = on_draft_skill
-        # 그려진 카드 (message id → `_render_card` 의 카드 상태). 다 그린 뒤에 카드에 무엇을 붙일 때 찾습니다.
+        # 렌더링된 카드 캐시 (message id → `_render_card` 의 카드 상태).
         self._cards_by_id: Dict[str, Dict[str, Any]] = {}
         # 끊긴 턴 (ADR-024). (턴 id, "finish"·"continue") 와 (턴 id). 주어지지 않으면 안내 줄도 없습니다.
         self.on_resume_turn = on_resume_turn
@@ -543,7 +543,7 @@ class ChatFeed(MentionUploadMixin, DecisionBarsMixin, ApprovalCardsMixin, CardsM
         if not busy:
             self.set_stop_pending(False)
             # 끝난 토론에는 답할 곳이 없습니다. 눌러도 아무 일이 없는 버튼을
-            # 남겨 두면 사람은 무언가 고장 났다고 생각합니다.
+            # 남겨 둘 경우 사용자가 시스템 오류로 오인할 수 있으므로 정리합니다.
             self.set_budget_request(None)
             self.set_approvals([])
             self.set_questions([])

@@ -83,12 +83,12 @@ class ExpertEventView:
         r, mr = event.get("round", 0), event.get("max_rounds", 0)
         if event.get("reason") == "budget":
             ui.notify(
-                f"턴 토큰 예산에 닿아 Round {r}/{mr} 에서 토론을 마치고 결론을 냅니다.",
+                f"턴 토큰 예산 한도에 도달하여 Round {r}/{mr}에서 토론을 조기 종료하고 결론을 합성합니다.",
                 type="warning", position="bottom-right",
             )
         else:
             ui.notify(
-                f"Round {r}/{mr} 에서 합의되어 남은 라운드를 건너뛰고 결론을 냅니다.",
+                f"Round {r}/{mr}에서 상호 합의에 도달하여 남은 라운드를 건너뛰고 결론을 합성합니다.",
                 type="positive", position="bottom-right",
             )
 
@@ -492,7 +492,7 @@ class ExpertEventView:
             )
         elif event.get("converged_round"):
             self.page.chat_feed.set_busy(
-                False, f"Round {event['converged_round']} 에서 합의되어 일찍 마침 · 결론 합성 완료{used}", "Done",
+                False, f"Round {event['converged_round']}에서 합의 수렴으로 조기 종료 · 최종 결론 합성 완료{used}", "Done",
             )
         else:
             self.page.chat_feed.set_busy(False, f"토론 완료 및 최종 산출물 합성 완료{used}", "Done")
@@ -504,11 +504,11 @@ class ExpertEventView:
     @_handles(EventType.USER_QUESTION_REQUESTED)
     async def _on_user_question_requested(self, event: Event) -> None:
         self.page.chat_feed.add_question({k: v for k, v in event.items() if k != "type"})
-        self.page.chat_feed.set_busy(True, f"[{event.get('agent_name', '')}] 의 질문에 답을 기다립니다.", "Question")
+        self.page.chat_feed.set_busy(True, f"[{event.get('agent_name', '')}]의 질문에 대한 사용자 응답을 대기 중입니다.", "Question")
 
     @_handles(EventType.USER_QUESTION_RESOLVED)
     async def _on_user_question_resolved(self, event: Event) -> None:
-        # 다른 화면에서 답했거나 시간이 지났으면 이 화면의 카드도 걷습니다.
+        # 다른 화면에서 답변했거나 시간이 만료된 경우 해당 질문 카드를 닫습니다.
         self.page.chat_feed.remove_approval(event.get("id"))
 
     @_handles(EventType.WORKSPACE_CHECKPOINTED)

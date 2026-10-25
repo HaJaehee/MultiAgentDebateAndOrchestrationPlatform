@@ -586,8 +586,8 @@ SKILL_TOOL_PREFIX = "skills"
 # 등록되면 도구 이름도 켜는 스위치도 겹칩니다.
 PEERS_TOOL_PREFIX = "peers"
 
-# 사람에게 묻기 도구의 접두사입니다 (`ask__ask_user`, app/agents/ask_user.py). 대화마다 켜는 내장 도구라
-# MCP 서버로 등록하지 않지만, 같은 이름의 MCP 서버가 있으면 도구 이름이 겹칩니다.
+# 사용자 질문 도구 접두사입니다 (`ask__ask_user`, app/agents/ask_user.py). 세션별로 설정 가능한 내장 도구이므로
+# MCP 서버로 등록하지 않으나, 동일한 이름의 MCP 서버 등록 시 도구명 충돌을 방지하기 위해 예약어로 지정합니다.
 ASK_TOOL_PREFIX = "ask"
 
 # 필수 에이전트의 키. 토론을 이끌고 합성하는 오케스트레이터는 `agents` 에 이 키로 있어야 합니다.
@@ -596,7 +596,7 @@ ORCHESTRATOR_KEY = "orchestrator"
 RESERVED_SERVER_NAMES = {
     SKILL_TOOL_PREFIX: f"스킬 도구 이름({SKILL_TOOL_PREFIX}__load_skill)",
     PEERS_TOOL_PREFIX: f"동료 자문 도구 이름({PEERS_TOOL_PREFIX}__consult_agent)",
-    ASK_TOOL_PREFIX: f"사람에게 묻기 도구 이름({ASK_TOOL_PREFIX}__ask_user)",
+    ASK_TOOL_PREFIX: f"사용자 질문 도구 이름({ASK_TOOL_PREFIX}__ask_user)",
 }
 
 class RootConfig(BaseModel):

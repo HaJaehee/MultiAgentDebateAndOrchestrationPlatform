@@ -211,40 +211,40 @@ MCP 서버별 연결 상태. `"enabled": false` 로 꺼 둔 서버도 함께 보
 
 ---
 
-## 화면 없이 토론 돌리기 — `/api/sessions/...` (v1.5)
+## 헤드리스(Headless) 토론 실행 — `/api/sessions/...` (v1.5)
 
-스크립트·CI·다른 에이전트가 화면 없이 토론을 시작하고 결과를 받아 가는 길입니다. 같은 대화를 화면으로
-열면 진행 중인 토론이 그대로 보입니다. 자세한 설명은 위키 `wiki/operations/headless-api.md`.
+외부 스크립트, CI/CD 파이프라인, 타 에이전트 환경에서 웹 UI 없이도 토론을 시작하고 결과를 수신할 수 있는 REST API입니다.
+동일한 세션을 웹 브라우저에서 열면 실시간으로 진행 상황을 함께 모니터링할 수 있습니다. 자세한 내용은 위키 `wiki/operations/headless-api.md`를 참고하세요.
 
-| 요청 | 하는 일 |
+| 엔드포인트 | 설명 |
 | :--- | :--- |
-| `GET /api/sessions?limit=50` | 최근 대화 목록 (id, 제목, 전략, 참여자, 진행 중 여부) |
-| `POST /api/sessions` | 대화를 만듭니다. 본문: `title`, `strategy`, `max_rounds`(1~10), `agents`(비우면 켜진 에이전트 전부), `custom_instructions`, `workspace_dir`, `converge_early`, `token_budget`. `201` |
-| `POST /api/sessions/{id}/turns` | 턴 시작: `{"prompt": "...", "attended": false}`. `202`, 이미 돌고 있으면 `409` |
-| `POST /api/sessions/{id}/stop` | 지금까지의 발언으로 결론을 내도록 정지 요청 |
-| `GET /api/sessions/{id}/status` | 진행 중이면 단계·상태 줄·사람의 답을 기다리는지, 아니면 마지막 턴의 상태 |
-| `GET /api/sessions/{id}/result?wait=0` | 마지막 턴의 결론·산출물·결정 장부·사용량·조기 종료·응답 없는 에이전트·바뀐 파일 수. `wait`(최대 600초)만큼 끝나기를 기다린 뒤 답합니다 |
-| `GET /api/sessions/{id}/events` | Server-Sent Events. 처음에 `snapshot`, 끝에 `run_finished`. 진행 중인 턴이 없으면 `idle` 하나 |
+| `GET /api/sessions?limit=50` | 최근 대화 세션 목록 조회 (세션 ID, 제목, 토론 전략, 참여 에이전트 목록, 진행 여부) |
+| `POST /api/sessions` | 새 대화 세션을 생성합니다. 요청 본문: `title`, `strategy`, `max_rounds`(1~10), `agents`(생략 시 활성화된 전체 에이전트), `custom_instructions`, `workspace_dir`, `converge_early`, `token_budget`. 상태 코드 `201` 반환 |
+| `POST /api/sessions/{id}/turns` | 토론 턴 시작 요청: `{"prompt": "...", "attended": false}`. 접수 시 `202`, 이미 진행 중인 경우 `409` |
+| `POST /api/sessions/{id}/stop` | 현재까지의 발언 내용을 바탕으로 최종 결론을 도출하도록 토론 중단(Stop) 요청 |
+| `GET /api/sessions/{id}/status` | 세션 실행 상태 조회: 진행 중인 경우 현재 페이즈, 상태 메시지, 사용자 응답 대기 여부를 반환하며, 유휴 상태인 경우 마지막 턴의 상태 반환 |
+| `GET /api/sessions/{id}/result?wait=0` | 마지막 턴 결과 조회: 최종 결론, 생성된 아티팩트 목록, 결정 장부, 토큰 사용량, 조기 종료 여부, 무응답 에이전트 목록, 변경된 파일 통계 반환. `wait`(초 단위, 최대 600초) 파라미터로 턴 완료까지 롱 폴링 대기 가능 |
+| `GET /api/sessions/{id}/events` | Server-Sent Events(SSE) 스트림: 연결 시 초기 `snapshot` 이벤트, 턴 완료 시 `run_finished` 이벤트 수신. 진행 중인 턴이 없으면 `idle` 이벤트 후 대기 |
 
-오류는 `{"error": "..."}` 와 `400`(모르는 전략·에이전트, 그래프 토론, 빈 요청)·`404`·`409` 입니다.
+오류 발생 시에는 `{"error": "..."}` 형태의 JSON과 함께 적절한 HTTP 상태 코드(`400`: 유효하지 않은 전략/에이전트/빈 요청/그래프 토론, `404`: 세션 없음, `409`: 턴 충돌)가 반환됩니다.
 
-**답할 사람이 없는 턴.** 이 길로 시작한 턴은 기본으로 `attended=false` 입니다. 계획 승인 카드를 띄우지 않고,
-도구 보안이 "묻기" 로 판정한 호출은 실행하지 않으며, 한도에 닿으면 묻지 않고 마무리합니다. 사람이 화면에서
-카드에 답하겠다면 `"attended": true` 로 보냅니다.
+**비대면(Unattended) 턴 실행.** API를 통해 시작된 턴은 기본적으로 사용자가 대화창에 참여하지 않는 `attended=false` 모드로 동작합니다.
+계획 승인 카드를 띄우지 않고 자동 승인하며, 도구 보안 정책상 "사용자 확인(Ask)"으로 분류된 호출은 안전을 위해 자동 거부되고,
+예산 한도 도달 시에도 별도 확인 없이 즉시 발언을 마무리합니다. 사용자가 웹 UI에서 승인 및 질문 카드에 직접 응답하고자 하는 경우 `"attended": true`로 지정합니다.
 
 ```bash
-curl -s -X POST http://127.0.0.1:8000/api/sessions -H "Content-Type: application/json" -d "{\"max_rounds\": 2}"
-curl -s -X POST http://127.0.0.1:8000/api/sessions/<id>/turns -H "Content-Type: application/json" -d "{\"prompt\": \"...\"}"
+curl -s -X POST http://127.0.0.1:8000/api/sessions -H "Content-Type: application/json" -d "{"max_rounds": 2}"
+curl -s -X POST http://127.0.0.1:8000/api/sessions/<id>/turns -H "Content-Type: application/json" -d "{"prompt": "..."}"
 curl -s "http://127.0.0.1:8000/api/sessions/<id>/result?wait=300"
 ```
 
 ---
 
-## MADO 를 MCP 서버로 — `/mcp` (v1.5)
+## MADO를 외부 MCP 서버로 제공 — `/mcp` (v1.5)
 
-같은 기능을 MCP 도구로 내놓습니다 (streamable HTTP). 도구: `list_agents`, `list_debates`, `start_debate`,
-`get_debate_status`, `get_debate_result`(기다리는 동안 진행 알림), `stop_debate`. `start_debate` 에
-`session_id` 를 주면 그 대화에서 이어 묻습니다.
+MADO의 토론 오케스트레이션 기능을 Model Context Protocol(MCP Streamable HTTP) 도구로 외부에 제공합니다.
+제공 도구: `list_agents`, `list_debates`, `start_debate`, `get_debate_status`, `get_debate_result`(완료 대기 중 진행 알림 지원), `stop_debate`.
+`start_debate` 호출 시 기존 `session_id`를 전달하면 해당 대화 세션의 맥락을 이어서 추가 질문을 진행할 수 있습니다.
 
 ```bash
 claude mcp add --transport http mado http://127.0.0.1:8000/mcp
@@ -252,26 +252,25 @@ claude mcp add --transport http mado http://127.0.0.1:8000/mcp
 
 ---
 
-## 화면 경로
+## 웹 화면 경로
 
-| 경로 | 내용 |
+| 경로 | 설명 |
 | :--- | :--- |
-| `/` | 메인 (사이드바 + 로스터 + 토론 피드 + 산출물 뷰어) |
+| `/` | 메인 전문가 화면 (사이드바 + 로스터 패널 + 토론 피드 + 산출물 뷰어) |
 | `/personas/{session_id}` | 세션별 페르소나 편집 |
-| `/graphs/{graph_id}` | 그래프 토론 편집 |
-| `/compare?a=<id>&b=<id>` | 두 대화 나란히 비교, 결론 평가 (v1.5) |
+| `/graphs/{graph_id}` | 그래프 토론 편집기 |
+| `/compare?a=<id>&b=<id>` | 두 대화 세션 나란히 비교 및 결론 평가 (v1.5) |
 
 ---
 
-## 인증
+## 인증 및 접근 제어
 
-* **서버 PC(루프백)** 에서 오는 요청은 주인으로 보고 그냥 받습니다.
-* **다른 PC** 에서는 원격 접속 토큰(`.env` 의 `MADO_ACCESS_TOKEN`)이 있어야 합니다. 화면은 `/login` 에서
-  토큰으로 로그인한 쿠키(7일)로, `/api/*` 와 `/mcp` 는 같은 토큰을 `Authorization: Bearer <토큰>` 으로
-  보냅니다 (v1.5). 틀린 토큰은 로그인 실패와 같은 잠금에 셉니다 (잠긴 동안 `429`).
-* 토큰이 없으면 원격 접속은 막힙니다. 체험 서버를 켠 경우 방문자는 `/trial` 아래만 쓸 수 있고 `/api/*` 는
-  쓸 수 없습니다.
-* 다른 사이트의 페이지가 이 서버를 부르는 교차 출처 요청은 어디서 오든 거부합니다.
+* **로컬 루프백(`127.0.0.1` / `localhost`)**에서 유입되는 요청은 마스터 권한으로 간주하여 별도 인증 없이 즉시 허용합니다.
+* **외부 원격 접속 시**에는 원격 접속 토큰(`.env`의 `MADO_ACCESS_TOKEN`)이 필요합니다. 웹 브라우저는 `/login` 페이지에서
+  토큰으로 로그인하여 쿠키(7일간 유지)로 인증하며, REST API(`/api/*`) 및 MCP 서버(`/mcp`) 엔드포인트는 `Authorization: Bearer <토큰>`
+  헤더를 통해 인증합니다 (v1.5). 잘못된 토큰을 반복 입력할 경우 계정 잠금 정책이 동일하게 적용됩니다 (잠금 상태 시 `429 Too Many Requests`).
+* 토큰이 설정되지 않은 경우 외부 원격 접속은 기본 차단됩니다. 체험 모드가 활성화된 경우 일반 방문자는 `/trial` 하위 페이지만 이용 가능하며 `/api/*` 엔드포인트는 접근할 수 없습니다.
+* 타 사이트로부터의 무단 접근을 방지하기 위해 CSRF 및 교차 출처(Cross-Origin) 요청은 출처와 관계없이 엄격히 거부합니다.
 
 ## 관련 문서
 

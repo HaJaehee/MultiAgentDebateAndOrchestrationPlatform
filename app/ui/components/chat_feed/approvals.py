@@ -1,4 +1,4 @@
-"""토론 피드 — 승인 카드: 도구 실행 승인과 계획 승인(ADR-028), 그리고 에이전트의 질문(v1.5).
+"""토론 피드 — 승인 카드: 도구 실행 승인, 계획 승인(ADR-028), 에이전트 사용자 질문 카드(v1.5).
 
 `ChatFeed` 의 일부입니다 (`feed.py`). 상태는 그 클래스가 가집니다.
 """
@@ -62,12 +62,12 @@ class ApprovalCardsMixin:
             return
         if not self.alive or self.approval_column is None or self.approval_column.is_deleted:
             return
-        entry: Dict[str, Any] = {"info": dict(info), "kind": "question", "expire_text": "답 없이 진행"}
+        entry: Dict[str, Any] = {"info": dict(info), "kind": "question", "expire_text": "무응답 시 자동 진행"}
         with self.approval_column:
             with ui.column().classes(QUESTION_CARD_CLASSES) as card:
                 with ui.row().classes("w-full items-center gap-2 flex-nowrap"):
                     ui.icon("contact_support", size="sm").classes("text-violet-300 flex-shrink-0")
-                    ui.label(f"{info.get('agent_name', '에이전트')} 의 질문").classes(
+                    ui.label(f"{info.get('agent_name', '에이전트')}의 확인 질문").classes(
                         "font-semibold text-violet-100 min-w-0 truncate"
                     )
                     ui.space()
@@ -82,7 +82,7 @@ class ApprovalCardsMixin:
                             ui.button(
                                 option, on_click=lambda _e, rid=request_id, o=option: self._answer_question(rid, o),
                             ).props(f"outline dense no-caps color=violet-3 {DECISION_BUTTON_SIZE}")
-                answer = ui.input(label="직접 답하기 — Enter 로 보냅니다").props(
+                answer = ui.input(label="답변 직접 입력 (Enter로 전송)").props(
                     "outlined dense dark"
                 ).classes("w-full text-xs")
                 answer.on(
@@ -91,14 +91,14 @@ class ApprovalCardsMixin:
                 entry["answer"] = answer
                 with ui.row().classes("w-full items-center gap-1 justify-end"):
                     ui.button(
-                        "답하기", icon="send",
+                        "답변 전송", icon="send",
                         on_click=lambda _e, rid=request_id, box=answer: self._answer_question(rid, box.value or ""),
                     ).props(f"unelevated dense no-caps color=violet-7 {DECISION_BUTTON_SIZE}")
                     ui.button(
                         "건너뛰기", icon="skip_next",
                         on_click=lambda _e, rid=request_id: self._answer_question(rid, ""),
                     ).props(f"flat dense no-caps color=violet-3 {DECISION_BUTTON_SIZE}").tooltip(
-                        "답하지 않습니다. 에이전트는 어떤 가정으로 진행하는지 밝히고 계속합니다."
+                        "답변하지 않고 건너뜁니다. 에이전트가 자체 가정을 명시하고 계속 진행합니다."
                     )
         entry["card"] = card
         self._approval_cards[request_id] = entry
@@ -112,7 +112,7 @@ class ApprovalCardsMixin:
             self.remove_approval(request_id)
 
     def remove_approval(self, request_id: Optional[str]) -> None:
-        """답이 난 카드를 걷습니다."""
+        """처리가 완료된 카드를 닫습니다."""
         entry = self._approval_cards.pop(str(request_id or ""), None)
         if entry is not None:
             card = entry.get("card")

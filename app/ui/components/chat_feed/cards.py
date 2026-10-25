@@ -386,13 +386,13 @@ class CardsMixin:
                     fork_btn = ui.button(
                         icon="call_split", on_click=lambda: self._fork_turn(info),
                     ).props("flat dense round size=12px color=amber-4")
-                    fork_btn.tooltip("이 턴까지로 갈라 새 대화를 만듭니다 — 전략·참여자·모델을 바꿔 다시 돌려 보고 비교합니다.")
+                    fork_btn.tooltip("현재 턴까지의 상태를 새 세션으로 분기(Fork)합니다 — 전략, 참여자, 모델을 변경하여 재실행 및 비교 가능")
                     fork_btn.set_visibility(False)
                     # 이 턴에서 정한 규칙을 스킬로 저장합니다 (결론 카드에만).
                     skill_btn = ui.button(
                         icon="auto_stories", on_click=lambda: self._draft_skill(info),
                     ).props("flat dense round size=12px color=teal-4")
-                    skill_btn.tooltip("이 턴에서 정한 규칙을 스킬로 저장합니다 — 초안을 고친 뒤 꺼진 채로 저장합니다.")
+                    skill_btn.tooltip("이 턴에서 도출된 결론을 스킬로 저장합니다 — 초안을 검토·수정한 후 비활성화 상태로 저장")
                     skill_btn.set_visibility(False)
                     if round_num > 0:
                         # 그래프 토론의 라운드는 단계입니다 (상태 줄의 "N단계" 와 같은 수).
@@ -470,7 +470,7 @@ class CardsMixin:
         return info
 
     def reveal_message(self, message_id: str) -> bool:
-        """그 발언의 카드를 펼쳐 화면 가운데로 가져오고 잠깐 테를 두릅니다 (검색 결과에서 왔을 때). 없으면 False."""
+        """대상 발언 카드를 펼치고 화면 중앙으로 스크롤한 뒤 하이라이트 테두리를 표시합니다 (검색 결과 이동 시)."""
         info = self._cards_by_id.get(message_id)
         card = info.get("card") if info else None
         if card is None or card.is_deleted:
@@ -486,7 +486,7 @@ class CardsMixin:
         return True
 
     def set_turn_actions(self, message_id: Optional[str], turn_id: str, changed: Optional[int] = None) -> None:
-        """결론 카드에 그 턴의 단추를 붙입니다: 갈라 보기, 그리고 바뀐 파일이 있으면 '이 턴이 바꾼 파일 N개' 칩."""
+        """결론 카드에 해당 턴의 액션 버튼을 연결합니다 (세션 분기, 스킬 생성, 작업 공간 변경 파일 칩)."""
         if not self.alive or not message_id or not turn_id:
             return
         info = self._cards_by_id.get(message_id) or self._active_streams.get(message_id)
@@ -505,7 +505,7 @@ class CardsMixin:
         button.set_text(f"{changed}" if changed else "")
         tip = info.get("changes_tip")
         if tip is not None and not tip.is_deleted:
-            tip.set_text(f"이 턴이 작업 공간에서 바꾼 파일 {changed}개 — 눌러서 보고, 필요하면 되돌립니다.")
+            tip.set_text(f"이 턴에서 변경된 작업 공간 파일 {changed}개 — 클릭하여 Diff를 확인하고 롤백할 수 있습니다.")
         button.set_visibility(bool(changed))
 
     async def _draft_skill(self, info: Dict[str, Any]) -> None:

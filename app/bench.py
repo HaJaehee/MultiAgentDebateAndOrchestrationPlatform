@@ -1,19 +1,19 @@
-"""전략 비교 하네스 (MADO Bench, v1.5): 같은 요청을 여러 조합으로 돌려 표로 비교합니다.
+"""전략 벤치마크 하네스 (MADO Bench, v1.5): 동일한 프롬프트 요구사항에 대해 여러 전략과 설정을 실행하고 비교합니다.
 
-"이 일에는 어떤 전략이 맞나" 를 감이 아니라 기록으로 고르려는 도구입니다. 시나리오 파일(`bench/*.json`) 하나에
-요청과 비교할 변형(전략·라운드·참여자·모델)을 적고 돌리면, 변형마다 대화를 하나씩 만들어 끝까지 돌리고
-결과를 `data/bench/<실행 id>/` 에 남깁니다.
+요구사항에 최적화된 토론 전략을 정량적 지표로 평가하기 위한 도구입니다. 시나리오 파일(`bench/*.json`)에
+프롬프트와 비교 대상 변형(전략, 라운드 수, 참여 에이전트, 모델)을 정의하면, 각 변형별로 독립된 세션을 생성하여 실행하고
+결과를 `data/bench/<실행 id>/` 디렉터리에 저장합니다.
 
-    python -m app.bench run bench/design-review.json            # conf.json 의 모델로
-    python -m app.bench run bench/design-review.json --dry-run  # LLM 없이 흐름만 확인
-    python -m app.bench report data/bench/<실행 id>/result.json  # 비교 화면의 평가를 반영해 보고서 다시 쓰기
+    python -m app.bench run bench/design-review.json            # conf.json 설정 모델로 실행
+    python -m app.bench run bench/design-review.json --dry-run  # LLM 호출 없이 파이프라인 흐름만 검증
+    python -m app.bench report data/bench/<실행 id>/result.json  # 비교 화면의 정량 평가를 반영해 보고서 재작성
 
-* 대화는 앱의 DB 에 `[bench]` 로 시작하는 제목으로 남습니다. 앱에서 열어 보고, 보고서의 비교 링크(`/compare`)로
-  나란히 놓고 👍/👎 를 매긴 뒤 `report` 를 다시 돌리면 평가가 표에 실립니다.
-* 변형마다 작업 공간을 따로 만듭니다 (`seed` 폴더가 있으면 그 사본). 서로의 파일을 보지 않습니다.
-* 턴은 답할 사람이 없는 턴으로 돕니다 — 계획 승인과 도구 확인을 묻지 않습니다 (`app/headless.py`).
-* 지표: 상태, 라운드, 일찍 끝났는지, 토큰·LLM 시간, 응답 못 한 에이전트, 도구 실패·차단 수, 마지막 장부의 미해결
-  쟁점 수, 바뀐 파일 수, 걸린 시간, 사람의 평가.
+* 실행된 세션은 데이터베이스에 `[bench]` 접두사가 붙은 제목으로 저장됩니다. 웹 브라우저에서 직접 검토하거나 보고서의 비교 링크(`/compare`)를
+  통해 좌우로 나란히 비교하며 평가(👍/👎)를 기록할 수 있으며, `report` 명령으로 평가 결과를 보고서에 재반영할 수 있습니다.
+* 변형마다 격리된 작업 공간 디렉터리를 생성합니다 (`seed` 디렉터리 지정 시 복제본 사용). 변형 간 파일 간섭이 배제됩니다.
+* 비대면(unattended) 모드로 실행되므로 계획 승인 및 도구 확인 절차를 자동으로 통과합니다 (`app/headless.py`).
+* 측정 지표: 실행 상태, 진행 라운드, 조기 종료 여부, 토큰 소모량, LLM 응답 시간, 소요 시간, 미해결 쟁점 수,
+  도구 오류/차단 횟수, 무응답 에이전트, 변경 파일 수, 정량 평가.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ class Variant:
     strategy: str = "sequential_debate"
     max_rounds: int = 3
     agents: Optional[List[str]] = None
-    # 에이전트 키 → 이 변형에서 쓸 모델 (conf.json 의 연결 정보는 그대로, 모델 이름만 바꿉니다)
+    # 에이전트 키 → 해당 변형에서 사용할 모델 (conf.json 의 연결 정보는 유지하고 모델명만 재정의)
     models: Dict[str, str] = field(default_factory=dict)
     converge_early: bool = True
     token_budget: int = 0
@@ -77,7 +77,7 @@ class Scenario:
 
 
 def load_scenario(path: str | Path) -> Scenario:
-    """시나리오 파일을 읽고 확인합니다. 틀린 곳이 있으면 모두 모아 ValueError 로 알립니다."""
+    """시나리오 파일을 로드하고 유효성을 검증합니다. 오류 발견 시 목록을 취합하여 ValueError를 발생시킵니다."""
     source = Path(path)
     data = json.loads(source.read_text(encoding="utf-8"))
     problems: List[str] = []
@@ -93,7 +93,7 @@ def load_scenario(path: str | Path) -> Scenario:
             continue
         strategy = STRATEGY_MAP.get(variant.strategy)
         if strategy is None or strategy.runs_graph:
-            problems.append(f"variants[{index}] '{variant.label}': 쓸 수 없는 전략 {variant.strategy}")
+            problems.append(f"variants[{index}] '{variant.label}': 지원되지 않는 전략 {variant.strategy}")
         variants.append(variant)
     if not variants:
         problems.append("variants 가 비어 있습니다")
@@ -103,7 +103,7 @@ def load_scenario(path: str | Path) -> Scenario:
     if data.get("seed"):
         seed = (source.parent / str(data["seed"])).resolve()
         if not seed.is_dir():
-            problems.append(f"seed 폴더가 없습니다: {seed}")
+            problems.append(f"seed 폴더가 존재하지 않습니다: {seed}")
     if problems:
         raise ValueError(f"{source}: " + "; ".join(problems))
     return Scenario(name=str(data.get("name") or source.stem), prompt=prompt, variants=variants, seed=seed)
@@ -113,10 +113,10 @@ def load_scenario(path: str | Path) -> Scenario:
 
 
 class DryRunCaller(LLMCaller):
-    """LLM 없이 하네스의 흐름을 확인하는 대본 호출기 (`--dry-run`).
+    """LLM 호출 없이 하네스 파이프라인의 정상 동작을 검증하기 위한 모의(Mock) 호출기 (`--dry-run`).
 
-    `_complete_unthrottled` 만 바꿔 끼우므로 도구 루프·기록·계측은 진짜 경로를 지납니다. 답은 프롬프트의 모양만
-    보고 정합니다 — 장부 갱신이면 장부, 결론 요청이면 결론, 나머지는 짧은 의견.
+    `_complete_unthrottled`만 모킹하므로 도구 루프, 이벤트 기록, 계측 로직은 실제 실행 경로를 거칩니다.
+    프롬프트 유형에 따라 결정 장부, 최종 결론, 간략 의견 등의 모의 응답을 반환합니다.
     """
 
     async def _complete_unthrottled(self, agent, messages, tools, on_chunk, tool_choice):
@@ -143,7 +143,7 @@ def _slug(text: str) -> str:
 
 
 async def _freeze_models(session_id: str, models: Dict[str, str]) -> None:
-    """이 변형의 모델로 에이전트 구성을 미리 고정합니다 (잠긴 대화 — 첫 턴이 conf.json 을 다시 읽지 않습니다)."""
+    """해당 변형의 모델 설정으로 세션 에이전트 구성을 스냅샷 고정합니다 (첫 턴 실행 시 재동기화 방지)."""
     if not models:
         return
     async with get_session_factory()() as db:
@@ -254,7 +254,7 @@ def _cell(value: Any) -> str:
 
 
 async def write_report(result_path: str | Path) -> Path:
-    """`result.json` 으로 `report.md` 를 (다시) 씁니다. 그 사이 비교 화면에서 매긴 평가를 DB 에서 읽어 넣습니다."""
+    """`result.json`을 기반으로 `report.md` 보고서를 생성(갱신)합니다. 비교 페이지(/compare)에서 기록된 평가를 DB에서 조회하여 반영합니다."""
     result_path = Path(result_path)
     payload = json.loads(result_path.read_text(encoding="utf-8"))
     variants = payload["variants"]
@@ -265,7 +265,7 @@ async def write_report(result_path: str | Path) -> Path:
         f"- 실행: `{payload['run_id']}` ({payload['created_at']}){' · 드라이런 (LLM 없음)' if payload.get('dry_run') else ''}",
         f"- 요청: {payload['prompt']}",
         "",
-        "| 변형 | 전략 | 상태 | 라운드 | 일찍 끝남 | 입력 토큰 | 출력 토큰 | LLM 시간 | 걸린 시간 | 미해결 쟁점 | 도구 실패·차단 | 응답 없음 | 바뀐 파일 | 평가 |",
+        "| 변형 | 전략 | 상태 | 라운드 | 조기 종료 | 입력 토큰 | 출력 토큰 | LLM 시간 | 소요 시간 | 미해결 쟁점 | 도구 실패·차단 | 무응답 에이전트 | 변경 파일 | 평가 |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for v in variants:
@@ -285,10 +285,10 @@ async def write_report(result_path: str | Path) -> Path:
             ", ".join(v.get("failed_agents") or []), v.get("files_changed"), score,
         )) + " |")
     first = variants[0]["session_id"] if variants else ""
-    lines += ["", "## 나란히 보기", ""]
+    lines += ["", "## 세션 비교 (Compare)", ""]
     for v in variants[1:]:
         lines.append(f"- {variants[0]['label']} ↔ {v['label']}: `{compare_url(first, v['session_id'])}`")
-    lines += ["", "평가는 비교 화면에서 매긴 뒤 `python -m app.bench report " + str(result_path) + "` 로 다시 반영합니다.", ""]
+    lines += ["", "평가는 비교 화면(/compare)에서 기록한 후 `python -m app.bench report " + str(result_path) + "` 명령으로 보고서에 반영할 수 있습니다.", ""]
     for v in variants:
         lines += [f"## {v['label']}", ""]
         if v.get("error"):

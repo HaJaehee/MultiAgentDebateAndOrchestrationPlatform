@@ -1,15 +1,16 @@
-"""MADO 를 MCP 서버로: 다른 에이전트가 "토론 팀" 을 도구로 부릅니다 (v1.5).
+"""MADO 내장 MCP 서버: 타 AI 에이전트가 MADO의 멀티 에이전트 토론을 도구로 호출 (v1.5).
 
-MADO 는 MCP 서버를 **쓰는** 쪽(호스트)이기도 하지만, 여기서는 반대로 MADO 자신을 MCP 서버로 내놓습니다.
-Claude Code·IDE·다른 에이전트가 설계 검토나 위험 분석처럼 여러 관점이 필요한 일을 MADO 에 맡기고 결론을
-받아 갑니다. 일은 `app/headless.py` 가 하고, 여기는 MCP 도구의 모양만 정합니다.
+MADO는 다양한 외부 MCP 서버를 연동하는 호스트 역할을 수행함과 동시에, MADO 자체를 Model Context Protocol(MCP Streamable HTTP)
+서버로 외부에 제공합니다. Claude Code, Cursor, 타 AI 에이전트가 설계 검토나 교차 검증처럼 다각도의 전문 분석이 필요한 과제를
+MADO 토론 팀에 위임하고 정제된 결론을 수신할 수 있습니다. 핵심 오케스트레이션은 `app/headless.py`가 담당하며,
+본 모듈은 MCP 도구 명세 및 프로토콜 인터페이스를 제공합니다.
 
-* 주소는 `/mcp` (streamable HTTP). 서버 PC 에서는 그냥 붙고, 다른 PC 에서는 주인 토큰을
-  `Authorization: Bearer` 로 보냅니다 (`app/security.py`).
-* 토론은 몇 분이 걸립니다. 그래서 시작(`start_debate`)과 결과(`get_debate_result`)를 나눴고, 결과는
-  `wait_seconds` 만큼 끝나기를 기다리며 진행 상황을 progress 알림으로 보냅니다.
-* 이 길로 시작한 턴은 답할 사람이 없는 턴입니다 (`attended=False`): 승인 카드를 띄우지 않고, 도구
-  보안이 "묻기" 로 판정한 호출은 실행하지 않습니다.
+* 엔드포인트: `/mcp` (Streamable HTTP). 로컬 루프백 접속은 인증 없이 즉시 허용되며, 외부 원격 접속 시에는 마스터 토큰을
+  `Authorization: Bearer <토큰>` 헤더로 전송합니다 (`app/security.py`).
+* 다중 에이전트 토론 특성상 시작(`start_debate`)과 결과 조회(`get_debate_result`)를 분리 제공하며, `wait_seconds` 파라미터로
+  완료 대기 중 실시간 진행 상황(라운드, 발언자)에 대한 progress 알림을 수신할 수 있습니다.
+* MCP를 통해 호출된 턴은 비대면 턴(`attended=False`)으로 동작합니다: 사용자 승인 카드를 띄우지 않으며, 도구 보안 정책상
+  "사용자 확인(Ask)" 대상 호출은 자동 차단됩니다.
 
 연결 예 (Claude Code):
 
@@ -58,7 +59,7 @@ def _strategies() -> str:
 
 @mado_mcp.tool()
 async def list_agents() -> List[Dict[str, Any]]:
-    """MADO 에 등록된 에이전트 (키, 이름, 역할, 켜짐 여부). start_debate 의 agents 에 키를 씁니다."""
+    """MADO에 등록된 에이전트 목록을 조회합니다 (키, 이름, 역할, 활성화 여부). `start_debate`의 `agents` 인자에 에이전트 키를 지정할 수 있습니다."""
     return [
         {"key": a.key, "name": a.name, "role": a.role, "enabled": bool(getattr(a, "enabled", True))}
         for a in get_agent_pool().list_all()
@@ -67,7 +68,7 @@ async def list_agents() -> List[Dict[str, Any]]:
 
 @mado_mcp.tool()
 async def list_debates(limit: int = 20) -> List[Dict[str, Any]]:
-    """최근 대화 목록 (id, 제목, 전략, 진행 중 여부)."""
+    """최근 대화 세션 목록을 조회합니다 (세션 ID, 제목, 토론 전략, 진행 여부)."""
     return await headless.list_sessions(limit)
 
 
@@ -81,11 +82,11 @@ async def start_debate(
     workspace_dir: str = "",
     session_id: str = "",
 ) -> Dict[str, Any]:
-    """토론을 시작하고 곧바로 돌아옵니다. 결과는 get_debate_result 로 받습니다.
+    """토론 턴을 시작하고 세션 ID를 즉시 반환합니다. 결과는 get_debate_result 로 조회합니다.
 
-    session_id 를 주면 그 대화에서 이어 묻습니다 (앞 턴의 결론·결정 장부를 기억합니다). 주지 않으면 새 대화를
-    만듭니다. strategy: sequential_debate · adversarial_debate · orchestrator_led · parallel_dispatch.
-    agents 를 비우면 켜진 에이전트가 모두 참여합니다.
+    기존 session_id 를 지정하면 해당 대화 세션의 맥락(이전 결론 및 결정 장부)을 이어서 토론하며, 미지정 시 새 세션을 생성합니다.
+    지원 전략: sequential_debate, adversarial_debate, orchestrator_led, parallel_dispatch.
+    agents 목록을 생략하면 활성화된 전체 에이전트가 참여합니다.
     """
     try:
         if not session_id:
@@ -102,7 +103,7 @@ async def start_debate(
 
 @mado_mcp.tool()
 async def get_debate_status(session_id: str) -> Dict[str, Any]:
-    """지금 상태: 진행 중이면 단계와 상태 줄, 끝났으면 마지막 턴의 상태."""
+    """토론 세션의 현재 상태를 조회합니다: 진행 중인 경우 현재 페이즈와 진행 메시지, 완료된 경우 최종 턴 상태 반환."""
     try:
         return await headless.turn_status(session_id)
     except headless.HeadlessError as exc:
@@ -111,10 +112,10 @@ async def get_debate_status(session_id: str) -> Dict[str, Any]:
 
 @mado_mcp.tool()
 async def get_debate_result(session_id: str, wait_seconds: int = 0, ctx: Optional[Context] = None) -> Dict[str, Any]:
-    """마지막 턴의 결과 (결론, 산출물, 결정 장부, 토큰 사용량). wait_seconds 만큼 끝나기를 기다립니다 (최대 600).
+    """최종 턴의 실행 결과를 조회합니다 (결론, 아티팩트 목록, 결정 장부, 토큰 사용량). wait_seconds(최대 600초) 동안 턴 완료를 대기합니다.
 
-    기다리는 동안 progress 알림으로 진행 상황(라운드·발언자)을 보냅니다. 시간 안에 끝나지 않으면
-    `"status": "running"` 과 지금 상태를 돌려주므로 다시 부르면 됩니다.
+    대기 중 진행 상황(라운드, 발언자)에 대한 progress 알림을 전송합니다. 시간 내에 완료되지 않으면
+    `"status": "running"`과 현재 진행 상태를 반환하므로 재호출하여 대기할 수 있습니다.
     """
     try:
         deadline = time.monotonic() + max(0, min(int(wait_seconds or 0), MAX_WAIT_SECONDS))
@@ -135,7 +136,7 @@ async def get_debate_result(session_id: str, wait_seconds: int = 0, ctx: Optiona
 
 @mado_mcp.tool()
 async def stop_debate(session_id: str) -> Dict[str, Any]:
-    """진행 중인 토론을 멈추고 지금까지의 발언으로 결론을 내게 합니다."""
+    """진행 중인 토론의 중단을 요청하고 현재까지의 발언 내용을 바탕으로 결론을 합성합니다."""
     return {"session_id": session_id, "stop_requested": headless.stop_turn(session_id)}
 
 

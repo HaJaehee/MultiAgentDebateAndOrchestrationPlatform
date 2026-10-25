@@ -1,11 +1,13 @@
-"""대화 비교 페이지 — `/compare?a=<대화 id>&b=<대화 id>` (v1.5).
+"""대화 세션 비교 페이지 — `/compare?a=<대화 id>&b=<대화 id>` (v1.5).
 
-같은 지점에서 갈라 다른 전략·참여자·모델로 돌린 대화(`app/session_fork.py`)나, 같은 요청을 다르게 돌린
-대화를 나란히 놓고 봅니다. 대화마다 마지막 턴의 결론·결정 장부·사용량·일찍 끝났는지·바뀐 파일 수를 보여 주고,
-결론마다 👍/👎 와 메모를 남깁니다 (`TurnModel.rating`). 이 평가는 전략 비교 하네스(`app/bench.py`)의 보고서에도
-실립니다.
+동일한 분기점에서 갈라져 나와 다른 전략·참여자·모델로 실행된 대화 세션(`app/session_fork.py`)이나,
+동일한 요청을 서로 다른 설정으로 실행한 대화를 좌우로 나란히 비교합니다.
+세션별 최종 턴의 결론, 결정 장부, 토큰 사용량, 조기 종료 여부, 변경된 파일 수를 종합 표시하며,
+결론에 대한 정량 평가(👍/👎) 및 피드백 메모를 남길 수 있습니다 (`TurnModel.rating`).
+이 평가는 전략 벤치마크 하네스(`app/bench.py`)의 보고서에도 함께 집계됩니다.
 
-화면 위의 두 선택 칸으로 다른 대화를 고를 수 있습니다. 갈라 만든 대화를 고르면 다른 쪽은 그 원본으로 채웁니다.
+상단의 드롭다운 선택 메뉴를 통해 비교할 대화 세션을 자유롭게 전환할 수 있습니다.
+분기된 세션을 선택하면 반대편에는 자동으로 원본 세션이 배치됩니다.
 """
 
 import logging
@@ -27,11 +29,11 @@ from app.ui.theme import CUSTOM_CSS, FAVICON_SVG
 logger = logging.getLogger(__name__)
 
 MARKDOWN_EXTRAS = ["fenced-code-blocks", "tables", "break-on-newline", "cuddled-lists"]
-ENDED_EARLY = {"converged": "합의되어 Round {round} 에서 일찍 마침", "budget": "토큰 예산으로 Round {round} 에서 마침"}
+ENDED_EARLY = {"converged": "합의 수렴으로 Round {round}에서 조기 종료", "budget": "토큰 예산 초과로 Round {round}에서 조기 종료"}
 
 
 def _when(iso: Optional[str]) -> str:
-    """목록의 시각(ISO, UTC)을 이 기계의 시간대로 짧게."""
+    """목록 표시용 시각(ISO, UTC)을 로컬 시간대로 변환합니다."""
     if not iso:
         return ""
     try:
@@ -53,7 +55,7 @@ def create_compare_page() -> None:
         async with get_session_factory()() as db:
             views = await compare_view(db, [sid for sid in (a, b) if sid])
         by_id = {v["session_id"]: v for v in views}
-        # 하나만 주었고 그것이 갈래면 다른 쪽은 원본입니다.
+        # 파라미터가 하나만 전달되었고 분기(fork) 세션인 경우 반대쪽에 원본 세션을 배치합니다.
         if a and not b and a in by_id and (by_id[a].get("forked_from") or {}).get("session_id"):
             ui.navigate.to(compare_url(by_id[a]["forked_from"]["session_id"], a))
             return
@@ -61,9 +63,9 @@ def create_compare_page() -> None:
         with ui.header().classes("bg-slate-900 border-b border-slate-800 px-4 py-2 items-center gap-3"):
             ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/")).props(
                 "flat dense round color=grey-4"
-            ).tooltip("토론 화면으로 돌아갑니다.")
+            ).tooltip("메인 토론 화면으로 이동")
             ui.icon("compare", size="sm").classes("text-amber-300")
-            ui.label("대화 비교").classes("text-base font-bold text-slate-100")
+            ui.label("대화 세션 비교").classes("text-base font-bold text-slate-100")
             ui.space()
 
             def pick(side: str, value: Optional[str]) -> None:
@@ -71,10 +73,10 @@ def create_compare_page() -> None:
                 right = value if side == "b" else b
                 ui.navigate.to(compare_url(left or "", right or ""))
 
-            ui.select(options, value=a or None, label="왼쪽", on_change=lambda e: pick("a", e.value)).props(
+            ui.select(options, value=a or None, label="왼쪽 세션", on_change=lambda e: pick("a", e.value)).props(
                 "dense outlined dark options-dense"
             ).classes("w-72 text-xs")
-            ui.select(options, value=b or None, label="오른쪽", on_change=lambda e: pick("b", e.value)).props(
+            ui.select(options, value=b or None, label="오른쪽 세션", on_change=lambda e: pick("b", e.value)).props(
                 "dense outlined dark options-dense"
             ).classes("w-72 text-xs")
 
@@ -83,7 +85,7 @@ def create_compare_page() -> None:
                 with ui.column().classes("flex-1 min-w-0 gap-3"):
                     view = by_id.get(sid)
                     if view is None:
-                        ui.label("위에서 대화를 고르십시오." if not sid else "대화를 찾지 못했습니다.").classes(
+                        ui.label("상단 드롭다운에서 비교할 대화 세션을 선택해 주세요." if not sid else "해당 대화 세션을 찾을 수 없습니다.").classes(
                             "text-sm text-slate-400 p-4"
                         )
                         continue
@@ -95,7 +97,7 @@ def _render_side(view: Dict[str, Any]) -> None:
         ui.label(view["title"]).classes("text-sm font-bold text-slate-100")
         forked = view.get("forked_from") or {}
         if forked:
-            ui.label(f"'{forked.get('title', '')}' 에서 갈라 만든 대화").classes("text-[12px] text-amber-300")
+            ui.label(f"'{forked.get('title', '')}' 세션에서 분기된 대화").classes("text-[12px] text-amber-300")
         facts: List[str] = [
             get_strategy(view["strategy"]).display_name,
             f"최대 {view['max_rounds']} 라운드",
@@ -110,9 +112,9 @@ def _render_side(view: Dict[str, Any]) -> None:
         if used:
             details.append(used)
         if view.get("files_changed") is not None:
-            details.append(f"바뀐 파일 {view['files_changed']}개")
+            details.append(f"변경된 파일 {view['files_changed']}개")
         if view.get("failed_agents"):
-            details.append("응답 없음: " + ", ".join(view["failed_agents"]))
+            details.append("무응답 에이전트: " + ", ".join(view["failed_agents"]))
         ui.label(" · ".join(details)).classes("text-[12px] text-slate-300")
         if view.get("request"):
             ui.label(f"요청: {view['request']}").classes("text-[12px] text-sky-300 break-all")
@@ -134,7 +136,7 @@ def _render_rating(view: Dict[str, Any]) -> None:
     with ui.row().classes("w-full items-center gap-1 mt-1 no-wrap"):
         up = ui.button(icon="thumb_up").props("flat dense round size=12px")
         down = ui.button(icon="thumb_down").props("flat dense round size=12px")
-        note = ui.input(placeholder="평가 메모 (선택)", value=rating.get("note") or "").props(
+        note = ui.input(placeholder="평가 메모 입력 (선택 사항)", value=rating.get("note") or "").props(
             "dense outlined dark"
         ).classes("flex-1 text-xs")
 
@@ -147,7 +149,7 @@ def _render_rating(view: Dict[str, Any]) -> None:
         async with get_session_factory()() as db:
             await rate_turn(db, view["turn_id"], state["score"], note.value or "")
         paint()
-        ui.notify("평가를 저장했습니다." if state["score"] else "평가를 지웠습니다.", position="bottom-right")
+        ui.notify("평가를 저장했습니다." if state["score"] else "평가를 초기화했습니다.", position="bottom-right")
 
     async def save_note() -> None:
         if state["score"]:
@@ -157,6 +159,6 @@ def _render_rating(view: Dict[str, Any]) -> None:
     up.on("click", lambda: save(1))
     down.on("click", lambda: save(-1))
     note.on("blur", save_note)
-    up.tooltip("이 결론이 낫습니다")
-    down.tooltip("이 결론은 부족합니다")
+    up.tooltip("우수한 결론 (추천)")
+    down.tooltip("미흡한 결론 (비추천)")
     paint()

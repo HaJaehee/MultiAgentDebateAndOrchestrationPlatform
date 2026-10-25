@@ -160,7 +160,7 @@ class OrchestratorEngine:
             workspace = await self._session_workspace(session_id)
             await pool.acquire(workspace, holder=session_id)
             try:
-                # 이 턴의 모든 LLM 호출을 셉니다 (`llm_usage`). 병렬 발언 태스크도 이 계량기를 물려받습니다.
+                # 해당 턴의 모든 LLM 호출 사용량을 측정합니다 (`llm_usage`). 병렬 발언 비동기 태스크도 이 측정 컨텍스트를 상속받습니다.
                 with measuring() as usage:
                     state = await self._run_turn(
                         session_id, user_prompt, workspace, turn_id, on_event, control,
@@ -311,7 +311,7 @@ class OrchestratorEngine:
             if on_event:
                 await on_event({"type": EventType.TURN_OPENED, "turn_id": turn_id, "resumed": False})
 
-            # 에이전트가 무엇이든 고치기 전의 작업 공간 (`app/workspace_checkpoint.py`).
+            # 에이전트 작업 시작 전 워크스페이스 스냅샷을 생성합니다 (`app/workspace_checkpoint.py`).
             start = await self._snapshot(workspace, turn_id, workspace_checkpoint.START)
             if start:
                 await self.recorder.set_turn(db, state, checkpoint={"start": start})
@@ -392,7 +392,7 @@ class OrchestratorEngine:
             state = new_state(session_id, opening.content, workspace, setup)
             state.turn_id = turn_id
             if usage is not None:
-                # 끊기기 전까지 쓴 만큼에서 이어 셉니다.
+                # 중단 전까지 누적된 사용량에 이어서 측정합니다.
                 usage.add(Usage.of(turn.usage))
                 state.usage = usage
             state.messages = history
@@ -521,7 +521,7 @@ class OrchestratorEngine:
 
     @staticmethod
     async def _snapshot(workspace: Path, turn_id: str, which: str) -> Optional[str]:
-        """작업 공간의 지금 모습을 이 턴의 `which`(start·end) 로 남깁니다. 못 남겨도 턴은 계속됩니다."""
+        """현재 워크스페이스 상태를 해당 턴의 체크포인트 `which`(start/end)로 기록합니다 (실패해도 턴 진행은 유지)."""
         try:
             return await asyncio.to_thread(
                 workspace_checkpoint.snapshot, workspace, workspace_checkpoint.turn_ref(turn_id, which),
@@ -539,10 +539,10 @@ class OrchestratorEngine:
         on_event: Optional[EventCallback],
         state: Optional[DebateState] = None,
     ) -> None:
-        """턴이 끝난 모습을 남기고, 시작과 견줘 바뀐 파일 수를 턴 기록에 적고 알립니다.
+        """턴 종료 시점의 워크스페이스 스냅샷을 기록하고, 시작 시점과 비교한 변경 파일 수를 턴 레코드에 저장한 뒤 이벤트를 발행합니다.
 
-        실패로 끝난 턴도 남깁니다 — 실패하기 전까지 고친 파일도 되돌릴 수 있어야 합니다. 시작 모습이
-        없으면(git 없음, 턴이 서기 전에 멈춤) 아무것도 하지 않습니다.
+        실패한 턴의 경우에도 실패 전까지 수정된 파일을 복원할 수 있도록 체크포인트를 기록합니다. 시작 스냅샷이
+        없으면(git 미지원 또는 초기 중단) 기록을 생략합니다.
         """
         try:
             start = await asyncio.to_thread(

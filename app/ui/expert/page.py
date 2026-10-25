@@ -557,34 +557,34 @@ class ExpertPage:
             self.chat_feed.set_busy(False, run.status_text, run.round_info)
 
     async def open_search_hit(self, session_id: str, message_id: str) -> None:
-        """검색 결과에서 고른 발언: 그 대화를 열고 그 카드로 내려갑니다."""
+        """검색 결과에서 선택된 발언: 해당 대화 세션을 열고 대상 발언 카드로 이동합니다."""
         if session_id != self.current_session_id:
             self.sidebar.current_session_id = session_id
             await self.on_session_selected(session_id)
             await self.sidebar.refresh_list()
         if not self.chat_feed.reveal_message(message_id):
-            ui.notify("그 발언을 찾지 못했습니다 (지워졌을 수 있습니다).", type="warning", position="bottom-right")
+            ui.notify("해당 발언을 찾을 수 없습니다 (삭제되었을 수 있습니다).", type="warning", position="bottom-right")
 
     async def on_user_question(self, request_id: str, answer: str) -> bool:
-        """에이전트의 질문에 답합니다. 이미 답이 났거나 토론이 끝났으면 카드를 걷고 알립니다."""
+        """에이전트의 확인 질문에 답변을 전달합니다. 이미 처리되었거나 토론이 종료된 경우 안내합니다."""
         if not self.current_session_id:
             return True
         approver = "local" if self.viewer_is_local() else "remote"
         if self.runner.resolve_user_question(self.current_session_id, request_id, answer, approver=approver):
             return True
-        ui.notify("이미 답이 났거나 기다림이 끝난 질문입니다.", type="info", position="bottom-right")
+        ui.notify("이미 답변이 완료되었거나 응답 대기 시간이 만료된 질문입니다.", type="info", position="bottom-right")
         return True
 
     async def on_draft_skill(self, turn_id: str) -> None:
         await self.skill_draft.open(self.current_session_id, turn_id)
 
     async def on_fork_turn(self, turn_id: str) -> None:
-        """이 턴까지로 갈라 새 대화를 만들고 그 대화로 갑니다 (`app/session_fork.py`)."""
+        """현재 턴 시점으로 대화 세션을 분기(Fork)하여 생성하고 이동합니다 (`app/session_fork.py`)."""
         source = self.current_session_id
         if not source:
             return
         if self.runner.is_running(source):
-            ui.notify("토론이 진행 중입니다. 턴이 끝난 뒤에 갈라 주십시오.", type="warning", position="bottom-right")
+            ui.notify("토론이 진행 중입니다. 턴이 완료된 후에 세션을 분기해 주세요.", type="warning", position="bottom-right")
             return
         try:
             async with self.session_factory() as db:
@@ -593,13 +593,13 @@ class ExpertPage:
             ui.notify(str(exc), type="warning", position="bottom-right")
             return
         where = (
-            "그 턴이 끝났을 때의 작업 공간을 따로 만들었습니다"
+            "해당 턴 완료 시점의 스냅샷으로 새 작업 공간 디렉터리를 생성했습니다"
             if result.from_snapshot else
-            "그 턴의 스냅샷이 없어 지금 작업 공간을 복사했습니다"
+            "해당 턴의 스냅샷이 없어 현재 작업 공간 디렉터리를 복사했습니다"
         )
         ui.notify(
-            f"'{result.title}' 대화를 만들었습니다 (발언 {result.messages}건). {where}: {result.workspace}. "
-            "전략·참여자·모델을 바꾼 뒤 요청을 보내고, 사이드바의 비교 단추로 원본과 나란히 보십시오.",
+            f"'{result.title}' 세션을 분기 생성했습니다 (발언 {result.messages}건). {where}: {result.workspace}. "
+            "전략·참여자·모델을 조정한 후 새 요청을 시작할 수 있으며, 사이드바의 비교 버튼을 통해 원본 세션과 나란히 비교할 수 있습니다.",
             type="positive", position="bottom-right", multi_line=True, timeout=10000,
         )
         self.sidebar.current_session_id = result.session_id

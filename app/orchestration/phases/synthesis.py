@@ -191,8 +191,8 @@ class SynthesisPhaseExecutor(PhaseExecutor):
         await self.recorder.set_turn(
             db, state, status=TURN_COMPLETED, phase="completed", finished_at=utc_now(),
         )
-        # 합의: 모두가 발언했고, 덜 논의되지 않았고, 결론이 나왔고, 마지막 장부에 미해결 쟁점이 없습니다.
-        # 장부를 읽지 못하면(형식이 아니면) 합의로 적지 않습니다.
+        # 합의 판정: 모든 에이전트가 정상 발언했고, 중단되지 않았으며, 결론이 도출되었고, 마지막 결정 장부에 미해결 쟁점이 없는 경우.
+        # 장부 형식이 올바르지 않아 파싱에 실패하면 합의로 판정하지 않습니다.
         state.is_consensus_reached = (
             not state.failed_agent_keys and not state.stopped_early and not synthesis_failed
             and memory.open_issue_count(state.decision_ledger) == 0
@@ -371,7 +371,7 @@ class SynthesisPhaseExecutor(PhaseExecutor):
             early_stop = (
                 f"\n[참고] Round {state.converged_round} 에서 결정 장부가 수렴해(미해결 쟁점 없음, 새 결정 없음) "
                 f"남은 라운드를 건너뛰었습니다 (진행: {state.current_round}/{state.max_rounds} 라운드). "
-                f"덜 논의된 것이 아니라 합의로 마친 것이니 그렇게 정리하세요.\n"
+                f"미완료 중단이 아니라 상호 합의에 도달한 것이므로 이를 반영하여 최종 결론을 정리하세요.\n"
             )
 
         missing = ""
@@ -741,8 +741,8 @@ class SynthesisPhaseExecutor(PhaseExecutor):
             "fallback_agents": list(state.fallback_agent_keys),
             "synthesis_failed": synthesis_failed,
             "total_messages": len(state.messages),
-            # 모두 발언했고, 덜 논의되지 않았고, 결론이 나왔는가. 장부의 합의 판정(`turn_completed`
-            # 의 `consensus`)은 이 요약을 만든 뒤에 마지막 장부로 정해지므로 여기에는 없습니다.
+            # 모든 에이전트가 정상 발언하고 조기 중단 없이 결론 합성에 도달했는지 여부. 결정 장부 기반의
+            # 합의 판정(`turn_completed` 의 `consensus`)은 요약 생성 이후 최종 장부로 평가됩니다.
             "completed_cleanly": (
                 not state.failed_agent_keys and not synthesis_failed and not state.stopped_early
             ),

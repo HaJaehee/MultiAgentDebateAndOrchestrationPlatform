@@ -82,7 +82,7 @@ LOCKOUT_SECONDS = 15 * 60
 
 LOGIN_PATH = "/login"
 LOGOUT_PATH = "/logout"
-# 원격에서 쿠키 대신 `Authorization: Bearer <토큰>` 을 받는 경로 (화면 없는 호출: REST API, MCP 서버).
+# 원격 환경에서 쿠키 대신 `Authorization: Bearer <토큰>` 헤더 인증을 사용하는 경로 (헤드리스 호출: REST API, MCP 서버).
 BEARER_PATHS = ("/api/", "/mcp")
 MAX_LOGIN_BODY = 4096
 
@@ -500,7 +500,7 @@ def _cookie(headers: Dict[str, str], name: str) -> Optional[str]:
 
 
 def _bearer(headers: Dict[str, str]) -> Optional[str]:
-    """`Authorization: Bearer <토큰>` 의 토큰. 없거나 다른 방식이면 None."""
+    """`Authorization: Bearer <토큰>` 헤더에서 토큰 문자열을 추출합니다. 헤더가 없거나 Bearer 스키마가 아니면 None을 반환합니다."""
     scheme, _, value = headers.get("authorization", "").partition(" ")
     if scheme.lower() != "bearer" or not value.strip():
         return None
@@ -646,9 +646,9 @@ class AccessMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # 화면 없는 호출(스크립트·다른 에이전트의 MCP 클라이언트)은 쿠키 대신 같은 주인 토큰을
-        # `Authorization: Bearer` 로 보냅니다 (v1.5). `/api/*` 와 `/mcp` 에서만 받고, 틀리면 로그인과
-        # 같은 실패 잠금에 셉니다.
+        # 헤드리스 호출(스크립트, 외부 에이전트의 MCP 클라이언트 등)은 웹 쿠키 대신 동일한 마스터 토큰을
+        # `Authorization: Bearer` 헤더로 전달합니다 (v1.5). `/api/*` 및 `/mcp` 경로에 한해 허용되며, 인증 실패 시
+        # 웹 로그인과 동일하게 실패 횟수가 누적되어 일시 잠금됩니다.
         bearer = _bearer(headers)
         if bearer is not None and control.status.enabled and path.startswith(BEARER_PATHS):
             if control.locked_for(ip):

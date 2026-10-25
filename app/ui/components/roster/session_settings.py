@@ -370,7 +370,7 @@ class SessionSettingsMixin:
             ui.timer(0.01, self.on_config_changed, once=True)
 
     def _on_token_budget_change(self, e) -> None:
-        # 비우면(`None`) 상한 없음입니다. 음수도 상한 없음으로 봅니다.
+        # 빈 값(`None`) 또는 음수는 상한 없음(0)으로 처리합니다.
         self.token_budget = max(0, int(e.value or 0))
         if self.on_config_changed:
             ui.timer(0.01, self.on_config_changed, once=True)

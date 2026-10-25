@@ -1,22 +1,21 @@
-"""대화 분기: 한 턴에서 갈라 새 대화를 만들고, 거기서 전략·참여자·모델을 바꿔 다시 돌려 봅니다 (v1.5).
+"""대화 세션 분기(Fork): 특정 턴 시점의 상태를 기반으로 새 세션을 생성하고 전략·참여자·모델을 변경하여 재실행 (v1.5).
 
-`새 대화로 이어가기`(`session_ops.continue_session`)는 기록을 비우고 결론만 넘깁니다 — 컨텍스트가 찼을 때의
-길입니다. 분기는 반대로 **그 턴까지의 기록을 통째로** 가져갑니다. 같은 지점에서 다른 선택을 했다면 어떻게
-됐을지 보는 길이고, 두 대화는 비교 화면(`/compare`)에서 나란히 봅니다.
+'새 대화로 이어가기'(`session_ops.continue_session`)가 컨텍스트 정리를 위해 과거 발언을 비우고 결론 요약 및 지식 그래프만
+계승하는 반면, 세션 분기(Fork)는 **해당 턴 시점까지의 발언 및 작업 공간 기록 전체**를 그대로 복제합니다.
+동일한 분기점에서 토론 전략, 모델, 참여자를 변경했을 때의 결과를 비교 분석하기 위한 기능이며, `/compare` 페이지에서
+두 세션을 좌우로 나란히 비교할 수 있습니다.
 
-가져가는 것 (그 턴까지):
+복제 대상 (해당 턴 시점까지):
 
-* 발언·도구 기록·산출물·턴 기록 — id 를 새로 매기고, 기록 안에서 서로를 가리키는 id(계획 승인이 가리키는 계획,
-  기억의 반영 지점 등)도 함께 바꿉니다.
-* 그 턴이 끝났을 때의 대화 기억(결정 장부·요약, `TurnModel.memory`). 마지막 턴이면 대화의 기억을 씁니다.
-* 에이전트 구성 초안 — 이어가기와 같습니다. 잠금은 풀어 두어, 다음 턴 전에 모델·참여자를 바꿀 수 있습니다.
-* 작업 공간 — 그 턴이 끝났을 때의 스냅샷(`app/workspace_checkpoint.export`)으로 **따로 된 폴더**를 만듭니다.
-  두 대화가 같은 파일을 고치면 비교가 되지 않기 때문입니다. 스냅샷이 없으면(git 없음, 이 기능 이전의 턴)
-  지금 모습을 복사하고 그렇게 했다고 알립니다.
-* 지식 그래프 — 새 작업 공간의 그래프 폴더로 복사합니다.
+* 발언 메시지, 도구 실행 기록, 아티팩트, 턴 기록 — 새로운 고유 ID가 부여되며 상호 참조 ID(계획 승인 대상 등)도 자동 갱신됩니다.
+* 해당 턴 완료 시점의 대화 기억(결정 장부 및 요약, `TurnModel.memory`). 마지막 턴인 경우 세션의 최신 기억을 사용합니다.
+* 에이전트 구성 스냅샷 — 페르소나 잠금이 해제된 상태로 복제되어 다음 턴 시작 전에 모델 및 구성을 변경할 수 있습니다.
+* 작업 공간 — 해당 턴 완료 시점의 스냅샷(`app/workspace_checkpoint.export`)을 기반으로 **별도의 독립 디렉터리**를 생성합니다.
+  동일 파일 동시 수정으로 인한 충돌을 방지합니다. 스냅샷이 없는 경우 현재 디렉터리를 복사합니다.
+* 지식 그래프 — 분기된 새 작업 공간 디렉터리로 복사됩니다.
 
-가져가지 않는 것: 그 턴 뒤의 기록, 끝나지 못한 발언의 초안, "이 대화에서 허용" 한 도구 규칙(새 대화에서 다시
-묻습니다), 갈라 간 턴들의 체크포인트(새 작업 공간에는 그 기록이 없으므로 되돌릴 수 없습니다).
+복제 제외 대상: 대상 턴 이후의 후속 기록, 미완료 발언 초안, 세션별 임시 도구 허용 규칙(새 세션에서 재확인),
+기존 턴 체크포인트(새 작업 공간 디렉터리에는 과거 Git ref가 없으므로 롤백 불가).
 """
 
 from __future__ import annotations
@@ -62,7 +61,7 @@ class ForkResult:
     session_id: str
     title: str
     workspace: str
-    # 작업 공간을 그 턴의 스냅샷으로 만들었는지 (False 면 지금 모습을 복사했습니다)
+    # 작업 공간을 해당 턴의 스냅샷으로 생성했는지 여부 (False인 경우 현재 디렉터리를 복사)
     from_snapshot: bool
     messages: int
     graph_copied: bool
@@ -73,7 +72,7 @@ def _columns(row: Any) -> Dict[str, Any]:
 
 
 def _remap(value: Any, ids: Dict[str, str]) -> Any:
-    """기록 안에서 옛 id 를 가리키는 문자열을 새 id 로 바꿉니다 (사전·목록 안까지)."""
+    """데이터 구조 내에서 이전 ID를 참조하는 문자열을 새 ID로 재귀적으로 치환합니다."""
     if isinstance(value, str):
         return ids.get(value, value)
     if isinstance(value, dict):
@@ -104,19 +103,19 @@ def _copy_graph(source_ws: Path, source_sid: str, target_ws: Path, target_sid: s
 
 
 async def fork_session(db, source_session_id: str, turn_id: str) -> ForkResult:
-    """`turn_id` 까지의 대화를 새 대화로 갈라 냅니다. 커밋까지 합니다."""
+    """`turn_id` 시점까지의 대화 세션을 새 세션으로 분기 생성하고 DB에 커밋합니다."""
     source = await db.get(SessionModel, source_session_id)
     if source is None:
-        raise ForkError("원본 대화를 찾지 못했습니다.")
+        raise ForkError("원본 대화 세션을 찾을 수 없습니다.")
     turns = (await db.execute(
         select(TurnModel).where(TurnModel.session_id == source_session_id).order_by(TurnModel.started_at)
     )).scalars().all()
     cut = next((i for i, t in enumerate(turns) if t.id == turn_id), None)
     if cut is None:
-        raise ForkError("갈라 낼 턴을 찾지 못했습니다.")
+        raise ForkError("분기 대상 턴을 찾을 수 없습니다.")
     turn = turns[cut]
     if turn.status in TURN_UNFINISHED:
-        raise ForkError("끝나지 않은 턴에서는 갈라 낼 수 없습니다. 턴이 끝난 뒤에 갈라 주십시오.")
+        raise ForkError("진행 중이거나 비정상 종료된 턴에서는 세션을 분기할 수 없습니다. 턴 완료 후 다시 시도해 주세요.")
     kept_turns = turns[:cut + 1]
     kept_turn_ids: Set[str] = {t.id for t in kept_turns}
     is_latest = cut == len(turns) - 1
@@ -134,7 +133,7 @@ async def fork_session(db, source_session_id: str, turn_id: str) -> ForkResult:
         m for m in messages
         if (m.turn_id in kept_turn_ids)
         or (m.turn_id is None and before_boundary(m.created_at)
-            # 작업 공간 되돌리기 안내는 원본 폴더의 일입니다. 갈래의 작업 공간은 그 턴이 끝났을 때의 모습입니다.
+            # 작업 공간 롤백 메모는 원본 작업 공간의 내역이므로 분기 세션에는 계승하지 않습니다.
             and not (m.turn_meta or {}).get("reverted_turn"))
     ]
     kept_message_ids = {m.id for m in kept_messages}
@@ -144,7 +143,7 @@ async def fork_session(db, source_session_id: str, turn_id: str) -> ForkResult:
     ids.update({t.id: str(uuid.uuid4()) for t in kept_turns})
     ids.update({m.id: str(uuid.uuid4()) for m in kept_messages})
 
-    # 작업 공간: 그 턴이 끝났을 때의 스냅샷으로 따로 된 폴더를 만듭니다.
+    # 작업 공간: 해당 턴 완료 시점의 스냅샷으로 독립된 디렉터리를 생성합니다.
     source_ws = resolve_workspace_dir(source.workspace_dir or None)
     target_ws = _fork_folder(source_ws, new_id)
     end_ref = workspace_checkpoint.turn_ref(turn.id, workspace_checkpoint.END)
@@ -239,7 +238,7 @@ async def fork_session(db, source_session_id: str, turn_id: str) -> ForkResult:
 
 
 async def compare_view(db, session_ids: Iterable[str]) -> List[Dict[str, Any]]:
-    """비교 화면이 그리는 대화별 요약: 설정, 마지막 턴의 결론·장부·사용량·평가."""
+    """비교 화면(/compare) 표시용 세션 요약 데이터 구성: 설정, 최종 턴 결론, 결정 장부, 사용량, 평가."""
     out: List[Dict[str, Any]] = []
     for sid in session_ids:
         session = await db.get(SessionModel, sid)
@@ -264,7 +263,7 @@ async def compare_view(db, session_ids: Iterable[str]) -> List[Dict[str, Any]]:
 
 
 async def rate_turn(db, turn_id: str, score: int, note: str = "") -> bool:
-    """사람의 평가를 턴에 남깁니다 (👍 1 · 👎 -1 · 지우기 0)."""
+    """턴에 대한 사용자의 정량 평가(👍 1, 👎 -1, 초기화 0) 및 피드백 메모를 저장합니다."""
     turn = await db.get(TurnModel, turn_id)
     if turn is None:
         return False
