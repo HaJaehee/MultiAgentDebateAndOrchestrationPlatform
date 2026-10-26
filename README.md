@@ -1,12 +1,12 @@
 # 🤖 MADO — Multi-Agent Debate & Orchestration Platform
 
-`v1.4.1` · `LGPL-3.0-or-later` · `Python 3.11+`
+`v1.5` · `LGPL-3.0-or-later` · `Python 3.11+`
 
 > **MCP 도구를 활용하는 반응형 멀티 에이전트 협업 & 토론 웹 애플리케이션**  
 > Dynamic Agent Profiling via `conf.json`, MCP Tool Integration, Multi-Model LLM Abstraction (LiteLLM), StateGraph Orchestration, and NiceGUI + FastAPI Reactive Web Interface.
 
 ```
-Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v1.4.1
+Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v1.5
 ```
 
 동일한 내용을 웹 UI 우측 상단의 **ⓘ** 버튼을 통해서도 확인하실 수 있습니다.
@@ -356,7 +356,7 @@ pytest -v tests/
 |------|-----|
 | Author | Ha, Jaehee |
 | Email | lovesm135@naver.com |
-| Version | **v1.4.1** |
+| Version | **v1.5** |
 | License | LGPL-3.0-or-later ([LICENSE.md](LICENSE.md)) |
 
 버전 문자열의 기준 위치(Single Source of Truth)는 [`app/about.py`](app/about.py) 파일 한 곳입니다. FastAPI 메타데이터, `GET /api/health` 응답, 웹 UI 헤더 뱃지, 정보 모달이 모두 이 값을 참조하므로, 버전을 올릴 때 한 곳만 수정하시면 됩니다.
@@ -368,7 +368,7 @@ curl -s localhost:8000/api/health | python -m json.tool
 ```json
 {
   "status": "healthy",
-  "version": "v1.4.1",
+  "version": "v1.5",
   "author": { "name": "Ha, Jaehee", "email": "lovesm135@naver.com" }
 }
 ```
@@ -936,8 +936,9 @@ python package_source.py   # dist/MultiAgentDebateOrchestration_source_YYYYMMDD.
 |---|---|
 | `app/`, `mcp_servers/` | `python_runtime/`, `node_runtime/`, `wheels/`, `mcp_sandbox/` |
 | `mcp_node/memory-scoped.mjs` (포크 서버 실행 사본) | `workspace/`, `multiagent.db`, `conf.json` |
-| `conf.example.json`, `.env.example`, `requirements.txt` | `tests/`, `wiki/`, `CLAUDE.md` |
+| `conf.example.json`, `.env.example`, `requirements.txt` | `tests/`, `CLAUDE.md` |
 | `docs/` (사용 설명서 원본 마크다운 + 렌더러) | `docs/user_manual_html/` (렌더링 산출물) |
+| `wiki/` (영문 기술 위키 마크다운 — 폐쇄망에서는 저장소를 열 수 없으므로 함께 반입) | |
 | `LICENSE.md` | |
 | `setup_mcp.py`, `open_browser.py`, `README.md` | 패키징 스크립트류 (`package_*.py|ps1`) |
 

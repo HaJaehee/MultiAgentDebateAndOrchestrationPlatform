@@ -20,6 +20,7 @@ MCP 서버 설치본까지 들고 있어 수백 MB 입니다. 그 런타임은 �
         │   ├── user_manual/          사용 설명서 마크다운 원본
         │   ├── user_manual_html/     그것을 패키징 시점에 렌더링한 HTML (바로 열람)
         │   └── render_user_manual.py 렌더러 (대상에서 다시 돌릴 수 있게)
+        ├── wiki/                     영문 기술 위키 (설계 배경·세부 사양, 마크다운)
         ├── conf.example.json         설정 템플릿
         ├── .env.example
         ├── requirements.txt
@@ -98,13 +99,16 @@ PACKAGE_NAME = "MultiAgentDebateOrchestration_source"
 #
 # skills/ 디렉터리는 기본 제공 스킬을 포함합니다. 소스 업데이트 패키지 적용 시 템플릿과 마찬가지로
 # 전체가 교체되므로, 직접 작성하신 스킬을 보존하시려면 conf.json 의 `skills.dir` 를 다른 폴더로 지정하시기 바랍니다.
-SOURCE_DIRS = ["app", "mcp_servers", "docs", "trial_templates", "skills"]
+#
+# wiki/ 는 영문 기술 위키입니다. 설명서와 같은 이유로 — 폐쇄망에서는 저장소를 열 수 없으므로 — 설계 배경과
+# 세부 사양을 소스와 함께 들고 갑니다. 마크다운 그대로 담습니다 (렌더러는 사용 설명서용입니다).
+SOURCE_DIRS = ["app", "mcp_servers", "docs", "trial_templates", "skills", "wiki"]
 
 # (원본 경로, 패키지 안에서의 경로). 대부분 루트 파일이지만, 설치본의 같은
 # 자리에 바로 놓여야 하는 파일은 하위 경로로 넣습니다.
 #
 # 여기 없는 것들: 이 패키지는 **돌아가는 앱을 갱신하고 쓰는 데 필요한 것만** 담습니다.
-# 테스트·위키·CLAUDE.md 는 개발 저장소에 있고, 패키징 스크립트는 만드는 쪽 도구이며,
+# 테스트·CLAUDE.md 는 개발 저장소에 있고, 패키징 스크립트는 만드는 쪽 도구이며,
 # conf.json 은 그 망의 실제 엔드포인트가 들어 있어 반입 대상이 아닙니다.
 PACKAGE_FILES: list[tuple[str, str]] = [
     ("requirements.txt", "requirements.txt"),
@@ -142,6 +146,7 @@ REQUIRED_PACKAGE_PATHS: list[str] = [
     "trial_templates/report-review.json",
     "skills/mermaid-diagrams/SKILL.md",
     "skills/csv-profile/scripts/profile_csv.py",
+    "wiki/README.md",
 ]
 
 # 디렉터리를 복사할 때 건너뛸 것들. 소스 트리 안에 런타임 부스러기가 섞이는 것을 막습니다.
