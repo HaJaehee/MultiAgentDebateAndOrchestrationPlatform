@@ -15,9 +15,9 @@ MultiAgentDebateOrchestration/
 │   ├── user_manual/          이 문서 모음 (마크다운)
 │   ├── user_manual_html/     렌더링 산출물 (생성물)
 │   └── render_user_manual.py 렌더러
-├── mcp_servers/              이 저장소가 직접 들고 있는 MCP 서버
-│   ├── memory_scoped/        대화별 지식 그래프 (공식 서버의 포크)
-│   └── anythingllm_kb/       AnythingLLM 문서 검색 (kb, v1.5.1)
+├── mcp_servers/              자체 내장 MCP 서버 디렉터리
+│   ├── memory_scoped/        세션별 격리 지식 그래프 (공식 memory 포크)
+│   └── anythingllm_kb/       AnythingLLM 사내 문서 검색 (kb, v1.5.1)
 │
 ├── bench/                    전략 비교 시나리오 (v1.5, python -m app.bench)
 │

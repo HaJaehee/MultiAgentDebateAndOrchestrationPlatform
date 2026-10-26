@@ -10,7 +10,7 @@
     ├── python_runtime/      포터블 CPython
     ├── node_runtime/        node.exe (MCP 공식 Node 서버 구동용, npm 미포함)
     ├── mcp_node/            filesystem / memory / sequential-thinking MCP 서버
-    ├── mcp_servers/         이 저장소의 MCP 서버 (memory 포크: 대화별 지식 그래프, anythingllm_kb: 문서 검색)
+    ├── mcp_servers/         내장 MCP 서버 (memory_scoped: 세션별 지식 그래프, anythingllm_kb: 문서 검색)
     ├── mcp_sandbox/         AirgappedPySandbox (Python 코드 실행 MCP 서버)
     ├── trial_templates/     체험 서버의 공식 템플릿 (trial.templates_dir)
     ├── skills/              기본 스킬 디렉터리 (skills.dir)
@@ -141,8 +141,8 @@ def stage_sources() -> None:
         shutil.rmtree(staging_app)
     shutil.copytree(ROOT_DIR / "app", staging_app, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
-    # 이 저장소의 MCP 서버 원본. memory 포크의 실행 사본(mcp_node/memory-scoped.mjs)은 앱이
-    # 기동할 때 여기서 복사해 놓고, anythingllm_kb 는 여기서 그대로 띄웁니다.
+    # 내장 MCP 서버 소스. memory 포크 실행 사본(mcp_node/memory-scoped.mjs)은 앱 구동 시
+    # mcp_node/ 로 복사되며, anythingllm_kb 는 이 경로에서 직접 실행됩니다.
     staging_forks = STAGING_DIR / "mcp_servers"
     if (ROOT_DIR / "mcp_servers").is_dir():
         if staging_forks.exists():

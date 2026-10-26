@@ -1,15 +1,13 @@
-"""AnythingLLM 문서 검색 MCP 서버 (`mcp_servers/anythingllm_kb`, conf.json 의 `kb`).
+"""AnythingLLM 문서 검색 MCP 서버 테스트 (`mcp_servers/anythingllm_kb`, conf.json 의 `kb`).
 
-진짜 AnythingLLM 대신 같은 경로·같은 모양으로 답하는 페이크(표준 라이브러리 HTTP 서버)를
-띄워 확인합니다. 지키려는 것.
+실제 AnythingLLM 대신 동일한 REST 엔드포인트 규격을 모사하는 Mock HTTP 서버를 구동하여 동작을 검증합니다.
+주요 검증 항목:
 
-1. 검색 결과는 원문과 출처(제목·주소·점수)를 번호와 함께 돌려줍니다 — 에이전트가 인용할 수 있게.
-2. 검색하지 못하면 도구 오류로 그 이유를 돌려줍니다. 결과를 지어내지 않습니다
-   (키 없음·거부, 연결 실패, 모르는 작업 공간, 빈 질의).
-3. 도구는 읽기 전용·닫힌 세계로 표시되어 MADO 의 도구 보안이 읽기로 판정합니다 — 물을 사람이
-   없는 턴에서도, read_only 모드에서도 묻지 않고 실행됩니다.
-4. 실제 도구 루프에서 `kb__search` 의 결과가 모델에게 관측으로 돌아가고, 도구 기록에 판정이 남습니다.
-5. conf.example.json 의 `kb` 는 꺼져 있고 이 서버를 가리킵니다.
+1. 검색 결과에 원문 청크와 근거 출처(제목, URL/경로, 유사도 점수)가 번호와 함께 정확히 포맷팅되는지 확인.
+2. 검색 실패 시 환각 없이 명확한 오류 원인을 도구 실행 예외로 반환하는지 검증 (키 누락/거부, 연결 실패, 미등록 작업 공간, 빈 검색어 등).
+3. 도구의 읽기 전용(readOnlyHint) 및 닫힌 세계(openWorldHint=False) 어노테이션이 MADO 도구 보안에서 안전한 읽기 권한으로 판정되는지 검증.
+4. 실제 도구 루프에서 `kb__search` 호출 결과가 모델 관측(observation)으로 정상 전달되고 실행 감사 로그가 남는지 확인.
+5. conf.example.json 의 `kb` 설정이 기본 비활성화 상태로 해당 서버를 올바르게 가리키는지 확인.
 """
 
 import importlib.util
@@ -41,7 +39,7 @@ SERVER = ROOT / "mcp_servers" / "anythingllm_kb" / "server.py"
 
 
 def _load_server():
-    """패키지가 아닌 서버 파일을 모듈로 읽습니다. dataclass 가 자기 모듈을 찾으므로 먼저 등록합니다."""
+    """독립 실행 스크립트 형태의 MCP 서버 파일을 동적 모듈로 로드합니다 (dataclass 모듈 참조 등록)."""
     spec = importlib.util.spec_from_file_location("anythingllm_kb_server", SERVER)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -53,14 +51,14 @@ kb = _load_server()
 
 
 # ---------------------------------------------------------------------------
-# 페이크 AnythingLLM
+# Mock AnythingLLM HTTP 서버
 # ---------------------------------------------------------------------------
 
 DOCS: Dict[str, List[Dict[str, Any]]] = {
     "mado-docs": [
         {
             "id": "c1",
-            # AnythingLLM 은 조각 앞에 문서 정보를 이 머리로 붙여 둡니다.
+            # AnythingLLM은 청크 데이터 앞에 문서 메타데이터 헤더 블록을 첨부합니다.
             "text": "<document_metadata>\nsourceDocument: 반출규정.pdf\n</document_metadata>\n\n"
                     "외부 반출은 보안 담당자의 사전 승인이 필요하다.",
             "metadata": {
@@ -85,16 +83,16 @@ WORKSPACES = [
 
 
 class FakeAnythingLLM:
-    """`/api/v1/workspaces` 와 `/api/v1/workspace/{slug}/vector-search` 만 답합니다.
+    """`/api/v1/workspaces` 및 `/api/v1/workspace/{slug}/vector-search` 엔드포인트를 모사합니다.
 
-    응답 모양과 거절 문구는 AnythingLLM 의 `server/endpoints/api/workspace/index.js` 를 따릅니다.
+    응답 스키마와 오류 메시지는 AnythingLLM 의 `server/endpoints/api/workspace/index.js` 명세를 준용합니다.
     """
 
     def __init__(self) -> None:
         self.api_key = "test-key"
         self.requests: List[Tuple[str, str, Optional[Dict[str, Any]], Optional[str]]] = []
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
-        # 기본 0.5초면 테스트마다 끄는 데 0.5초씩 기다립니다.
+        # 기본 폴링 간격(0.5초)에 따른 테스트 지연을 줄이기 위해 주기를 단축합니다.
         self.thread = threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
 
     @property
@@ -170,7 +168,7 @@ def fake():
 
 @pytest.fixture
 def kb_env(monkeypatch, fake):
-    """서버 함수를 이 프로세스에서 직접 부를 때의 환경. 개발 PC 의 ANYTHINGLLM_* 은 지웁니다."""
+    """테스트 프로세스에서 MCP 서버 함수를 직접 호출할 때 사용할 환경변수 격리 픽스처."""
     for name in [n for n in os.environ if n.startswith("ANYTHINGLLM_")]:
         monkeypatch.delenv(name)
     monkeypatch.setenv("ANYTHINGLLM_URL", fake.url)
@@ -181,7 +179,7 @@ def kb_env(monkeypatch, fake):
 
 @pytest.fixture
 def security(monkeypatch):
-    """게이트와 매니저가 읽는 설정을 테스트가 정합니다 (개발 PC 의 conf.json 과 무관)."""
+    """도구 보안 게이트와 MCP 관리자가 참조할 임시 설정 객체를 생성합니다."""
     config = RootConfig.model_validate({"agents": {"orchestrator": {"name": "O", "role": "r"}}})
     monkeypatch.setattr(gate_module, "get_config", lambda *a, **k: config)
     monkeypatch.setattr(manager_module, "get_config", lambda *a, **k: config)
@@ -195,7 +193,7 @@ def _closed_port() -> int:
 
 
 # ---------------------------------------------------------------------------
-# 1. 결과 — 원문과 출처
+# 1. 검색 결과 포맷 검증 — 원문 청크 및 근거 출처 메타데이터
 # ---------------------------------------------------------------------------
 
 
@@ -206,7 +204,7 @@ async def test_search_returns_numbered_chunks_with_their_sources(kb_env, fake):
     assert out.startswith('[AnythingLLM 작업 공간 `mado-docs`] "반출 승인 절차" — 조각 2개')
     assert "[1] 반출규정.pdf · 출처: file://C:/docs/반출규정.pdf · 점수 0.82" in out
     assert "외부 반출은 보안 담당자의 사전 승인이 필요하다." in out
-    assert "<document_metadata>" not in out, "출처는 따로 적으므로 임베딩용 머리는 걷어냅니다"
+    assert "<document_metadata>" not in out, "출처 메타데이터는 별도 표기되므로 임베딩 헤더 블록을 제거합니다"
     assert "[2] 보관지침.md · 출처: custom-documents/보관지침.json · 점수 0.65" in out
     assert fake.requests == [(
         "POST", "/api/v1/workspace/mado-docs/vector-search",
@@ -237,7 +235,7 @@ async def test_an_empty_workspace_is_reported_not_filled_in(kb_env):
 
 
 # ---------------------------------------------------------------------------
-# 2. 실패 — 이유를 그대로, 결과는 지어내지 않음
+# 2. 오류 처리 검증 — 환각 없이 명확한 예외 메시지 반환
 # ---------------------------------------------------------------------------
 
 
@@ -302,7 +300,7 @@ async def test_allowed_workspaces_limit_search_and_listing(kb_env, fake):
 
     with pytest.raises(kb.KBError, match="'empty'은 검색할 수 없습니다"):
         await kb.search("반출", workspace="empty")
-    assert fake.searches() == [], "허용 목록 밖은 묻지도 않습니다"
+    assert fake.searches() == [], "허용 목록 외 작업 공간 요청은 서버를 호출하지 않고 차단합니다"
 
     listing = await kb.list_workspaces()
     assert listing == "AnythingLLM 작업 공간 1개\n- mado-docs — MADO 문서 (기본)"
@@ -332,7 +330,7 @@ def test_the_address_is_normalized(raw, expected):
 
 
 # ---------------------------------------------------------------------------
-# 3·4. MADO 를 거쳐서 — stdio, 도구 보안, 도구 루프
+# 3·4. MADO 런타임 연동 검증 — stdio 통신, 도구 보안 정책 판정, 실제 도구 루프
 # ---------------------------------------------------------------------------
 
 
@@ -369,7 +367,7 @@ async def test_over_stdio_the_tools_are_judged_read_only_and_run_unattended(fake
 
         agent = Agent(key="architect", name="Architect", role="r", api_key="sk-test")
         for mode in ("default", "read_only"):
-            gate = ToolGate(session_id="s", mode=mode, control=None)  # 물을 사람이 없습니다
+            gate = ToolGate(session_id="s", mode=mode, control=None)  # 무인 헤드리스 모드 (승인 대화 없음)
             result = await gate.check(agent, "kb__search", {"query": "반출"}, manager)
             assert result.allowed, result.output
             assert result.audit["decision"] == "allow" and result.audit["rule"] == f"mode:{mode}"
@@ -405,7 +403,7 @@ def _call(cid: str, name: str, arguments: Dict[str, Any]) -> SimpleNamespace:
 
 
 class _Scripted(LLMCaller):
-    """모델 자리에 각본을 넣습니다 (`_complete_unthrottled` — MADOWarGame 의 가짜 두뇌와 같은 지점)."""
+    """테스트용 스크립트 기반 가상 LLM 응답을 주입합니다 (`_complete_unthrottled`)."""
 
     def __init__(self, manager: MCPManager, script: List[Dict[str, Any]]):
         super().__init__(mcp_manager=manager)

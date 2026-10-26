@@ -45,7 +45,7 @@ MCPManager  (프로세스 전역 싱글턴)
 | `sandbox` | Python | 5 | 상태 유지형 Python 코드 실행. 제안된 알고리즘의 실제 동작 검증 |
 | `sequential_thinking` | Node.js (공식) | 1 | 단계적 심층 추론 도구 (`mcp` 추론 모드에서 사용) |
 | `fetch` | Python | 1 | 외부 URL 웹페이지 내용 마크다운 변환 (**폐쇄망 환경에서는 비활성화 권장**) |
-| `kb` | Python (**이 저장소**) | 2 | AnythingLLM 작업 공간의 문서 검색. 원문 조각과 출처를 돌려줌 (기본은 꺼짐, v1.5.1) |
+| `kb` | Python (**내장 서버**) | 2 | AnythingLLM 작업 공간의 문서 검색. 원문 청크와 근거 출처 제공 (기본 비활성, v1.5.1) |
 
 ### 공식 Memory 서버를 포크(Fork)하여 개선한 이유
 
@@ -231,21 +231,21 @@ MADO 호스트는 MCP 표준 사양인 `roots/list` 프로토콜 요청에 대�
 
 ## AnythingLLM 문서 검색 연결 (`kb`, v1.5.1)
 
-AnythingLLM 작업 공간에 넣어 둔 문서(규정, 설계 문서, 보고서 등)를 에이전트가 근거로 찾아 쓰게 하는 서버입니다. 이 저장소의 `mcp_servers/anythingllm_kb/server.py` 이며, 추가로 설치할 패키지는 없습니다.
+AnythingLLM 작업 공간(Workspace)에 등록된 사내 규정, 아키텍처 설계서, 보고서 등의 지식 문서를 전문가 에이전트가 토론 근거 자료로 검색할 수 있도록 지원하는 내장 MCP 서버입니다 (`mcp_servers/anythingllm_kb/server.py`). 추가적인 패키지 설치 없이 즉시 사용할 수 있습니다.
 
-**검색만 하고 답은 만들지 않습니다.** AnythingLLM 개발자 API 중 검색(`vector-search`)과 작업 공간 목록만 부릅니다. 답은 토론에 참여한 에이전트가 자기 모델로 쓰고, 이 서버는 원문 조각과 출처를 돌려줍니다. AnythingLLM 의 채팅 API 를 쓰면 다른 LLM 이 답을 만들어 어느 문서에서 나온 말인지 흐려지고, MADO 의 토큰 계측 밖에서 토큰을 쓰게 됩니다.
+**문서 검색만 수행하며 최종 응답은 에이전트가 직접 생성합니다.** AnythingLLM 개발자 API 중 벡터 유사도 검색(`vector-search`) 및 작업 공간 목록 조회 엔드포인트만 호출합니다. AnythingLLM의 대화형 채팅 API를 우회하는 이유는 외부 LLM 개입으로 인한 출처 불투명성을 방지하고, MADO의 토큰 계측 및 폴백 모델 제어 범위를 벗어나지 않도록 하기 위함입니다. 본 서버는 검색된 원문 청크와 메타데이터(문서 제목, URL/경로, 유사도 점수)를 정형화된 번호와 함께 에이전트에 전달하여 정확한 인용을 유도합니다.
 
 ### 켜는 순서
 
-1. AnythingLLM 설정의 **Developer API** 화면에서 API 키를 만듭니다.
-2. `.env` 에 주소와 키, 기본 작업 공간을 적습니다. 작업 공간은 slug(작업 공간 주소의 마지막 부분)로 적습니다.
+1. AnythingLLM 관리자 설정의 **Developer API** 화면에서 API 키를 발급받습니다.
+2. `.env` 파일에 서버 주소와 API 키, 기본 대상 작업 공간을 설정합니다. 작업 공간은 고유 슬러그(slug: URL 경로의 마지막 식별자)로 지정합니다.
    ```bash
    ANYTHINGLLM_URL=http://localhost:3001
    ANYTHINGLLM_API_KEY=<발급받은 키>
    ANYTHINGLLM_WORKSPACE=mado-docs
    ```
-3. `conf.json` 의 `mcp_servers.kb` 에서 `"enabled": true` 로 바꿉니다 (`conf.example.json` 에 꺼진 상태로 들어 있습니다).
-4. 문서를 찾아 쓸 에이전트의 `allowed_mcp_servers` 에 `"kb"` 를 넣습니다.
+3. `conf.json`의 `mcp_servers.kb` 설정에서 `"enabled": true`로 변경합니다 (`conf.example.json` 기본값은 비활성화 상태입니다).
+4. 문서를 검색하여 참조할 전문가 에이전트의 `allowed_mcp_servers` 목록에 `"kb"`를 추가합니다.
 
 ```json
 "kb": {
@@ -263,45 +263,45 @@ AnythingLLM 작업 공간에 넣어 둔 문서(규정, 설계 문서, 보고서 
 ```
 
 > [!IMPORTANT]
-> 키는 반드시 위처럼 서버의 `env` 에 적어야 서버에 전달됩니다. MADO 는 `.env` 에서 읽은 비밀을 MCP 서버에 그대로 물려주지 않습니다 ([도구 보안](08-tool-security.md)).
+> API 키는 반드시 위와 같이 서버의 `env` 블록에 명시해야 MCP 프로세스에 안전하게 전달됩니다. MADO는 보안 격리를 위해 `.env`의 환경변수를 하위 MCP 서버 프로세스에 무조건 상속하지 않습니다 ([도구 보안](08-tool-security.md) 참조).
 
-### 에이전트가 쓰는 도구
+### 에이전트가 사용하는 도구
 
-| 도구 | 하는 일 |
+| 도구 | 기능 설명 |
 | :--- | :--- |
-| `kb__search` | 질의와 가까운 조각을 `[번호] 제목 · 출처 · 점수` 와 원문으로 돌려줍니다. 기본 5개, 최대 20개 |
-| `kb__list_workspaces` | 검색할 수 있는 작업 공간의 slug 와 이름 (기본 작업 공간 표시) |
+| `kb__search` | 질의와 유사한 문서 청크를 `[번호] 제목 · 출처 · 점수` 형식의 메타데이터 및 원문으로 반환합니다 (기본 5개, 최대 20개). |
+| `kb__list_workspaces` | 검색 가능한 작업 공간의 슬러그(slug) 및 이름 목록을 조회합니다 (기본 작업 공간 표기 포함). |
 
-검색 결과에는 인용할 때 `[번호]` 와 문서 제목을 밝히라는 안내가 붙습니다. 찾은 조각이 없으면 그렇다고 알리고, 질의를 바꿔 다시 찾거나 찾지 못했다고 말하라고 안내합니다.
+검색 결과에는 답변 작성 시 `[번호]` 및 문서 제목을 반드시 명시하라는 인용 가이드가 함께 포함됩니다. 일치하는 문서 조각이 없을 경우 빈 결과임을 명확히 통보하고, 질의 표현을 재구성하거나 근거 자료가 없음을 솔직하게 밝히도록 유도합니다.
 
-### 설정 값
+### 설정 항목
 
-| 환경 변수 | 기본값 | 의미 |
+| 환경 변수 | 기본값 | 설명 |
 | :--- | :--- | :--- |
-| `ANYTHINGLLM_URL` | `http://localhost:3001` | AnythingLLM 주소. 끝에 `/api` 나 `/api/v1` 이 붙어 있어도 됩니다 |
-| `ANYTHINGLLM_API_KEY` | (필수) | 개발자 API 키 |
-| `ANYTHINGLLM_WORKSPACE` | (없음) | 기본 작업 공간 slug. 비우면 작업 공간이 하나일 때 그것을 쓰고, 여럿이면 에이전트가 골라야 합니다 |
-| `ANYTHINGLLM_WORKSPACES` | (전부) | 검색을 허용할 작업 공간 slug 목록 (쉼표로 구분) |
-| `ANYTHINGLLM_TOP_N` | `5` | 한 번에 돌려줄 조각 수 |
-| `ANYTHINGLLM_SCORE_THRESHOLD` | (작업 공간 설정) | 이 점수(0~1)보다 낮은 조각은 버립니다 |
-| `ANYTHINGLLM_TIMEOUT` | `30` | 요청 하나를 기다리는 시간(초) |
+| `ANYTHINGLLM_URL` | `http://localhost:3001` | AnythingLLM 서버 주소 (끝에 `/api` 또는 `/api/v1` 경로가 포함되어도 자동 정규화) |
+| `ANYTHINGLLM_API_KEY` | (필수) | AnythingLLM 개발자 API 키 |
+| `ANYTHINGLLM_WORKSPACE` | (선택) | 기본 대상 작업 공간 slug (생략 시 단일 작업 공간 자동 선택) |
+| `ANYTHINGLLM_WORKSPACES` | (전체) | 검색을 허용할 작업 공간 slug 목록 (쉼표 구분) |
+| `ANYTHINGLLM_TOP_N` | `5` | 단일 검색 시 반환할 최대 청크 수 |
+| `ANYTHINGLLM_SCORE_THRESHOLD` | (서버 기본값) | 유사도 점수 임계값 (0.0 ~ 1.0, 미달 항목은 결과에서 제외) |
+| `ANYTHINGLLM_TIMEOUT` | `30` | HTTP 요청 대기 제한 시간(초) |
 
-표의 마지막 세 값(`ANYTHINGLLM_TOP_N`, `ANYTHINGLLM_SCORE_THRESHOLD`, `ANYTHINGLLM_TIMEOUT`)은 위 예시에 없으므로, 필요할 때 `kb` 의 `env` 에 직접 더합니다. 값은 검색할 때마다 다시 읽습니다.
+테이블의 마지막 세 항목(`ANYTHINGLLM_TOP_N`, `ANYTHINGLLM_SCORE_THRESHOLD`, `ANYTHINGLLM_TIMEOUT`)은 기본 예시 설정에 포함되어 있지 않으므로, 조정이 필요한 경우 `kb`의 `env` 블록에 직접 추가하여 설정할 수 있습니다. 설정값은 검색 호출 시마다 동적으로 반영됩니다.
 
-### 승인 카드가 뜨지 않는 이유
+### 사용자 승인 다이얼로그가 생략되는 이유
 
-두 도구는 MCP 도구 표시(annotations)에 **읽기 전용·닫힌 세계**(`readOnlyHint=true`, `openWorldHint=false`)로 적혀 있습니다. 정해진 문서 묶음만 읽기 때문입니다. MADO 는 이 PC 에서 띄운 서버의 표시를 믿으므로 두 도구를 **읽기**로 판정하고, `read_only` 모드나 사람이 없는 헤드리스 턴에서도 묻지 않고 실행합니다. 주소는 주인이 `conf.json` 에 적은 곳으로 고정되어 있어 모델이 다른 곳으로 요청을 보낼 수 없습니다.
+두 도구 모두 MCP 스펙 어노테이션(annotations)에 **읽기 전용·닫힌 세계**(`readOnlyHint=true`, `openWorldHint=false`)로 선언되어 있습니다. 사전 정의된 문서 저장소만을 정적으로 조회하기 때문입니다. MADO 보안 엔진은 로컬에서 구동되는 내장 서버의 신뢰 어노테이션을 바탕으로 이를 **안전한 읽기(read)** 권한으로 판정하며, `read_only` 보안 모드나 대화형 사용자가 없는 무인 헤드리스 턴에서도 별도의 확인 팝업 없이 즉시 실행합니다. 호출 URL 역시 관리자가 `conf.json`에 구성한 고정 엔드포인트로 제한되므로 모델이 임의의 외부 주소로 요청을 전송할 위험이 없습니다.
 
-### 실패하면
+### 오류 발생 시 동작
 
-키가 없거나 거부됨, AnythingLLM 에 연결하지 못함, 시간 초과, 모르는 작업 공간, 빈 질의, 허용 목록 밖 작업 공간 — 모두 도구 오류로 돌아가며 도구 카드에 `실패` 로 보입니다. 에이전트는 그 이유를 읽습니다. 결과를 지어내지 않습니다.
+API 키 누락 또는 인증 거부(401/403), 서버 연결 실패, 요청 시간 초과, 미등록 작업 공간 지정, 빈 검색어 전달, 허용 목록 외 접근 등 모든 실패 상황은 도구 실행 오류로 반환되며, 채팅 피드의 도구 실행 카드에 `실패` 상태로 표시됩니다. 에이전트는 오류 상세 메시지를 확인하고 실패 사실을 인지하므로, 결과를 임의로 날조(환각)하지 않고 솔직하게 상황을 보고합니다.
 
-AnythingLLM 이 이 PC 에 있으면(`localhost`) 사내 프록시 설정(`HTTP_PROXY` 등)을 타지 않고 바로 붙습니다.
+AnythingLLM이 MADO와 동일한 로컬 환경(`localhost`, `127.0.0.1`)에 구축된 경우 사내 프록시 환경변수(`HTTP_PROXY` 등)를 우회하여 직결되므로 안정적으로 통신할 수 있습니다.
 
-### 아직 하지 않은 것
+### 사전 준비 및 참고 사항
 
-- 문서를 AnythingLLM 에 넣는 일은 AnythingLLM 화면에서 합니다. DRM 이 걸린 문서는 AnythingLLM 이 열지 못하므로, 변환해 넣는 기능은 따로 필요합니다.
-- 체험 화면과 쉬운 화면의 대화는 설계상 도구가 없어 `kb` 를 쓸 수 없습니다.
+- **문서 적재 사전 완료**: 본 MCP 서버는 AnythingLLM에 이미 적재된 문서를 조회하는 역할만 수행합니다. 사내 보안(DRM)이 적용된 문서 등은 AnythingLLM 기본 수집기로 파싱되지 않을 수 있으므로, 보안 해제 후 업로드하거나 AnythingLLM의 `POST /api/v1/document/raw-text` API를 통해 사전에 텍스트를 적재해 두어야 합니다.
+- **체험/쉬운 모드 미제공**: 간이 UI(체험 및 쉬운 모드)는 복잡한 도구 설정 없이 구동되도록 설계되어 있으므로 `kb` 도구가 연동되지 않으며, 전문가 모드 토론 세션에서만 활용됩니다.
 
 ---
 

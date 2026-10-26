@@ -11,8 +11,8 @@ MCP 서버 설치본까지 들고 있어 수백 MB 입니다. 그 런타임은 �
     └── MultiAgentDebateOrchestration_source/
         ├── app/                      애플리케이션 소스 (통째로 교체)
         ├── mcp_servers/              이 저장소가 직접 들고 있는 MCP 서버
-        │   ├── memory_scoped/        공식 memory 서버 포크 (대화별 지식 그래프)
-        │   └── anythingllm_kb/       AnythingLLM 문서 검색 (kb)
+        │   ├── memory_scoped/        세션별 격리 지식 그래프 (공식 memory 포크)
+        │   └── anythingllm_kb/       AnythingLLM 사내 문서 검색 (kb, v1.5.1)
         ├── mcp_node/memory-scoped.mjs  그 실행 사본 (설치본의 것을 바로 갈아끼움)
         ├── trial_templates/          체험 서버의 공식 템플릿 (trial.templates_dir)
         ├── skills/                   기본 스킬 디렉터리 (skills.dir)

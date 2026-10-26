@@ -71,8 +71,8 @@ Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v1.5.1
    - REST API(`/api/sessions/...`, SSE 스트리밍 지원) 및 **MADO MCP 서버(`/mcp`)**를 제공하여 Claude Code나 Cursor 같은 외부 AI 에이전트/툴이 MADO를 '다중 에이전트 토론 팀' 도구로 직접 호출할 수 있습니다 (`claude mcp add --transport http mado http://127.0.0.1:8000/mcp`). 원격 접속 시에는 마스터 토큰(Master Token)을 Bearer 인증 헤더로 전달합니다.
    - **MADO Bench** (`python -m app.bench run bench/<시나리오>.json`): 동일한 프롬프트 요구사항에 대해 여러 전략과 모델 설정을 실행하고, 소모 토큰·소요 시간·합의 조기 종료 여부·미해결 쟁점 및 정량 평가를 한눈에 비교할 수 있는 벤치마크 하네스를 제공합니다.
 12. **AnythingLLM 문서 검색 (`kb`, v1.5.1)**:
-   - AnythingLLM 작업 공간에 넣어 둔 문서에서 질의와 가까운 조각을 찾아 **원문과 출처(제목·주소·점수)**를 돌려주는 MCP 서버(`mcp_servers/anythingllm_kb/`)를 제공합니다. AnythingLLM 은 검색만 하고, 답은 토론에 참여한 에이전트가 자기 모델로 씁니다.
-   - 읽기 전용 도구로 표시되어 검색할 때마다 승인을 묻지 않으며, 연결 실패·키 거부·모르는 작업 공간은 도구 오류로 돌려줍니다 (결과를 지어내지 않음). 기본은 꺼져 있습니다 — 켜는 법은 아래 [MCP 도구 구성](#mcp-도구-구성-mcp_servers) 참조.
+   - AnythingLLM 작업 공간(Workspace)에 적재된 문서에서 질의와 유사한 텍스트 청크를 검색하여 **원문과 근거 출처(문서 제목·URL/경로·유사도 점수)**를 반환하는 내장 MCP 서버(`mcp_servers/anythingllm_kb/`)를 제공합니다. AnythingLLM은 벡터 검색만 수행하며, 최종 응답은 토론 에이전트가 자체 모델 맥락에서 직접 합성합니다.
+   - 읽기 전용(readOnly) 힌트가 선언되어 있어 검색 시마다 사용자 승인 팝업이 발생하지 않으며, 연결 실패·인증 오류·미등록 작업 공간 접근 시 환각 없이 명확한 도구 실행 오류를 반환합니다. 기본값은 비활성화 상태입니다 (활성화 방법은 아래 [MCP 도구 구성](#mcp-도구-구성-mcp_servers) 참조).
 
 ---
 
@@ -695,11 +695,11 @@ python docs/render_user_manual.py
 | `sandbox` | Python ([AirgappedPySandbox](https://github.com/HaJaehee/AirgappedPySandbox)) | 5 | 활성 | 파이썬 코드를 독립된 환경에서 실행합니다. 에이전트의 주장을 실제 코드 실행을 통해 검증합니다. |
 | `sequential_thinking` | Node (공식) | 1 | 비활성 | `mode = "mcp"` 모드를 사용할 때만 활성화합니다. |
 | `fetch` | Python (공식) | 1 | 비활성 | 웹 URL 조회 및 콘텐츠 추출을 담당합니다. **폐쇄망 환경에서는 활성화하지 마십시오.** |
-| `kb` | Python (이 저장소) | 2 | 비활성 | AnythingLLM 작업 공간의 문서를 검색해 원문 조각과 출처를 돌려줍니다 (v1.5.1). |
+| `kb` | Python (내장 서버) | 2 | 비활성 | AnythingLLM 작업 공간의 문서를 검색하여 원문 청크와 근거 출처를 제공합니다 (v1.5.1). |
 
 > `@modelcontextprotocol/server-brave-search` 패키지는 공식 레포지토리에서 `servers-archived`로 이관되어 더 이상 유지보수되지 않으므로 기본 구성에서 제외하였습니다. 웹 검색 기능이 필요한 경우 `conf.example.json` 하단의 DuckDuckGo 또는 SearXNG 연동 예시를 참고하시기 바랍니다.
 
-`kb` 를 켜려면 AnythingLLM 설정의 Developer API 에서 키를 만들어 `.env` 의 `ANYTHINGLLM_API_KEY` 에 넣고(주소는 `ANYTHINGLLM_URL`, 기본 작업 공간은 `ANYTHINGLLM_WORKSPACE`), `conf.json` 의 `mcp_servers.kb` 를 `"enabled": true` 로 바꾼 뒤 쓸 에이전트의 `allowed_mcp_servers` 에 `"kb"` 를 넣습니다. 키는 서버의 `env` 에 적혀 있어야 전달됩니다 — MADO 는 `.env` 의 비밀을 MCP 서버에 그대로 물려주지 않습니다. 자세한 내용은 [MCP 호스트 설명서](docs/user_manual/03-core/04-mcp-host.md#anythingllm-문서-검색-연결-kb-v151)를 참고하십시오.
+`kb` 도구를 활성화하려면 AnythingLLM 관리자 설정의 'Developer API'에서 API 키를 발급받아 `.env` 파일의 `ANYTHINGLLM_API_KEY`에 등록하고(서버 URL은 `ANYTHINGLLM_URL`, 기본 작업 공간은 `ANYTHINGLLM_WORKSPACE`), `conf.json`의 `mcp_servers.kb`를 `"enabled": true`로 변경한 후 사용할 에이전트의 `allowed_mcp_servers` 목록에 `"kb"`를 추가합니다. 보안을 위해 상위 환경변수를 직접 상속하지 않으므로, API 키는 반드시 서버 `env` 블록에 명시해야 안전하게 전달됩니다. 자세한 설정 가이드는 [MCP 호스트 설명서](docs/user_manual/03-core/04-mcp-host.md#anythingllm-문서-검색-연결-kb-v151)를 참고하십시오.
 
 기본 도구 배분 구성은 다음과 같습니다. Critic 에이전트에게 `sandbox` 접근 권한을 부여하는 것이 핵심 설계로, 제안된 코드를 직접 실행하여 반박 및 검증할 수 있어야 비판적 검토 역할이 실질적으로 기능하기 때문입니다.
 
