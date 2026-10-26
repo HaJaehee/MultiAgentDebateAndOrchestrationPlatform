@@ -22,6 +22,7 @@ pytest -k "snapshot"
 | `test_mcp_admin.py` | MCP 서버 추가/삭제/on-off, 주석(`//`) 및 `${VAR}` 보존, 런타임 실서버 반영 |
 | `test_mcp.py` | MCP 클라이언트 stdio 연결 수립, 도구 스키마 검색 및 안전 실행 |
 | `test_remote_mcp.py` | 원격(HTTP/SSE) MCP 서버: 설정 유효성, 전송 방식 자동 폴백, 인증 토큰 격리 |
+| `test_anythingllm_kb.py` | AnythingLLM 문서 검색(`kb`): 페이크 AnythingLLM 으로 결과·출처 형식, 실패를 오류로 돌려주기, 작업 공간 허용 목록, stdio 연결·읽기 판정·무인 실행, 실제 도구 루프 (v1.5.1) |
 | `test_llm_settings.py` | `llm` 전역 설정 상속, 요청 파라미터 매핑, 단계적 사고 모드 동작 |
 | `test_orchestrator.py` | 에이전트 발언 우선순위 정렬 및 전략별 발언 순서 배치 |
 | `test_speaker_selection.py` | 오케스트레이터의 동적 발언자 지명 및 실패 시 안전 폴백 메커니즘 |

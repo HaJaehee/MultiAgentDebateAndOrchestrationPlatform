@@ -45,6 +45,7 @@ MCPManager  (프로세스 전역 싱글턴)
 | `sandbox` | Python | 5 | 상태 유지형 Python 코드 실행. 제안된 알고리즘의 실제 동작 검증 |
 | `sequential_thinking` | Node.js (공식) | 1 | 단계적 심층 추론 도구 (`mcp` 추론 모드에서 사용) |
 | `fetch` | Python | 1 | 외부 URL 웹페이지 내용 마크다운 변환 (**폐쇄망 환경에서는 비활성화 권장**) |
+| `kb` | Python (**이 저장소**) | 2 | AnythingLLM 작업 공간의 문서 검색. 원문 조각과 출처를 돌려줌 (기본은 꺼짐, v1.5.1) |
 
 ### 공식 Memory 서버를 포크(Fork)하여 개선한 이유
 
@@ -225,6 +226,82 @@ MADO 호스트는 MCP 표준 사양인 `roots/list` 프로토콜 요청에 대�
 ### UI 화면에서의 간편 추가
 
 로스터 관리 화면의 **서버 추가** 대화상자에서 로컬 프로세스(`stdio`) 방식과 원격(`HTTP`) 방식을 탭으로 선택하여 손쉽게 등록할 수 있습니다. 사용자의 주 관심사는 '어떤 MCP 서버를 연동할 것인가'이지 내부 전송 프로토콜 분류가 아니므로, 단일 인터페이스 내에서 설정 항목이 직관적으로 전환되도록 설계되어 있습니다.
+
+---
+
+## AnythingLLM 문서 검색 연결 (`kb`, v1.5.1)
+
+AnythingLLM 작업 공간에 넣어 둔 문서(규정, 설계 문서, 보고서 등)를 에이전트가 근거로 찾아 쓰게 하는 서버입니다. 이 저장소의 `mcp_servers/anythingllm_kb/server.py` 이며, 추가로 설치할 패키지는 없습니다.
+
+**검색만 하고 답은 만들지 않습니다.** AnythingLLM 개발자 API 중 검색(`vector-search`)과 작업 공간 목록만 부릅니다. 답은 토론에 참여한 에이전트가 자기 모델로 쓰고, 이 서버는 원문 조각과 출처를 돌려줍니다. AnythingLLM 의 채팅 API 를 쓰면 다른 LLM 이 답을 만들어 어느 문서에서 나온 말인지 흐려지고, MADO 의 토큰 계측 밖에서 토큰을 쓰게 됩니다.
+
+### 켜는 순서
+
+1. AnythingLLM 설정의 **Developer API** 화면에서 API 키를 만듭니다.
+2. `.env` 에 주소와 키, 기본 작업 공간을 적습니다. 작업 공간은 slug(작업 공간 주소의 마지막 부분)로 적습니다.
+   ```bash
+   ANYTHINGLLM_URL=http://localhost:3001
+   ANYTHINGLLM_API_KEY=<발급받은 키>
+   ANYTHINGLLM_WORKSPACE=mado-docs
+   ```
+3. `conf.json` 의 `mcp_servers.kb` 에서 `"enabled": true` 로 바꿉니다 (`conf.example.json` 에 꺼진 상태로 들어 있습니다).
+4. 문서를 찾아 쓸 에이전트의 `allowed_mcp_servers` 에 `"kb"` 를 넣습니다.
+
+```json
+"kb": {
+  "command": "${PYTHON_BIN:-python}",
+  "args": ["./mcp_servers/anythingllm_kb/server.py"],
+  "env": {
+    "ANYTHINGLLM_URL": "${ANYTHINGLLM_URL:-http://localhost:3001}",
+    "ANYTHINGLLM_API_KEY": "${ANYTHINGLLM_API_KEY:-}",
+    "ANYTHINGLLM_WORKSPACE": "${ANYTHINGLLM_WORKSPACE:-}",
+    "ANYTHINGLLM_WORKSPACES": "${ANYTHINGLLM_WORKSPACES:-}",
+    "PYTHONIOENCODING": "utf-8"
+  },
+  "enabled": true
+}
+```
+
+> [!IMPORTANT]
+> 키는 반드시 위처럼 서버의 `env` 에 적어야 서버에 전달됩니다. MADO 는 `.env` 에서 읽은 비밀을 MCP 서버에 그대로 물려주지 않습니다 ([도구 보안](08-tool-security.md)).
+
+### 에이전트가 쓰는 도구
+
+| 도구 | 하는 일 |
+| :--- | :--- |
+| `kb__search` | 질의와 가까운 조각을 `[번호] 제목 · 출처 · 점수` 와 원문으로 돌려줍니다. 기본 5개, 최대 20개 |
+| `kb__list_workspaces` | 검색할 수 있는 작업 공간의 slug 와 이름 (기본 작업 공간 표시) |
+
+검색 결과에는 인용할 때 `[번호]` 와 문서 제목을 밝히라는 안내가 붙습니다. 찾은 조각이 없으면 그렇다고 알리고, 질의를 바꿔 다시 찾거나 찾지 못했다고 말하라고 안내합니다.
+
+### 설정 값
+
+| 환경 변수 | 기본값 | 의미 |
+| :--- | :--- | :--- |
+| `ANYTHINGLLM_URL` | `http://localhost:3001` | AnythingLLM 주소. 끝에 `/api` 나 `/api/v1` 이 붙어 있어도 됩니다 |
+| `ANYTHINGLLM_API_KEY` | (필수) | 개발자 API 키 |
+| `ANYTHINGLLM_WORKSPACE` | (없음) | 기본 작업 공간 slug. 비우면 작업 공간이 하나일 때 그것을 쓰고, 여럿이면 에이전트가 골라야 합니다 |
+| `ANYTHINGLLM_WORKSPACES` | (전부) | 검색을 허용할 작업 공간 slug 목록 (쉼표로 구분) |
+| `ANYTHINGLLM_TOP_N` | `5` | 한 번에 돌려줄 조각 수 |
+| `ANYTHINGLLM_SCORE_THRESHOLD` | (작업 공간 설정) | 이 점수(0~1)보다 낮은 조각은 버립니다 |
+| `ANYTHINGLLM_TIMEOUT` | `30` | 요청 하나를 기다리는 시간(초) |
+
+표의 마지막 세 값(`ANYTHINGLLM_TOP_N`, `ANYTHINGLLM_SCORE_THRESHOLD`, `ANYTHINGLLM_TIMEOUT`)은 위 예시에 없으므로, 필요할 때 `kb` 의 `env` 에 직접 더합니다. 값은 검색할 때마다 다시 읽습니다.
+
+### 승인 카드가 뜨지 않는 이유
+
+두 도구는 MCP 도구 표시(annotations)에 **읽기 전용·닫힌 세계**(`readOnlyHint=true`, `openWorldHint=false`)로 적혀 있습니다. 정해진 문서 묶음만 읽기 때문입니다. MADO 는 이 PC 에서 띄운 서버의 표시를 믿으므로 두 도구를 **읽기**로 판정하고, `read_only` 모드나 사람이 없는 헤드리스 턴에서도 묻지 않고 실행합니다. 주소는 주인이 `conf.json` 에 적은 곳으로 고정되어 있어 모델이 다른 곳으로 요청을 보낼 수 없습니다.
+
+### 실패하면
+
+키가 없거나 거부됨, AnythingLLM 에 연결하지 못함, 시간 초과, 모르는 작업 공간, 빈 질의, 허용 목록 밖 작업 공간 — 모두 도구 오류로 돌아가며 도구 카드에 `실패` 로 보입니다. 에이전트는 그 이유를 읽습니다. 결과를 지어내지 않습니다.
+
+AnythingLLM 이 이 PC 에 있으면(`localhost`) 사내 프록시 설정(`HTTP_PROXY` 등)을 타지 않고 바로 붙습니다.
+
+### 아직 하지 않은 것
+
+- 문서를 AnythingLLM 에 넣는 일은 AnythingLLM 화면에서 합니다. DRM 이 걸린 문서는 AnythingLLM 이 열지 못하므로, 변환해 넣는 기능은 따로 필요합니다.
+- 체험 화면과 쉬운 화면의 대화는 설계상 도구가 없어 `kb` 를 쓸 수 없습니다.
 
 ---
 

@@ -4,6 +4,22 @@ Change history for the MADO: Multi-Agent Debate & Orchestration Platform, newest
 entry links to the topic page carrying the full explanation — this file is an index of *what
 changed*, not a second copy of the documentation.
 
+## v1.5.1
+
+**Agents can search an AnythingLLM document base.** A new MCP server owned by this repository,
+`mcp_servers/anythingllm_kb/server.py`, is declared in `conf.example.json` as `kb` (switched off). It calls
+only AnythingLLM's `vector-search` and workspace list routes and gives the agent numbered source chunks —
+title, source, score and text — through `kb__search` and `kb__list_workspaces`; the answer is still written
+by the agent's own model, so sources stay visible and tokens stay in MADO's metering. Both tools are
+annotated read-only and closed-world, so the tool gate grades them `read` and they run without an approval
+card in every mode, unattended turns included. A missing or rejected key, an unreachable AnythingLLM, an
+unknown workspace or an empty query comes back as a tool error, never as results. Settings are
+`ANYTHINGLLM_*` variables passed in the server's `env` (the key must be named there — MCP servers do not
+inherit secrets). Verified against a fake AnythingLLM over stdio, through the gate and through the real
+tool loop (`tests/test_anythingllm_kb.py`). Getting documents into AnythingLLM — DRM-protected files in
+particular — is not part of this release.
+→ [Bundled Servers §2.5](mcp/bundled-servers.md) · [Environment Variables §3.4](configuration/environment-variables.md)
+
 ## v1.5
 
 **Tokens and LLM time are measured.** Every LLM call is timed and its reported usage (input, output,

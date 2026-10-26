@@ -14,6 +14,7 @@ The platform comes pre-configured with a suite of official and open-source MCP s
 | `sandbox` | Python | [AirgappedPySandbox](https://github.com/HaJaehee/AirgappedPySandbox) v0.8.0 | 7 | **Enabled** | Stateful IPython kernel code execution, one namespace per conversation and speaker. |
 | `sequential_thinking` | Node.js | `@modelcontextprotocol/server-sequential-thinking`| 1 | *Disabled* | Step-by-step reasoning (used only when `mode = "mcp"`). |
 | `fetch` | Python | `mcp-server-fetch` (pip package) | 1 | *Disabled* | Web URL to Markdown extractor. **Keep disabled in air-gaps.** |
+| `kb` (v1.5.1) | Python | this repository ([`mcp_servers/anythingllm_kb/`](file:///d:/MultiAgentDebateOrchestration/mcp_servers/anythingllm_kb/server.py)) | 2 | *Disabled* | Document search in an AnythingLLM workspace: source chunks with title, source and score. |
 
 ---
 
@@ -68,6 +69,51 @@ The platform comes pre-configured with a suite of official and open-source MCP s
     ahead of the filesystem server's `edit_file` ([LLM Integration §2.2](../agents/llm-integration.md)).
   - `reset_kernel_state`: Clears kernel state and memory when starting a clean session.
 
+### 2.5. AnythingLLM Document Search (`kb`, v1.5.1)
+- **Source**: [`mcp_servers/anythingllm_kb/server.py`](file:///d:/MultiAgentDebateOrchestration/mcp_servers/anythingllm_kb/server.py),
+  a FastMCP stdio server owned by this repository. It needs nothing beyond `mcp` and `httpx` (an `mcp`
+  dependency), so the offline bundle needs no extra wheels.
+- **What it calls**: only two routes of the AnythingLLM developer API — `POST /api/v1/workspace/{slug}/vector-search`
+  (`query`, `topN`, `scoreThreshold`) and `GET /api/v1/workspaces` — with the API key as `Authorization: Bearer`.
+- **Why retrieval only**: AnythingLLM also offers a chat route and an OpenAI-compatible completion route, but
+  either would have another LLM write the answer. Sources blur, tokens are spent outside MADO's
+  [usage metering](../agents/llm-integration.md) and fallback, and the debate's agents would be quoting a
+  second model rather than the documents. Here the agent writes the answer with its own model; the server
+  only hands it evidence.
+- **Tools** (both annotated `readOnlyHint=True, openWorldHint=False`):
+  - `search(query, top_n=0, workspace="")`: numbered chunks — `[n] title · 출처: url|chunkSource|docSource · 점수 0.82`
+    followed by the chunk text, with AnythingLLM's `<document_metadata>` embedding header stripped. The
+    description tells the model to cite `[n]` and the title and not to claim what the results do not say.
+    `top_n` 0 means the server default, at most 20. No results is a success that says so (with AnythingLLM's
+    own `message`, e.g. "No embeddings found for this workspace."), and asks the model to rephrase or say it
+    found nothing.
+  - `list_workspaces()`: slugs and names the agent may search, the default marked.
+- **Configuration**: environment variables in the server's `env` block — `ANYTHINGLLM_URL` (default
+  `http://localhost:3001`; a trailing `/api` or `/api/v1` is accepted), `ANYTHINGLLM_API_KEY`,
+  `ANYTHINGLLM_WORKSPACE` (default slug; empty means "the only one there is"), `ANYTHINGLLM_WORKSPACES`
+  (comma-separated allow list), `ANYTHINGLLM_TOP_N`, `ANYTHINGLLM_SCORE_THRESHOLD`, `ANYTHINGLLM_TIMEOUT`.
+  They are read per call. The key must be named in `env`: MADO strips secrets from the environment its
+  MCP servers inherit (`server_environment`, [Tool Security §1](tool-security.md)).
+- **Tool security**: a local stdio server is trusted, and a tool missing from `KNOWN_TOOLS` is graded by its
+  annotations (`risk_from_annotations`). These two are `read`, so they run in every mode — including
+  `read_only` and unattended turns — without an approval card. Without the annotations the grade would be
+  `unknown`; with `openWorldHint` left out it would be `net` (the spec's default is `true`); both ask on
+  every search. MADO's `net()` rules do not see the HTTP request — the server makes it, to the address the
+  owner wrote in `conf.json`, not to one the model chose.
+- **Failures are errors, never results**: no key, connection refused or timeout, a rejected key (401/403), an
+  unknown workspace or empty query (AnythingLLM's 400 reason passed through), a non-JSON answer, a
+  workspace outside the allow list. Each is raised, reaches the agent as an `isError` observation, and the
+  tool card shows `실패`.
+- **Proxies**: when the address is loopback the server ignores `HTTP_PROXY`-style variables, which on
+  corporate PCs would otherwise send `localhost` requests to the proxy.
+- **Not done**: documents still have to get into AnythingLLM. DRM-protected Office files cannot be read by
+  AnythingLLM's collector; converting them (and pushing the text with `POST /api/v1/document/raw-text`) is
+  separate work. Trial and beginner conversations are tool-less by design and do not get `kb`.
+- **Tests**: [tests/test_anythingllm_kb.py](file:///d:/MultiAgentDebateOrchestration/tests/test_anythingllm_kb.py)
+  runs against a fake AnythingLLM (a standard-library HTTP server with the same routes, shapes and refusal
+  texts), directly, over stdio through `MCPManager`, through `ToolGate` with nobody to ask, and through the
+  real tool loop with a scripted `_complete_unthrottled`.
+
 ---
 
 ## 3. Agent Tool Allocation Matrix
@@ -77,7 +123,7 @@ Tools are distributed across agents according to their specialized responsibilit
 | Agent | Assigned MCP Servers | Purpose |
 | :--- | :--- | :--- |
 | **Orchestrator** | `filesystem`, `memory` | Read existing files, coordinate decisions, record facts. |
-| **Architect** | `filesystem`, `memory`, `fetch` | Review project structure, query facts, inspect external specs. |
+| **Architect** | `filesystem`, `memory`, `fetch`, `kb` | Review project structure, query facts, inspect external specs, search the document base (`fetch` and `kb` are off until enabled). |
 | **Coder** | `filesystem`, `sandbox`, `git` | Write code files, verify code execution, commit functional diffs. |
 | **Critic** | `filesystem`, `sandbox`, `git`, `memory` | Inspect code, run stress/edge-case tests in sandbox, verify git diffs, record security findings. |
 

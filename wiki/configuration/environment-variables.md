@@ -96,6 +96,14 @@ By defaulting `PYTHON_BIN` to `sys.executable`, the child MCP process inherits t
 | `SANDBOX_KERNEL_PYTHON`| `PYTHON_BIN` | Python interpreter used for the IPython code sandbox execution kernel. |
 | `SANDBOX_EXEC_TIMEOUT` | `60` | Execution timeout in seconds for code evaluation. |
 | `SANDBOX_MAX_NAMESPACES`| `16` | Total IPython kernel budget. Namespaces are scoped per conversation **and per speaker**, so budget `concurrent debates x agents holding sandbox access` (two by default: coder and critic). Because a sandbox server now runs per workspace, the pool divides this number by `MCP_MAX_RUNTIMES` before handing it to each one — otherwise the kernels would multiply. Above the cap the least recently used kernel is shut down and its variables are gone. |
+| `ANYTHINGLLM_URL` | `http://localhost:3001` | AnythingLLM address for the `kb` document search server (v1.5.1). A trailing `/api` or `/api/v1` is accepted. |
+| `ANYTHINGLLM_API_KEY` | - | AnythingLLM developer API key. Must be passed in `mcp_servers.kb.env` (`${ANYTHINGLLM_API_KEY}`) — secrets are stripped from what MCP servers inherit. |
+| `ANYTHINGLLM_WORKSPACE` | - | Default workspace slug. Empty: the only workspace there is, otherwise the agent must name one. |
+| `ANYTHINGLLM_WORKSPACES` | - | Comma-separated slugs `kb` may search; empty means all. |
+
+`kb` also reads `ANYTHINGLLM_TOP_N` (default 5, at most 20), `ANYTHINGLLM_SCORE_THRESHOLD` (0–1; empty uses the
+workspace's setting) and `ANYTHINGLLM_TIMEOUT` (seconds, default 30) if they are added to its `env`. See
+[Bundled Servers §2.5](../mcp/bundled-servers.md).
 
 ### 3.5. MCP Runtime Pool
 
