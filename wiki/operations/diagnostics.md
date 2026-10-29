@@ -34,6 +34,9 @@ while the loop is held — it sees the exact function holding it. A long stall i
 --- thread mado-loop-watchdog ...
 ```
 
+(This particular stall is gone since v1.5.1: the assembly runs in a worker thread —
+[LLM Integration §2](../agents/llm-integration.md). The example still shows how to read a record.)
+
 **"loop thread idle".** If the loop thread is waiting in `select`/`_poll` and the heartbeat is still late, the
 loop was not busy — it was not given a turn. Either another thread held the GIL, or the whole process was
 paused (sleep, heavy swapping, a CPU starved by a local model). The record then includes the full stack of

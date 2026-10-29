@@ -75,6 +75,12 @@ so the two cannot drift apart. One round is a fixed sequence of steps:
 ### Key Behaviors:
 1. **Observation Feedback**: The tool output is appended to the message context with `role: "tool"`. The LLM observes the real output (or error message) and refines its reasoning in the next iteration.
 2. **Incremental Token Streaming**: Using `acompletion(stream=True)` and `litellm.stream_chunk_builder`, partial word tokens are streamed to `on_chunk`, dynamically rendering in the UI while tools are accumulating.
+   Since v1.5.1 the assembly (`stream_chunk_builder`, synchronous) runs in a worker thread (`asyncio.to_thread`,
+   with a copy of the message list). On the event loop it held every other speech's stream, every other
+   conversation and every page until it returned — the stack in [Diagnostics §1](../operations/diagnostics.md).
+   The speech itself still waits for it, and the GIL means it is not faster; the loop just keeps getting turns.
+   Cancelling a speech during assembly returns at once; the thread finishes and its result is dropped.
+   Usage is recorded back on the loop as before. Tests: `tests/test_llm_offload.py`.
 3. **Tool Execution Streaming**: As each tool executes, the `on_tool_call` asynchronous callback dispatches events to the UI, rendering an accordion widget in the chat feed before the agent's text response finishes generating.
 4. **Nothing in the loop may end the turn** (v0.5.0). Malformed `tool_calls` are absorbed by
    [`_parse_tool_call()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm_tool_calls.py) — object or dict

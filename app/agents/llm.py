@@ -422,7 +422,11 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
                     if progress is not None:
                         progress.streamed = True
                     await self._emit_chunk(on_chunk, content_delta)
-            complete_response = litellm.stream_chunk_builder(chunks, messages=messages)
+            # 조립은 동기 함수라 루프 위에서 돌면 끝날 때까지 다른 발언 스트림·대화·화면이 모두 멈춥니다.
+            # 스레드로 보내도 GIL 때문에 빨라지지는 않지만 루프가 그동안 차례를 받습니다. 목록은 복사해 넘깁니다.
+            complete_response = await asyncio.to_thread(
+                litellm.stream_chunk_builder, chunks, messages=list(messages),
+            )
             llm_usage.note_response(complete_response)
             return complete_response.choices[0].message, self._finish_reason(complete_response)
         except Exception as exc:

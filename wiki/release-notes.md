@@ -20,6 +20,13 @@ tool loop (`tests/test_anythingllm_kb.py`). Getting documents into AnythingLLM �
 particular — is not part of this release.
 → [Bundled Servers §2.5](mcp/bundled-servers.md) · [Environment Variables §3.4](configuration/environment-variables.md)
 
+**Assembling a streamed answer no longer freezes the server.** After a speech's stream ends, LiteLLM's
+`stream_chunk_builder` turns the chunks into one response. It is synchronous and ran on the event loop, so
+until it returned every other speech's stream, every other conversation and every page stood still (the
+stall in the diagnostics example). It now runs in a worker thread. The speech waits as before and it is not
+faster (GIL); the rest of the server keeps moving. A stop during assembly takes effect at once.
+→ [LLM Integration §2](agents/llm-integration.md) · `tests/test_llm_offload.py`
+
 ## v1.5
 
 **Tokens and LLM time are measured.** Every LLM call is timed and its reported usage (input, output,

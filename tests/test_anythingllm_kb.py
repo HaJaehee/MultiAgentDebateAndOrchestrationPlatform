@@ -271,7 +271,7 @@ async def test_an_empty_query_is_refused_before_asking(kb_env, fake):
 async def test_an_unreachable_anythingllm_is_an_error(kb_env):
     kb_env.setenv("ANYTHINGLLM_URL", f"http://127.0.0.1:{_closed_port()}")
     kb_env.setenv("ANYTHINGLLM_TIMEOUT", "3")
-    with pytest.raises(kb.KBError, match="연결하지 못해 검색하지 못했습니다"):
+    with pytest.raises(kb.KBError, match="연결할 수 없습니다"):
         await kb.search("반출")
 
 
