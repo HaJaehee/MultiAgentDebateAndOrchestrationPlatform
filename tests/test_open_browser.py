@@ -115,6 +115,11 @@ def test_wait_survives_a_server_that_starts_late():
 
     포트를 잡아 두되 `listen()` 만 늦게 겁니다. 포트를 놓았다가 다시 잡으면 그
     틈에 다른 프로세스가 가져갈 수 있어, 테스트가 이따금 이유 없이 실패합니다.
+
+    백로그를 한 칸(`listen(1)`)으로 두면 안 됩니다. Windows 는 듣지 않는 포트로 SYN 을
+    0.5초마다 다시 보내고, 1.0초째 재시도는 `wait_for_server` 의 1초 제한과 겹칩니다.
+    연결이 맺어진 순간 클라이언트가 시간 초과로 소켓을 닫으면 그 연결이 백로그에 남고,
+    여기서는 아무도 `accept()` 하지 않으니 칸이 비지 않아 다음 연결이 모두 거절됩니다.
     """
     server = socket.socket()
     server.bind(("127.0.0.1", 0))          # 포트는 처음부터 우리 것입니다
@@ -122,7 +127,7 @@ def test_wait_survives_a_server_that_starts_late():
 
     def listen_later():
         time.sleep(0.8)
-        server.listen(1)                   # 여기서부터 연결을 받습니다
+        server.listen()                    # 여기서부터 연결을 받습니다
 
     thread = threading.Thread(target=listen_later, daemon=True)
     thread.start()
