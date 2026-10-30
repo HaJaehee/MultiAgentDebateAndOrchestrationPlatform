@@ -5,10 +5,13 @@ working (think → act → observe, with real tools), lets them build an agent t
 config form, and lets them hand it a task. Design record:
 [ADR-029](../../lectures/05-adr/ADR-029-beginner-pages.md).
 
-Code: [app/easy/](file:///d:/MultiAgentDebateOrchestration/app/easy/__init__.py) — `catalog.py` (plain-language
-names for tools and skills, the demo agent, example tasks, example folder), `builder.py` (the interview and
-saving), `sessions.py` (locked sessions, history), `loop.py` (events → steps, pure logic) and `pages/`.
-There are four touch points outside the package:
+Code: [app/easy/](file:///d:/MultiAgentDebateOrchestration/app/easy/__init__.py) — `catalog.py` (the demo agent, example tasks, example folder,
+visitor limits), `sessions.py` (locked sessions, history, saving a visitor's agent), `loop.py` (events → steps,
+pure logic) and `pages/`. The interview and the plain-language names are shared with the expert page, so they sit
+below both screens: [app/agents/draft.py](file:///d:/MultiAgentDebateOrchestration/app/agents/draft.py),
+[app/agents/catalog.py](file:///d:/MultiAgentDebateOrchestration/app/agents/catalog.py) and the conversation in
+[app/ui/components/agent_builder_chat.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/agent_builder_chat.py).
+There are three touch points outside the package:
 
 - `setup_easy()` in [app/main.py](file:///d:/MultiAgentDebateOrchestration/app/main.py).
 - A `쉬운 화면` button in the expert page header
@@ -20,9 +23,6 @@ There are four touch points outside the package:
 - Both buttons take `EASY_HOME` from [app/routes.py](file:///d:/MultiAgentDebateOrchestration/app/routes.py), where all page addresses live, so the
   screen packages do not import each other for a link. The visitor-page frame shared by the trial and beginner
   pages (`page_setup`, footer, avatars, time labels) is [app/ui/shared/page.py](file:///d:/MultiAgentDebateOrchestration/app/ui/shared/page.py).
-- An `에이전트 만들기` button in the expert page's add-agent dialog
-  ([app/ui/components/roster/agent_admin.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/agent_admin.py)), which
-  opens `FormBuilderChat` (§3).
 
 The trial pages gain only that header button; the engine is unchanged.
 
@@ -87,7 +87,7 @@ flowchart LR
   `LoopTimeline.from_messages` marks such speeches `restored`, shows the actions first and the text as the
   conclusion, and the page says so.
 
-Tool names are rendered in plain words by `catalog.tool_label`, e.g. `filesystem__read_text_file` +
+Tool names are rendered in plain words by `agents.catalog.tool_label`, e.g. `filesystem__read_text_file` +
 `{"path": "sales.csv"}` → `파일 읽기: sales.csv`.
 
 ## 3. The builder
@@ -117,7 +117,7 @@ Tool names are rendered in plain words by `catalog.tool_label`, e.g. `filesystem
     5. Calls `reload_agent_pool()`. No restart is needed.
   - Visitor — `save_guest_agent` writes an `easy_agents` row, keeping only guest tools. A visitor can keep up
     to `MAX_GUEST_AGENTS` (20). `conf.json` is never touched.
-- **From the expert page.** `FormBuilderChat` subclasses `BuilderScreen` and keeps its `send`. Its
+- **From the expert page.** [`FormBuilderChat`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/builder_dialog.py) subclasses `BuilderChat`, as `BuilderScreen` does, and keeps its `send`. Its
   `read_card` returns the draft itself, and its `fill_card` draws a summary in place of the card. It opens
   from the add-agent dialog with the form's current values. **양식에 채우기** hands the draft back to that
   form, and the form's **추가** button saves it (`add_agent_to_conf_file`), not `save_owner_agent`. Details

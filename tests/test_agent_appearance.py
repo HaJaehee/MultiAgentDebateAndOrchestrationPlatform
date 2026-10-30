@@ -289,17 +289,15 @@ async def test_locked_conversation_keeps_its_colours(db_factory):
 
 
 def _feed():
-    """UI 를 짓지 않고 스타일 판정만 보는 최소 인스턴스."""
-    from app.ui.components.chat_feed.feed import ChatFeed
+    """UI 를 짓지 않고 스타일 판정만 봅니다."""
+    from app.ui.components.chat_feed.cards import CardTimeline
 
-    feed = ChatFeed.__new__(ChatFeed)
-    feed._agent_styles = {}
-    return feed
+    return CardTimeline()
 
 
 def test_chat_falls_back_to_the_key_when_the_session_is_unknown():
-    assert _feed()._style_for("orchestrator")["avatar"] == "forum"
-    assert _feed()._style_for("orchestrator")["custom"] is False
+    assert _feed().style_for("orchestrator")["avatar"] == "forum"
+    assert _feed().style_for("orchestrator")["custom"] is False
 
 
 def test_chat_uses_the_session_agents_appearance():
@@ -309,7 +307,7 @@ def test_chat_uses_the_session_agents_appearance():
         Agent.from_config("critic", AgentConfig(name="C", role="R", card_color="#c2185b")),
         Agent.from_config("coder", AgentConfig(name="K", role="R")),
     ])
-    assert feed._style_for("critic")["badge_color"] == "#c2185b"
-    assert feed._style_for("critic")["custom"] is True
+    assert feed.style_for("critic")["badge_color"] == "#c2185b"
+    assert feed.style_for("critic")["custom"] is True
     # 색을 정하지 않은 에이전트는 테두리를 칠하지 않습니다 — 예전 모습 그대로.
-    assert feed._style_for("coder")["custom"] is False
+    assert feed.style_for("coder")["custom"] is False

@@ -20,7 +20,7 @@ from app.agents.llm_types import LLMUnavailableError
 from app.orchestration.engine import OrchestratorEngine
 from app.orchestration.state import DebateState
 from app.ui.components.chat_feed.common import STREAM_RENDER_INTERVAL
-from app.ui.components.chat_feed.feed import ChatFeed
+from app.ui.components.chat_feed.cards import CardTimeline
 
 
 # =========================================================== 화면: 모아서 그리기
@@ -35,12 +35,8 @@ class _Markdown:
         self.renders.append(content)
 
 
-async def _noop(*_args):
-    return None
-
-
 def _feed(*stream_ids):
-    feed = ChatFeed(on_send_message=_noop)
+    feed = CardTimeline()
     feed.message_container = SimpleNamespace(is_deleted=False)     # 살아 있는 페이지
     for msg_id in stream_ids:
         feed._active_streams[msg_id] = {"content": "", "markdown": _Markdown()}
@@ -61,7 +57,7 @@ def test_a_flush_draws_each_changed_card_once_with_everything_so_far():
         feed.append_stream_chunk("m1", "가")
     feed.append_stream_chunk("m2", "나")
 
-    feed._flush_streams()
+    feed.flush_streams()
 
     assert feed._active_streams["m1"]["markdown"].renders == ["가" * 300]
     assert feed._active_streams["m2"]["markdown"].renders == ["나"]
@@ -70,9 +66,9 @@ def test_a_flush_draws_each_changed_card_once_with_everything_so_far():
 def test_nothing_new_means_nothing_is_redrawn():
     feed = _feed("m1")
     feed.append_stream_chunk("m1", "가")
-    feed._flush_streams()
-    feed._flush_streams()
-    feed._flush_streams()
+    feed.flush_streams()
+    feed.flush_streams()
+    feed.flush_streams()
     assert len(feed._active_streams["m1"]["markdown"].renders) == 1
 
 
@@ -80,10 +76,10 @@ def test_only_the_cards_that_changed_are_redrawn():
     feed = _feed("m1", "m2")
     feed.append_stream_chunk("m1", "가")
     feed.append_stream_chunk("m2", "나")
-    feed._flush_streams()
+    feed.flush_streams()
 
     feed.append_stream_chunk("m1", "다")
-    feed._flush_streams()
+    feed.flush_streams()
 
     assert feed._active_streams["m1"]["markdown"].renders == ["가", "가다"]
     assert feed._active_streams["m2"]["markdown"].renders == ["나"], "안 바뀐 카드는 건드리지 않습니다"
@@ -93,7 +89,7 @@ def test_a_closed_page_is_not_drawn_on():
     feed = _feed("m1")
     feed.append_stream_chunk("m1", "가")
     feed.message_container.is_deleted = True
-    feed._flush_streams()
+    feed.flush_streams()
     assert feed._active_streams["m1"]["markdown"].renders == []
 
 

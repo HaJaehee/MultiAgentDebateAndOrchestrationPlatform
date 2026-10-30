@@ -14,7 +14,7 @@ pytest -k "snapshot"
 
 | 테스트 파일명 | 검증 및 보호하는 핵심 기능 |
 | :--- | :--- |
-| `test_layering.py` | **모듈 사이 의존 방향** — 토론 쪽은 화면·NiceGUI 를, 단계 실행기·서비스는 엔진을, 화면 패키지끼리는 서로를 import 하지 않음 (함수 안 import 포함) |
+| `test_layering.py` | **모듈 사이 의존 방향** — 토론 쪽은 화면·NiceGUI 를, 단계 실행기·서비스는 엔진을, 화면 패키지끼리는 서로를 import 하지 않음 (함수 안 import 포함), 로스터·피드의 컴포넌트끼리도 서로를 모르고 mixin 이 없음 |
 | `test_public_surface.py` | **바깥(MADOWarGame 구동기)이 기대는 이름과 시그니처** — `LLMCaller._complete_unthrottled` 재정의 지점, `engine.session_factory`·`llm_caller`, `run_turn` 인자 등 |
 | `test_events.py` | 이벤트 이름은 `EventType` 으로만 쓰고, 쓰이지 않는 이름이 없으며, 스냅샷 리듀서는 아는 이벤트만 처리 |
 | `test_config.py` | `conf.json` 파싱 로딩, 중첩 환경변수 치환, 오케스트레이터 필수 존재 검증 |
@@ -31,6 +31,9 @@ pytest -k "snapshot"
 | `test_personas.py` | 세션별 페르소나 생애주기: 초안 편집 → 첫 턴 잠금 → 세션 재개 |
 | `test_agent_appearance.py` | 카드 색상/아이콘: 이미지 업로드 → 설정 저장 → UI 렌더링 → 스냅샷 및 폴백 |
 | `test_session_snapshot.py` | **시작된 대화 세션의 완전한 자기완결성 및 외부 설정 격리 보장** |
+| `test_roster_service.py` | 로스터의 conf.json 쓰기·반영·다시 읽기·잠금 규칙을 화면 없이 (`RosterService`) |
+| `test_roster_components.py` | 로스터 하위 컴포넌트를 `AgentRosterControl` 없이 하나씩 (대역 서비스와 콜백) |
+| `test_feed_components.py` | 토론 피드 부품을 `ChatFeed` 없이 하나씩, 그리고 부품을 잇는 조립 규칙 |
 | `test_roster_lock.py` | 토론 백그라운드 진행 중 전역 로스터 및 MCP 설정 변경 차단 잠금 |
 | `test_roster_selection.py` | 신규 에이전트 추가 시 기존 대화 세션의 활성/비활성 목록 정합성 |
 | `test_interaction.py` | 사용자 정지(Stop) 요청 및 중간 개입 메모(Interjection) 정상 반영 |
@@ -58,7 +61,6 @@ pytest -k "snapshot"
 | 파일명 | 주요 용도 |
 | :--- | :--- |
 | `fake_llm.py` | 외부 네트워크 없이 고속으로 토론 턴을 모의 실행하는 LLM 스텁 |
-| `roster_patch.py` | 로스터 패널(여러 mixin 파일)의 바깥 의존(`get_config` 등)을 패키지 안 모든 파일에 한 번에 바꿔 끼우는 도우미 |
 | `fixtures/stateful_mcp_server.py` | 실제 stdio 프로세스로 구동되어 연결 및 재기동을 검증하는 모의 MCP 서버 |
 
 ---

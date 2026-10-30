@@ -21,16 +21,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.base import Agent
+from app.agents.catalog import GUEST_SERVERS
+from app.agents.draft import AgentDraft, SaveRefused, require_complete
 from app.agents.personas import config_snapshot_of
 from app.agents.pool import AgentPool
 from app.config import ORCHESTRATOR_KEY, AgentConfig
 from app.database.models import MessageModel, SessionAgentModel, SessionModel, ToolCallRecordModel
-from app.easy.builder import AgentDraft
-from app.easy.catalog import DEMO_AGENT, GUEST_SERVERS, MAX_RUN_AGENTS, easy_workspace
+from app.easy.catalog import DEMO_AGENT, MAX_GUEST_AGENTS, MAX_RUN_AGENTS, easy_workspace
 from app.easy.models import EasyAgentModel, EasySessionModel
 from app.session_ops import load_feed_messages
 
@@ -91,6 +92,29 @@ async def delete_guest_agent(db: AsyncSession, user_id: str, agent_id: str) -> b
     )
     await db.commit()
     return bool(result.rowcount)
+
+
+async def save_guest_agent(db: AsyncSession, user_id: str, draft: AgentDraft) -> EasyAgentModel:
+    """방문자 전용 '내 에이전트'로 데이터베이스에 저장합니다. 도구는 방문자에게 허용된 것만 보관합니다."""
+    require_complete(draft)
+    count = (await db.execute(
+        select(func.count()).select_from(EasyAgentModel).where(EasyAgentModel.user_id == user_id)
+    )).scalar_one()
+    if count >= MAX_GUEST_AGENTS:
+        raise SaveRefused(f"내 에이전트는 최대 {MAX_GUEST_AGENTS}개까지 생성할 수 있습니다. 사용하지 않는 에이전트를 삭제한 후 다시 시도해 주세요.")
+    row = EasyAgentModel(
+        user_id=user_id,
+        name=draft.name,
+        role=draft.role,
+        system_prompt=draft.system_prompt,
+        allowed_mcp_servers=[s for s in draft.allowed_mcp_servers if s in GUEST_SERVERS],
+        allowed_skills=list(draft.allowed_skills),
+        card_color=draft.card_color,
+        icon=draft.icon,
+    )
+    db.add(row)
+    await db.commit()
+    return row
 
 
 async def agent_choices(db: AsyncSession, *, user_id: str, owner: bool, pool: AgentPool) -> List[Choice]:

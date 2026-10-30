@@ -1,6 +1,6 @@
 """나만의 에이전트 만들기 — 왼쪽 대화창에서 도우미와 대화하고, 오른쪽에서 실시간으로 생성되는 설계도를 직접 수정할 수 있습니다.
 
-사용자가 수정한 내용은 다음 입력 시 도우미에게 함께 전달되므로 임의로 덮어쓰이지 않습니다(`builder.with_draft`).
+사용자가 수정한 내용은 다음 입력 시 도우미에게 함께 전달되므로 임의로 덮어쓰이지 않습니다(`draft.with_draft`).
 입력 필드마다 역할을 친절하게 설명하여, 에이전트를 제작하면서 페르소나·업무 지시서·도구·스킬의 개념을 자연스럽게 익힐 수 있도록 돕습니다.
 """
 
@@ -8,69 +8,32 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import Request
 from nicegui import ui
 
-from app.agents.llm_types import LLMUnavailableError
+from app.agents.catalog import Option, server_options, skill_options
+from app.agents.draft import AgentDraft, SaveRefused, agent_key_for, conf_block, save_owner_agent
 from app.config import get_config
 from app.database.session import get_session_factory
-from app.easy.builder import (
-    AgentDraft,
-    SaveRefused,
-    agent_key_for,
-    ask_builder,
-    conf_block,
-    merge_draft,
-    sanitize_draft,
-    save_guest_agent,
-    save_owner_agent,
-    split_reply,
-    streaming_text,
-    with_draft,
-)
-from app.easy.catalog import Option, server_options, skill_options
 from app.easy.pages.common import Viewer, agent_avatar, easy_header, easy_setup, resolve_viewer
+from app.easy.sessions import save_guest_agent
 from app.orchestration.runner import get_debate_runner
 from app.routes import EASY_BUILD, EASY_HOME, EASY_RUN
+from app.ui.components.agent_builder_chat import EXAMPLES, GREETING, BuilderChat
 from app.ui.math_markdown import MathMarkdown
 from app.ui.shared.page import MARKDOWN_EXTRAS, disabled_page, footer_notice
 
 logger = logging.getLogger(__name__)
 
-GREETING = (
-    "안녕하세요! 에이전트를 함께 만들어 보겠습니다.\n\n"
-    "**어떤 업무를 맡기고 싶으신가요?** 평소 반복되는 업무나 번거로운 작업을 편하게 말씀해 주세요. "
-    "몇 가지 질문을 통해 오른쪽 설계도를 함께 완성해 드리겠습니다."
-)
-# 전문가 화면 대화 창(FormBuilderChat)용. 그 창에서는 설계도 요약이 대화 아래에 있습니다.
-FORM_GREETING = GREETING.replace("오른쪽 설계도", "아래 설계도")
-EXAMPLES = [
-    "매주 회의록을 분석하여 결정 사항과 액션 아이템을 정리해 주는 비서",
-    "매출 데이터를 분석하여 인기 상품과 판매 추세를 알려 주는 분석가",
-    "보고서의 논리 구조와 맞춤법을 검토하여 개선점을 제안하는 검토자",
-    "고객 문의를 유형별로 분류하고 답변 초안을 작성해 주는 상담 도우미",
-]
 
-
-class BuilderScreen:
-    # 도우미가 설명 없이 설계도만 보냈을 때 대신 보여 줄 말. 설계도가 놓인 자리를 가리킵니다.
+class BuilderScreen(BuilderChat):
     UPDATED_NOTE = "설계도를 갱신했습니다. 오른쪽 카드를 확인해 주세요."
 
     def __init__(self, viewer: Viewer, servers: List[Option], skills: List[Option]):
+        super().__init__(servers, skills, guest=not viewer.owner)
         self.viewer = viewer
-        self.guest = not viewer.owner
-        self.servers = servers
-        self.skills = skills
-        # 도우미와 주고받은 대화 기록. 사용자의 발화에는 당시의 설계도 상태가 포함됩니다.
-        self.history: List[Dict[str, str]] = []
-        self.draft = AgentDraft()
-        self.busy = False
-
-        self.log: Optional[ui.column] = None
-        self.input: Optional[ui.textarea] = None
-        self.send_button: Optional[ui.button] = None
         self.name_in: Optional[ui.input] = None
         self.role_in: Optional[ui.input] = None
         self.prompt_in: Optional[ui.textarea] = None
@@ -202,53 +165,6 @@ class BuilderScreen:
 
     # ------------------------------------------------------------ 대화
 
-    async def _send_input(self) -> None:
-        text = (self.input.value or "").strip()
-        if text:
-            self.input.set_value("")
-            await self.send(text)
-
-    async def send(self, text: str) -> None:
-        text = (text or "").strip()
-        if not text or self.busy:
-            return
-        self.busy = True
-        self.send_button.disable()
-        with self.log:
-            self._bubble(text, me=True)
-            reply = self._bubble("…", me=False)
-        self.history.append({"role": "user", "content": with_draft(text, self.read_card())})
-        streamed: List[str] = []
-
-        def on_chunk(delta: str) -> None:
-            streamed.append(delta)
-            reply.set_content(streaming_text("".join(streamed)) or "…")
-
-        try:
-            content = await ask_builder(
-                self.history, servers=self.servers, skills=self.skills, guest=self.guest, on_chunk=on_chunk,
-            )
-        except LLMUnavailableError as exc:
-            self.history.pop()
-            reply.set_content(f"도우미에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.\n\n`{exc}`")
-            return
-        except Exception as exc:  # noqa: BLE001 - 실패한 원인을 사용자에게 보여주어야 합니다
-            logger.error("The agent builder failed: %s", exc, exc_info=True)
-            self.history.pop()
-            reply.set_content(f"도우미 응답 중 오류가 발생했습니다: {exc}")
-            return
-        finally:
-            self.busy = False
-            self.send_button.enable()
-
-        visible, data = split_reply(content)
-        reply.set_content(visible or self.UPDATED_NOTE)
-        self.history.append({"role": "assistant", "content": content})
-        if data is not None:
-            merged = merge_draft(self.read_card(), data)
-            self.draft = sanitize_draft(merged, [o.id for o in self.servers], [o.id for o in self.skills])
-            self.fill_card()
-
     # ------------------------------------------------------------ 저장
 
     async def save(self) -> None:
@@ -283,85 +199,6 @@ class BuilderScreen:
                           on_click=lambda: ui.navigate.to(EASY_BUILD)).props("flat no-caps color=indigo-3")
 
 
-class FormBuilderChat(BuilderScreen):
-    """전문가 화면 '에이전트 추가' 양식에서 여는 도우미 대화 창.
-
-    대화 로직(`send`)은 `BuilderScreen` 그대로이고, 설계도 칸 대신 요약만 보여 줍니다. '양식에 채우기'는
-    설계도를 `on_apply` 로 넘길 뿐이며, 저장은 추가 양식의 '추가' 버튼이 기존 경로로 합니다.
-    """
-
-    UPDATED_NOTE = "설계도를 갱신했습니다. 아래 요약을 확인해 주세요."
-
-    def __init__(self, servers: List[Option], skills: List[Option], on_apply: Callable[[AgentDraft], None]):
-        super().__init__(Viewer("", "소유자", True), servers, skills)
-        self.on_apply = on_apply
-        self.dialog: Optional[ui.dialog] = None
-        self.summary: Optional[ui.markdown] = None
-
-    def open(self, draft: AgentDraft) -> None:
-        """양식의 지금 값에서 이어 갑니다. 양식에서 고친 값은 다음 말과 함께 도우미에게 넘어갑니다."""
-        self.draft = draft
-        if self.dialog is None:
-            self._build_dialog()
-        self.fill_card()
-        self.dialog.open()
-
-    def _build_dialog(self) -> None:
-        with ui.dialog() as self.dialog, ui.card().classes(
-            "p-4 w-[720px] max-w-full bg-slate-900 text-white border border-slate-700 gap-3"
-        ):
-            ui.label("대화로 에이전트 만들기").classes("text-lg font-bold")
-            ui.label("도우미와 대화하면 설계도가 채워집니다. '양식에 채우기'를 누르면 추가 양식으로 옮겨지며, "
-                     "저장은 양식의 '추가' 버튼으로 합니다.").classes("text-[12px] text-slate-400 leading-snug")
-            with ui.column().classes("w-full max-h-[40vh] overflow-y-auto pr-1"):
-                self.log = ui.column().classes("w-full gap-2")
-                with self.log:
-                    self._bubble(FORM_GREETING, me=False)
-            with ui.row().classes("gap-2"):
-                for text in EXAMPLES:
-                    ui.button(text, on_click=lambda t=text: self.send(t)).props(
-                        "outline dense no-caps color=indigo-3"
-                    ).classes("text-xs")
-            with ui.row().classes("w-full items-end gap-2 flex-nowrap"):
-                self.input = ui.textarea(placeholder="예: 매주 월요일마다 지난주 매출 데이터를 정리해 주면 좋겠어요").props(
-                    "outlined dense dark autogrow rows=2"
-                ).classes("flex-grow")
-                self.send_button = ui.button(icon="send", on_click=self._send_input).props(
-                    "round unelevated color=indigo-6"
-                )
-            with ui.column().classes("w-full rounded-lg border border-slate-700 bg-slate-800/40 p-3 gap-0"):
-                self.summary = ui.markdown().classes("text-sm")
-            with ui.row().classes("w-full justify-end gap-2"):
-                ui.button("닫기", on_click=self.dialog.close).props("flat color=grey")
-                ui.button("양식에 채우기", icon="input", on_click=self._apply).props("unelevated no-caps color=indigo-6")
-
-    def _bubble(self, text: str, *, me: bool) -> MathMarkdown:
-        tone = "self-end bg-indigo-950 border-indigo-800" if me else "bg-slate-800/60 border-slate-700"
-        with ui.column().classes(f"rounded-lg border {tone} p-3 gap-1 max-w-full"):
-            ui.label("User" if me else "도우미").classes("text-[11px] font-semibold text-slate-400")
-            return MathMarkdown(text, extras=MARKDOWN_EXTRAS).classes("text-sm")
-
-    def read_card(self) -> AgentDraft:
-        return self.draft
-
-    def fill_card(self) -> None:
-        if self.summary is None:
-            return
-        labels = {o.id: o.label for o in [*self.servers, *self.skills]}
-        draft = self.draft
-        first_line = draft.system_prompt.splitlines()[0] if draft.system_prompt else ""
-        self.summary.set_content("\n".join([
-            "**설계도**",
-            "",
-            f"- 이름 · 역할: {draft.name or '—'} · {draft.role or '—'}",
-            f"- 도구: {', '.join(labels.get(s, s) for s in draft.allowed_mcp_servers) or '없음'}",
-            f"- 스킬: {', '.join(labels.get(s, s) for s in draft.allowed_skills) or '없음'}",
-            f"- 업무 지시서: {first_line or '—'}",
-        ]))
-
-    def _apply(self) -> None:
-        self.dialog.close()
-        self.on_apply(self.draft)
 
 
 def build_builder() -> None:

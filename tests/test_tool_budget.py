@@ -246,19 +246,15 @@ async def test_answering_a_finished_debate_is_refused_not_silently_dropped():
 
 
 def _headless_feed():
-    """화면 없이 상태만 가진 피드 (`alive` 가 False 라 그리기는 건너뜁니다)."""
-    from app.ui.components.chat_feed.feed import ChatFeed
-
-    async def _noop(*args, **kwargs):
-        return None
+    """화면 없이 상태만 가진 한도 줄 (`alive` 가 False 라 그리기는 건너뜁니다)."""
+    from app.ui.components.chat_feed.decisions import DecisionBar
 
     answered = []
 
     async def _answer(extra, request_id):
         answered.append((extra, request_id))
 
-    feed = ChatFeed(_noop, on_interject=_noop, on_stop=_noop, on_tool_budget=_answer)
-    return feed, answered
+    return DecisionBar(alive=lambda: False, on_decision=_answer), answered
 
 
 REQUEST = {
@@ -275,9 +271,9 @@ REQUEST = {
 @pytest.mark.asyncio
 async def test_the_extend_button_sends_the_offered_step():
     feed, answered = _headless_feed()
-    feed.set_budget_request(REQUEST)
+    feed.set_request(REQUEST)
 
-    await feed._handle_budget_extend()
+    await feed.handle_extend()
 
     assert answered == [(15, "req-1")]
 
@@ -285,9 +281,9 @@ async def test_the_extend_button_sends_the_offered_step():
 @pytest.mark.asyncio
 async def test_finish_now_sends_zero():
     feed, answered = _headless_feed()
-    feed.set_budget_request(REQUEST)
+    feed.set_request(REQUEST)
 
-    await feed._handle_budget_wrap_up()
+    await feed.handle_wrap_up()
 
     assert answered == [(0, "req-1")]
 
@@ -296,10 +292,10 @@ async def test_finish_now_sends_zero():
 async def test_the_question_can_only_be_answered_once():
     """두 번 누른다고 상한이 두 번 늘어나서는 안 됩니다."""
     feed, answered = _headless_feed()
-    feed.set_budget_request(REQUEST)
+    feed.set_request(REQUEST)
 
-    await feed._handle_budget_extend()
-    await feed._handle_budget_extend()
+    await feed.handle_extend()
+    await feed.handle_extend()
 
     assert answered == [(15, "req-1")]
 
@@ -309,11 +305,11 @@ async def test_a_question_answered_elsewhere_goes_inert_here():
     """같은 대화를 두 화면에서 보고 있을 수 있습니다. 한쪽이 답하면 다른 쪽 버튼은
     죽어야 합니다 — 두 번째 답이 다음 발언자의 상한을 엉뚱하게 늘립니다."""
     feed, answered = _headless_feed()
-    feed.set_budget_request(REQUEST)
+    feed.set_request(REQUEST)
 
     # 다른 화면이 답했다는 이벤트가 도착한 자리 (`app.py` 의 tool_budget_resolved).
-    feed.set_budget_request(None)
-    await feed._handle_budget_extend()
+    feed.set_request(None)
+    await feed.handle_extend()
 
     assert answered == []
 
@@ -354,10 +350,10 @@ async def test_two_agents_asking_at_once_can_both_be_answered():
 async def test_answering_the_older_question_does_not_hide_the_newer_one():
     """화면에 새 물음이 올라온 뒤 앞 물음의 답이 도착해도 새 물음은 남아야 합니다."""
     feed, _answered = _headless_feed()
-    feed.set_budget_request({**REQUEST, "id": "req-2", "agent_name": "Quality Critic"})
+    feed.set_request({**REQUEST, "id": "req-2", "agent_name": "Quality Critic"})
 
-    feed.clear_budget_request("req-1")     # 앞 물음이 처리됐다는 소식
-    assert feed._budget_request is not None
+    feed.clear_request("req-1")     # 앞 물음이 처리됐다는 소식
+    assert feed._request is not None
 
-    feed.clear_budget_request("req-2")     # 지금 보이는 물음이 처리됐다는 소식
-    assert feed._budget_request is None
+    feed.clear_request("req-2")     # 지금 보이는 물음이 처리됐다는 소식
+    assert feed._request is None

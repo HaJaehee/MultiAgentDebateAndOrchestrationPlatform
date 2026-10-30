@@ -29,7 +29,7 @@ from app.export import build_session_markdown
 from app.timestamps import format_duration, report_completed_line, speech_time_text, to_local
 from app.orchestration.control import TurnControl
 from app.orchestration.engine import OrchestratorEngine
-from app.ui.components.chat_feed.feed import ChatFeed
+from app.ui.components.chat_feed.cards import CardTimeline
 from app.ui.components.chat_feed.common import card_time_text
 from tests.fake_llm import FakeLLMCaller
 from tests.test_resilience import _fixed_pool
@@ -317,11 +317,8 @@ class _Widget:
 
 
 def test_finishing_a_streamed_card_replaces_in_progress_with_the_end_time(monkeypatch):
-    async def noop(*_args):
-        pass
-
-    feed = ChatFeed(noop, on_interject=noop, on_stop=noop)
-    monkeypatch.setattr(feed, "_scroll_to_bottom", lambda *a, **k: None)
+    feed = CardTimeline()
+    monkeypatch.setattr(feed, "scroll_to_bottom", lambda *a, **k: None)
     monkeypatch.setattr(feed, "_apply_clamp", lambda *a, **k: None)
     label, tip = _Widget(), _Widget()
     label.set_text(card_time_text({"started_at": T0})[0])

@@ -351,13 +351,13 @@ def test_download_search_needs_every_word():
 
 def test_download_buttons_are_wired_in_both_places():
     app_src = "".join(p.read_text(encoding="utf-8") for p in sorted((ROOT / "app" / "ui" / "expert").glob("*.py")))
-    roster_src = io.open(ROOT / "app" / "ui" / "components" / "roster" / "control.py", encoding="utf-8").read()
+    roster_src = io.open(ROOT / "app" / "ui" / "components" / "roster" / "workspace_row.py", encoding="utf-8").read()
     viewer_src = io.open(ROOT / "app" / "ui" / "components" / "artifact_viewer.py", encoding="utf-8").read()
     assert "WorkspaceDownloadDialog(self.workspace_root)" in app_src
     assert "self.roster_control.on_open_workspace_download = self.workspace_download.open" in app_src
     assert "ArtifactViewer(on_open_workspace_files=self.workspace_download.open)" in app_src
     assert "작업 공간 파일 다운로드" in roster_src
     # 입력란 아래: 버튼이 입력란보다 뒤, 안내 줄보다 앞에 만들어집니다.
-    assert roster_src.index("self.workspace_input = ui.input(") < roster_src.index("self.workspace_download_btn = (") \
-        < roster_src.index("self.workspace_hint = ui.label(")
+    assert roster_src.index("self.input = ui.input(") < roster_src.index("self.download_btn = (") \
+        < roster_src.index("self.hint = ui.label(")
     assert "_open_workspace_files" in viewer_src

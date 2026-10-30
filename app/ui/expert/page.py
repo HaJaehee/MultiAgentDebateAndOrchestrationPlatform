@@ -200,20 +200,20 @@ class ExpertPage:
                 # 지금 무엇이 있었는지 함께 남깁니다. 나중에 에이전트가 추가되면
                 # 이 목록과 비교해 "새로 생긴 것" 만 켜진 채로 보여줍니다.
                 curr.known_agents = self.roster_control.known_agent_keys()
-                curr.strategy = self.roster_control.strategy_name
-                curr.max_rounds = self.roster_control.max_rounds
-                curr.parallel_limit = self.roster_control.parallel_limit
-                curr.converge_early = self.roster_control.converge_early
-                curr.token_budget = self.roster_control.token_budget
-                curr.ask_user = self.roster_control.ask_user
-                curr.tool_mode = self.roster_control.tool_mode
-                curr.custom_instructions = self.roster_control.custom_instructions
-                curr.workspace_dir = self.roster_control.workspace_dir
-                curr.graph_id = self.roster_control.graph_id
+                curr.strategy = self.roster_control.state.strategy_name
+                curr.max_rounds = self.roster_control.state.max_rounds
+                curr.parallel_limit = self.roster_control.state.parallel_limit
+                curr.converge_early = self.roster_control.state.converge_early
+                curr.token_budget = self.roster_control.state.token_budget
+                curr.ask_user = self.roster_control.state.ask_user
+                curr.tool_mode = self.roster_control.state.tool_mode
+                curr.custom_instructions = self.roster_control.state.custom_instructions
+                curr.workspace_dir = self.roster_control.state.workspace_dir
+                curr.graph_id = self.roster_control.state.graph_id
                 agent_count_changed = active_agent_count(curr, graph_keys) != count_before
                 await db.commit()
         # 도구 보안 모드는 진행 중인 턴에도 바로 걸립니다 (다음 도구 호출부터).
-        self.runner.set_tool_mode(self.current_session_id, self.roster_control.tool_mode)
+        self.runner.set_tool_mode(self.current_session_id, self.roster_control.state.tool_mode)
         # 세션 카드의 'N Agents' 는 해당 대화에 실제 참여하는 에이전트 수(활성화된 에이전트, 그래프
         # 토론의 경우 그래프에 배치된 에이전트)를 표시합니다. 세션 목록을 갱신하지 않으면 세션 생성 시점의
         # 초기값(전원 활성화)이 첫 발언 전까지 잔존하여, 참여 변경이나 그래프 선택이 즉시 반영되지 않았습니다.
@@ -229,7 +229,7 @@ class ExpertPage:
         """
         if not self.current_session_id:
             return
-        pool = self.roster_control.agent_pool
+        pool = self.roster_control.state.agent_pool
         async with self.session_factory() as db:
             res = await db.execute(
                 select(SessionModel).where(SessionModel.id == self.current_session_id)
@@ -260,7 +260,7 @@ class ExpertPage:
 
     def workspace_root(self):
         """이 대화의 작업 공간. 엔진이 턴을 열 때 쓰는 것과 같은 해석입니다."""
-        return resolve_workspace_dir(self.roster_control.workspace_dir or None)
+        return resolve_workspace_dir(self.roster_control.state.workspace_dir or None)
 
     def mention_agents(self):
         return agents_for_mentions(
@@ -315,7 +315,7 @@ class ExpertPage:
             if not self.current_session_id:
                 self.current_session_id = await self.create_new_session_db(title=prompt[:30])
                 self.sidebar.current_session_id = self.current_session_id
-                self.roster_control.session_id = self.current_session_id
+                self.roster_control.state.session_id = self.current_session_id
 
             if self.runner.is_running(self.current_session_id):
                 ui.notify("이 세션의 토론이 아직 진행 중입니다.", type="warning", position="bottom-right")
@@ -335,7 +335,7 @@ class ExpertPage:
             # 모자라면 턴이 시작된 뒤 `RuntimeCapacityError` 로 끝나고, 그
             # 사유는 아래 실패 경로를 통해 화면에 그대로 나옵니다.
             run = self.runner.start(
-                self.current_session_id, prompt, self.roster_control.workspace_dir,
+                self.current_session_id, prompt, self.roster_control.state.workspace_dir,
                 skill_designations=skill_designations,
             )
         except Exception as exc:  # noqa: BLE001 - 입력이 잠긴 채로 남으면 안 됩니다
@@ -650,20 +650,20 @@ class ExpertPage:
             new_session = SessionModel(
                 id=sid,
                 title=title,
-                strategy=self.roster_control.strategy_name,
-                max_rounds=self.roster_control.max_rounds,
-                parallel_limit=self.roster_control.parallel_limit,
-                converge_early=self.roster_control.converge_early,
-                token_budget=self.roster_control.token_budget,
+                strategy=self.roster_control.state.strategy_name,
+                max_rounds=self.roster_control.state.max_rounds,
+                parallel_limit=self.roster_control.state.parallel_limit,
+                converge_early=self.roster_control.state.converge_early,
+                token_budget=self.roster_control.state.token_budget,
                 # 다른 설정과 달리 지금 보던 대화에서 물려받지 않고 늘 켠 채로 시작합니다. 이 칸 이전의 대화는
                 # 모두 꺼져 있어(체험 화면을 위한 기본값) 물려받으면 새 대화도 영영 꺼진 채가 됩니다.
                 ask_user=True,
-                tool_mode=self.roster_control.tool_mode,
+                tool_mode=self.roster_control.state.tool_mode,
                 active_agents=self.roster_control.get_active_agent_keys(),
                 known_agents=self.roster_control.known_agent_keys(),
-                custom_instructions=self.roster_control.custom_instructions,
-                workspace_dir=self.roster_control.workspace_dir,
-                graph_id=self.roster_control.graph_id,
+                custom_instructions=self.roster_control.state.custom_instructions,
+                workspace_dir=self.roster_control.state.workspace_dir,
+                graph_id=self.roster_control.state.graph_id,
             )
             db.add(new_session)
             await db.commit()
@@ -683,7 +683,7 @@ class ExpertPage:
             res_s = await db.execute(stmt_s)
             s_obj = res_s.scalar_one_or_none()
             if s_obj:
-                pool = self.roster_control.agent_pool
+                pool = self.roster_control.state.agent_pool
                 personas = await effective_personas(db, sid, pool)
                 # 잠긴 대화는 잠글 때 고정된 에이전트로 로스터를 그립니다.
                 # conf.json 에서 지워진 에이전트도 이 대화에서는 계속 발언합니다.

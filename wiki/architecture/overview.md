@@ -144,8 +144,8 @@ flowchart TD
 - Every screen (expert, trial, beginner) attaches to a running debate through [`RunBinding`](file:///d:/MultiAgentDebateOrchestration/app/ui/run_binding.py); closing the page drops the subscription, never the debate.
 - Components:
   - [SessionSidebar](file:///d:/MultiAgentDebateOrchestration/app/ui/components/sidebar.py): session history, creation, and deletion.
-  - [AgentRosterControl](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/control.py): one class split by concern into `roster/` (session settings, agent cards, MCP panel, agent administration, per-card dialogs, skills panel, graph row).
-  - [ChatFeed](file:///d:/MultiAgentDebateOrchestration/app/ui/components/chat_feed/feed.py): one class split into `chat_feed/` (cards, approvals, decision bars, mentions).
+  - [AgentRosterControl](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/control.py): assembles the components in `roster/` (session settings, workspace row, agent cards, MCP panel, agent administration, per-card dialogs, skills panel, graph row) over a shared `RosterState`, `RosterService` and `RosterChanges` ([Module Boundaries §6.9](module-boundaries.md)).
+  - [ChatFeed](file:///d:/MultiAgentDebateOrchestration/app/ui/components/chat_feed/feed.py): assembles the pieces in `chat_feed/` (card timeline, approval cards, decision bars, mentions) behind one public surface.
   - [ArtifactViewer](file:///d:/MultiAgentDebateOrchestration/app/ui/components/artifact_viewer.py): multi-tab viewer with syntax highlighting and Mermaid diagram rendering.
   - [PersonasPage](file:///d:/MultiAgentDebateOrchestration/app/ui/personas_page.py): session persona configuration editor.
 - Trial and beginner pages share the visitor-page frame in [ui/shared/page.py](file:///d:/MultiAgentDebateOrchestration/app/ui/shared/page.py); page addresses are in [app/routes.py](file:///d:/MultiAgentDebateOrchestration/app/routes.py).

@@ -823,22 +823,19 @@ async def test_trimming_is_reported_to_the_screen():
 
 def test_the_banner_does_not_offer_a_widening_that_is_not_available():
     """확장 버튼이 사라졌는데 문구가 "늘릴까요?" 로 남으면 사라진 버튼을 찾게 됩니다."""
-    from app.ui.components.chat_feed.feed import ChatFeed
+    from app.ui.components.chat_feed.decisions import DecisionBar
 
-    async def _noop(*args, **kwargs):
-        return None
+    feed = DecisionBar(alive=lambda: False)
 
-    feed = ChatFeed(_noop, on_decision=_noop)
-
-    feed.set_decision_request({
+    feed.set_request({
         "id": "c1", "kind": "context_window", "agent_name": "A",
         "limit": 128000, "extension_step": 0, "max_extension": 0,
     })
     # 화면이 없으므로 상태만 확인합니다 (`alive` 가 False 라 그리기는 건너뜁니다).
-    assert feed._extension_step() == 0
+    assert feed.extension_step() == 0
 
-    feed.set_decision_request({
+    feed.set_request({
         "id": "c2", "kind": "context_window", "agent_name": "A",
         "limit": 32000, "extension_step": 16000, "max_extension": 16000,
     })
-    assert feed._extension_step() == 16000
+    assert feed.extension_step() == 16000

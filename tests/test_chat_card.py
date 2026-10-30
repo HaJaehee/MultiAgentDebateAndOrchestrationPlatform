@@ -24,6 +24,7 @@ from app.ui.components.chat_feed.common import (
     SUBMIT_KEY_EVENT,
     is_clampable,
 )
+from app.ui.components.chat_feed.cards import CardTimeline
 from app.ui.components.chat_feed.feed import ChatFeed
 from app.ui.math_markdown import render_markdown
 from app.ui.shared.page import MARKDOWN_EXTRAS
@@ -80,10 +81,8 @@ LONG_ENOUGH = "가" * (CLAMP_MIN_CHARS + 1)
 
 
 def _feed():
-    async def noop(*_args):
-        pass
-
-    return ChatFeed(noop, on_interject=noop, on_stop=noop)
+    """타임라인 부품 하나. 피드나 화면 없이 만들어집니다."""
+    return CardTimeline()
 
 
 def _card(msg_id: str, content: str = LONG_ENOUGH, collapsed: bool = True):
@@ -255,7 +254,7 @@ def test_collapse_all_closes_every_card_the_reader_opened():
     feed._toggle_card(first)
     feed._toggle_card(second)
 
-    feed._collapse_all_cards()
+    feed.collapse_all_cards()
 
     assert first["collapsed"] is True and second["collapsed"] is True
     assert feed._user_expanded == {}
@@ -269,7 +268,7 @@ def test_collapse_all_leaves_a_card_being_written_open():
     feed._toggle_card(opened)
     feed._apply_clamp(streaming, collapsed=False)   # 그리는 쪽이 하는 일
 
-    feed._collapse_all_cards()
+    feed.collapse_all_cards()
 
     assert opened["collapsed"] is True
     assert streaming["collapsed"] is False
@@ -279,9 +278,9 @@ def test_collapse_all_does_not_undo_a_manual_scroll():
     """카드를 접었다고 사람이 올려 둔 화면을 끌어내리지 않습니다 (하나씩 접을 때와 같습니다)."""
     feed = _feed()
     feed._toggle_card(_card("m1"))
-    feed._handle_manual_scroll()
+    feed.handle_manual_scroll()
 
-    feed._collapse_all_cards()
+    feed.collapse_all_cards()
 
     assert feed.following is False
 
@@ -298,7 +297,7 @@ def test_the_collapse_all_button_shows_only_while_cards_are_open():
     assert feed.collapse_all_button.visible is False
 
     feed._toggle_card(card)
-    feed._collapse_all_cards()
+    feed.collapse_all_cards()
     assert feed.collapse_all_button.visible is False
 
 
@@ -324,7 +323,7 @@ def test_the_footer_never_unfolds_a_card(scripts):
 def test_moving_the_wheel_detaches_the_feed():
     feed = _feed()
 
-    feed._handle_manual_scroll()
+    feed.handle_manual_scroll()
 
     assert feed.following is False
 
@@ -334,17 +333,17 @@ def test_the_direction_of_the_wheel_does_not_matter():
     다시 붙이면 맨 아래 근처에서 붙었다 떨어졌다 합니다."""
     feed = _feed()
 
-    feed._handle_manual_scroll({"deltaY": -120})
-    feed._handle_manual_scroll({"deltaY": 120})
+    feed.handle_manual_scroll({"deltaY": -120})
+    feed.handle_manual_scroll({"deltaY": 120})
 
     assert feed.following is False
 
 
 def test_the_jump_button_resumes_following_after_a_manual_scroll():
     feed = _feed()
-    feed._handle_manual_scroll()
+    feed.handle_manual_scroll()
 
-    feed._handle_follow()
+    feed.handle_follow()
 
     assert feed.following is True
 
@@ -353,9 +352,9 @@ def test_the_jump_button_does_not_unfold_what_the_reader_opened():
     """펼친 카드까지 풀어 버리면, 읽으려던 글이 그대로 흘러가 버립니다."""
     feed = _feed()
     feed._toggle_card(_card("m1"))
-    feed._handle_manual_scroll()
+    feed.handle_manual_scroll()
 
-    feed._handle_follow()
+    feed.handle_follow()
 
     assert feed.following is False, "카드가 아직 펼쳐져 있습니다"
 
@@ -365,7 +364,7 @@ def test_collapsing_a_card_does_not_undo_a_manual_scroll():
     feed = _feed()
     card = _card("m1")
     feed._toggle_card(card)
-    feed._handle_manual_scroll()
+    feed.handle_manual_scroll()
 
     feed._toggle_card(card)
 
@@ -383,12 +382,12 @@ async def test_sending_something_means_watching_the_result():
     feed = ChatFeed(record, on_interject=record, on_stop=record)
     # 화면 없이 입력칸만 흉내 냅니다 (`alive` 가 False 라 나머지는 그냥 지나갑니다).
     feed.input_field = SimpleNamespace(value="다음 라운드도 부탁합니다")
-    feed._handle_manual_scroll()
+    feed.timeline.handle_manual_scroll()
 
     await feed._handle_send()
 
     assert sent == ["다음 라운드도 부탁합니다"]
-    assert feed.following is True
+    assert feed.timeline.following is True
 
 
 @pytest.mark.asyncio
@@ -399,16 +398,16 @@ async def test_sending_does_not_close_the_card_being_read():
 
     feed = ChatFeed(noop, on_interject=noop, on_stop=noop)
     feed.input_field = SimpleNamespace(value="계속 진행하세요")
-    feed._toggle_card(_card("m1"))
+    feed.timeline._toggle_card(_card("m1"))
 
     await feed._handle_send()
 
-    assert feed.following is False
+    assert feed.timeline.following is False
 
 
 def test_switching_sessions_also_forgets_a_manual_scroll():
     feed = _feed()
-    feed._handle_manual_scroll()
+    feed.handle_manual_scroll()
 
     feed.clear()
 

@@ -7,9 +7,9 @@
 
 저장 방식은 사용자 권한에 따라 구분됩니다:
 
-* 소유자 — `conf.json`의 `agents` 섹션에 직접 추가합니다 (`add_agent_to_conf_file`). 모델 및 API 키는 별도로 지정하지 않아 기본
+* 소유자 — `conf.json`의 `agents` 섹션에 직접 추가합니다 (`save_owner_agent`). 모델 및 API 키는 별도로 지정하지 않아 기본
   `llm` 설정을 상속받습니다. 로스터 편집 규칙과 동일하게 진행 중인 토론 세션이 있으면 저장이 거부됩니다.
-* 체험 방문자 — `easy_agents` 테이블에만 저장합니다. `conf.json`은 서버 전체가 공유하는 핵심 설정이므로 방문자가 임의로 변경할 경우
+* 체험 방문자 — `easy_agents` 테이블에만 저장합니다 (`app/easy/sessions.py` 의 `save_guest_agent`). `conf.json`은 서버 전체가 공유하는 핵심 설정이므로 방문자가 임의로 변경할 경우
   다른 사용자의 대화 세션 및 도구 권한에 영향을 미칠 수 있기 때문입니다.
 """
 
@@ -21,10 +21,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.base import CARD_COLOR_CHOICES, ICON_CHOICES, Agent
+from app.agents.catalog import Option
 from app.agents.llm import LLMCaller
 from app.agents.reasoning import strip_reasoning_trace
 from app.agents.pool import AgentPool, get_agent_pool, reload_agent_pool
@@ -36,8 +35,6 @@ from app.config import (
     get_config,
     join_text_lines,
 )
-from app.easy.catalog import GUEST_SERVERS, MAX_GUEST_AGENTS, Option
-from app.easy.models import EasyAgentModel
 
 # 설계도 블록 정규식. 업무 지시서 내부에 '{고객명}' 같은 중괄호가 포함되어 있어도 블록 끝(```)까지 안전하게 추출합니다.
 _BLOCK_RE = re.compile(r"```(?:agent|json)\s*(\{.*?\})\s*```", re.S)
@@ -283,7 +280,7 @@ def save_owner_agent(
 ) -> str:
     """conf.json에 에이전트를 영구 추가하고 실행 풀을 즉시 갱신합니다. 저장된 고유 키를 반환합니다.
 
-    `running`은 현재 실행 중인 토론 세션 목록입니다. 로스터 관리 규칙(`_agent_admin_lock_reason`)과 동일하게,
+    `running`은 현재 실행 중인 토론 세션 목록입니다. 로스터 관리 규칙(`roster_service.agent_admin_lock_reason`)과 동일하게,
     프로세스 전역에서 단일 에이전트 풀을 공유하므로 실행 중인 세션이 하나라도 있으면 설정을 변경하지 않습니다.
     """
     if running:
@@ -307,26 +304,3 @@ def save_owner_agent(
     )
     reload_agent_pool()
     return key
-
-
-async def save_guest_agent(db: AsyncSession, user_id: str, draft: AgentDraft) -> EasyAgentModel:
-    """방문자 전용 '내 에이전트'로 데이터베이스에 저장합니다. 도구는 방문자에게 허용된 것만 보관합니다."""
-    require_complete(draft)
-    count = (await db.execute(
-        select(func.count()).select_from(EasyAgentModel).where(EasyAgentModel.user_id == user_id)
-    )).scalar_one()
-    if count >= MAX_GUEST_AGENTS:
-        raise SaveRefused(f"내 에이전트는 최대 {MAX_GUEST_AGENTS}개까지 생성할 수 있습니다. 사용하지 않는 에이전트를 삭제한 후 다시 시도해 주세요.")
-    row = EasyAgentModel(
-        user_id=user_id,
-        name=draft.name,
-        role=draft.role,
-        system_prompt=draft.system_prompt,
-        allowed_mcp_servers=[s for s in draft.allowed_mcp_servers if s in GUEST_SERVERS],
-        allowed_skills=list(draft.allowed_skills),
-        card_color=draft.card_color,
-        icon=draft.icon,
-    )
-    db.add(row)
-    await db.commit()
-    return row

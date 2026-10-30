@@ -165,7 +165,7 @@ def test_math_markdown_keeps_the_raw_content_for_copying():
 @pytest.mark.parametrize("rel, needle", [
     ("app/ui/components/chat_feed/cards.py", "md = MathMarkdown(content, extras=FEED_MARKDOWN_EXTRAS)"),
     ("app/ui/components/artifact_viewer.py", "MathMarkdown(content)"),
-    ("app/ui/components/roster/control.py", 'self.ledger_view = MathMarkdown("")'),
+    ("app/ui/components/roster/session_settings.py", 'self.ledger_view = MathMarkdown("")'),
     ("app/trial/pages/session.py", "MathMarkdown(result.final, extras=MARKDOWN_EXTRAS)"),
 ])
 def test_cards_conclusions_and_the_ledger_render_math(rel, needle):

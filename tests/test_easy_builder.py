@@ -1,4 +1,4 @@
-"""대화형 에이전트 빌더 단위 테스트 (app/easy/builder.py).
+"""대화형 에이전트 빌더 단위 테스트 (app/agents/draft.py).
 
 테스트 검증 목표:
 1. 도우미 응답에서 설계도(blueprint) 블록을 파싱하고, 사용자 노출 텍스트에서는 분리·제거한다. 구문 오류가 있는 블록은 무시한다.
@@ -18,7 +18,8 @@ from app.agents import pool as pool_module
 from app.config import AgentConfig, get_config, load_config, read_conf_file, write_conf_file
 from app.database.session import get_session_factory, init_db
 from app.easy import models as easy_models  # noqa: F401 - 테이블 등록
-from app.easy.builder import (
+from app.agents.catalog import Option
+from app.agents.draft import (
     AgentDraft,
     SaveRefused,
     agent_key_for,
@@ -28,13 +29,13 @@ from app.easy.builder import (
     merge_draft,
     require_complete,
     sanitize_draft,
-    save_guest_agent,
     save_owner_agent,
     split_reply,
     streaming_text,
     with_draft,
 )
-from app.easy.catalog import MAX_GUEST_AGENTS, Option
+from app.easy.catalog import MAX_GUEST_AGENTS
+from app.easy.sessions import save_guest_agent
 from app.agents.pool import AgentPool
 from tests.fake_llm import FakeLLMCaller
 
@@ -260,7 +261,7 @@ class _Recorder:
 
 
 def test_the_expert_form_chat_hands_its_blueprint_to_the_add_form():
-    from app.easy.pages.build import FormBuilderChat
+    from app.ui.components.roster.builder_dialog import FormBuilderChat
 
     applied = []
     chat = FormBuilderChat([Option("filesystem", "파일 열어 보기", "")], [], applied.append)
@@ -282,22 +283,24 @@ def test_the_expert_form_chat_hands_its_blueprint_to_the_add_form():
 def test_the_expert_add_dialog_opens_the_builder_and_still_saves_through_its_own_path():
     import inspect
 
-    from app.ui.components.roster.control import AgentRosterControl
+    from app.ui.components.roster.agent_admin import AgentAdminComponent
 
-    source = inspect.getsource(AgentRosterControl._open_agent_add_dialog)
+    source = inspect.getsource(AgentAdminComponent.open_add_dialog)
     button = source.find('ui.button("에이전트 만들기"')
     assert button != -1, "에이전트 추가 다이얼로그에 '에이전트 만들기' 버튼이 있어야 합니다"
     assert button < source.index('key_in = ui.input("에이전트 키"'), "버튼은 양식 위 제목 줄에 있어야 합니다"
     assert "FormBuilderChat(" in source and ".open(form_draft())" in source
-    assert source.count("add_agent_to_conf_file(") == 1, "저장은 기존 '추가' 버튼 경로 하나뿐이어야 합니다"
+    assert source.count("self.service.add_agent(") == 1, "저장은 기존 '추가' 버튼 경로 하나뿐이어야 합니다"
     assert "save_owner_agent" not in source
 
 
 def test_the_expert_chat_points_its_fallback_note_at_its_own_summary():
     import inspect
 
-    from app.easy.pages.build import BuilderScreen, FormBuilderChat
+    from app.easy.pages.build import BuilderScreen
+    from app.ui.components.agent_builder_chat import BuilderChat
+    from app.ui.components.roster.builder_dialog import FormBuilderChat
 
     assert "오른쪽 카드" in BuilderScreen.UPDATED_NOTE, "쉬운 화면 문구는 그대로여야 합니다"
     assert "아래 요약" in FormBuilderChat.UPDATED_NOTE and "오른쪽" not in FormBuilderChat.UPDATED_NOTE
-    assert "self.UPDATED_NOTE" in inspect.getsource(BuilderScreen.send)
+    assert "self.UPDATED_NOTE" in inspect.getsource(BuilderChat.send)

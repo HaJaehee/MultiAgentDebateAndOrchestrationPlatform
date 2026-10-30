@@ -18,7 +18,7 @@ from app.config import AgentConfig
 from app.database.models import SessionModel
 from app.orchestration.graph import graph_from_card_order
 from app.ui.components import sidebar
-from tests.roster_patch import patch_roster
+from app.orchestration import roster_service
 from app.ui.components.roster.control import AgentRosterControl
 from app.ui.components.sidebar import active_agent_count
 
@@ -101,7 +101,7 @@ def roster_control(monkeypatch) -> AgentRosterControl:
         key: AgentConfig(name=key.title(), role=key, model="openai/gpt-4o-mini", api_key="sk-test")
         for key in FIVE
     })
-    patch_roster(monkeypatch, "get_agent_pool", lambda: pool)
+    monkeypatch.setattr(roster_service, "get_agent_pool", lambda: pool)
     control = AgentRosterControl()
     control.summary_badge = FakeBadge()
     return control
@@ -109,15 +109,15 @@ def roster_control(monkeypatch) -> AgentRosterControl:
 
 def test_roster_badge_shows_the_same_number_as_the_card(graphs, monkeypatch):
     control = roster_control(monkeypatch)
-    control.selected_agents["critic"] = False
+    control.state.selected_agents["critic"] = False
 
-    control._update_summary_badge()
+    control.update_summary_badge()
     checked = [key for key in FIVE if key != "critic"]
     assert control.summary_badge.text == "4 Agents Active"
     assert active_agent_count(SessionModel(active_agents=checked)) == 4
 
     # 그래프 토론으로 바꾸면 둘 다 그래프를 봅니다. 꺼 둔 critic 은 수와 무관합니다.
-    control._graph_agent_keys = set(graph_store.graph_agent_keys("pair"))
-    control._update_summary_badge()
+    control.state.graph_agent_keys = set(graph_store.graph_agent_keys("pair"))
+    control.update_summary_badge()
     assert control.summary_badge.text == "3 Agents Active"
     assert active_agent_count(graph_session("pair", active=checked)) == 3

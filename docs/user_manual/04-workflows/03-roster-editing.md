@@ -2,7 +2,7 @@
 
 > 상위: [워크플로우 개관](README.md) · 이전: [세션 생애주기](02-session-lifecycle.md) · 다음: [산출물 생성과 내보내기](04-artifact-and-export.md)
 >
-> 관련 구현: [설정 레이어](../03-core/01-config-layer.md) · 소스 파일: `app/ui/components/roster/` (`agent_admin.py`·`agent_cards.py`·`agent_dialogs.py` 등)
+> 관련 구현: [설정 레이어](../03-core/01-config-layer.md) · 소스 파일: `app/ui/components/roster/` (`agent_admin.py`·`agent_cards.py`·`agent_dialogs.py` 등) · `app/orchestration/roster_service.py` (conf.json 쓰기와 잠금 규칙)
 
 초기 시스템에서 에이전트 설정은 오직 `conf.json` 파일에만 존재했습니다. 새로운 에이전트를 추가하거나 도구 권한을 부여하고 발언 순서를 변경하려면 텍스트 에디터를 열어 수동 편집한 뒤 서버를 재기동해야 했습니다. 현재 MADO의 로스터 패널은 이 모든 작업을 웹 UI 화면에서 직관적으로 처리하며, **그 결과를 `conf.json` 파일에 실시간으로 안전하게 역반영**합니다.
 

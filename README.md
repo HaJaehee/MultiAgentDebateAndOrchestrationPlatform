@@ -184,8 +184,8 @@ MultiAgentDebateOrchestration/
 │       ├── math_markdown.py  # 발언·결론의 LaTeX 수식을 MathML 로 렌더링 (ui.markdown 대체)
 │       └── components/       # UI 컴포넌트
 │           ├── sidebar.py    # 세션 히스토리 사이드바
-│           ├── roster/       # 에이전트 로스터 및 토론 제어판 (관심사별 파일)
-│           ├── chat_feed/    # 대화 타임라인 & MCP 도구 아코디언 (관심사별 파일)
+│           ├── roster/       # 에이전트 로스터 및 토론 제어판 (control 이 하위 컴포넌트를 조립)
+│           ├── chat_feed/    # 대화 타임라인 & MCP 도구 아코디언 (feed 가 부품을 조립)
 │           ├── agent_appearance.py # 카드 색상·아이콘 편집기 (추가 모달 / 페르소나 편집 공용)
 │           ├── model_status.py # `모델 연결 상태` 버튼과 창 (전문가·체험·쉬운 화면 상단 공용)
 │           └── artifact_viewer.py # 탭형 산출물 뷰어 (Code, Markdown, Mermaid)
@@ -199,6 +199,9 @@ MultiAgentDebateOrchestration/
     ├── test_personas.py       # 페르소나 편집 → 고정 → 재개 수명주기
     ├── test_agent_appearance.py # 카드 색상·아이콘 (업로드 → conf.json → 화면 → 스냅샷, 폴백)
     ├── test_agent_admin.py    # 에이전트 추가/비활성화/삭제 → conf.json 편집 및 잠금 규칙
+    ├── test_roster_service.py # 로스터의 conf.json 쓰기·반영·다시 읽기·잠금 규칙 (화면 없이)
+    ├── test_roster_components.py # 로스터 하위 컴포넌트를 하나씩 (대역 서비스와 콜백)
+    ├── test_feed_components.py # 토론 피드 부품을 하나씩, 그리고 조립 규칙
     ├── test_session_snapshot.py # 세션 구성 스냅샷 (삭제·키 교체 시의 자기완결성)
     ├── test_speaker_selection.py # 오케스트레이터 지명 전략 (지명·해석·실패 시 폴백)
     ├── test_parallel_dispatch.py # 병렬 지시 전략 (동시 실행·태스크 분배·취합·상한)

@@ -12,17 +12,11 @@ from typing import Dict, List, Optional
 from fastapi import Request
 from nicegui import ui
 
+from app.agents.catalog import SERVER_GUIDE
 from app.agents.pool import get_agent_pool
 from app.config import get_config
 from app.database.session import get_session_factory
-from app.easy.catalog import (
-    DEMO_MISSION,
-    EXAMPLE_MISSIONS,
-    MAX_RUN_AGENTS,
-    OWNER_MISSIONS,
-    SERVER_GUIDE,
-    example_files,
-)
+from app.easy.catalog import DEMO_MISSION, EXAMPLE_MISSIONS, MAX_RUN_AGENTS, OWNER_MISSIONS, example_files
 from app.easy.pages.common import Viewer, agent_avatar, easy_header, easy_setup, resolve_viewer
 from app.easy.sessions import DEMO_REF, Choice, agent_choices, create_easy_session
 from app.orchestration.runner import get_debate_runner

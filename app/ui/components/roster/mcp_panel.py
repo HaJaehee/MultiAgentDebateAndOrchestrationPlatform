@@ -1,80 +1,110 @@
-"""로스터 패널 — MCP 서버 칸: 연결 상태, 토론 중 잠금, 켜기·끄기, 추가·삭제, 재연결.
-
-`AgentRosterControl` 의 일부입니다 (`control.py`). 상태는 그 클래스가 가집니다.
-"""
+"""로스터 패널 — MCP 서버 칸: 연결 상태, 토론 중 잠금 표시, 켜기·끄기, 추가·삭제, 재연결."""
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from nicegui import ui
 
 from app.agents.consultation import PEERS_TOOL_BADGE
-from app.config import (
-    PEERS_TOOL_PREFIX,
-    add_mcp_server_to_conf_file,
-    get_config,
-    remove_mcp_server_from_conf_file,
-    set_mcp_server_enabled_in_conf_file,
-)
-from app.mcp.manager import MCPManager
-from app.mcp.pool import get_runtime_pool
-from app.orchestration.runner import get_debate_runner
-from app.ui.components.roster.common import MCP_CHIP_CLASSES, PROGRESS_TOAST_TIMEOUT, peers_chip_tooltip
+from app.config import PEERS_TOOL_PREFIX
+from app.orchestration.roster_service import RosterService
+from app.ui.components.roster.changes import RosterChanges
+from app.ui.components.roster.common import MCP_CHIP_CLASSES, peers_chip_tooltip
+from app.ui.components.roster.state import RosterState
 
 logger = logging.getLogger(__name__)
 
 
-class McpPanelMixin:
-    """MCP 서버 칸: 연결 상태, 토론 중 잠금, 켜기·끄기, 추가·삭제, 재연결."""
+class McpPanelComponent:
+    """MCP 서버 칸. 상태는 `RosterState`, conf.json 은 `RosterService`, 절차는 `RosterChanges` 가 맡습니다."""
 
-    def _session_runtime(self) -> Optional[MCPManager]:
-        """이 대화의 작업 공간에 해당하는 MCP 런타임. 아직 안 떴으면 None.
+    def __init__(
+        self, state: RosterState, service: RosterService, changes: RosterChanges, *, alive: Callable[[], bool],
+    ):
+        self.state = state
+        self.service = service
+        self.changes = changes
+        self.alive = alive
+        self.row: Optional[ui.row] = None
+        self.badge: Optional[ui.badge] = None
+        self.reconnect_btn: Optional[ui.button] = None
+        self.add_btn: Optional[ui.button] = None
+        self.lock_badge: Optional[ui.badge] = None
+        self.lock_hint: Optional[ui.label] = None
+        # 마지막으로 칩에 그린 런타임 상태의 지문. 서버는 이제 첫 토론 때 뜨므로
+        # 화면이 열려 있는 동안 상태가 **실제로 바뀝니다**. 잠금 사유만 보고 있으면
+        # 그 변화를 놓쳐, 도구가 다 붙은 뒤에도 "미기동" 이 토론이 끝날 때까지
+        # 남습니다.
+        self.status_seen: Optional[tuple] = None
 
-        **떠 있는 것만 찾습니다** (`pool.get`). 화면을 그리는 것만으로 서버가 뜨면
-        사이드바를 클릭할 때마다 프로세스 묶음이 하나씩 늘어납니다.
+    def build(self) -> None:
+        # 2. MCP Tool Servers — 상태 표시와 추가/삭제/on-off
+        with ui.row().classes("w-full items-center justify-between"):
+            with ui.row().classes("items-center gap-2"):
+                ui.label("MCP 서버").classes("text-xs font-bold text-slate-300")
+                self.badge = ui.badge("-", color="slate-7").props("dense text-xs")
+                self.lock_badge = ui.badge("잠김", color="amber-8").props("dense text-[11px]")
+                self.lock_badge.set_visibility(False)
+            with ui.row().classes("items-center gap-1"):
+                self.add_btn = (
+                    ui.button("서버 추가", icon="add", on_click=self.open_add_dialog)
+                    .props("flat dense no-caps size=12px color=indigo-4")
+                    .classes("text-[11px]")
+                )
+                self.reconnect_btn = (
+                    ui.button(icon="refresh", on_click=self.on_reconnect)
+                    .props("flat dense round size=12px color=slate-4")
+                )
+                self.reconnect_btn.tooltip("연결되지 않은 MCP 서버 다시 시도")
 
-        없을 때 기본 런타임으로 물러서지 **않습니다.** 그러면 다른 폴더를 쓰는
-        대화에 남의 작업 공간에서 뜬 서버의 상태가 "도구 14" 처럼 그려집니다 —
-        이 대화의 서버는 하나도 안 떠 있는데 말입니다. 없으면 없다고 그리는 것이
-        맞고, 그게 "첫 토론 때 기동됩니다" 라는 사실과도 맞습니다.
-        """
-        return get_runtime_pool().get(self.workspace_dir)
+        # 이 설정은 대화 하나의 것이 아닙니다. 작업 공간과 달리 conf.json 에
+        # 저장되고, MCP 서버는 프로세스 전체가 공유합니다.
+        ui.label(
+            "⚠️ MCP 서버의 추가·삭제·on/off 는 conf.json 에 저장되며, 지금 열려 있는 모든 "
+            "대화와 앞으로 만드는 모든 대화에 함께 적용됩니다."
+        ).classes("text-[12px] text-amber-400/90 w-full leading-snug -mt-1")
+        self.lock_hint = ui.label("").classes(
+            "text-[12px] text-rose-300/90 w-full leading-snug"
+        )
+        self.lock_hint.set_visibility(False)
+
+        self.row = ui.row().classes("w-full gap-2 flex-wrap items-center")
+        self.changes.sync_lock()
+        self.refresh_status()
+        # 다른 화면에서 시작·종료된 토론은 이 화면에 이벤트로 오지 않고,
+        # 서버는 첫 토론 때 뜨므로 화면이 열려 있는 동안 상태가 바뀝니다.
+        # 둘 다 주기적으로 맞춥니다 (조회 몇 번이고, 바뀔 때만 다시 그립니다).
+        ui.timer(2.0, self.sync)
 
     @staticmethod
-    def _status_fingerprint(status: Dict[str, Any]) -> tuple:
+    def status_fingerprint(status: Dict[str, Any]) -> tuple:
         """칩에 그려질 내용의 요약. 같으면 다시 그릴 이유가 없습니다."""
         return tuple(sorted(
             (name, bool(info.get("connected")), int(info.get("tool_count") or 0))
             for name, info in status.items()
         ))
 
-    def refresh_mcp_status(self) -> None:
+    def refresh_status(self) -> None:
         """conf.json 의 MCP 서버별 연결 상태를 칩으로 다시 그립니다.
 
         상태는 **이 대화가 쓸 런타임**의 것입니다. 폴더가 다르면 뜬 서버도
         다르므로, 전역 하나를 보여주면 다른 대화의 상태를 읽게 됩니다.
         """
-        if self.mcp_row is None or self.mcp_row.is_deleted:
+        if self.row is None or self.row.is_deleted:
             return
 
-        try:
-            runtime = self._session_runtime()
-            status = runtime.connection_status() if runtime is not None else {}
-            configured = get_config().mcp_servers
-        except Exception as e:  # noqa: BLE001 - UI 는 설정 오류로 죽지 않아야 합니다
-            logger.warning(f"Could not read MCP status: {e}")
-            status, configured = {}, {}
+        status, configured = self.service.mcp_view(self.state.workspace_dir)
 
         # 방금 그린 것을 기억해 둡니다. 타이머가 이 값과 비교해 바뀐 때만 다시
-        # 그립니다 (`_sync_mcp_runtime`).
-        self.mcp_status_seen = self._status_fingerprint(status)
+        # 그립니다 (`sync_runtime`).
+        self.status_seen = self.status_fingerprint(status)
 
-        self.mcp_row.clear()
+        self.row.clear()
         connected_count = 0
 
-        with self.mcp_row:
+        with self.row:
             # 내장 도구 peers 를 맨 앞에 둡니다. conf.json 에 없어도 늘 있고 띄울 프로세스가 없으므로
             # 켜기·삭제 스위치가 없고, 아래 "N/M 연결됨" 에도 세지 않습니다. 누가 켰는지는 에이전트
             # 카드의 '도구' 가 정합니다.
@@ -82,7 +112,7 @@ class McpPanelMixin:
                 ui.icon("forum", size="13px").classes("text-indigo-300")
                 ui.label(PEERS_TOOL_PREFIX).classes("text-[11px] font-semibold text-slate-200")
                 ui.badge(PEERS_TOOL_BADGE, color="indigo-8").props("dense").classes("text-[13px]")
-                ui.tooltip(peers_chip_tooltip(self._roster_agents())).classes("whitespace-pre-line text-[11px]")
+                ui.tooltip(peers_chip_tooltip(self.state.roster_agents())).classes("whitespace-pre-line text-[11px]")
 
             if not configured:
                 ui.label("conf.json 에 등록된 MCP 서버가 없습니다.").classes("text-[11px] text-slate-500")
@@ -125,60 +155,31 @@ class McpPanelMixin:
 
                     toggle = ui.switch(
                         value=server_cfg.enabled,
-                        on_change=lambda e, n=name: self._on_mcp_toggle(n, bool(e.value)),
+                        on_change=lambda e, n=name: self.on_toggle(n, bool(e.value)),
                     ).props("dense dark size=xs color=indigo-4").classes("ml-1")
                     remove = ui.button(
                         icon="delete_outline",
-                        on_click=lambda _, n=name: self._open_mcp_delete_dialog(n),
+                        on_click=lambda _, n=name: self.open_delete_dialog(n),
                     ).props("flat dense round size=10px color=rose-4")
-                    if self.mcp_locked:
+                    if self.state.mcp_locked:
                         toggle.disable()
                         remove.disable()
-                        toggle.tooltip(self.mcp_lock_reason)
-                        remove.tooltip(self.mcp_lock_reason)
+                        toggle.tooltip(self.state.mcp_lock_reason)
+                        remove.tooltip(self.state.mcp_lock_reason)
                     else:
                         remove.tooltip(f"'{name}' 서버를 conf.json에서 삭제합니다.")
 
         enabled_total = len([c for c in configured.values() if c.enabled])
-        if self.mcp_badge:
+        if self.badge:
             summary_color = (
                 "green-7" if enabled_total and connected_count == enabled_total
                 else "amber-8" if connected_count
                 else "red-8"
             )
-            self.mcp_badge.set_text(f"{connected_count}/{enabled_total} 연결됨")
-            self.mcp_badge.props(f"dense color={summary_color}")
+            self.badge.set_text(f"{connected_count}/{enabled_total} 연결됨")
+            self.badge.props(f"dense color={summary_color}")
 
-    def _current_mcp_lock_reason(self) -> str:
-        """지금 MCP 구성을 바꾸면 안 되는 이유. 바꿔도 되면 빈 문자열.
-
-        서버 프로세스는 이제 작업 공간마다 나뉘지만, **무엇을 어떻게 띄울지는
-        여전히 conf.json 하나가 정합니다.** 여기서 서버를 고치면 살아 있는 런타임
-        전부를 다시 띄우게 되고(`pool.reload_all`), 진행 중인 토론은 그 도중에
-        도구를 잃거나 다른 구성으로 응답하는 서버를 만납니다. 그래서 이 대화든
-        다른 대화든 하나라도 돌고 있으면 잠급니다.
-        """
-        running = get_debate_runner().running_sessions()
-        if not running:
-            return ""
-        return (
-            f"토론이 진행 중인 대화가 {len(running)}개 있습니다. MCP 서버 구성은 "
-            f"conf.json 파일로 전체 작업 공간을 일괄 설정하므로, 모든 토론이 "
-            f"종료되거나 정지되어 최종 산출물이 생성된 후에 변경할 수 있습니다."
-        )
-
-    def _sync_mcp_lock(self) -> None:
-        """진행 중인 토론 여부에 맞춰 잠금 상태를 갱신합니다 (바뀔 때만 다시 그림)."""
-        if not self.alive:
-            return
-        reason = self._current_mcp_lock_reason()
-        if bool(reason) == self.mcp_locked and reason == self.mcp_lock_reason:
-            return
-        self.mcp_locked = bool(reason)
-        self.mcp_lock_reason = reason
-        self._apply_mcp_lock()
-
-    def _sync_mcp_runtime(self) -> None:
+    def sync_runtime(self) -> None:
         """런타임 상태가 바뀌었으면 칩을 다시 그립니다.
 
         잠금 사유만 보던 시절에는 이 갱신이 없었습니다. 서버가 앱 기동 때 한 번
@@ -186,59 +187,43 @@ class McpPanelMixin:
         지금은 첫 토론이 시작될 때 그 폴더의 서버가 뜨므로, 그 순간을 보지 않으면
         도구가 다 붙은 뒤에도 "미기동" 이 토론이 끝날 때까지 남습니다.
         """
-        if not self.alive or self.mcp_row is None or self.mcp_row.is_deleted:
+        if not self.alive() or self.row is None or self.row.is_deleted:
             return
-        try:
-            runtime = self._session_runtime()
-            status = runtime.connection_status() if runtime is not None else {}
-        except Exception as e:  # noqa: BLE001 - 화면 갱신이 설정 오류로 죽지 않게
-            logger.debug(f"Could not read MCP status for the refresh check: {e}")
+        status = self.service.runtime_status(self.state.workspace_dir)
+        if status is None or self.status_fingerprint(status) == self.status_seen:
             return
-        if self._status_fingerprint(status) == self.mcp_status_seen:
-            return
-        self.refresh_mcp_status()
+        self.refresh_status()
 
-    def _sync_mcp_panel(self) -> None:
+    def sync(self) -> None:
         """잠금과 런타임 상태를 화면에 맞춥니다 (타이머가 부릅니다)."""
-        self._sync_mcp_lock()
-        self._sync_mcp_runtime()
+        self.changes.sync_lock()
+        self.sync_runtime()
 
-    def refresh_mcp_lock(self) -> None:
-        """토론이 시작·종료된 직후 화면에서 부릅니다 (타이머를 기다리지 않도록)."""
-        self._sync_mcp_panel()
-
-    def _apply_mcp_lock(self) -> None:
-        if not self.alive:
-            return
-        if self.mcp_lock_badge and not self.mcp_lock_badge.is_deleted:
-            self.mcp_lock_badge.set_visibility(self.mcp_locked)
-        if self.mcp_lock_hint and not self.mcp_lock_hint.is_deleted:
-            self.mcp_lock_hint.set_text(
-                f"🔒 {self.mcp_lock_reason}" if self.mcp_locked else ""
+    def apply_lock(self) -> None:
+        """잠금이 바뀌었습니다. 이 칸의 잠금 표시와 칩을 맞춥니다."""
+        if self.lock_badge and not self.lock_badge.is_deleted:
+            self.lock_badge.set_visibility(self.state.mcp_locked)
+        if self.lock_hint and not self.lock_hint.is_deleted:
+            self.lock_hint.set_text(
+                f"🔒 {self.state.mcp_lock_reason}" if self.state.mcp_locked else ""
             )
-            self.mcp_lock_hint.set_visibility(self.mcp_locked)
-        if self.mcp_add_btn and not self.mcp_add_btn.is_deleted:
-            self.mcp_add_btn.disable() if self.mcp_locked else self.mcp_add_btn.enable()
-        if self.reload_conf_btn and not self.reload_conf_btn.is_deleted:
-            # 설정을 다시 읽으면 에이전트 풀이 통째로 바뀌고, MCP 서버까지 다시
-            # 띄울 수 있습니다. 진행 중인 토론 밑에서 할 일이 아닙니다.
-            self.reload_conf_btn.disable() if self.mcp_locked else self.reload_conf_btn.enable()
-        self.refresh_mcp_status()
-        # 카드의 도구 버튼도 같은 규칙으로 잠깁니다.
-        self.refresh_agent_cards()
+            self.lock_hint.set_visibility(self.state.mcp_locked)
+        if self.add_btn and not self.add_btn.is_deleted:
+            self.add_btn.disable() if self.state.mcp_locked else self.add_btn.enable()
+        self.refresh_status()
 
-    async def _on_mcp_toggle(self, server_name: str, enabled: bool) -> None:
-        if self._blocked_by_running_debate():
+    async def on_toggle(self, server_name: str, enabled: bool) -> None:
+        if self.changes.blocked_by_running_debate():
             # 스위치를 사용자가 움직여 놓았으므로 실제 설정값으로 되돌립니다.
-            self.refresh_mcp_status()
+            self.refresh_status()
             return
-        await self._apply_conf_change(
-            lambda: set_mcp_server_enabled_in_conf_file(server_name, enabled, self._conf_path()),
+        await self.changes.apply_conf_change(
+            lambda: self.service.set_mcp_enabled(server_name, enabled),
             f"'{server_name}' 서버를 {'활성화하였습니다' if enabled else '비활성화하였습니다'}.",
         )
 
-    def _open_mcp_add_dialog(self) -> None:
-        if self._blocked_by_running_debate():
+    def open_add_dialog(self) -> None:
+        if self.changes.blocked_by_running_debate():
             return
 
         with ui.dialog() as dialog, ui.card().classes(
@@ -339,11 +324,8 @@ class McpPanelMixin:
 
                     transport = transport_sel.value or "auto"
                     dialog.close()
-                    await self._apply_conf_change(
-                        lambda: add_mcp_server_to_conf_file(
-                            name, enabled=enabled, config_path=self._conf_path(),
-                            url=url, headers=headers, transport=transport,
-                        ),
+                    await self.changes.apply_conf_change(
+                        lambda: self.service.add_remote_mcp_server(name, url, headers, transport, enabled),
                         f"'{name}' 원격 서버를 추가하였습니다." + ("" if enabled else " (비활성 상태)"),
                     )
                     return
@@ -367,10 +349,8 @@ class McpPanelMixin:
                     env[key.strip()] = value.strip()
 
                 dialog.close()
-                await self._apply_conf_change(
-                    lambda: add_mcp_server_to_conf_file(
-                        name, command, args, env, enabled, self._conf_path()
-                    ),
+                await self.changes.apply_conf_change(
+                    lambda: self.service.add_local_mcp_server(name, command, args, env, enabled),
                     f"'{name}' 서버를 추가하였습니다." + ("" if enabled else " (비활성 상태)"),
                 )
 
@@ -380,14 +360,14 @@ class McpPanelMixin:
 
         dialog.open()
 
-    def _open_mcp_delete_dialog(self, server_name: str) -> None:
-        if self._blocked_by_running_debate():
+    def open_delete_dialog(self, server_name: str) -> None:
+        if self.changes.blocked_by_running_debate():
             return
 
         # 이 서버를 쓰도록 지정된 에이전트가 있으면 미리 알립니다. 삭제해도
         # 토론은 돌지만, 그 에이전트는 도구 없이 발언하게 됩니다.
         users = [
-            ag.name for ag in self.agent_pool.list_all()
+            ag.name for ag in self.state.agent_pool.list_all()
             if server_name in (ag.allowed_mcp_servers or [])
         ]
 
@@ -410,8 +390,8 @@ class McpPanelMixin:
 
             async def do_delete() -> None:
                 dialog.close()
-                await self._apply_conf_change(
-                    lambda: remove_mcp_server_from_conf_file(server_name, self._conf_path()),
+                await self.changes.apply_conf_change(
+                    lambda: self.service.remove_mcp_server(server_name),
                     f"'{server_name}' 서버를 삭제하였습니다.",
                 )
 
@@ -421,61 +401,9 @@ class McpPanelMixin:
 
         dialog.open()
 
-    def _mcp_fingerprint(self) -> Dict[str, Any]:
-        """지금 떠 있어야 할 MCP 서버 구성. 값이 달라지면 다시 띄워야 합니다."""
-        try:
-            servers = get_config().enabled_mcp_servers
-        except Exception:  # noqa: BLE001
-            return {}
-        return {
-            name: (cfg.command, tuple(cfg.args), tuple(sorted(cfg.env.items())))
-            for name, cfg in servers.items()
-        }
-
-    def _progress_toast(self, message: str):
-        """스스로 사라질 줄 아는 진행 토스트.
-
-        예전에는 `type="ongoing"` 이라 제한 시간이 아예 없었습니다. 뒷일이 끝나기
-        전에 화면이 갱신되거나 이벤트가 오지 않으면 토스트만 영영 남았습니다.
-
-        이제는 제한 시간이 사라짐을 보장하고, 작업이 끝나면 `_dismiss_toast()` 가
-        그보다 일찍 치웁니다. 사용자가 직접 닫을 수도 있습니다.
-
-        토스트 엘리먼트는 **다시 그려지지 않는 슬롯**(로스터 루트)에 답니다. MCP 칩
-        줄 안에서 만들면, 작업이 끝나고 그 줄을 다시 그릴 때 엘리먼트가 지워집니다.
-        그러면 `dismiss()` 가 닿을 곳이 없어지고, 화면의 Quasar 토스트는 자기 포털에
-        그대로 남습니다.
-        """
-        try:
-            # `type="ongoing"` 은 쓰지 않습니다. Quasar 의 그 프리셋이 timeout 을 0 으로
-            # 잡아 두어, 여기서 제한 시간을 줘도 무엇이 이기는지가 버전에 달립니다.
-            # 스피너만 직접 켜면 모양은 같고 사라지는 것은 확실합니다.
-            def _make():
-                return ui.notification(
-                    message, spinner=True, timeout=PROGRESS_TOAST_TIMEOUT,
-                    close_button=True, position="bottom-right",
-                )
-
-            if self.expansion is not None and not self.expansion.is_deleted:
-                with self.expansion:
-                    return _make()
-            return _make()
-        except Exception as e:  # noqa: BLE001 - 알림을 못 띄운다고 작업을 막지 않습니다
-            logger.debug(f"Could not show a progress toast: {e}")
-            return None
-
-    @staticmethod
-    def _dismiss_toast(toast) -> None:
-        if toast is None:
-            return
-        try:
-            toast.dismiss()
-        except Exception as e:  # noqa: BLE001 - 이미 사라진 토스트일 수 있습니다
-            logger.debug(f"Could not dismiss a progress toast: {e}")
-
-    async def _on_mcp_reconnect(self) -> None:
+    async def on_reconnect(self) -> None:
         """연결되지 않은 MCP 서버를 다시 띄웁니다."""
-        runtime = self._session_runtime()
+        runtime = self.service.runtime(self.state.workspace_dir)
         if runtime is None:
             # 이 대화의 폴더에는 아직 서버 묶음이 없습니다. 여기서 띄워 버리면
             # 아무도 반납하지 않는 런타임이 남아 다음 대화의 자리를 먹습니다.
@@ -486,12 +414,12 @@ class McpPanelMixin:
             )
             return
 
-        if self.mcp_reconnect_btn:
-            self.mcp_reconnect_btn.disable()
-        progress = self._progress_toast("MCP 서버 재연결을 시도합니다...")
+        if self.reconnect_btn:
+            self.reconnect_btn.disable()
+        progress = self.changes.progress_toast("MCP 서버 재연결을 시도합니다...")
         try:
             changed = await runtime.reconnect()
-            self.refresh_mcp_status()
+            self.refresh_status()
             if changed:
                 ui.notify("MCP 서버에 다시 연결되었습니다.", type="positive", position="bottom-right")
             else:
@@ -501,6 +429,6 @@ class McpPanelMixin:
             logger.error(f"MCP reconnect failed: {e}")
             ui.notify(f"재연결 중 오류가 발생하였습니다: {e}", type="negative", position="bottom-right")
         finally:
-            self._dismiss_toast(progress)
-            if self.mcp_reconnect_btn:
-                self.mcp_reconnect_btn.enable()
+            self.changes.dismiss_toast(progress)
+            if self.reconnect_btn:
+                self.reconnect_btn.enable()

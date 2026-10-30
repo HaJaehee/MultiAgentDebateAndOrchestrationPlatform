@@ -13,13 +13,15 @@
 
 import pytest
 
+from app.orchestration import roster_service
 from app.ui.components.roster.control import AgentRosterControl
+from app.ui.components.roster.state import is_selected
 
 FOUR = ["orchestrator", "architect", "coder", "critic"]
 
 
 def selected(key, active, known, locked=False):
-    return AgentRosterControl._is_selected(key, active, known, locked)
+    return is_selected(key, active, known, locked)
 
 
 def test_agent_kept_on_stays_on():
@@ -97,8 +99,8 @@ def test_on_agent_toggle_updates_card_classes():
     card = FakeCard()
 
     # 1. 켜기 (True)
-    control._on_agent_toggle("architect", True, card=card)
-    assert control.selected_agents["architect"] is True
+    control.cards.on_toggle("architect", True, card=card)
+    assert control.state.selected_agents["architect"] is True
     assert card.calls[-1] == {
         "remove": "bg-slate-900/60 border-slate-800 opacity-50",
         "add": "bg-slate-800/90 border-indigo-500/60",
@@ -106,8 +108,8 @@ def test_on_agent_toggle_updates_card_classes():
     }
 
     # 2. 끄기 (False)
-    control._on_agent_toggle("architect", False, card=card)
-    assert control.selected_agents["architect"] is False
+    control.cards.on_toggle("architect", False, card=card)
+    assert control.state.selected_agents["architect"] is False
     assert card.calls[-1] == {
         "remove": "bg-slate-800/90 border-indigo-500/60",
         "add": "bg-slate-900/60 border-slate-800 opacity-50",
@@ -120,38 +122,37 @@ def _control_with_four_agents(monkeypatch) -> AgentRosterControl:
     """conf.json 없이도 돌도록 풀을 직접 넣습니다."""
     from app.agents.pool import AgentPool
     from app.config import AgentConfig
-    from tests.roster_patch import patch_roster
 
     pool = AgentPool({
         key: AgentConfig(name=key.title(), role=key, model="openai/gpt-4o-mini", api_key="sk-test") for key in FOUR
     })
-    patch_roster(monkeypatch, "get_agent_pool", lambda: pool)
+    monkeypatch.setattr(roster_service, "get_agent_pool", lambda: pool)
     return AgentRosterControl()
 
 
 def test_select_none_turns_every_specialist_off_but_keeps_the_orchestrator(monkeypatch):
     control = _control_with_four_agents(monkeypatch)
-    control._on_select_all(False)
-    assert {k: v for k, v in control.selected_agents.items() if k != "orchestrator"} == {
+    control.cards.on_select_all(False)
+    assert {k: v for k, v in control.state.selected_agents.items() if k != "orchestrator"} == {
         "architect": False, "coder": False, "critic": False,
     }
-    assert control.selected_agents["orchestrator"] is True
+    assert control.state.selected_agents["orchestrator"] is True
     assert control.get_active_agent_keys() == ["orchestrator"]
 
-    control._on_select_all(True)
-    assert all(control.selected_agents[k] for k in FOUR)
+    control.cards.on_select_all(True)
+    assert all(control.state.selected_agents[k] for k in FOUR)
 
 
 @pytest.mark.parametrize("lock", ["started", "graph"])
 def test_select_all_does_nothing_where_the_checkboxes_are_locked(lock, monkeypatch):
     """체크박스가 잠기는 경우(이미 시작된 대화, 그래프 토론)에는 일괄 선택도 바꾸지 않습니다."""
     control = _control_with_four_agents(monkeypatch)
-    control.selected_agents["coder"] = False
+    control.state.selected_agents["coder"] = False
     if lock == "started":
-        control.personas_locked = True
+        control.state.personas_locked = True
     else:
-        control._graph_agent_keys = set()
-    control._on_select_all(True)
-    assert control.selected_agents["coder"] is False
-    control._on_select_all(False)
-    assert control.selected_agents["architect"] is True
+        control.state.graph_agent_keys = set()
+    control.cards.on_select_all(True)
+    assert control.state.selected_agents["coder"] is False
+    control.cards.on_select_all(False)
+    assert control.state.selected_agents["architect"] is True

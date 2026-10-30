@@ -29,7 +29,7 @@ from app.config import (
 )
 from nicegui import ui
 
-from tests.roster_patch import patch_roster
+from app.orchestration import roster_service
 from app.ui.components.roster.control import AgentRosterControl
 
 SAMPLE = {
@@ -366,8 +366,8 @@ class _FakePool:
 @pytest.fixture()
 def roster(monkeypatch):
     runner = _FakeRunner([])
-    patch_roster(monkeypatch, "get_debate_runner", lambda: runner)
-    patch_roster(monkeypatch, "get_runtime_pool", lambda: _FakePool(_FakeManager()))
+    monkeypatch.setattr(roster_service, "get_debate_runner", lambda: runner)
+    monkeypatch.setattr(roster_service, "get_runtime_pool", lambda: _FakePool(_FakeManager()))
     monkeypatch.setattr(ui, "notify", lambda *a, **k: None)
 
     control = AgentRosterControl()
@@ -377,8 +377,8 @@ def roster(monkeypatch):
 
 def test_a_fresh_session_may_edit_the_agent_pool(roster):
     control, _ = roster
-    assert control._agent_admin_lock_reason() == ""
-    assert control.add_agent_btn._props.get("disable") is None
+    assert control.state.admin_lock_reason() == ""
+    assert control.admin.add_agent_btn._props.get("disable") is None
 
 
 def test_a_started_conversation_freezes_the_agent_pool(roster):
@@ -386,8 +386,8 @@ def test_a_started_conversation_freezes_the_agent_pool(roster):
     control, _ = roster
     control.set_personas_locked(True)
 
-    assert "고정" in control._agent_admin_lock_reason()
-    assert control.add_agent_btn._props.get("disable") is True
+    assert "고정" in control.state.admin_lock_reason()
+    assert control.admin.add_agent_btn._props.get("disable") is True
 
 
 def test_a_running_debate_anywhere_freezes_the_agent_pool(roster):
@@ -396,8 +396,8 @@ def test_a_running_debate_anywhere_freezes_the_agent_pool(roster):
     runner.running = ["another-session"]
     control.refresh_mcp_lock()
 
-    assert "진행 중인 대화" in control._agent_admin_lock_reason()
-    assert control.add_agent_btn._props.get("disable") is True
+    assert "진행 중인 대화" in control.state.admin_lock_reason()
+    assert control.admin.add_agent_btn._props.get("disable") is True
 
 
 def test_the_add_dialog_does_not_open_while_frozen(roster, monkeypatch):
@@ -406,8 +406,8 @@ def test_the_add_dialog_does_not_open_while_frozen(roster, monkeypatch):
     monkeypatch.setattr(ui, "dialog", lambda *a, **k: opened.append("dialog"))
 
     control.set_personas_locked(True)
-    control._open_agent_add_dialog()
-    control._open_agent_delete_dialog("critic")
+    control.admin.open_add_dialog()
+    control.admin.open_delete_dialog("critic")
 
     assert opened == []
 
@@ -416,13 +416,13 @@ def test_the_add_dialog_does_not_open_while_frozen(roster, monkeypatch):
 async def test_a_frozen_roster_never_writes_to_the_conf_file(roster, monkeypatch):
     control, _ = roster
     writes: List[tuple] = []
-    patch_roster(monkeypatch, "set_agent_enabled_in_conf_file",
+    monkeypatch.setattr(roster_service, "set_agent_enabled_in_conf_file",
         lambda *args, **kwargs: writes.append(args),
     )
 
     control.set_personas_locked(True)
-    await control._on_agent_disable("critic")
-    await control._on_agent_enable("critic")
+    await control.admin.disable_agent("critic")
+    await control.admin.enable_agent("critic")
 
     assert writes == []
 
@@ -431,11 +431,11 @@ async def test_a_frozen_roster_never_writes_to_the_conf_file(roster, monkeypatch
 async def test_disable_writes_once_the_conversation_is_fresh(roster, monkeypatch):
     control, _ = roster
     writes: List[tuple] = []
-    patch_roster(monkeypatch, "set_agent_enabled_in_conf_file",
+    monkeypatch.setattr(roster_service, "set_agent_enabled_in_conf_file",
         lambda *args, **kwargs: writes.append(args),
     )
 
-    await control._on_agent_disable("critic")
+    await control.admin.disable_agent("critic")
 
     assert [args[:2] for args in writes] == [("critic", False)]
 
@@ -508,7 +508,7 @@ def test_a_neutral_agent_does_not_clutter_the_file(conf: Path):
 
 
 def _reorder(keys, source, target, after):
-    """`AgentRosterControl._on_drop_on` 의 자리 계산과 같은 규칙."""
+    """`AgentCardsComponent.on_drop_on` 의 자리 계산과 같은 규칙."""
     out = list(keys)
     out.remove(source)
     out.insert(out.index(target) + (1 if after else 0), source)

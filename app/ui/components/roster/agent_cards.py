@@ -1,22 +1,16 @@
-"""로스터 패널 — 에이전트 카드: 카드 그리기, 드래그로 순서 바꾸기, 진영 바꾸기.
-
-`AgentRosterControl` 의 일부입니다 (`control.py`). 상태는 그 클래스가 가집니다.
-"""
+"""로스터 패널 — 에이전트 카드 줄: 카드 그리기, 참여 선택, 드래그로 순서 바꾸기, 진영 바꾸기, 발언 순서 미리보기."""
 
 from __future__ import annotations
 
-import logging
-from typing import Any, Optional
+from typing import Any, Callable, List, Optional
 
 from nicegui import ui
 
 from app.agents.base import Agent
-from app.config import (
-    DEBATE_STANCES,
-    ORCHESTRATOR_KEY,
-    set_agent_debate_order_in_conf_file,
-    set_agent_debate_stance_in_conf_file,
-)
+from app.config import DEBATE_STANCES, ORCHESTRATOR_KEY
+from app.orchestration.roster_service import RosterService
+from app.orchestration.strategies import STRATEGY_MAP, resolve_strategy_name
+from app.ui.components.roster.changes import RosterChanges
 from app.ui.components.roster.common import (
     JS_DRAG_END,
     JS_DRAG_LEAVE,
@@ -25,34 +19,124 @@ from app.ui.components.roster.common import (
     JS_DROP,
     STANCE_COLORS,
     STANCE_LABELS,
+    STANCE_PREVIEW_CLASSES,
     dropped_after,
 )
+from app.ui.components.roster.state import RosterState, order_preview_note
 
-logger = logging.getLogger(__name__)
 
+class AgentCardsComponent:
+    """카드 줄과 그 위아래의 일괄 선택·발언 순서 미리보기. 카드 메뉴가 여는 창과 관리 조작은 콜백으로 받습니다."""
 
-class AgentCardsMixin:
-    """에이전트 카드: 카드 그리기, 드래그로 순서 바꾸기, 진영 바꾸기."""
+    def __init__(
+        self,
+        state: RosterState,
+        service: RosterService,
+        changes: RosterChanges,
+        *,
+        open_tools: Callable[[str], None],
+        open_skills: Callable[[str], None],
+        open_delete: Callable[[str], None],
+        disable_agent: Callable[[str], Any],
+        on_selection_changed: Callable[[], None],
+        refresh_disabled: Callable[[], None],
+    ):
+        self.state = state
+        self.service = service
+        self.changes = changes
+        self.open_tools = open_tools
+        self.open_skills = open_skills
+        self.open_delete = open_delete
+        self.disable_agent = disable_agent
+        self.on_selection_changed = on_selection_changed
+        self.refresh_disabled = refresh_disabled
+        self.cards_row: Optional[ui.row] = None
+        self.order_preview: Optional[ui.row] = None
+        # 참여 체크박스를 한꺼번에 켜고 끄는 버튼. 체크박스가 잠길 때 함께 잠깁니다 (`fill`).
+        self.select_all_btn: Optional[ui.button] = None
+        self.select_none_btn: Optional[ui.button] = None
 
-    def _build_agent_card(self, agent: Agent, persona: Optional[Any] = None) -> bool:
+    def build(self) -> None:
+        with ui.row().classes("w-full items-center gap-1 -mt-1"):
+            self.select_all_btn = (
+                ui.button("모두 선택", icon="done_all", on_click=lambda: self.on_select_all(True))
+                .props("flat dense no-caps color=indigo-4")
+                .classes("text-[11px]")
+            )
+            self.select_all_btn.tooltip(
+                "이 대화에 참여할 전문가 에이전트를 모두 켭니다 (오케스트레이터는 항상 참여 · conf.json 은 그대로)"
+            )
+            self.select_none_btn = (
+                ui.button("모두 선택 해제", icon="remove_done", on_click=lambda: self.on_select_all(False))
+                .props("flat dense no-caps color=grey-5")
+                .classes("text-[11px]")
+            )
+            self.select_none_btn.tooltip(
+                "이 대화에 참여할 전문가 에이전트를 모두 끕니다 (오케스트레이터는 항상 참여 · conf.json 은 그대로)"
+            )
+
+        self.cards_row = ui.row().classes("w-full gap-2 flex-wrap")
+        self.fill(self.state.roster_agents())
+
+        # 카드가 놓인 순서가 곧 발언 순서인 전략은 순차 토론뿐입니다.
+        # 디베이트는 진영끼리 교차시키고, 지명·병렬은 매 라운드
+        # 오케스트레이터가 정합니다. 그 차이가 화면에 없으면 사람은
+        # 카드 순서대로 돌 것이라 믿게 됩니다.
+        self.order_preview = ui.row().classes(
+            "w-full items-center gap-1.5 flex-wrap -mt-1"
+        )
+        self.refresh_order_preview()
+
+    @property
+    def built(self) -> bool:
+        return self.cards_row is not None and not self.cards_row.is_deleted
+
+    def fill(self, agents: List[Agent]) -> None:
+        """카드 줄을 비우고 지금 보기 방식으로 다시 채웁니다."""
+        self.cards_row.clear()
+        hidden = 0
+        with self.cards_row:
+            for ag in agents:
+                p = self.state.current_personas.get(ag.key) if self.state.current_personas else None
+                if not self._build_card(ag, persona=p):
+                    hidden += 1
+            if hidden:
+                ui.label(f"비활성 {hidden}개 숨김").classes(
+                    "text-[12px] text-slate-500 self-center"
+                )
+        # 체크박스와 같은 규칙으로 잠급니다. 잠금이 바뀌는 곳은 모두 카드를 다시 그리므로 여기 한 곳이면 됩니다.
+        locked = self.state.selection_locked
+        for button in (self.select_all_btn, self.select_none_btn):
+            if button is not None and not button.is_deleted:
+                button.set_enabled(not locked)
+
+    def set_view_option(self, name: str, value: bool) -> None:
+        """요약 보기 / 비활성 숨기기. 화면만 바뀌므로 카드와 꺼 둔 줄만 다시 그립니다."""
+        setattr(self.state, name, bool(value))
+        if self.cards_row is None or self.cards_row.is_deleted:
+            return
+        self.fill(self.state.roster_agents())
+        self.refresh_disabled()
+
+    def _build_card(self, agent: Agent, persona: Optional[Any] = None) -> bool:
         """카드 하나를 그립니다. 비활성 숨기기로 감췄으면 False."""
         is_orchestrator = (agent.key == "orchestrator")
-        graph_keys = self._graph_agent_keys
+        graph_keys = self.state.graph_agent_keys
         is_active = (
             agent.key in graph_keys if graph_keys is not None
-            else self.selected_agents.get(agent.key, True)
+            else self.state.selected_agents.get(agent.key, True)
         )
 
         display_name = persona.name if (persona and getattr(persona, "name", None)) else agent.name
         display_role = persona.role if (persona and getattr(persona, "role", None)) else agent.role
         is_customized = getattr(persona, "is_customized", False) if persona else False
 
-        if self.hide_inactive and not is_active and not is_orchestrator:
+        if self.state.hide_inactive and not is_active and not is_orchestrator:
             return False
 
         # 이름 줄 양쪽으로 드래그 손잡이와 (체크박스 + ⋮) 가 붙으면서 가운데가
         # 좁아졌습니다. 폭을 넓혀 이름·역할·뱃지가 제 자리를 갖게 합니다.
-        if self.compact_cards:
+        if self.state.compact_cards:
             card_cls = "px-2 py-1 rounded-lg border max-w-[300px] overflow-hidden transition-all "
         else:
             card_cls = "p-2 rounded-lg border flex-grow max-w-[340px] min-w-[270px] transition-all "
@@ -60,7 +144,7 @@ class AgentCardsMixin:
 
         # 순서를 바꿀 수 있을 때만 집어 들 수 있게 합니다. 오케스트레이터는 라운드
         # 밖에 서므로 순서에 넣지 않습니다.
-        reorderable = not is_orchestrator and not self._agent_admin_lock_reason()
+        reorderable = not is_orchestrator and not self.state.admin_lock_reason()
         if reorderable:
             card_cls += " cursor-grab"
 
@@ -74,18 +158,18 @@ class AgentCardsMixin:
             card.props('draggable="true"')
             # 서버로 가는 것은 드래그 한 번에 세 번뿐입니다 (시작·놓기·끝).
             # 커서를 따라다니는 dragover/dragleave 는 브라우저 안에서만 돕니다.
-            card.on("dragstart", lambda _, k=agent.key: self._on_drag_start(k),
+            card.on("dragstart", lambda _, k=agent.key: self.on_drag_start(k),
                     js_handler=JS_DRAG_START)
-            card.on("dragend", lambda _: self._on_drag_end(), js_handler=JS_DRAG_END)
+            card.on("dragend", lambda _: self.on_drag_end(), js_handler=JS_DRAG_END)
             card.on("dragover", js_handler=JS_DRAG_OVER)
             card.on("dragleave", js_handler=JS_DRAG_LEAVE)
             card.on(
                 "drop",
-                lambda e, k=agent.key: self._on_drop_on(k, dropped_after(e)),
+                lambda e, k=agent.key: self.on_drop_on(k, dropped_after(e)),
                 js_handler=JS_DROP,
             )
 
-        if self.compact_cards:
+        if self.state.compact_cards:
             # 요약 보기 — 아이콘과 이름만. 참여 여부는 흐림으로, 나머지는 툴팁으로 읽습니다.
             with card:
                 with ui.row().classes("w-full items-center gap-1.5 no-wrap min-w-0 overflow-hidden"):
@@ -134,7 +218,7 @@ class AgentCardsMixin:
                                     ).props("dense").classes("flex-shrink-0 text-[13px]").tooltip(
                                     "디베이트 전략에서의 진영"
                                 )
-                            if self.personas_locked and self.agent_pool.get(agent.key) is None:
+                            if self.state.personas_locked and self.state.agent_pool.get(agent.key) is None:
                                 ui.badge("이 대화 전용", color="amber-8").props(
                                     "dense"
                                 ).classes("flex-shrink-0 text-[13px]").tooltip(
@@ -149,14 +233,14 @@ class AgentCardsMixin:
                     with ui.row().classes("items-center gap-0 no-wrap flex-shrink-0"):
                         cb = ui.checkbox(
                             value=is_active,
-                            on_change=lambda e, k=agent.key, c=card: self._on_agent_toggle(k, e.value, c),
+                            on_change=lambda e, k=agent.key, c=card: self.on_toggle(k, e.value, c),
                         ).props("dense dark color=indigo-4")
                         if graph_keys is not None:
                             # 그래프 토론의 참여자는 그래프가 정합니다. 여기서 끄고 켜도 반영되지
                             # 않으므로 손잡이를 잠그고 그래프를 따라 보여 줍니다.
                             cb.disable()
                             cb.tooltip("그래프 토론은 그래프에 배치된 에이전트가 참여합니다 — 그래프 편집 화면에서 변경하십시오.")
-                        elif self.personas_locked:
+                        elif self.state.personas_locked:
                             cb.disable()
                             cb.tooltip("본 세션은 이미 토론이 시작되어 에이전트 구성이 고정되었습니다.")
                         else:
@@ -167,7 +251,7 @@ class AgentCardsMixin:
                         admin_btn = ui.button(icon="more_vert").props(
                             "flat dense round size=10px color=slate-5"
                         )
-                        admin_reason = self._agent_admin_lock_reason()
+                        admin_reason = self.state.admin_lock_reason()
                         if admin_reason:
                             admin_btn.disable()
                             admin_btn.tooltip(admin_reason)
@@ -184,18 +268,18 @@ class AgentCardsMixin:
                                     ui.menu_item(
                                         ("✓ " if chosen else "　") + STANCE_LABELS[stance],
                                         on_click=lambda k=agent.key, s=stance:
-                                            self._on_stance_change(k, s),
+                                            self.on_stance_change(k, s),
                                     ).classes(
                                         "text-[13px] " + ("text-indigo-300" if chosen else "")
                                     )
                                 ui.separator().classes("bg-slate-700")
                                 ui.menu_item(
                                     "비활성화 (설정 유지)",
-                                    on_click=lambda k=agent.key: self._on_agent_disable(k),
+                                    on_click=lambda k=agent.key: self.disable_agent(k),
                                 ).classes("text-[13px]")
                                 ui.menu_item(
                                     "삭제",
-                                    on_click=lambda k=agent.key: self._open_agent_delete_dialog(k),
+                                    on_click=lambda k=agent.key: self.open_delete(k),
                                 ).classes("text-[13px] text-rose-300")
 
             # Model / endpoint / sequential-thinking summary (from conf.json)
@@ -216,14 +300,14 @@ class AgentCardsMixin:
                 tools_button = ui.button(
                     f"도구 {len(allowed)}",
                     icon="handyman",
-                    on_click=lambda _, k=agent.key: self._open_agent_tools_dialog(k),
+                    on_click=lambda _, k=agent.key: self.open_tools(k),
                 ).props("flat dense no-caps stack size=sm color=teal-4").classes(
                     "flex-shrink-0"
                 ).style("font-size: 11px")  # size=sm 이 글자 크기를 인라인(10px)으로 박아 클래스로는 못 바꿉니다
                 ui.label(", ".join(allowed) or "없음").classes(
                     "text-[12px] text-slate-500 truncate"
                 )
-                tools_reason = self._agent_admin_lock_reason()
+                tools_reason = self.state.admin_lock_reason()
                 if tools_reason:
                     tools_button.disable()
                     tools_button.tooltip(tools_reason)
@@ -239,7 +323,7 @@ class AgentCardsMixin:
                 skills_button = ui.button(
                     f"스킬 {len(skills)}",
                     icon="auto_stories",
-                    on_click=lambda _, k=agent.key: self._open_agent_skills_dialog(k),
+                    on_click=lambda _, k=agent.key: self.open_skills(k),
                 ).props("flat dense no-caps stack size=sm color=sky-4").classes(
                     "flex-shrink-0"
                 ).style("font-size: 11px")  # size=sm 이 글자 크기를 인라인(10px)으로 박아 클래스로는 못 바꿉니다
@@ -263,13 +347,48 @@ class AgentCardsMixin:
             ).classes("whitespace-pre-line text-[11px]")
         return True
 
-    def _on_drag_start(self, agent_key: str) -> None:
-        self.dragging_key = agent_key
+    def on_toggle(self, key: str, value: bool, card: Optional[ui.card] = None) -> None:
+        self.state.selected_agents[key] = value
+        if self.state.hide_inactive and not value:
+            # 참여에서 빼는 순간 숨김 대상이 됩니다. 줄을 다시 그려 "N개 숨김" 도 맞춥니다.
+            self.fill(self.state.roster_agents())
+        elif card is not None and not card.is_deleted:
+            if value:
+                card.classes(
+                    remove="bg-slate-900/60 border-slate-800 opacity-50",
+                    add="bg-slate-800/90 border-indigo-500/60",
+                )
+            else:
+                card.classes(
+                    remove="bg-slate-800/90 border-indigo-500/60",
+                    add="bg-slate-900/60 border-slate-800 opacity-50",
+                )
+        self.on_selection_changed()
+        self.refresh_order_preview()
+        self.changes.config_changed_later()
 
-    def _on_drag_end(self) -> None:
-        self.dragging_key = None
+    def on_select_all(self, value: bool) -> None:
+        """참여 체크박스를 한꺼번에 켜고 끕니다. 오케스트레이터는 늘 참여하므로 건드리지 않습니다.
 
-    async def _on_drop_on(self, target_key: str, after: bool = False) -> None:
+        체크박스가 잠기는 경우(그래프 토론, 이미 시작된 대화)에는 아무것도 하지 않습니다.
+        버튼도 그때 잠기지만, 화면이 낡았을 때를 위한 마지막 확인입니다.
+        """
+        if self.state.selection_locked:
+            return
+        self.state.select_all_specialists(value)
+        if self.cards_row is not None and not self.cards_row.is_deleted:
+            self.fill(self.state.roster_agents())
+        self.on_selection_changed()
+        self.refresh_order_preview()
+        self.changes.config_changed_later()
+
+    def on_drag_start(self, agent_key: str) -> None:
+        self.state.dragging_key = agent_key
+
+    def on_drag_end(self) -> None:
+        self.state.dragging_key = None
+
+    async def on_drop_on(self, target_key: str, after: bool = False) -> None:
         """집어 든 카드를 이 카드의 앞(`after=False`) 또는 뒤에 놓습니다.
 
         `after` 는 커서가 대상 카드의 어느 쪽 절반에 있었는지입니다. 이것이 없으면
@@ -285,34 +404,81 @@ class AgentCardsMixin:
         conf.json 의 `debate_priority` 를 다시 매깁니다. 화면에 보이는 순서가 곧
         발언 순서이므로, 눈에 보이는 것과 실제로 도는 것이 같아야 합니다.
         """
-        source_key = self.dragging_key
-        self.dragging_key = None
+        source_key = self.state.dragging_key
+        self.state.dragging_key = None
         if not source_key or source_key == target_key:
             return
-        if self._blocked_for_agent_admin():
+        if self.changes.blocked_for_agent_admin():
             return
 
-        keys = [a.key for a in self._roster_agents()]
+        keys = [a.key for a in self.state.roster_agents()]
         if source_key not in keys or target_key not in keys:
             return
         keys.remove(source_key)
         keys.insert(keys.index(target_key) + (1 if after else 0), source_key)
 
-        await self._apply_agent_change(
-            lambda: set_agent_debate_order_in_conf_file(keys, self._conf_path()),
+        await self.changes.apply_agent_change(
+            lambda: self.service.set_debate_order(keys),
             "발언 순서를 저장하였습니다: "
             + " → ".join(
-                a.name for a in self._roster_agents() if a.key != ORCHESTRATOR_KEY
+                a.name for a in self.state.roster_agents() if a.key != ORCHESTRATOR_KEY
             ),
         )
 
-    async def _on_stance_change(self, agent_key: str, stance: str) -> None:
+    async def on_stance_change(self, agent_key: str, stance: str) -> None:
         """디베이트 전략에서의 진영을 바꿉니다."""
-        if self._blocked_for_agent_admin():
+        if self.changes.blocked_for_agent_admin():
             return
-        agent = next((a for a in self._roster_agents() if a.key == agent_key), None)
+        agent = self.state.find_agent(agent_key)
         display = agent.name if agent is not None else agent_key
-        await self._apply_agent_change(
-            lambda: set_agent_debate_stance_in_conf_file(agent_key, stance, self._conf_path()),
+        await self.changes.apply_agent_change(
+            lambda: self.service.set_debate_stance(agent_key, stance),
             f"'{display}' 에이전트의 진영을 {STANCE_LABELS[stance]}(으)로 변경하였습니다.",
         )
+
+    def refresh_order_preview(self) -> None:
+        """발언 순서 미리보기를 지금 설정으로 다시 그립니다."""
+        if self.order_preview is None or self.order_preview.is_deleted:
+            return
+
+        strategy = STRATEGY_MAP.get(resolve_strategy_name(self.state.strategy_name))
+        speakers = self.state.speaking_order()
+        self.order_preview.clear()
+
+        with self.order_preview:
+            ui.icon("format_list_numbered", size="xs").classes("text-slate-500 flex-shrink-0")
+            ui.label("발언 순서:").classes(
+                "text-[11px] font-semibold text-slate-400 flex-shrink-0"
+            )
+            if strategy is not None and strategy.runs_graph:
+                ui.label(
+                    "그래프 설정에 따름 — 참여자, 순서, 병렬 처리, 반복은 선택된 그래프 정의를 따릅니다."
+                ).classes("text-[11px] text-slate-400")
+                return
+            if strategy is None or not speakers:
+                ui.label("참여할 전문가 에이전트가 없습니다.").classes(
+                    "text-[11px] text-amber-400"
+                )
+                return
+
+            parallel = strategy.orchestrator_dispatches_parallel
+            for index, agent in enumerate(speakers):
+                if index:
+                    # 병렬은 순서가 없습니다. 화살표를 쓰면 없는 차례를 만듭니다.
+                    ui.label("·" if parallel else "→").classes(
+                        "text-[11px] text-slate-600 flex-shrink-0"
+                    )
+                chip = ui.label(
+                    agent.name if parallel else f"{index + 1}. {agent.name}"
+                ).classes(
+                    "text-[11px] px-1.5 py-0.5 rounded flex-shrink-0 "
+                    + STANCE_PREVIEW_CLASSES.get(
+                        agent.debate_stance if strategy.name == "adversarial_debate" else "neutral",
+                        STANCE_PREVIEW_CLASSES["neutral"],
+                    )
+                )
+                chip.tooltip(f"{agent.role} · 우선순위 {agent.debate_priority}")
+
+            ui.label(order_preview_note(strategy, speakers, self.state.parallel_limit)).classes(
+                "text-[12px] text-slate-500 w-full leading-snug"
+            )

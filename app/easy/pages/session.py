@@ -16,11 +16,11 @@ from fastapi import Request
 from nicegui import ui
 
 from app.agents.base import Agent
+from app.agents.catalog import tool_label
 from app.agents.personas import session_roster_agents
 from app.agents.pool import get_agent_pool
 from app.database.models import SessionModel
 from app.database.session import get_session_factory
-from app.easy.catalog import tool_label
 from app.easy.loop import (
     ACTION,
     APPROVAL,

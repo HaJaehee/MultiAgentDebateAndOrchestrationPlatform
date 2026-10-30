@@ -1,4 +1,4 @@
-"""생각 → 행동 → 관찰 단계 분해(app/easy/loop.py) 및 도구 친화적 레이블 변환(app/easy/catalog.py) 단위 테스트.
+"""생각 → 행동 → 관찰 단계 분해(app/easy/loop.py) 및 도구 친화적 레이블 변환(app/agents/catalog.py) 단위 테스트.
 
 테스트 검증 목표:
 1. 스트리밍 텍스트 청크와 도구 실행 결과가 수신된 순서대로 생각 · 행동 · 다음 생각 단계로 순차 적재된다.
@@ -7,7 +7,7 @@
 3. 오케스트레이터의 발언은 실행 상태에 따라 계획(PLAN)과 최종 정리(SYNTHESIS)로 정확히 구분되며, 계획 승인 메타데이터는 별도 승인(APPROVAL) 단계로 취급한다.
 """
 
-from app.easy.catalog import tool_label
+from app.agents.catalog import tool_label
 from app.easy.loop import ACTION, AGENT, APPROVAL, PLAN, SYNTHESIS, THOUGHT, USER, LoopTimeline
 
 READ = {"tool_name": "filesystem__read_text_file", "arguments": {"path": "sales.csv"}, "output": "날짜,제품", "status": "success"}

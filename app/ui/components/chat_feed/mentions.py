@@ -1,28 +1,58 @@
-"""토론 피드 — @언급 제안과 파일 올리기.
-
-`ChatFeed` 의 일부입니다 (`feed.py`). 상태는 그 클래스가 가집니다.
-"""
+"""토론 피드 — @언급 제안과 파일 올리기."""
 
 import json
 import logging
+from typing import Any, Callable, Optional
 
 from nicegui import ui
 
+from app.ui.components.chat_feed.common import MentionProvider, UploadHandler
 from app.workspace_files import MAX_UPLOAD_BYTES, UPLOAD_SUBDIR, format_size, mention_token
 
 
 logger = logging.getLogger(__name__)
 
 
-class MentionUploadMixin:
-    """@언급 제안과 파일 올리기."""
+class MentionUpload:
+    """입력창의 @언급과 작업 공간 업로드. 주어지지 않으면 둘 다 없습니다."""
 
-    async def _handle_mention_query(self, e) -> None:
+    def __init__(
+        self,
+        *,
+        alive: Callable[[], bool],
+        input_field: Callable[[], Any],
+        mention_provider: Optional[MentionProvider] = None,
+        on_upload_file: Optional[UploadHandler] = None,
+        upload_destination: Optional[Callable[[], str]] = None,
+    ):
+        self.alive = alive
+        self.input_field = input_field
+        self.mention_provider = mention_provider
+        self.on_upload_file = on_upload_file
+        self.upload_destination = upload_destination
+        self.upload_button: Optional[ui.button] = None
+        # 브라우저의 언급 창이 이 입력창을 가리키는 이름. 전역 이벤트라 페이지의 다른
+        # 입력창과 섞이지 않게 합니다.
+        self.mention_id = f"feed-{id(self):x}"
+
+    def build_upload_button(self) -> None:
+        if self.on_upload_file is None:
+            return
+        self.upload_button = (
+            ui.button(icon="upload_file", on_click=self.open_upload_dialog)
+            .props("flat round dense color=slate-4")
+            .tooltip(
+                f"워크스페이스에 파일 업로드 — 작업 공간의 {UPLOAD_SUBDIR}/ 에 저장되고, "
+                f"입력창에 @경로가 들어갑니다. 파일 내용은 대화에 붙지 않습니다."
+            )
+        )
+
+    async def handle_query(self, e) -> None:
         """브라우저가 커서 앞의 `@조각` 을 보냈습니다. 후보를 골라 돌려줍니다."""
-        if not self.alive or self.input_field is None or self.mention_provider is None:
+        if not self.alive() or self.input_field() is None or self.mention_provider is None:
             return
         args = e.args if isinstance(e.args, dict) else {}
-        if args.get("id") != self._mention_id:
+        if args.get("id") != self.mention_id:
             return
         try:
             items = await self.mention_provider(str(args.get("query") or ""))
@@ -34,7 +64,7 @@ class MentionUploadMixin:
             f"{json.dumps(args.get('id'))}, {int(args.get('seq') or 0)}, {json.dumps(items, ensure_ascii=False)})"
         )
 
-    def _open_upload_dialog(self) -> None:
+    def open_upload_dialog(self) -> None:
         if self.on_upload_file is None:
             return
         destination = self.upload_destination() if self.upload_destination else UPLOAD_SUBDIR
@@ -76,9 +106,9 @@ class MentionUploadMixin:
 
     def insert_mention(self, rel_path: str) -> None:
         """입력창 커서 자리에 `@경로` 를 넣습니다."""
-        if not self.alive or self.input_field is None:
+        if not self.alive() or self.input_field() is None:
             return
         ui.run_javascript(
             f"window.MadoMention && window.MadoMention.insert("
-            f"{json.dumps(self._mention_id)}, {json.dumps(mention_token(rel_path), ensure_ascii=False)})"
+            f"{json.dumps(self.mention_id)}, {json.dumps(mention_token(rel_path), ensure_ascii=False)})"
         )

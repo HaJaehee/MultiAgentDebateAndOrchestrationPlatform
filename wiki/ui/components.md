@@ -98,9 +98,9 @@ The web application workspace is organized into four primary UI components in [a
 
 - **Agent Toggle Cards**: Allows users to include or exclude specific specialists (e.g. toggling the Critic off for faster brainstorming). The Master Orchestrator is fixed and always enabled.
 - **Select all / none**: `모두 선택` and `모두 선택 해제`, under the `⚠️ 에이전트 추가·삭제와 …` hint
-  (`_on_select_all`). They set every specialist's participation for *this conversation*. The orchestrator
+  (`AgentCardsComponent.on_select_all`). They set every specialist's participation for *this conversation*. The orchestrator
   is left alone and `conf.json` is untouched. They follow the checkbox lock: both are disabled under Graph
-  Debate and in a started conversation. `_fill_cards_row` re-syncs them, because every lock change
+  Debate and in a started conversation. `AgentCardsComponent.fill` re-syncs them, because every lock change
   redraws the cards. Afterwards they redraw the cards, the `N Agents Active` badge and the order preview,
   and save the conversation, the same as a single toggle.
 - **Card anatomy**: drag handle · avatar on the top line, then name with `수정됨` / stance /
@@ -278,14 +278,14 @@ the persona editor — because two copies would drift on how a value is picked o
   lives *outside* the scroll area: inside it, it would scroll out of view the moment a card is
   expanded, which is when it is needed most. Each phase restarts the counter, so it reads "how
   long has this speaker been going", not "how long since the turn started".
-- **Auto-scroll while streaming**: the feed follows new output only while `ChatFeed.following`
+- **Auto-scroll while streaming**: the feed follows new output only while `CardTimeline.following`
   holds, which two things can revoke.
   - **An expanded card.** Expanding is how a reader says "I am reading this", and chunks keep
     arriving from other agents meanwhile. Cards drawn open by the renderer — a speech being
     streamed — do not count: only `_toggle_card()` (a real click) records into
     `_user_expanded`, otherwise following would be off for the whole debate. Finalising a
     stream leaves a user-expanded card open, and the jump button never collapses one.
-  - **A wheel or touch gesture** on the scroll area (`_handle_manual_scroll`, bound with
+  - **A wheel or touch gesture** on the scroll area (`handle_manual_scroll`, bound with
     `throttle=0.3`). Direction is deliberately ignored: judging it would re-attach every time
     the reader nudged downward near the bottom. Watching the scroll *position* instead would
     not work at all — our own auto-scroll moves it, so the feed would detach from itself on
@@ -294,7 +294,7 @@ the persona editor — because two copies would drift on how a value is picked o
   While paused, an amber button in the status bar names the reason — `맨 아래로 (N개 펼침)` or
   `맨 아래로 · 따라가기 재개` — and clicking it clears what it can: a manual scroll, never the
   reader's open cards. To its left, `카드 모두 접기` appears while any card is user-expanded and collapses
-  all of them at once (`_collapse_all_cards`; `_user_expanded` maps each id to its card state for this).
+  all of them at once (`collapse_all_cards`; `_user_expanded` maps each id to its card state for this).
   Cards being streamed stay open. Following resumes unless the reader had also scrolled by hand, and during
   a debate the feed then drops to the bottom, as when the last card is collapsed one by one.
 - **Reaching the actual bottom**: scrolling uses `scroll_to(pixels=SCROLL_TO_BOTTOM_PX)` — a
@@ -302,7 +302,7 @@ the persona editor — because two copies would drift on how a value is picked o
   Quasar converts a percentage using its own *cached* content height, which does not yet
   include the text that just arrived, so percent-scrolling landed a card's height short (over
   200px, measured) and stayed there after the turn ended. The command still executes before Vue
-  patches the DOM, so a second pass runs shortly after: `_scroll_to_bottom()` raises a flag and
+  patches the DOM, so a second pass runs shortly after: `scroll_to_bottom()` raises a flag and
   a 0.2s timer created in `build_ui()` acts on it. The timer must be created there — one made
   inside the streaming consumer task never runs at all (verified: its callback never fired).
 - **Input Bar**: an auto-growing textarea. **Enter sends, Shift+Enter breaks the line** — bound
@@ -379,7 +379,7 @@ Three changes, each closing a different link:
 
 | Where | Change |
 | :--- | :--- |
-| `ChatFeed` | A chunk only appends and raises a flag. `_flush_streams()`, on a `STREAM_RENDER_INTERVAL` (0.25 s) timer created in `build_ui`, redraws each changed card once and scrolls once. (A timer created from the background consumer never runs — the same reason `_settle_scroll` uses a flag.) The final `message_added` still draws immediately. |
+| `ChatFeed` | A chunk only appends and raises a flag. `flush_streams()`, on a `STREAM_RENDER_INTERVAL` (0.25 s) timer created in `build_ui`, redraws each changed card once and scrolls once. (A timer created from the background consumer never runs — the same reason `settle_scroll` uses a flag.) The final `message_added` still draws immediately. |
 | `SpeechRunner.speak` | Chunk events are coalesced to one per `STREAM_EVENT_INTERVAL` (0.1 s), so a briefly slow page no longer overflows its subscriber queue and gets silently dropped mid-stream. A short delayed flush is armed on the first pending chunk — "send when the next chunk arrives" would hide the line written before a 30-second tool call — and it is drained or cancelled on every exit path, so no chunk lands after the message is final (the runner's snapshot would append it to the final text a second time). |
 | `app/main.py` | `reconnect_timeout=30.0`: a few seconds of busyness, a monitor switching off, or waking from sleep resumes the page instead of rebuilding it. |
 
@@ -496,7 +496,7 @@ mentioned; reading them is the job of whichever MCP server handles the format (e
    class `mado-mention-input`. When the text before the caret ends in `@fragment` (preceded by the
    start of text, whitespace or an opening bracket), it sends `emitEvent('mado_mention_query',
    {id, seq, query})`.
-2. `ChatFeed._handle_mention_query` checks `id` against its own `data-mado-mention` value and asks
+2. `MentionUpload.handle_query` checks `id` against its own `data-mado-mention` value and asks
    the page's provider. The provider scans the workspace off the event loop
    (`run.io_bound(WorkspaceIndex.get)`), and `suggest_mentions()` returns at most 30 items — active
    specialists first, then usable skills (matched on name or description), then files and folders ranked

@@ -20,6 +20,7 @@ from app.agents.pool import AgentPool
 from app.config import AgentConfig
 from app.database.models import SessionAgentModel, SessionModel
 from app.database.session import get_session_factory, init_db
+from app.agents.catalog import GUEST_SERVERS
 from app.easy import catalog
 from app.easy.loop import ACTION, THOUGHT, LoopTimeline
 from app.easy.models import EasyAgentModel
@@ -97,7 +98,7 @@ async def test_a_guest_session_is_read_only_with_guest_tools_in_its_own_folder(t
     assert sorted(p.name for p in Path(workspace).iterdir()) == catalog.example_files()
     assert snapshots["orchestrator"]["allowed_mcp_servers"] == []
     for key, snap in snapshots.items():
-        assert set(snap["allowed_mcp_servers"]) <= set(catalog.GUEST_SERVERS), key
+        assert set(snap["allowed_mcp_servers"]) <= set(GUEST_SERVERS), key
     guest_key = next(k for k in snapshots if k.startswith("my_"))
     assert snapshots[guest_key]["model"] == "openai/gpt-4o", "오케스트레이터의 LLM 연결 설정을 상속받습니다"
     assert snapshots[guest_key]["sequential_thinking"]["enabled"] is False

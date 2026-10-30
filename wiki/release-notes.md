@@ -27,6 +27,14 @@ stall in the diagnostics example). It now runs in a worker thread. The speech wa
 faster (GIL); the rest of the server keeps moving. A stop during assembly takes effect at once.
 → [LLM Integration §2](agents/llm-integration.md) · `tests/test_llm_offload.py`
 
+**The roster and the feed are made of components (no change on screen).** `AgentRosterControl` and `ChatFeed` were
+one object spread over mixin files; each piece now takes what it needs through its constructor and can be read and
+tested alone. The rules for changing `conf.json` and for locking moved to `RosterService`, which does not know
+NiceGUI, and the agent draft and catalog moved below the screens, so the expert page no longer imports the beginner
+pages. The two decisions against this from 2026-10-24 are reversed. A golden master of what the browser receives
+was identical before and after.
+→ [Module Boundaries §6.9](architecture/module-boundaries.md) · [ADR-032](../lectures/05-adr/ADR-032-compose-roster-and-feed.md)
+
 ## v1.5
 
 **Tokens and LLM time are measured.** Every LLM call is timed and its reported usage (input, output,

@@ -1,16 +1,13 @@
-"""토론 피드 — 발언 카드: 그리기, 스트리밍, 확정, 겉모습, 접기·복사, 도구 기록, 스크롤 따라가기.
-
-`ChatFeed` 의 일부입니다 (`feed.py`). 상태는 그 클래스가 가집니다.
-"""
+"""토론 피드 — 발언 카드 타임라인: 그리기, 스트리밍, 확정, 겉모습, 접기·복사, 도구 기록, 스크롤 따라가기."""
 
 import json
-import logging
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Callable, Coroutine, Dict, Iterable, List, Optional, Set
 
 from nicegui import ui
 
 from app.agents.base import style_for_agent
 from app.mcp.policy import OUTCOME_LABELS, describe_verdict, tool_outcome
+from app.orchestration.graph_run import NodeBadges
 from app.orchestration.state import FALLBACK_BADGE, fallback_sentence
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.components.chat_feed.common import (
@@ -24,11 +21,138 @@ from app.ui.components.chat_feed.common import (
 )
 from app.ui.math_markdown import MathMarkdown
 
-logger = logging.getLogger(__name__)
 
+class CardTimeline:
+    """발언 카드 타임라인과 스크롤. 이 칸이 살아 있는지가 곧 피드가 살아 있는지입니다 (`alive`)."""
 
-class CardsMixin:
-    """발언 카드: 그리기, 스트리밍, 확정, 겉모습, 접기·복사, 도구 기록, 스크롤 따라가기."""
+    def __init__(
+        self,
+        *,
+        on_open_turn_changes: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
+        on_fork_turn: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
+        on_draft_skill: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
+    ):
+        # 턴별 작업 공간 파일 변경 조회 및 되돌리기 콜백 (턴 ID). 미지정 시 결론 카드에
+        # 파일 칩이 표시되지 않습니다 (`set_turn_actions`).
+        self.on_open_turn_changes = on_open_turn_changes
+        # 해당 턴 시점으로 세션을 분기(Fork)하는 콜백 (턴 ID, `app/session_fork.py`).
+        self.on_fork_turn = on_fork_turn
+        # 해당 턴의 결론 기반으로 스킬 초안을 생성하는 콜백 (턴 ID, `app/orchestration/skill_draft.py`).
+        self.on_draft_skill = on_draft_skill
+        # 렌더링된 카드 캐시 (message id → `_render_card` 의 카드 상태).
+        self._cards_by_id: Dict[str, Dict[str, Any]] = {}
+        self.scroll_area: Optional[ui.scroll_area] = None
+        self.message_container: Optional[ui.column] = None
+        # 이 대화의 에이전트별 색·아이콘. 잠긴 대화는 conf.json 이 아니라 그때
+        # 고정된 스냅샷의 겉모습으로 그려야, 나중에 색을 바꿔도 지난 기록이 그대로
+        # 남습니다. 비어 있으면 예전처럼 키에서 정해집니다.
+        self._agent_styles: Dict[str, Dict[str, Any]] = {}
+        self._active_streams: Dict[str, Dict[str, Any]] = {}
+        self._placeholder: Optional[ui.column] = None
+        # 사용자가 직접 펼쳐 둔 카드 (message id → `_render_card` 의 카드 상태). 하나라도
+        # 있으면 자동 스크롤을 멈춥니다 — 읽는 중에 화면이 밑으로 끌려가면 읽을 수가 없습니다.
+        # 카드 상태까지 들고 있는 것은 "카드 모두 접기" 가 그것을 접어야 하기 때문입니다.
+        # 스트리밍 카드는 펼쳐진 채로 그려지지만 여기 들어오지 않습니다. 그건
+        # 사람이 편 것이 아니라 기본 상태이고, 그것까지 세면 토론이 도는 동안
+        # 자동 스크롤이 영영 꺼집니다.
+        self._user_expanded: Dict[str, Dict[str, Any]] = {}
+        # 그래프 토론 발언에 붙는 노드 배지 ("구현 · 2회차"). 이름은 화면이 그 대화의 그래프에서 줍니다.
+        self._node_badges = NodeBadges()
+        # 사람이 직접 스크롤을 움직였는지. 카드를 접고 나서도 쏟아지는 출력을
+        # 거슬러 올라가려면 이것이 필요합니다 — 펼침 여부와 무관하게, 휠을
+        # 굴리는 것 자체가 "내가 볼 곳은 내가 정한다" 는 뜻입니다.
+        self._scroll_detached: bool = False
+        # 바닥 재조정이 예약돼 있는지, 그리고 그것이 사람이 요청한 것인지
+        # (`scroll_to_bottom` 주석 참고).
+        self._scroll_settle_pending: bool = False
+        # 다시 그려야 할 스트리밍 카드가 있는지. 조각은 내용에 덧붙이기만 하고,
+        # 실제 그리기는 화면의 시계(`flush_streams`)가 모아서 합니다.
+        self._stream_dirty: bool = False
+        self._scroll_settle_forced: bool = False
+        self.collapse_all_button: Optional[ui.button] = None
+        self.follow_button: Optional[ui.button] = None
+
+    @property
+    def alive(self) -> bool:
+        """이 타임라인이 아직 살아 있는 페이지에 붙어 있는지.
+
+        토론은 백그라운드에서 계속 굴러가므로, 새로고침으로 버려진 화면에
+        늦게 도착한 이벤트가 들어올 수 있습니다. 그때 조용히 무시합니다.
+        """
+        return self.message_container is not None and not self.message_container.is_deleted
+
+    def build_status_buttons(self) -> None:
+        """상태 줄에 놓이는 "카드 모두 접기" 와 "맨 아래로"."""
+        # 펼쳐 둔 카드가 있을 때만 보입니다. 여러 개를 펼쳐 읽은 뒤 하나씩 찾아가
+        # 접지 않아도 되게 — 다 접히면 자동 스크롤도 함께 풀립니다.
+        self.collapse_all_button = (
+            ui.button("카드 모두 접기", icon="unfold_less",
+                      on_click=self.collapse_all_cards)
+            .props("flat dense no-caps color=slate-4 size=12px")
+            .tooltip("직접 펼쳐 두신 카드를 모두 세 줄로 접습니다. 생성 중인 발언은 그대로 둡니다.")
+        )
+        self.collapse_all_button.set_visibility(False)
+        self.follow_button = (
+            ui.button("맨 아래로", icon="vertical_align_bottom",
+                      on_click=self.handle_follow)
+            .props("flat dense no-caps color=amber-4 size=12px")
+            .tooltip(
+                "새 발언 자동 스크롤이 비활성화된 상태입니다. 스크롤을 직접 이동하셨다면 "
+                "이 버튼을 클릭하여 자동 스크롤을 재개할 수 있으며, 카드를 펼쳐 "
+                "두셨다면 해당 카드를 접으면 다시 자동 스크롤됩니다."
+            )
+        )
+        self.follow_button.set_visibility(False)
+
+    def build_area(self) -> None:
+        """남은 세로 칸을 다 쓰는 타임라인."""
+        # 2. Scrollable Messages Timeline (Fills all remaining vertical space)
+        with ui.scroll_area().classes("debate-feed w-full flex-grow my-2 pr-2 min-h-0") as self.scroll_area:
+            self.message_container = ui.column().classes("w-full gap-3 debate-timeline")
+            with self.message_container:
+                self.render_empty_placeholder()
+
+        # 사람이 스크롤을 잡는 순간 따라가기를 놓습니다.
+        #
+        # 스크롤 위치가 아니라 **휠·터치 자체**를 봅니다. 위치로 판단하면
+        # 우리가 부른 자동 스크롤과 사람이 굴린 것을 구분할 수 없어, 매
+        # 청크마다 스스로 떼었다 붙였다 하게 됩니다.
+        #
+        # throttle 은 이벤트 수를 줄이려는 것입니다 (휠 한 번에 수십 개가
+        # 옵니다). `leading_events` 가 기본값이라 첫 틱은 그대로 도착하므로
+        # 반응이 늦지 않습니다.
+        for event in ("wheel", "touchmove"):
+            self.scroll_area.on(event, self.handle_manual_scroll, throttle=0.3)
+
+    def render_empty_placeholder(self) -> None:
+        with ui.column().classes("w-full items-center justify-center py-16 text-center text-slate-500") as self._placeholder:
+            ui.icon("forum", size="xl").classes("text-slate-700 mb-2")
+            ui.label("새로운 토론을 시작해 보십시오.").classes("text-base font-bold text-slate-400")
+            ui.label("요청을 입력하시면 Master Orchestrator가 목표를 분석하고 전문가 토론을 진행합니다.").classes("text-xs max-w-md")
+
+    def release_scroll(self) -> None:
+        """직접 움직인 스크롤을 놓아 줍니다 (펼쳐 둔 카드는 그대로 둡니다)."""
+        self._scroll_detached = False
+        self.refresh_follow_button()
+
+    def set_graph_labels(self, labels: Dict[str, str]) -> None:
+        """노드 배지에 쓸 {노드 id: 이름}. 대화를 열 때와 그래프가 돌기 시작할 때 받습니다."""
+        self._node_badges.set_labels(labels)
+
+    def clear(self) -> None:
+        self._node_badges.reset()
+        self._active_streams.clear()
+        self._cards_by_id.clear()
+        # 카드가 사라지므로 펼침 기억도 함께 버립니다. 남겨 두면 다음 대화가
+        # 있지도 않은 카드 때문에 자동 스크롤이 꺼진 채로 시작합니다.
+        self._user_expanded.clear()
+        self.release_scroll()
+        if not self.alive:
+            return
+        self._placeholder = None
+        self.message_container.clear()
+        with self.message_container:
+            self.render_empty_placeholder()
 
     def render_all(
         self,
@@ -47,13 +171,13 @@ class CardsMixin:
         self._active_streams.clear()
         self._user_expanded.clear()
         self._scroll_detached = False
-        self._refresh_follow_button()
+        self.refresh_follow_button()
         self._placeholder = None
         self.message_container.clear()
 
         if not messages:
             with self.message_container:
-                self._render_empty_placeholder()
+                self.render_empty_placeholder()
             return
 
         with self.message_container:
@@ -65,7 +189,7 @@ class CardsMixin:
                     self._active_streams[msg_id] = handles
 
         # 방금 그린 화면입니다. 펼친 카드가 있을 수 없으므로 그냥 맨 아래로.
-        self._scroll_to_bottom(force=True)
+        self.scroll_to_bottom(force=True)
 
     def start_streaming_message(self, msg: Dict[str, Any]) -> None:
         """Starts a streaming message card in the feed."""
@@ -78,7 +202,7 @@ class CardsMixin:
         self._drop_placeholder()
         with self.message_container:
             self._active_streams[msg_id] = self._render_card(msg, streaming=True)
-        self._scroll_to_bottom()
+        self.scroll_to_bottom()
 
     def append_stream_chunk(self, msg_id: str, delta: str) -> None:
         """Appends a text chunk to an actively streaming message card."""
@@ -92,7 +216,7 @@ class CardsMixin:
         info["dirty"] = True
         self._stream_dirty = True
 
-    def _flush_streams(self) -> None:
+    def flush_streams(self) -> None:
         """바뀐 스트리밍 카드만 한 번씩 다시 그리고, 스크롤도 한 번만 합니다."""
         if not self._stream_dirty:
             return
@@ -110,7 +234,7 @@ class CardsMixin:
             markdown.set_content(info["content"])
             drew = True
         if drew:
-            self._scroll_to_bottom()
+            self.scroll_to_bottom()
 
     def append_message(self, msg: Dict[str, Any]) -> None:
         if not self.alive:
@@ -124,7 +248,7 @@ class CardsMixin:
         self._drop_placeholder()
         with self.message_container:
             self._render_card(msg)
-        self._scroll_to_bottom()
+        self.scroll_to_bottom()
 
     def _finalize_streaming_message(self, msg: Dict[str, Any]) -> None:
         """스트리밍 카드를 최종 내용으로 확정합니다.
@@ -187,7 +311,7 @@ class CardsMixin:
         # 버리면 그것대로 남의 손이 끼어든 것입니다.
         if (info.get("id") or "") not in self._user_expanded:
             self._apply_clamp(info, collapsed=True)
-        self._scroll_to_bottom()
+        self.scroll_to_bottom()
 
     def _drop_placeholder(self) -> None:
         """빈 상태 안내가 떠 있으면 치웁니다."""
@@ -214,7 +338,7 @@ class CardsMixin:
         """
         return not self._user_expanded and not self._scroll_detached
 
-    def _handle_manual_scroll(self, _event=None) -> None:
+    def handle_manual_scroll(self, _event=None) -> None:
         """휠이나 터치로 스크롤을 움직였습니다. 방향은 보지 않습니다.
 
         아래로 굴린 것도 "내가 볼 곳은 내가 정한다" 입니다. 여기서 방향을 따져
@@ -224,9 +348,9 @@ class CardsMixin:
         if self._scroll_detached:
             return
         self._scroll_detached = True
-        self._refresh_follow_button()
+        self.refresh_follow_button()
 
-    def _scroll_to_bottom(self, force: bool = False) -> None:
+    def scroll_to_bottom(self, force: bool = False) -> None:
         """맨 아래로. `force` 는 사람이 직접 요청했거나 화면을 새로 그린 경우입니다.
 
         두 번 부릅니다. 브라우저는 이번 갱신에서 늘어난 내용을 **아직 배치하기
@@ -246,7 +370,7 @@ class CardsMixin:
         self._scroll_settle_pending = True
         self._scroll_settle_forced = self._scroll_settle_forced or force
 
-    def _settle_scroll(self) -> None:
+    def settle_scroll(self) -> None:
         """늘어난 내용까지 반영해 바닥을 다시 맞춥니다 (화면의 시계가 부릅니다)."""
         if not self._scroll_settle_pending:
             return
@@ -260,7 +384,7 @@ class CardsMixin:
             return
         self.scroll_area.scroll_to(pixels=SCROLL_TO_BOTTOM_PX)
 
-    def _refresh_follow_button(self) -> None:
+    def refresh_follow_button(self) -> None:
         """자동 스크롤이 멈춰 있다는 사실과 되돌아갈 방법을 함께 보여줍니다.
 
         말없이 멈추면 이번에는 "스크롤이 고장 났다" 가 됩니다. 멈춘 이유를 문구에
@@ -280,7 +404,7 @@ class CardsMixin:
         elif self._scroll_detached:
             self.follow_button.set_text("맨 아래로 · 따라가기 재개")
 
-    def _handle_follow(self) -> None:
+    def handle_follow(self) -> None:
         """맨 아래로 내려가고, 풀 수 있는 만큼 따라가기를 되살립니다.
 
         직접 움직인 스크롤은 여기서 풉니다. 펼쳐 둔 카드는 풀지 않습니다 — 사람이
@@ -288,8 +412,8 @@ class CardsMixin:
         한 번 내려보내는 것까지만 합니다.
         """
         self._scroll_detached = False
-        self._refresh_follow_button()
-        self._scroll_to_bottom(force=True)
+        self.refresh_follow_button()
+        self.scroll_to_bottom(force=True)
 
     def set_agent_styles(self, agents: Optional[List[Any]]) -> None:
         """이 대화의 에이전트 목록으로 카드 겉모습을 맞춥니다.
@@ -303,7 +427,7 @@ class CardsMixin:
             for a in (agents or [])
         }
 
-    def _style_for(self, sender_key: str) -> Dict[str, Any]:
+    def style_for(self, sender_key: str) -> Dict[str, Any]:
         """발언자 카드의 색·아이콘. 이 대화의 값이 있으면 그것을 먼저 씁니다."""
         known = self._agent_styles.get(sender_key)
         if known is not None:
@@ -328,7 +452,7 @@ class CardsMixin:
         # 기록 순서대로 불려야 방문 횟수가 맞습니다 — 카드는 늘 그 순서로 그려집니다.
         node_badge = self._node_badges.observe(msg)
 
-        style = self._style_for(sender_key)
+        style = self.style_for(sender_key)
 
         # 버튼 핸들러가 이 딕셔너리를 통해 카드 상태를 봅니다. 카드를 다 그린 뒤에
         # 채우지만, 핸들러는 클릭될 때 읽으므로 지금 비어 있어도 됩니다.
@@ -479,7 +603,7 @@ class CardsMixin:
             self._toggle_card(info)
         # 사람이 고른 자리로 갑니다. 새 발언이 와도 맨 아래로 끌려가지 않게 따라가기를 멈춥니다.
         self._scroll_detached = True
-        self._refresh_follow_button()
+        self.refresh_follow_button()
         card.classes(add="ring-2 ring-amber-400")
         ui.run_javascript(f'getHtmlElement({card.id})?.scrollIntoView({{block: "center", behavior: "smooth"}})')
         ui.timer(2.5, lambda: card.is_deleted or card.classes(remove="ring-2 ring-amber-400"), once=True)
@@ -595,13 +719,13 @@ class CardsMixin:
         else:
             self._user_expanded[msg_id] = info
 
-        self._refresh_follow_button()
+        self.refresh_follow_button()
         # 마지막 펼침을 접었다면 다시 흐름을 따라가겠다는 뜻입니다. 생성 중일
         # 때만 곧바로 내려갑니다 — 멈춰 있는 화면을 임의로 움직이지 않습니다.
         if self.following and self._active_streams:
-            self._scroll_to_bottom()
+            self.scroll_to_bottom()
 
-    def _collapse_all_cards(self) -> None:
+    def collapse_all_cards(self) -> None:
         """사람이 펼쳐 둔 카드를 한꺼번에 접습니다 (상태 줄의 "카드 모두 접기").
 
         생성 중인 카드는 건드리지 않습니다. 펼친 채 그려지는 것이 기본 상태이고, 다 쓰면
@@ -611,9 +735,9 @@ class CardsMixin:
         for info in list(self._user_expanded.values()):
             self._apply_clamp(info, collapsed=True)
         self._user_expanded.clear()
-        self._refresh_follow_button()
+        self.refresh_follow_button()
         if self.following and self._active_streams:
-            self._scroll_to_bottom()
+            self.scroll_to_bottom()
 
     def _collapse_from_footer(self, info: Dict[str, Any]) -> None:
         """카드 끝의 접기. 접은 뒤 카드 머리가 화면에 보이게 합니다.

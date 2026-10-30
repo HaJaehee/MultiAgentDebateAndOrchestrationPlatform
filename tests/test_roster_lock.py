@@ -17,7 +17,7 @@ import pytest
 
 from nicegui import ui
 
-from tests.roster_patch import patch_roster
+from app.orchestration import roster_service
 from app.ui.components.roster.control import AgentRosterControl
 
 
@@ -103,8 +103,8 @@ class _FakePool:
 def roster(monkeypatch):
     runner = _FakeRunner([])
     manager = _FakeManager()
-    patch_roster(monkeypatch, "get_debate_runner", lambda: runner)
-    patch_roster(monkeypatch, "get_runtime_pool", lambda: _FakePool(manager))
+    monkeypatch.setattr(roster_service, "get_debate_runner", lambda: runner)
+    monkeypatch.setattr(roster_service, "get_runtime_pool", lambda: _FakePool(manager))
     monkeypatch.setattr(ui, "notify", lambda *a, **k: None)
 
     control = AgentRosterControl()
@@ -114,9 +114,9 @@ def roster(monkeypatch):
 
 def test_controls_are_open_when_nothing_is_running(roster):
     control, _, _ = roster
-    assert control.mcp_locked is False
-    assert control.mcp_add_btn._props.get("disable") is None
-    assert control.mcp_lock_hint.visible is False
+    assert control.state.mcp_locked is False
+    assert control.mcp.add_btn._props.get("disable") is None
+    assert control.mcp.lock_hint.visible is False
 
 
 def test_a_running_debate_locks_the_controls(roster):
@@ -125,23 +125,23 @@ def test_a_running_debate_locks_the_controls(roster):
     runner.running = ["session-a", "session-b"]
     control.refresh_mcp_lock()
 
-    assert control.mcp_locked is True
-    assert "2개" in control.mcp_lock_reason
-    assert control.mcp_add_btn._props.get("disable") is True
-    assert control.mcp_lock_hint.visible is True
-    assert control.mcp_lock_badge.visible is True
+    assert control.state.mcp_locked is True
+    assert "2개" in control.state.mcp_lock_reason
+    assert control.mcp.add_btn._props.get("disable") is True
+    assert control.mcp.lock_hint.visible is True
+    assert control.mcp.lock_badge.visible is True
 
 
 @pytest.mark.asyncio
 async def test_locked_toggle_never_reaches_the_conf_file(roster, monkeypatch):
     control, runner, manager = roster
     writes: List[tuple] = []
-    patch_roster(monkeypatch, "set_mcp_server_enabled_in_conf_file",
+    monkeypatch.setattr(roster_service, "set_mcp_server_enabled_in_conf_file",
         lambda *args, **kwargs: writes.append(args),
     )
 
     runner.running = ["session-a"]
-    await control._on_mcp_toggle("filesystem", False)
+    await control.mcp.on_toggle("filesystem", False)
 
     assert writes == [], "토론 중에는 설정 파일을 건드리면 안 됩니다"
     assert manager.reloads == 0, "토론 중에는 서버를 다시 띄우면 안 됩니다"
@@ -151,7 +151,7 @@ async def test_locked_toggle_never_reaches_the_conf_file(roster, monkeypatch):
 async def test_toggle_writes_and_reloads_once_the_debate_is_over(roster, monkeypatch):
     control, runner, manager = roster
     writes: List[tuple] = []
-    patch_roster(monkeypatch, "set_mcp_server_enabled_in_conf_file",
+    monkeypatch.setattr(roster_service, "set_mcp_server_enabled_in_conf_file",
         lambda *args, **kwargs: writes.append(args),
     )
 
@@ -159,9 +159,9 @@ async def test_toggle_writes_and_reloads_once_the_debate_is_over(roster, monkeyp
     control.refresh_mcp_lock()
     runner.running = []            # 마지막 라운드까지 끝나 아티팩트가 나왔습니다
     control.refresh_mcp_lock()
-    assert control.mcp_locked is False
+    assert control.state.mcp_locked is False
 
-    await control._on_mcp_toggle("filesystem", False)
+    await control.mcp.on_toggle("filesystem", False)
 
     assert [args[:2] for args in writes] == [("filesystem", False)]
     assert manager.reloads == 1
@@ -175,9 +175,9 @@ async def test_dialogs_refuse_to_open_while_a_debate_runs(roster, monkeypatch):
     monkeypatch.setattr(ui, "dialog", lambda *a, **k: opened.append("dialog"))
 
     runner.running = ["session-a"]
-    control._open_mcp_add_dialog()
-    control._open_mcp_delete_dialog("filesystem")
-    control._open_agent_tools_dialog("orchestrator")
+    control.mcp.open_add_dialog()
+    control.mcp.open_delete_dialog("filesystem")
+    control.dialogs.open_tools("orchestrator")
 
     assert opened == []
 
@@ -188,7 +188,7 @@ async def test_agent_tool_change_does_not_restart_the_servers(roster):
     control, _, manager = roster
     written: List[str] = []
 
-    await control._apply_conf_change(
+    await control.changes.apply_conf_change(
         lambda: written.append("conf"), "저장했습니다.", restart_servers=False
     )
 
@@ -200,7 +200,7 @@ async def test_agent_tool_change_does_not_restart_the_servers(roster):
 async def test_server_change_still_restarts_the_servers(roster):
     control, _, manager = roster
 
-    await control._apply_conf_change(lambda: None, "저장했습니다.", restart_servers=True)
+    await control.changes.apply_conf_change(lambda: None, "저장했습니다.", restart_servers=True)
 
     assert manager.reloads == 1
 
@@ -211,17 +211,17 @@ async def test_server_change_still_restarts_the_servers(roster):
 def test_sync_keeps_choices_prunes_removed_and_turns_new_ones_on(roster):
     """설정을 다시 읽은 뒤 선택 상태를 지금 있는 에이전트에 맞춥니다."""
     control, _, _ = roster
-    control.selected_agents = {"orchestrator": True, "architect": False, "gone": True}
-    control.agent_pool = _StubPool(["orchestrator", "architect", "researcher"])
+    control.state.selected_agents = {"orchestrator": True, "architect": False, "gone": True}
+    control.state.agent_pool = _StubPool(["orchestrator", "architect", "researcher"])
 
-    control.sync_agents_with_pool()
+    control.state.sync_with_pool()
 
-    assert control.selected_agents == {
+    assert control.state.selected_agents == {
         "orchestrator": True,      # 켜 둔 것은 그대로
         "architect": False,        # 끈 것도 그대로
         "researcher": True,        # 새로 생긴 것은 켠 채로
     }
-    assert "gone" not in control.selected_agents, "사라진 에이전트는 목록에서도 빠져야 합니다"
+    assert "gone" not in control.state.selected_agents, "사라진 에이전트는 목록에서도 빠져야 합니다"
 
 
 @pytest.mark.asyncio
@@ -237,11 +237,11 @@ async def test_reload_is_refused_while_a_debate_runs(roster, monkeypatch):
             rereads.append("reload")
         return _StubConfig()
 
-    patch_roster(monkeypatch, "get_config", get_config)
-    patch_roster(monkeypatch, "reload_agent_pool", lambda: reloaded.append(1))
+    monkeypatch.setattr(roster_service, "get_config", get_config)
+    monkeypatch.setattr(roster_service, "reload_agent_pool", lambda: reloaded.append(1))
 
     runner.running = ["session-a"]
-    await control._on_reload_conf()
+    await control.admin.on_reload_conf()
 
     assert rereads == [], "토론 중에는 설정 파일을 다시 읽지 않습니다"
     assert reloaded == []
@@ -252,7 +252,7 @@ async def test_reload_is_refused_while_a_debate_runs(roster, monkeypatch):
 async def test_broken_conf_leaves_the_running_setup_untouched(roster, monkeypatch):
     """설정 파일이 깨져 있으면 아무것도 바꾸지 않고 돌아옵니다."""
     control, _, manager = roster
-    original_pool = control.agent_pool
+    original_pool = control.state.agent_pool
 
     def get_config(*args, **kwargs):
         if kwargs.get("reload"):
@@ -260,13 +260,13 @@ async def test_broken_conf_leaves_the_running_setup_untouched(roster, monkeypatc
         return _StubConfig()
 
     reloaded: List[int] = []
-    patch_roster(monkeypatch, "get_config", get_config)
-    patch_roster(monkeypatch, "reload_agent_pool", lambda: reloaded.append(1))
+    monkeypatch.setattr(roster_service, "get_config", get_config)
+    monkeypatch.setattr(roster_service, "reload_agent_pool", lambda: reloaded.append(1))
 
-    await control._on_reload_conf()
+    await control.admin.on_reload_conf()
 
     assert reloaded == [], "읽지도 못한 설정으로 풀을 다시 만들면 안 됩니다"
-    assert control.agent_pool is original_pool
+    assert control.state.agent_pool is original_pool
     assert manager.reloads == 0
 
 
@@ -274,34 +274,34 @@ async def test_broken_conf_leaves_the_running_setup_untouched(roster, monkeypatc
 async def test_servers_restart_only_when_their_config_changed(roster, monkeypatch):
     """에이전트만 바뀌었으면 MCP 서버를 다시 띄우지 않습니다 (몇 초를 버립니다)."""
     control, _, manager = roster
-    patch_roster(monkeypatch, "get_config", lambda *a, **k: _StubConfig())
-    patch_roster(monkeypatch, "reload_agent_pool",
+    monkeypatch.setattr(roster_service, "get_config", lambda *a, **k: _StubConfig())
+    monkeypatch.setattr(roster_service, "reload_agent_pool",
                         lambda: _StubPool(["orchestrator", "researcher"]))
 
-    monkeypatch.setattr(control, "_mcp_fingerprint", lambda: {"git": ("python", (), ())})
-    await control._on_reload_conf()
+    monkeypatch.setattr(control.service, "mcp_fingerprint", lambda: {"git": ("python", (), ())})
+    await control.admin.on_reload_conf()
     assert manager.reloads == 0
 
     fingerprints = iter([{"git": ("python", (), ())}, {"git": ("node", (), ())}])
-    monkeypatch.setattr(control, "_mcp_fingerprint", lambda: next(fingerprints))
-    await control._on_reload_conf()
+    monkeypatch.setattr(control.service, "mcp_fingerprint", lambda: next(fingerprints))
+    await control.admin.on_reload_conf()
     assert manager.reloads == 1, "MCP 구성이 바뀌었으면 서버도 맞춰야 합니다"
 
 
 @pytest.mark.asyncio
 async def test_reload_picks_up_a_newly_added_agent(roster, monkeypatch):
     control, _, _ = roster
-    patch_roster(monkeypatch, "get_config", lambda *a, **k: _StubConfig())
-    patch_roster(monkeypatch, "reload_agent_pool",
+    monkeypatch.setattr(roster_service, "get_config", lambda *a, **k: _StubConfig())
+    monkeypatch.setattr(roster_service, "reload_agent_pool",
                         lambda: _StubPool(["orchestrator", "architect", "researcher"]))
-    monkeypatch.setattr(control, "_mcp_fingerprint", lambda: {})
-    control.selected_agents = {"orchestrator": True, "architect": True}
+    monkeypatch.setattr(control.service, "mcp_fingerprint", lambda: {})
+    control.state.selected_agents = {"orchestrator": True, "architect": True}
 
-    await control._on_reload_conf()
+    await control.admin.on_reload_conf()
 
     # 새 에이전트가 선택 목록에 들어오고, 켜진 채로 나옵니다.
-    assert control.selected_agents["researcher"] is True
-    assert set(control.selected_agents) == {"orchestrator", "architect", "researcher"}
+    assert control.state.selected_agents["researcher"] is True
+    assert set(control.state.selected_agents) == {"orchestrator", "architect", "researcher"}
 
 
 # ---------------------------------------------------------------- 런타임 상태 칩
@@ -349,14 +349,14 @@ def test_a_workspace_without_a_runtime_shows_nothing_running(roster, monkeypatch
     안 떠 있는데 말입니다.
     """
     control, _, _ = roster
-    patch_roster(monkeypatch, "get_config", lambda *a, **k: _ConfigWithServers())
-    patch_roster(monkeypatch, "get_runtime_pool",
+    monkeypatch.setattr(roster_service, "get_config", lambda *a, **k: _ConfigWithServers())
+    monkeypatch.setattr(roster_service, "get_runtime_pool",
                         lambda: _LateStartPool(_ConnectedManager()))
 
-    control.refresh_mcp_status()
+    control.mcp.refresh_status()
 
-    assert control._session_runtime() is None
-    assert control.mcp_status_seen == (), "뜨지 않은 런타임의 상태가 그려졌습니다"
+    assert control.service.runtime(control.state.workspace_dir) is None
+    assert control.mcp.status_seen == (), "뜨지 않은 런타임의 상태가 그려졌습니다"
 
 
 def test_the_chip_follows_a_runtime_that_starts_mid_debate(roster, monkeypatch):
@@ -368,23 +368,23 @@ def test_the_chip_follows_a_runtime_that_starts_mid_debate(roster, monkeypatch):
     """
     control, runner, _ = roster
     pool = _LateStartPool(_ConnectedManager())
-    patch_roster(monkeypatch, "get_config", lambda *a, **k: _ConfigWithServers())
-    patch_roster(monkeypatch, "get_runtime_pool", lambda: pool)
+    monkeypatch.setattr(roster_service, "get_config", lambda *a, **k: _ConfigWithServers())
+    monkeypatch.setattr(roster_service, "get_runtime_pool", lambda: pool)
 
     # 토론이 시작됩니다 — 아직 서버는 뜨기 전.
     runner.running = ["session-a"]
     control.refresh_mcp_lock()
-    assert control.mcp_locked is True
-    assert control.mcp_status_seen == ()
+    assert control.state.mcp_locked is True
+    assert control.mcp.status_seen == ()
 
     # 잠금 사유는 그대로인 채로 런타임만 떴습니다.
     pool.started = True
-    control._sync_mcp_panel()
+    control.mcp.sync()
 
-    assert control.mcp_status_seen == (("filesystem", True, 14),)
+    assert control.mcp.status_seen == (("filesystem", True, 14),)
 
     # 바뀐 것이 없으면 다시 그리지 않습니다 (타이머가 2초마다 부릅니다).
     drawn = []
-    monkeypatch.setattr(control, "refresh_mcp_status", lambda: drawn.append(1))
-    control._sync_mcp_panel()
+    monkeypatch.setattr(control.mcp, "refresh_status", lambda: drawn.append(1))
+    control.mcp.sync()
     assert drawn == []

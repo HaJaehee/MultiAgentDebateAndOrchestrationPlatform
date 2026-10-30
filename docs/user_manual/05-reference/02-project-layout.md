@@ -90,6 +90,8 @@ app/
 │   ├── skills.py                    762   스킬 스캔·도구·지침·스크립트 복사
 │   ├── ask_user.py                  129   에이전트 사용자 질문 ask__ask_user (v1.5)
 │   ├── consultation.py              458   동료 자문 peers__consult_agent
+│   ├── draft.py                     306   에이전트 설계도: 도우미 프롬프트·읽기·거르기, 주인 저장
+│   ├── catalog.py                   155   도구·스킬의 쉬운 말 이름, 고를 수 있는 목록
 │   ├── llm.py                       469   LLMCaller: 호출, 폴백 판단, 한 판 호출
 │   ├── llm_loop.py                  630   도구 루프 (ToolLoop 상태 + 단계별 함수)
 │   ├── llm_request.py               173   시스템 프롬프트·LiteLLM 인자
@@ -135,6 +137,7 @@ app/
 │   ├── graph.py                     541   그래프 모델·검증·스케줄러
 │   ├── graph_run.py                 304   그래프 실행 표시
 │   ├── skill_draft.py               143   결론 기반 스킬 초안 생성 (v1.5)
+│   ├── roster_service.py            328   로스터의 conf.json 쓰기·반영·다시 읽기·잠금 규칙 (NiceGUI 없음)
 │   ├── plan_gate.py                 430   계획 승인 규칙 (ADR-028)
 │   ├── tool_gate.py                 453   도구 보안 판정을 토론에 붙임
 │   ├── control.py                   693   정지·개입·한도·승인 제어 채널
@@ -168,8 +171,9 @@ app/
     ├── mention_input.py             221   입력창 @언급 창 (브라우저 스크립트)
     ├── diagnostics_script.py        120   브라우저 진단 보고 스크립트
     ├── math_markdown.py             266   LaTeX → MathML 마크다운
-    ├── components/roster/         3,659   로스터 패널 (control · session_settings · agent_cards · mcp_panel · agent_admin · agent_dialogs · skills_panel · graph_row · common)
-    ├── components/chat_feed/      2,478   토론 피드 (feed · cards · approvals · decisions · mentions · common)
+    ├── components/roster/         3,917   로스터 패널 (control 이 조립 · state · changes · agent_cards · agent_admin · agent_dialogs · mcp_panel · skills_panel · workspace_row · session_settings · graph_row · builder_dialog · widgets · common)
+    ├── components/chat_feed/      2,658   토론 피드 (feed 가 조립 · cards · approvals · decisions · mentions · common)
+    ├── components/agent_builder_chat.py   111   도우미와 대화해 설계도를 채우는 부분 (전문가·쉬운 화면 공용)
     ├── components/sidebar.py        829   세션 목록
     ├── components/artifact_viewer.py   377   산출물 탭, 복사·다운로드
     ├── components/agent_appearance.py   257   카드 색·아이콘 편집기
@@ -202,9 +206,9 @@ app/
 | 도구 보안 규칙 | 문법은 `tool_rules.py`, 판정은 `mcp/policy.py` |
 | 발언 카드 모양 | `ui/components/chat_feed/cards.py` |
 | 에이전트 카드 색·아이콘 | `agents/base.py` (해석·폴백) · `ui/components/agent_appearance.py` (편집기) |
-| 로스터 컨트롤 | `ui/components/roster/` (대화 설정은 `session_settings.py`, conf.json 편집은 `agent_admin.py`) |
+| 로스터 컨트롤 | `ui/components/roster/` (조립은 `control.py`, 값과 선택 규칙은 `state.py`, 대화 설정은 `session_settings.py`, conf.json 편집 화면은 `agent_admin.py`) · conf.json 쓰기와 잠금 규칙은 `orchestration/roster_service.py` |
 | 전문가 화면 배치·동작 | `ui/expert/page.py` |
-| 비엔지니어 화면 (홈·대화형 빌더·생각/행동/관찰 단계) | `easy/` — 도구 레이블/안내 문구는 `easy/catalog.py` |
+| 비엔지니어 화면 (홈·대화형 빌더·생각/행동/관찰 단계) | `easy/` — 도구 레이블/안내 문구는 `agents/catalog.py`, 설계도와 도우미 프롬프트는 `agents/draft.py` |
 | 체험·쉬운 화면 공용 틀 | `ui/shared/page.py` · 화면 주소는 `routes.py` |
 | 스킬 (스캔·도구·스크립트 복사) | `agents/skills.py` · 기본 스킬 디렉터리는 루트의 `skills/` |
 | 산출물 렌더링 | `ui/components/artifact_viewer.py` |
@@ -233,9 +237,9 @@ app/
 
 **`mcp/policy.py` (952줄)** — 도구 호출 판정 한 가지 일을 합니다. 규칙 문법만 `tool_rules.py` 로 내렸습니다.
 
-나머지 큰 클래스는 관심사별 파일로 나눠 두었습니다. 로스터 패널(`AgentRosterControl`)과 토론 피드(`ChatFeed`)는
-한 클래스를 mixin 파일로 나눈 것이라, 메서드를 찾을 때는 패키지 안의 파일 이름을 보시면 됩니다. 어떻게 나눴는지는
-`docs/refactoring-plan.md` 에 있습니다.
+로스터 패널(`AgentRosterControl`)과 토론 피드(`ChatFeed`)는 생성자로 필요한 것만 받는 하위 컴포넌트를 조립합니다.
+컴포넌트끼리는 서로를 모르므로 파일 하나만 읽고 시험할 수 있습니다 (ADR-032). `LLMCaller` 는 MADOWarGame 구동기가
+상속해 쓰므로 한 클래스를 mixin 파일로 나눈 그대로입니다. 어떻게 나눴는지는 `docs/refactoring-plan.md` 에 있습니다.
 
 ---
 

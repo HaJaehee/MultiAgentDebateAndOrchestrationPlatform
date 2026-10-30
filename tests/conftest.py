@@ -32,6 +32,17 @@ async def _start_without_processes(self, key):
     return runtime
 
 
+@pytest.fixture
+def ui_page():
+    """화면 요소를 그릴 곳. 비동기 시험은 자기 태스크에서 돌아 기본 슬롯이 없으므로 `with ui_page:` 로 엽니다."""
+    from nicegui.client import Client
+    from nicegui.page import page
+
+    client = Client(page("/test-ui-page"))
+    yield client
+    client.delete()
+
+
 @pytest.fixture(autouse=True)
 def _no_real_mcp_processes(request, monkeypatch):
     if "real_mcp_runtimes" in request.fixturenames:

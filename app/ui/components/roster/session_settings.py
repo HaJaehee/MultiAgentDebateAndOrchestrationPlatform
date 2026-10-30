@@ -1,323 +1,73 @@
-"""로스터 패널 — 대화 설정: 참여 선택, 전략·라운드·동시 실행 수, 발언 순서 미리보기, 작업 공간, 도구 보안 모드·규칙, 지침, 결정 장부.
-
-`AgentRosterControl` 의 일부입니다 (`control.py`). 상태는 그 클래스가 가집니다.
-"""
+"""로스터 패널 — 대화 설정: 전략·라운드·동시 실행 수, 토큰 예산, 도구 보안 모드·규칙, 지침, 결정 장부."""
 
 from __future__ import annotations
 
-import logging
-from typing import Dict, List, Optional
+from typing import Callable, Coroutine, Dict, List, Optional
 
 from nicegui import ui
 
-from app.agents.base import Agent
-from app.config import ORCHESTRATOR_KEY, resolve_workspace_dir
-from app.mcp.pool import get_runtime_pool
-from app.orchestration.runner import get_debate_runner
-from app.orchestration.state import DebateState
-from app.orchestration.strategies import STRATEGY_MAP, resolve_strategy_name
-from app.ui.components.roster.common import STANCE_PREVIEW_CLASSES
+from app.mcp.policy import MODE_LABELS, MODES
+from app.orchestration.roster_service import RosterService
+from app.orchestration.strategies import STRATEGY_MAP
+from app.ui.components.roster.changes import RosterChanges
+from app.ui.components.roster.state import RosterState
+from app.ui.math_markdown import MathMarkdown
 
 
-logger = logging.getLogger(__name__)
+class ToolRulesDialog:
+    """승인 카드의 "이 대화에서 허용·거부" 로 쌓인 규칙을 보고 지우는 창."""
 
+    def __init__(
+        self,
+        state: RosterState,
+        *,
+        on_changed: Callable[[List[str], List[str]], Coroutine[None, None, None]],
+    ):
+        self.state = state
+        # 규칙을 지웠을 때 저장하는 쪽 (허용, 거부). DB 와 도는 토론을 아는 화면이 답니다.
+        self.on_changed = on_changed
+        self.button: Optional[ui.button] = None
+        self._dialog: Optional[ui.dialog] = None
+        self._body: Optional[ui.column] = None
 
-class SessionSettingsMixin:
-    """대화 설정: 참여 선택, 전략·라운드·동시 실행 수, 발언 순서 미리보기, 작업 공간, 도구 보안 모드·규칙, 지침, 결정 장부."""
-
-    def _speaking_order(self) -> List[Agent]:
-        """지금 설정으로 한 라운드를 돌면 나올 발언 순서.
-
-        엔진과 **같은 함수**를 부릅니다 (`strategy.get_speakers_for_round`).
-        여기서 순서를 다시 구현하면 화면과 실제가 언젠가 갈라지고, 그때
-        사람이 믿는 쪽은 화면입니다.
-
-        오케스트레이터를 목록에 넣어 넘기는 것도 엔진과 같습니다 — 전략이
-        `specialists_of()` 로 직접 빼냅니다.
-        """
-        agents = [
-            a for a in self._roster_agents()
-            if a.key == ORCHESTRATOR_KEY or self.selected_agents.get(a.key, True)
-        ]
-        strategy = STRATEGY_MAP.get(resolve_strategy_name(self.strategy_name))
-        if strategy is None:
-            return []
-        probe = DebateState(
-            session_id=self.session_id or "preview",
-            user_prompt="",
-            strategy=strategy.name,
-            max_rounds=self.max_rounds,
-            current_round=1,
-        )
-        try:
-            return strategy.get_speakers_for_round(agents, 1, probe)
-        except Exception:  # noqa: BLE001 - 미리보기가 로스터를 깨뜨리면 안 됩니다
-            logger.warning("Could not compute the speaking-order preview", exc_info=True)
-            return []
-
-    def _order_preview_note(self, strategy, speakers: List[Agent]) -> str:
-        """순서 옆에 붙는 한 줄. 이 순서를 얼마나 믿어도 되는지 말합니다."""
-        if strategy.orchestrator_dispatches_parallel:
-            over = len(speakers) > self.parallel_limit
-            note = f"동시 실행 (한 번에 최대 {self.parallel_limit}명"
-            note += ", 나머지는 순차로 밀림)" if over else ")"
-            return note + " · 태스크는 매 라운드 오케스트레이터가 나눕니다"
-        if strategy.orchestrator_selects_speakers:
-            return "매 라운드 오케스트레이터가 지명합니다 · 아래는 지명 실패 시의 순서"
-        if strategy.name == "adversarial_debate":
-            stances = {a.debate_stance for a in speakers}
-            if not ({"proponent", "critic"} <= stances):
-                return "한쪽 진영이 비어 대립이 성립하지 않습니다 · 우선순위 순으로 진행"
-            return "제안 ↔ 비판 교차 · 중립은 맨 뒤 (카드 순서와 다를 수 있습니다)"
-        return "카드 순서 그대로 진행 · 각 에이전트가 이전 발언자의 결론을 이어받습니다"
-
-    def _refresh_order_preview(self) -> None:
-        """발언 순서 미리보기를 지금 설정으로 다시 그립니다."""
-        if self.order_preview is None or self.order_preview.is_deleted:
-            return
-
-        strategy = STRATEGY_MAP.get(resolve_strategy_name(self.strategy_name))
-        speakers = self._speaking_order()
-        self.order_preview.clear()
-
-        with self.order_preview:
-            ui.icon("format_list_numbered", size="xs").classes("text-slate-500 flex-shrink-0")
-            ui.label("발언 순서:").classes(
-                "text-[11px] font-semibold text-slate-400 flex-shrink-0"
-            )
-            if strategy is not None and strategy.runs_graph:
-                ui.label(
-                    "그래프 설정에 따름 — 참여자, 순서, 병렬 처리, 반복은 선택된 그래프 정의를 따릅니다."
-                ).classes("text-[11px] text-slate-400")
-                return
-            if strategy is None or not speakers:
-                ui.label("참여할 전문가 에이전트가 없습니다.").classes(
-                    "text-[11px] text-amber-400"
-                )
-                return
-
-            parallel = strategy.orchestrator_dispatches_parallel
-            for index, agent in enumerate(speakers):
-                if index:
-                    # 병렬은 순서가 없습니다. 화살표를 쓰면 없는 차례를 만듭니다.
-                    ui.label("·" if parallel else "→").classes(
-                        "text-[11px] text-slate-600 flex-shrink-0"
-                    )
-                chip = ui.label(
-                    agent.name if parallel else f"{index + 1}. {agent.name}"
-                ).classes(
-                    "text-[11px] px-1.5 py-0.5 rounded flex-shrink-0 "
-                    + STANCE_PREVIEW_CLASSES.get(
-                        agent.debate_stance if strategy.name == "adversarial_debate" else "neutral",
-                        STANCE_PREVIEW_CLASSES["neutral"],
-                    )
-                )
-                chip.tooltip(f"{agent.role} · 우선순위 {agent.debate_priority}")
-
-            ui.label(self._order_preview_note(strategy, speakers)).classes(
-                "text-[12px] text-slate-500 w-full leading-snug"
-            )
-
-    def _refresh_workspace_hint(self) -> None:
-        """입력값이 실제로 어느 폴더가 되는지 보여줍니다 (상대 경로·빈 값 포함)."""
-        if self.workspace_hint is None or self.workspace_hint.is_deleted:
-            return
-        saved = resolve_workspace_dir(self.workspace_dir or None)
-        typed = resolve_workspace_dir((self.workspace_input.value or "").strip() or None) \
-            if self.workspace_input is not None else saved
-        live = get_runtime_pool().get(saved) is not None
-        text = f"이 대화의 작업 공간: {saved}"
-        text += "   |   MCP 서버 기동됨" if live else "   |   MCP 서버는 첫 토론 때 기동됩니다"
-        if typed != saved:
-            text += f"   |   적용 대기: {typed}  ('적용' 버튼을 누르십시오)"
-        self.workspace_hint.set_text(text)
-        btn = self.workspace_download_btn
-        if btn is not None and not btn.is_deleted:
-            if saved.is_dir():
-                btn.enable()
-            else:
-                btn.disable()
-
-    async def _on_workspace_download(self) -> None:
-        if self.on_open_workspace_download is not None:
-            await self.on_open_workspace_download()
-
-    async def _on_workspace_apply(self) -> None:
-        """이 대화가 쓸 작업 공간을 바꿉니다.
-
-        **여기서 MCP 서버를 다시 띄우지 않습니다.** 서버는 이제 작업 공간마다
-        따로 뜨고(`app/mcp/pool.py`), 이 대화의 다음 토론이 시작될 때 그 폴더의
-        런타임이 붙습니다. 다른 대화가 토론 중이어도 상관없습니다 — 그쪽 서버는
-        그쪽 폴더를 계속 보고 있습니다.
-
-        conf.json 은 건드리지 않습니다. 이것은 대화의 설정입니다.
-        """
-        if self.workspace_input is None:
-            return
-        value = (self.workspace_input.value or "").strip()
-
-        if self.session_id and get_debate_runner().is_running(self.session_id):
-            # 진행 중인 토론은 이미 런타임을 빌려 쓰고 있습니다. 도중에 바꾸면
-            # 화면과 도구가 서로 다른 폴더를 가리킵니다.
-            ui.notify("본 세션의 토론이 진행 중입니다. 토론이 종료된 후 변경하십시오.",
-                      type="warning", position="bottom-right")
-            return
-
-        if self.workspace_apply_btn:
-            self.workspace_apply_btn.disable()
-        try:
-            self.workspace_dir = value
-            target = resolve_workspace_dir(value or None)
-            self.refresh_mcp_status()
-            self._refresh_workspace_hint()
-            if self.on_config_changed:
-                await self.on_config_changed()
-            ui.notify(
-                f"본 세션의 작업 공간을 '{target}'(으)로 변경하였습니다. "
-                f"다음 토론부터 해당 폴더의 MCP 서버가 연결됩니다.",
-                type="positive", position="bottom-right",
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"Workspace switch failed: {e}", exc_info=True)
-            ui.notify(f"작업 공간 변경에 실패하였습니다: {e}", type="negative", position="bottom-right")
-        finally:
-            if self.workspace_apply_btn and not self.workspace_apply_btn.is_deleted:
-                self.workspace_apply_btn.enable()
-
-    def _on_agent_toggle(self, key: str, value: bool, card: Optional[ui.card] = None) -> None:
-        self.selected_agents[key] = value
-        if self.hide_inactive and not value:
-            # 참여에서 빼는 순간 숨김 대상이 됩니다. 줄을 다시 그려 "N개 숨김" 도 맞춥니다.
-            self._fill_cards_row(self._roster_agents())
-        elif card is not None and not card.is_deleted:
-            if value:
-                card.classes(
-                    remove="bg-slate-900/60 border-slate-800 opacity-50",
-                    add="bg-slate-800/90 border-indigo-500/60",
-                )
-            else:
-                card.classes(
-                    remove="bg-slate-800/90 border-indigo-500/60",
-                    add="bg-slate-900/60 border-slate-800 opacity-50",
-                )
-        self._update_summary_badge()
-        self._refresh_order_preview()
-        if self.on_config_changed:
-            ui.timer(0.01, self.on_config_changed, once=True)
-
-    def _on_select_all(self, value: bool) -> None:
-        """참여 체크박스를 한꺼번에 켜고 끕니다. 오케스트레이터는 늘 참여하므로 건드리지 않습니다.
-
-        체크박스가 잠기는 경우(그래프 토론, 이미 시작된 대화)에는 아무것도 하지 않습니다.
-        버튼도 그때 잠기지만, 화면이 낡았을 때를 위한 마지막 확인입니다.
-        """
-        if self._graph_agent_keys is not None or self.personas_locked:
-            return
-        for agent in self._roster_agents():
-            if agent.key != ORCHESTRATOR_KEY:
-                self.selected_agents[agent.key] = value
-        if self.cards_row is not None and not self.cards_row.is_deleted:
-            self._fill_cards_row(self._roster_agents())
-        self._update_summary_badge()
-        self._refresh_order_preview()
-        if self.on_config_changed:
-            ui.timer(0.01, self.on_config_changed, once=True)
-
-    def _update_summary_badge(self) -> None:
-        if self._graph_agent_keys is not None:
-            # 그래프 토론은 체크박스가 아니라 그래프에 놓인 에이전트가 참여합니다. 세션 목록
-            # 카드의 'N Agents' 와 같은 수여야 합니다 (`sidebar.active_agent_count`).
-            active_count = len({ORCHESTRATOR_KEY, *self._graph_agent_keys})
-        else:
-            active_count = len([k for k, v in self.selected_agents.items() if v])
-        if self.summary_badge:
-            self.summary_badge.set_text(f"{active_count} Agents Active")
-
-    def _on_strategy_change(self, e) -> None:
-        self.strategy_name = e.value
-        self._sync_parallel_visibility()
-        self._sync_graph_row()
-        self._refresh_order_preview()
-        if self.on_config_changed:
-            ui.timer(0.01, self.on_config_changed, once=True)
-
-    def _sync_parallel_visibility(self) -> None:
-        """'동시 실행' 은 여럿이 동시에 도는 전략(병렬 지시 · 그래프 토론)에서만 의미가 있습니다."""
-        if self.parallel_row is None:
-            return
-        strategy = STRATEGY_MAP.get(self.strategy_name)
-        self.parallel_row.set_visibility(
-            bool(strategy and (strategy.orchestrator_dispatches_parallel or strategy.runs_graph))
-        )
-
-    @staticmethod
-    def _tool_mode_options() -> Dict[str, str]:
-        """모드 목록. 빈 값은 "conf.json 의 기본값" 이고, 그 값이 무엇인지 함께 적습니다."""
-        from app.config import get_config
-        from app.mcp.policy import MODE_LABELS, MODES
-
-        try:
-            default = get_config().tool_security.mode
-        except Exception:  # noqa: BLE001 - 설정을 못 읽어도 목록은 그립니다
-            default = "default"
-        options = {"": f"설정 기본값 ({MODE_LABELS.get(default, default)})"}
-        options.update({mode: MODE_LABELS[mode] for mode in MODES})
-        return options
-
-    def _on_tool_mode_change(self, e) -> None:
-        self.tool_mode = str(e.value or "")
-        if self.tool_mode == "auto":
-            ui.notify(
-                "자동 모드는 거부 규칙 및 고정 보호 항목 외에는 확인 없이 실행합니다. "
-                "격리된 환경에서만 사용하십시오.",
-                type="warning", position="bottom-right",
-            )
-        if self.on_config_changed:
-            ui.timer(0.01, self.on_config_changed, once=True)
-
-    def _tool_rules_label(self) -> str:
-        count = len(self.tool_grants) + len(self.tool_denials)
-        return f"대화 규칙 {count}" if count else "대화 규칙"
-
-    def set_tool_rules(self, grants: Optional[List[str]], denials: Optional[List[str]]) -> None:
+    def set_rules(self, grants: Optional[List[str]], denials: Optional[List[str]]) -> None:
         """이 대화의 허용·거부 목록을 바꿔 그립니다 (세션을 열 때, 카드에 답했을 때)."""
-        self.tool_grants = [str(r) for r in grants or [] if str(r).strip()]
-        self.tool_denials = [str(r) for r in denials or [] if str(r).strip()]
-        if self.tool_rules_button is not None and not self.tool_rules_button.is_deleted:
-            self.tool_rules_button.set_text(self._tool_rules_label())
-        self._render_tool_rules()
+        self.state.set_tool_rules(grants, denials)
+        if self.button is not None and not self.button.is_deleted:
+            self.button.set_text(self.state.tool_rules_label())
+        self.render()
 
-    def _open_tool_rules(self) -> None:
-        if self._tool_rules_dialog is None or self._tool_rules_dialog.is_deleted:
-            with ui.dialog() as self._tool_rules_dialog, ui.card().classes(
+    def open(self) -> None:
+        if self._dialog is None or self._dialog.is_deleted:
+            with ui.dialog() as self._dialog, ui.card().classes(
                 "bg-slate-900 border border-emerald-800 text-slate-200 w-[36rem] max-w-full"
             ):
                 with ui.row().classes("w-full items-center gap-2"):
                     ui.icon("rule", size="sm").classes("text-emerald-300")
                     ui.label("이 대화의 도구 규칙").classes("text-base font-bold text-emerald-200")
                     ui.space()
-                    ui.button(icon="close", on_click=self._tool_rules_dialog.close).props(
+                    ui.button(icon="close", on_click=self._dialog.close).props(
                         "flat round dense color=grey-4"
                     )
                 ui.label(
                     "승인 카드에서 '이 대화에서 허용·거부' 로 쌓인 규칙입니다. 이 대화에만 걸리고 "
                     "다음 턴에도 이어집니다. 지우면 다음 도구 호출부터 다시 모드와 설정대로 판정합니다."
                 ).classes("text-xs text-slate-400")
-                self._tool_rules_body = ui.column().classes("w-full gap-3")
+                self._body = ui.column().classes("w-full gap-3")
                 ui.label(
                     "'항상 허용·거부' 로 저장한 규칙은 conf.json 의 tool_security.allow · deny 에 있습니다."
                 ).classes("text-[11px] text-slate-500")
-        self._render_tool_rules()
-        self._tool_rules_dialog.open()
+        self.render()
+        self._dialog.open()
 
-    def _render_tool_rules(self) -> None:
-        body = self._tool_rules_body
+    def render(self) -> None:
+        body = self._body
         if body is None or body.is_deleted:
             return
         body.clear()
         sections = (
-            ("거부", "playlist_remove", "text-red-300", "denials", self.tool_denials),
-            ("허용", "playlist_add_check", "text-sky-300", "grants", self.tool_grants),
+            ("거부", "playlist_remove", "text-red-300", "denials", self.state.tool_denials),
+            ("허용", "playlist_add_check", "text-sky-300", "grants", self.state.tool_grants),
         )
         with body:
             for title, icon, color, kind, rules in sections:
@@ -336,65 +86,267 @@ class SessionSettingsMixin:
                             )
                             ui.button(
                                 icon="delete_outline",
-                                on_click=lambda _e, k=kind, r=rule: self._remove_tool_rule(k, r),
+                                on_click=lambda _e, k=kind, r=rule: self.remove(k, r),
                             ).props("flat round dense color=grey-5 size=12px").tooltip("이 규칙 지우기")
 
-    async def _remove_tool_rule(self, kind: str, rule: str) -> None:
-        grants = [r for r in self.tool_grants if not (kind == "grants" and r == rule)]
-        denials = [r for r in self.tool_denials if not (kind == "denials" and r == rule)]
-        if self.on_tool_rules_changed is not None:
-            await self.on_tool_rules_changed(grants, denials)
+    async def remove(self, kind: str, rule: str) -> None:
+        grants = [r for r in self.state.tool_grants if not (kind == "grants" and r == rule)]
+        denials = [r for r in self.state.tool_denials if not (kind == "denials" and r == rule)]
+        await self.on_changed(grants, denials)
         # 알림을 먼저 띄웁니다. 다시 그리면 방금 누른 버튼이 지워지고, 그 버튼 자리에서는
         # 더 이상 알림을 띄울 수 없습니다.
         ui.notify(f"세션 대화 규칙을 삭제하였습니다: {rule}", type="info", position="bottom-right")
-        self.set_tool_rules(grants, denials)
+        self.set_rules(grants, denials)
 
-    def _on_parallel_limit_change(self, e) -> None:
+
+class SessionSettingsComponent:
+    """이 대화에만 걸리는 손잡이들. 값은 `RosterState` 에 두고, 저장은 `RosterChanges` 를 거쳐 화면에 맡깁니다."""
+
+    def __init__(
+        self,
+        state: RosterState,
+        service: RosterService,
+        changes: RosterChanges,
+        *,
+        tool_rules: ToolRulesDialog,
+        on_strategy_changed: Callable[[], None],
+        on_parallel_changed: Callable[[], None],
+    ):
+        self.state = state
+        self.service = service
+        self.changes = changes
+        self.tool_rules = tool_rules
+        self.on_strategy_changed = on_strategy_changed
+        self.on_parallel_changed = on_parallel_changed
+        self.converge_switch: Optional[ui.switch] = None
+        self.ask_switch: Optional[ui.switch] = None
+        self.budget_input: Optional[ui.number] = None
+        self.tool_mode_select: Optional[ui.select] = None
+        self.strategy_select: Optional[ui.select] = None
+        self.rounds_slider: Optional[ui.slider] = None
+        self.rounds_label: Optional[ui.badge] = None
+        self.parallel_row: Optional[ui.row] = None
+        self.parallel_input: Optional[ui.number] = None
+        self.custom_instr_input: Optional[ui.textarea] = None
+        self.ledger_expansion: Optional[ui.expansion] = None
+        self.ledger_view: Optional[ui.markdown] = None
+
+    def build_controls(self) -> None:
+        with ui.row().classes("w-full items-center justify-between gap-3 flex-wrap"):
+            # Strategy Selection
+            with ui.row().classes("items-center gap-2 min-w-[240px]"):
+                ui.icon("alt_route", size="xs").classes("text-indigo-400")
+                ui.label("토론 전략:").classes("text-xs font-semibold text-slate-300")
+                strategy_options = {k: v.display_name for k, v in STRATEGY_MAP.items()}
+                self.strategy_select = ui.select(
+                    options=strategy_options,
+                    value=self.state.strategy_name,
+                    on_change=self.on_strategy_change,
+                ).props("outlined dense dark options-dense").classes("w-52 text-xs")
+
+            # Max Rounds Slider
+            with ui.row().classes("items-center gap-2 min-w-[180px]"):
+                ui.icon("repeat", size="xs").classes("text-amber-400")
+                ui.label("최대 라운드:").classes("text-xs font-semibold text-slate-300")
+                self.rounds_slider = ui.slider(
+                    min=1, max=5, step=1, value=self.state.max_rounds, on_change=self.on_rounds_change
+                ).props("dark label color=indigo-4").classes("w-20")
+                self.rounds_label = ui.badge(str(self.state.max_rounds), color="indigo-7").props("dense")
+                # 라운드 수는 최대 상한이며, 합의 수렴 시 조기 종료될 수 있음을 바로 옆에 배치합니다.
+                self.converge_switch = ui.switch(
+                    "합의되면 일찍 끝내기", value=self.state.converge_early, on_change=self.on_converge_change,
+                ).props("dense dark color=indigo-4").classes("text-xs text-slate-300")
+                self.converge_switch.tooltip(
+                    "각 라운드 종료 시 갱신되는 결정 장부에 2라운드 연속 미해결 쟁점이 없고 새로운 결정 사항이 "
+                    "추가되지 않아 수렴한 경우, 남은 라운드를 건너뛰고 조기 종료하여 결론을 합성합니다. "
+                    "그래프 토론에는 적용되지 않습니다 (게이트 조건으로 종료 판정)."
+                )
+                self.ask_switch = ui.switch(
+                    "에이전트 질문 받기", value=self.state.ask_user, on_change=self.on_ask_user_change,
+                ).props("dense dark color=violet-4").classes("text-xs text-slate-300")
+                self.ask_switch.tooltip(
+                    "전문가 에이전트가 발언 도중 요구사항이 모호할 때 사용자에게 확인 질문을 요청할 수 있습니다 (턴당 최대 3회). "
+                    "채팅 피드에 질문 카드가 표시되며, 5분 이내에 답변이 없으면 자체 가정을 명시하고 계속 진행합니다. "
+                    "답변 내용은 후속 발언자들에게도 공유됩니다."
+                )
+
+            # 턴 토큰 예산 — 해당 턴의 최대 소모 토큰(입력+출력) 한도. 도달 시 다음 라운드 경계에서 결론 합성으로 이동합니다.
+            with ui.row().classes("items-center gap-2 min-w-[180px]"):
+                ui.icon("data_usage", size="xs").classes("text-sky-400")
+                ui.label("토큰 예산:").classes("text-xs font-semibold text-slate-300")
+                self.budget_input = ui.number(
+                    value=self.state.token_budget or None, min=0, step=10000, format="%.0f",
+                    placeholder="없음", on_change=self.on_token_budget_change,
+                ).props("outlined dense dark").classes("w-28 text-xs")
+                self.budget_input.tooltip(
+                    "해당 턴에서 소모할 수 있는 최대 토큰(입력+출력) 한도입니다. 한도에 도달하면 다음 라운드 경계에서 "
+                    "남은 라운드를 건너뛰고 현재까지의 토론 내용을 바탕으로 결론을 합성합니다. "
+                    "비우거나 0으로 설정하면 상한이 없습니다. 발언 카드 및 세션 정보에서 실제 사용량을 확인할 수 있습니다."
+                )
+
+            # 도구 보안 모드 (`app/mcp/policy.py`). 대화마다 고르고, 토론 중에 바꾸면
+            # 진행 중인 턴에도 다음 도구 호출부터 걸립니다.
+            with ui.row().classes("items-center gap-2 min-w-[220px]"):
+                ui.icon("shield", size="xs").classes("text-emerald-400")
+                ui.label("도구 보안:").classes("text-xs font-semibold text-slate-300")
+                self.tool_mode_select = ui.select(
+                    options=self.tool_mode_options(),
+                    value=self.state.tool_mode,
+                    on_change=self.on_tool_mode_change,
+                ).props("outlined dense dark options-dense").classes("w-40 text-xs")
+                self.tool_mode_select.tooltip(
+                    "읽기 전용: 읽기만 · 기본: 작업 공간 쓰기와 검사를 통과한 코드는 묻지 "
+                    "않음 · 검토: 읽기 말고 전부 묻기 · 자동: 거부 규칙 말고 묻지 않음. "
+                    "고정 보호(MADO 설정·비밀·다른 대화의 기억)는 어느 모드에서도 풀리지 않습니다."
+                )
+                self.tool_rules.button = (
+                    ui.button(self.state.tool_rules_label(), icon="rule",
+                              on_click=self.tool_rules.open)
+                    .props("flat dense no-caps color=emerald-4 size=12px")
+                    .tooltip(
+                        "승인 카드에서 '이 대화에서 허용·거부' 로 쌓인 규칙을 보고 지웁니다. "
+                        "'항상' 규칙은 conf.json 의 tool_security 에 있습니다."
+                    )
+                )
+
+            # 동시 실행 상한 — 병렬 지시 전략에서만 뜹니다. 다른 전략에서는
+            # 읽히지 않는 값이라, 늘 띄워 두면 안 듣는 손잡이가 됩니다.
+            self.parallel_row = ui.row().classes("items-center gap-2 min-w-[180px]")
+            with self.parallel_row:
+                ui.icon("call_split", size="xs").classes("text-teal-400")
+                ui.label("동시 실행:").classes("text-xs font-semibold text-slate-300")
+                self.parallel_input = ui.number(
+                    value=self.state.parallel_limit, min=1, max=8, step=1, format="%.0f",
+                    on_change=self.on_parallel_limit_change,
+                ).props("outlined dense dark").classes("w-16 text-xs")
+                self.parallel_input.tooltip(
+                    "한 라운드에 동시에 띄울 에이전트 수. 이보다 많이 지시받으면 "
+                    "나머지는 순차적으로 밀려 실행됩니다. 로컬 단일 엔드포인트"
+                    "(Ollama 등)에서는 낮게 두세요"
+                )
+            self.sync_parallel_visibility()
+
+    def build_notes(self) -> None:
+        # Custom Instructions Input
+        with ui.column().classes("w-full gap-1 mt-1"):
+            ui.label("세션 전용 커스텀 지침 (선택사항):").classes("text-[11px] font-semibold text-slate-400")
+            self.custom_instr_input = ui.textarea(
+                placeholder="본 세션에 적용할 추가 지침을 입력하십시오 (예: '비동기 FastAPI 및 Pydantic v2 기준으로 작성')...",
+                value=self.state.custom_instructions,
+                on_change=self.on_instructions_change,
+            ).props("outlined dark dense autogrow rows=2").classes("w-full text-xs")
+
+        # 결정 장부 — 커스텀 지침 바로 아래. 프롬프트에서는 이번 차례 지시 바로 앞에 들어갑니다.
+        with ui.expansion("결정 장부", icon="fact_check", value=False).classes(
+            "w-full mt-1 bg-slate-800/40 rounded-lg border border-slate-800 text-xs"
+        ) as self.ledger_expansion:
+            ui.label(
+                "오케스트레이터가 각 라운드 및 최종 합성 완료 후 요구사항, 결정 사항, 기각안, "
+                "미해결 쟁점, 담당 업무를 정리합니다. 모든 에이전트의 지시문 앞에 포함되어 "
+                "이전 기록이 생략되더라도 유지됩니다. 읽기 전용이며, "
+                "수정이 필요한 항목은 채팅으로 전달하시면 다음 갱신 시 반영됩니다."
+            ).classes("text-[12px] text-slate-500 leading-snug px-2")
+            self.ledger_view = MathMarkdown("").classes(
+                "w-full px-2 pb-2 text-[11px] text-slate-300 break-words"
+            )
+        self.set_decision_ledger(self.state.decision_ledger)
+
+    def sync_from_state(self) -> None:
+        """대화를 열 때 값을 손잡이에 옮깁니다. 값이 바뀐 손잡이는 자기 핸들러도 부릅니다."""
+        state = self.state
+        if self.strategy_select:
+            self.strategy_select.value = state.strategy_name
+        if self.rounds_slider:
+            self.rounds_slider.value = state.max_rounds
+        if self.parallel_input:
+            self.parallel_input.value = state.parallel_limit
+        if self.converge_switch:
+            self.converge_switch.value = state.converge_early
+        if self.budget_input:
+            self.budget_input.value = state.token_budget or None
+        if self.ask_switch:
+            self.ask_switch.value = state.ask_user
+        if self.tool_mode_select:
+            # conf.json 의 기본 모드가 바뀌었을 수 있으니 목록도 새로 그립니다.
+            self.tool_mode_select.set_options(self.tool_mode_options(), value=state.tool_mode)
+        self.sync_parallel_visibility()
+        if self.rounds_label:
+            self.rounds_label.set_text(str(state.max_rounds))
+        if self.custom_instr_input:
+            self.custom_instr_input.value = state.custom_instructions
+
+    def on_strategy_change(self, e) -> None:
+        self.state.strategy_name = e.value
+        self.sync_parallel_visibility()
+        self.on_strategy_changed()
+        self.changes.config_changed_later()
+
+    def sync_parallel_visibility(self) -> None:
+        """'동시 실행' 은 여럿이 동시에 도는 전략(병렬 지시 · 그래프 토론)에서만 의미가 있습니다."""
+        if self.parallel_row is None:
+            return
+        strategy = STRATEGY_MAP.get(self.state.strategy_name)
+        self.parallel_row.set_visibility(
+            bool(strategy and (strategy.orchestrator_dispatches_parallel or strategy.runs_graph))
+        )
+
+    def tool_mode_options(self) -> Dict[str, str]:
+        """모드 목록. 빈 값은 "conf.json 의 기본값" 이고, 그 값이 무엇인지 함께 적습니다."""
+        default = self.service.default_tool_mode()
+        options = {"": f"설정 기본값 ({MODE_LABELS.get(default, default)})"}
+        options.update({mode: MODE_LABELS[mode] for mode in MODES})
+        return options
+
+    def on_tool_mode_change(self, e) -> None:
+        self.state.tool_mode = str(e.value or "")
+        if self.state.tool_mode == "auto":
+            ui.notify(
+                "자동 모드는 거부 규칙 및 고정 보호 항목 외에는 확인 없이 실행합니다. "
+                "격리된 환경에서만 사용하십시오.",
+                type="warning", position="bottom-right",
+            )
+        self.changes.config_changed_later()
+
+    def on_parallel_limit_change(self, e) -> None:
         # 빈 칸으로 지우는 중이면 (`None`) 마지막 값을 지킵니다. 0 이나 음수는
         # "동시에 아무도 못 돈다" 는 뜻이 되므로 최소 1 입니다.
         if e.value is None:
             return
-        self.parallel_limit = max(1, int(e.value))
-        self._refresh_order_preview()
-        if self.on_config_changed:
-            ui.timer(0.01, self.on_config_changed, once=True)
+        self.state.parallel_limit = max(1, int(e.value))
+        self.on_parallel_changed()
+        self.changes.config_changed_later()
 
-    def _on_converge_change(self, e) -> None:
-        self.converge_early = bool(e.value)
-        if self.on_config_changed:
-            ui.timer(0.01, self.on_config_changed, once=True)
+    def on_converge_change(self, e) -> None:
+        self.state.converge_early = bool(e.value)
+        self.changes.config_changed_later()
 
-    def _on_ask_user_change(self, e) -> None:
-        self.ask_user = bool(e.value)
-        if self.on_config_changed:
-            ui.timer(0.01, self.on_config_changed, once=True)
+    def on_ask_user_change(self, e) -> None:
+        self.state.ask_user = bool(e.value)
+        self.changes.config_changed_later()
 
-    def _on_token_budget_change(self, e) -> None:
+    def on_token_budget_change(self, e) -> None:
         # 빈 값(`None`) 또는 음수는 상한 없음(0)으로 처리합니다.
-        self.token_budget = max(0, int(e.value or 0))
-        if self.on_config_changed:
-            ui.timer(0.01, self.on_config_changed, once=True)
+        self.state.token_budget = max(0, int(e.value or 0))
+        self.changes.config_changed_later()
 
-    def _on_rounds_change(self, e) -> None:
-        self.max_rounds = int(e.value)
-        if hasattr(self, "rounds_label") and self.rounds_label:
-            self.rounds_label.set_text(str(self.max_rounds))
-        if self.on_config_changed:
-            ui.timer(0.01, self.on_config_changed, once=True)
+    def on_rounds_change(self, e) -> None:
+        self.state.max_rounds = int(e.value)
+        if self.rounds_label:
+            self.rounds_label.set_text(str(self.state.max_rounds))
+        self.changes.config_changed_later()
 
     def set_decision_ledger(self, ledger: str) -> None:
         """결정 장부를 보여 줍니다. 진행 중인 토론이 갱신할 때마다 불립니다."""
-        self.decision_ledger = ledger or ""
+        self.state.decision_ledger = ledger or ""
         if self.ledger_view is not None:
             self.ledger_view.set_content(
-                self.decision_ledger or "_아직 없음 — 첫 라운드나 최종 합성이 끝나면 채워집니다._"
+                self.state.decision_ledger or "_아직 없음 — 첫 라운드나 최종 합성이 끝나면 채워집니다._"
             )
         if self.ledger_expansion is not None:
             self.ledger_expansion.props(
-                f'caption="{len(self.decision_ledger):,}자"' if self.decision_ledger else 'caption="비어 있음"'
+                f'caption="{len(self.state.decision_ledger):,}자"' if self.state.decision_ledger else 'caption="비어 있음"'
             )
 
-    def _on_instructions_change(self, e) -> None:
-        self.custom_instructions = e.value
-        if self.on_config_changed:
-            ui.timer(0.01, self.on_config_changed, once=True)
+    def on_instructions_change(self, e) -> None:
+        self.state.custom_instructions = e.value
+        self.changes.config_changed_later()

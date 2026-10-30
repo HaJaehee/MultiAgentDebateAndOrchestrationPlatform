@@ -34,7 +34,7 @@ conversation is unaffected, because it froze its own copy of both values at lock
 ## 1. The lock: who may edit, and when
 
 All six are gated by
-[`_agent_admin_lock_reason()`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/agent_admin.py). Opening
+[`agent_admin_lock_reason()`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/roster_service.py). Opening
 only some of them would produce the worst outcome — a user changes something and cannot tell why the
 conversation ignored it.
 
@@ -219,7 +219,7 @@ degrades to a single priority-ordered pass.
 ## 7. Applying the change to the running app
 
 Writing the file is not enough — the screen and the live pool would drift until the next restart.
-[`_apply_agent_change()`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/agent_admin.py) chains:
+[`RosterChanges.apply_agent_change()`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/changes.py) chains:
 
 ```mermaid
 graph LR

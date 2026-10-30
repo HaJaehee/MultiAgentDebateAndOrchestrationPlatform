@@ -11,7 +11,7 @@
 - 토론을 돌리는 쪽(orchestration · agents · mcp · database · config)은 화면도, NiceGUI 도 모릅니다.
   그래야 브라우저가 끊겨도 토론이 백그라운드에서 끝납니다.
 - 화면 패키지끼리는 서로 가져다 쓰지 않습니다. 함께 쓰는 것은 `app.ui.shared` 와
-  `app.ui.components` 에 둡니다.
+  `app.ui.components` 에, 화면이 아닌 것은 아래층(`app.agents.draft`·`app.agents.catalog`)에 둡니다.
 
 `KNOWN_VIOLATIONS` 는 알고도 남겨 둔 위반입니다 (지금은 없습니다). 줄이기만 하고 늘리지 않습니다.
 고쳐서 사라진 항목이 목록에 남아 있으면 그것도 실패로 알립니다.
@@ -38,7 +38,7 @@ SHARED_UI = (
     "app.ui.shared", "app.ui.run_binding", "app.ui.components.chat_feed", "app.ui.components.model_status",
     "app.ui.components.agent_appearance", "app.ui.components.quiet_splitter", "app.ui.math_markdown",
     "app.ui.clipboard", "app.ui.theme", "app.ui.mermaid_export", "app.ui.mention_input",
-    "app.ui.diagnostics_script",
+    "app.ui.diagnostics_script", "app.ui.components.agent_builder_chat",
 )
 ENGINE_SIDE = ("app.orchestration", "app.agents", "app.mcp", "app.database", "app.config")
 
@@ -66,12 +66,20 @@ RULES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("app.easy", ("app.trial.pages",) + EXPERT_UI),
     # 화면 공용 부품은 어느 화면에도 기대지 않습니다.
     *((shared, ("app.trial", "app.easy") + EXPERT_UI) for shared in SHARED_UI),
-    # 전문가 화면은 쉬운 화면의 기능(대화로 에이전트 만들기)을 빌려 쓰지만 체험 화면은 모릅니다.
-    *((expert, ("app.trial",)) for expert in EXPERT_UI),
+    # 전문가 화면은 쉬운 화면도 체험 화면도 모릅니다. 대화로 에이전트 만들기의 재료는 아래층에 있습니다
+    # (`app.agents.draft`·`app.agents.catalog`·`app.ui.components.agent_builder_chat`).
+    *((expert, ("app.trial", "app.easy")) for expert in EXPERT_UI),
 )
 
-# 토론을 돌리는 쪽은 NiceGUI 를 가져오지 않습니다.
-NO_NICEGUI = ENGINE_SIDE
+# 토론을 돌리는 쪽은 NiceGUI 를 가져오지 않습니다. 로스터의 상태 객체도 화면 없이 돕니다.
+NO_NICEGUI = ENGINE_SIDE + ("app.ui.components.roster.state",)
+
+# 큰 화면 부품의 하위 컴포넌트가 가져와도 되는 것. 컴포넌트끼리는 서로를 모릅니다. 잇는 것은
+# 조립하는 파일(`control.py`, `feed.py`)이고, 나머지는 생성자로 받는 상태·서비스·콜백입니다.
+COMPONENT_SIBLINGS = {
+    "app.ui.components.roster": ("control", {"common", "state", "changes", "widgets", "builder_dialog"}),
+    "app.ui.components.chat_feed": ("feed", {"common"}),
+}
 
 # 아직 남은 위반: (가져오는 모듈, 가져오는 모듈). 줄이기만 합니다.
 KNOWN_VIOLATIONS: Set[Tuple[str, str]] = set()
@@ -165,6 +173,41 @@ def test_every_ui_module_is_classified():
         and not any(_under(m, p) for p in EXPERT_UI + SHARED_UI)
     )
     assert not loose, f"EXPERT_UI 나 SHARED_UI 에 넣어 주세요: {loose}"
+
+
+def test_components_do_not_import_each_other():
+    """하위 컴포넌트는 공용 모듈만 가져옵니다. 다른 컴포넌트가 필요하면 생성자로 콜백을 받습니다."""
+    found = []
+    graph = collect()
+    for package, (assembler, allowed) in COMPONENT_SIBLINGS.items():
+        siblings = {m.rsplit(".", 1)[1] for m in graph if m.startswith(package + ".")}
+        for module, targets in graph.items():
+            if not module.startswith(package + ".") or module.endswith("." + assembler):
+                continue
+            own = module.rsplit(".", 1)[1]
+            for target in targets:
+                if target.startswith(package + "."):
+                    name = target[len(package) + 1:].split(".")[0]
+                    if name in siblings and name not in allowed and name != own:
+                        found.append(f"{module} → {name}")
+    assert not found, "컴포넌트끼리 직접 기대고 있습니다:\n" + "\n".join(sorted(set(found)))
+
+
+def test_ui_components_are_composed_not_mixed():
+    """로스터와 피드의 클래스는 mixin 으로 한 객체를 이루지 않습니다.
+
+    한 객체를 여러 파일로 나누면 파일 하나를 읽을 수도, 시험할 수도 없습니다 — 다른 파일이 세운
+    속성에 기대기 때문입니다. 상속은 하나까지만 허용합니다 (`FormBuilderChat(BuilderChat)`).
+    """
+    found = []
+    for directory in (APP / "ui" / "components",):
+        for path in directory.rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.ClassDef) and (node.name.endswith("Mixin") or len(node.bases) > 1):
+                    found.append(f"{path.relative_to(APP)}: {node.name}")
+    assert not found, "\n".join(found)
 
 
 def test_known_violations_are_still_real():

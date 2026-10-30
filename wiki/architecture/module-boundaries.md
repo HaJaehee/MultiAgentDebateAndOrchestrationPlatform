@@ -28,7 +28,6 @@ flowchart LR
     Trial --> Shared
     Easy --> Shared
     Easy --> Trial
-    Expert --> Easy
     Screens --> Orchestration
     Orchestration --> Agents
     Orchestration --> Database
@@ -69,8 +68,9 @@ straight back to them.
 `app/ui/` holds two kinds of modules, and every module must be listed as one of them
 (`test_every_ui_module_is_classified`):
 
-- **Shared UI** — `ui/shared/`, `ui/run_binding.py`, the chat feed, model status, appearance editor,
-  markdown and clipboard helpers. They depend on no screen.
+- **Shared UI** — `ui/shared/`, `ui/run_binding.py`, the chat feed, the builder conversation
+  (`ui/components/agent_builder_chat.py`), model status, appearance editor, markdown and clipboard helpers.
+  They depend on no screen.
 - **Expert UI** — `ui/expert/`, the roster panel, sidebar, artifact viewer, workspace download, access token,
   graph canvas, persona and graph pages.
 
@@ -79,7 +79,7 @@ straight back to them.
 | `trial/` | `easy/`, the expert UI |
 | `easy/` | `trial/pages/` (it may use the trial site's login, gate and models), the expert UI |
 | Shared UI | `trial/`, `easy/`, the expert UI |
-| Expert UI | `trial/` (it may reuse the beginner pages' agent builder) |
+| Expert UI | `trial/`, `easy/` |
 
 ## 4. Known Violations
 
@@ -128,20 +128,12 @@ caller ([Overview §4.1](file:///d:/MultiAgentDebateOrchestration/wiki/architect
 
 ### 6.4. One class across several files (mixins)
 
-Three large classes were split by concern into files of mixins, and the class itself stayed one object:
+`LLMCaller` ([agents/llm.py](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py)) is split by concern into mixins (`llm_request` ·
+`llm_recovery` · `llm_tool_calls` · `llm_loop`), and the class stays one object. The MADOWarGame driver subclasses
+it and overrides `_complete_unthrottled`, so that shape is part of the public surface. A mixin file cannot be read
+or tested on its own, because it uses attributes that other files set. Put a new method in the file of its concern.
 
-| Class | Defined in | Mixin files |
-| :--- | :--- | :--- |
-| `LLMCaller` | [agents/llm.py](file:///d:/MultiAgentDebateOrchestration/app/agents/llm.py) | `llm_request` · `llm_recovery` · `llm_tool_calls` · `llm_loop` |
-| `AgentRosterControl` | [ui/components/roster/control.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/control.py) | `session_settings` · `agent_cards` · `mcp_panel` · `agent_admin` · `agent_dialogs` · `skills_panel` · `graph_row` |
-| `ChatFeed` | [ui/components/chat_feed/feed.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/chat_feed/feed.py) | `cards` · `approvals` · `decisions` · `mentions` |
-
-Keeping one object meant every method still runs with the same attributes as before, so the split could not
-change behaviour. The cost is that a mixin file cannot be read or tested on its own — it uses attributes that
-other files set — and that a name imported by several mixin files must be replaced in each of them in tests
-([tests/roster_patch.py](file:///d:/MultiAgentDebateOrchestration/tests/roster_patch.py) `patch_roster` does
-this for the roster). Put a new method in the file of its concern. Logic that needs no NiceGUI is better
-written as a plain function outside the class (see 6.7).
+`AgentRosterControl` and `ChatFeed` used to be built the same way and were replaced by components: see 6.9.
 
 ### 6.5. Where shared pieces live
 
@@ -154,6 +146,11 @@ hidden by imports inside functions:
   loads, `mcp/policy.py` judges calls with them, and `config/` may not import `mcp/`.
 - **Model connection classification** — `agents/connection.py`: used by `llm.py`, `llm_fallback.py`, the model
   status check and its dialog, which used to import each other.
+- **Agent draft and plain-language catalog** — `agents/draft.py`, `agents/catalog.py`: the expert add-agent
+  dialog and the beginner builder both use them, and neither screen may import the other. What belongs to the
+  beginner pages alone (demo agent, example tasks, visitor limits, saving a visitor's agent) stays in `easy/`.
+- **Roster rules** — `orchestration/roster_service.py`: the lowest layer that can see the runner, the MCP pool,
+  the agent pool and the config, and one the layering test keeps free of NiceGUI.
 
 ### 6.6. Files left whole
 
@@ -165,13 +162,13 @@ hidden by imports inside functions:
 
 ### 6.7. Planned but not done
 
-The first two were decided against on 2026-10-24; they are recorded here so they are not taken up again by
-mistake.
+The first two were decided against on 2026-10-24 and reversed on 2026-10-30, when the cost of keeping them
+(6.4 as it then was) came up again ([ADR-032](../../lectures/05-adr/ADR-032-compose-roster-and-feed.md)).
 
 | Plan item | State |
 | :--- | :--- |
-| Move the agent draft and catalog out of the screens (P4) | Not doing (decided 2026-10-24). The roster's `agent_admin.py` imports `easy.builder` (`AgentDraft`, `agent_key_for`), `easy.catalog` (`server_options`, `skill_options`) and `easy.pages.build` (`FormBuilderChat`); the layering test allows the expert UI this. `FormBuilderChat` is itself a screen component; the draft and catalog would have been the pieces to move. |
-| Move applying roster changes to `conf.json` and the lock rules into a service without NiceGUI (P5) | Not doing (decided 2026-10-24). They are still methods of `AgentRosterControl`, and `test_agent_admin.py` and `test_roster_lock.py` still replace `ui.notify`. |
+| Move the agent draft and catalog out of the screens (P4) | Done 2026-10-30. `agents/draft.py`, `agents/catalog.py`; the builder conversation is `ui/components/agent_builder_chat.py` and `FormBuilderChat` moved into the roster. The expert UI may no longer import `easy/`. |
+| Move applying roster changes to `conf.json` and the lock rules into a service without NiceGUI (P5) | Done 2026-10-30. `orchestration/roster_service.py` (`RosterService`), tested with a temporary `conf.json` in `tests/test_roster_service.py`. |
 | Make `agents/llm.py` an `agents/llm/` package (P6) | Done as sibling modules instead (`llm_request`, `llm_recovery`, `llm_tool_calls`, `llm_context`, `llm_budget`, `llm_tools`, `llm_types`, `llm_fingerprint`, `reasoning`, `connection`). Why this was chosen over a package was not recorded. As it stands, `LLMCaller` is still defined in `app/agents/llm.py`, the path the MADOWarGame driver imports, so nothing has to be re-exported. |
 
 ### 6.8. The two longest functions, split (2026-10-24)
@@ -201,3 +198,61 @@ How the absence of a behaviour change was checked:
    were byte-for-byte identical to the one before. Together with the test suite, these scenarios executed
    every statement of both functions before the split, and of every new step after it.
 3. The full test suite and the MADOWarGame driver tests.
+
+### 6.9. Roster and feed as components (2026-10-30)
+
+The mixins of 6.4 shared one object's attributes, so no file could be read or tested alone, and a name imported
+by several files had to be replaced in each of them. Both classes are now assembled from objects that take what
+they need through their constructor.
+
+```mermaid
+flowchart TD
+    Control["AgentRosterControl — control.py assembles"]
+    Control --> Cards["AgentCardsComponent"]
+    Control --> Admin["AgentAdminComponent"]
+    Control --> Dialogs["AgentDialogs"]
+    Control --> Mcp["McpPanelComponent"]
+    Control --> Skills["SkillsPanelComponent"]
+    Control --> Workspace["WorkspaceRowComponent"]
+    Control --> Settings["SessionSettingsComponent · ToolRulesDialog"]
+    Control --> Graph["GraphRowComponent"]
+    Cards & Admin & Dialogs & Mcp & Workspace & Settings & Graph --> Changes["RosterChanges — the steps of a change"]
+    Cards & Admin & Dialogs & Mcp & Skills & Workspace & Settings & Graph --> Service["RosterService — conf.json, locks, no NiceGUI"]
+    Changes --> Service
+    Cards & Admin & Dialogs & Mcp & Workspace & Settings & Graph & Changes --> State["RosterState — this conversation's values, no NiceGUI"]
+```
+
+| Roster piece | Holds |
+| :--- | :--- |
+| [state.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/state.py) `RosterState` | This conversation's values and the rules over them: who is on the roster, selection, speaking order, active count. |
+| [roster_service.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/roster_service.py) `RosterService` | The roster's only way out: named `conf.json` writes, applying them to the running app, re-reading the file, the lock rules. Results come back as `Notice`. |
+| [changes.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/changes.py) `RosterChanges` | The steps around a change on screen: check the lock, write, apply, notify, redraw. Whom to redraw is a constructor callback. |
+| [control.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/control.py) `AgentRosterControl` | Builds the components, connects them with callbacks and lays them out. The page reads values from `roster_control.state` and calls the few methods left on the control. |
+
+`ChatFeed` ([feed.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/chat_feed/feed.py)) keeps the status bar, input bar, stop and abort,
+and assembles `CardTimeline` (`cards.py`), `ApprovalCards` and `PlanApprovalCard` (`approvals.py`), `DecisionBar`
+and `UnfinishedTurnBar` (`decisions.py`) and `MentionUpload` (`mentions.py`). Three screens use it, so its public
+methods stay on `ChatFeed` and delegate to the pieces. `CardTimeline` owns the message column, so `alive` is its
+answer.
+
+Two rules hold this in place, both in `tests/test_layering.py`: components do not import each other (they may
+import shared modules only, and the assembling file imports them all), and no class under `ui/components/` is a
+mixin or has more than one base. To add something, put the value in `RosterState`, the outside call in
+`RosterService`, and pass a callback from `control.py` if another component must react. Tests hand a component a
+small stub service ([tests/test_roster_components.py](file:///d:/MultiAgentDebateOrchestration/tests/test_roster_components.py),
+[tests/test_feed_components.py](file:///d:/MultiAgentDebateOrchestration/tests/test_feed_components.py)); patching a name happens in one module,
+`roster_service`, so `tests/roster_patch.py` is gone.
+
+How the absence of a behaviour change was checked:
+
+1. **Golden master through the browser's view.** Before any code moved, a script drew the real panels, clicked
+   buttons found by their text or icon and fired the same events a browser sends, then recorded everything visible
+   from outside: the element tree the browser receives, `conf.json` after each step, notifications, navigation,
+   JavaScript sent, callbacks and state. 34 roster scenarios (157 steps) and 16 feed scenarios (130 steps) reached
+   about 95% of the statements of both packages. The recordings after the move were identical except for one prop:
+   the MCP add button no longer carries `disable: false`, because a disable and enable around a synchronous write
+   (invisible to the browser) was removed.
+2. The full test suite, unchanged in what it asserts.
+3. The real app in a browser with a temporary config, database and a fake LLM: selection, add-agent with the builder
+   dialog, a full turn through plan approval to conclusion, the lock during it, reload, resync, graph strategy,
+   and `/trial/easy/build`.
