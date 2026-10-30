@@ -26,7 +26,7 @@ from app.agents.llm_budget import (
     reasoning_share,
     truncation_advice,
 )
-from app.agents.llm_tools import file_writing_guidance
+from app.agents.llm_tools import file_editing_guidance, file_writing_guidance
 
 # 실제로 끊긴 자리를 그대로 옮긴 인자입니다. 닫히지 않은 문자열이라 파싱되지 않습니다.
 TRUNCATED = '{"path": "app/util.py", "content": "def load(path):\n    if path:'
@@ -551,6 +551,8 @@ def test_edit_file_is_still_the_fallback_and_gets_no_tail_line():
     text = file_writing_guidance(_tools("filesystem__write_file", "filesystem__edit_file"))
     assert "`filesystem__edit_file` 로 **뒤에 덧붙이세요.**" in text
     assert "파일 끝 몇 줄" not in text, "edit_file 의 결과에는 파일 끝 줄이 나오지 않습니다"
+    # 찾아 바꾸기로 덧붙이는 법을 알려 줍니다. 안 그러면 v1.1.2 의 고장이 이 갈래에 그대로 남습니다.
+    assert "마지막 여러 줄을 `oldText` 에" in text
 
 
 def test_a_sandbox_only_agent_writes_and_appends_with_the_sandbox():
@@ -584,6 +586,76 @@ def test_session_instructions_stay_last():
         _agent(), custom_instructions="파일은 한 번에 쓰세요.",
         tools=_tools("filesystem__write_file", "filesystem__edit_file"))
     assert prompt.index("[파일 쓰기]") < prompt.index("[Session Custom Instructions]")
+    assert prompt.index("[기존 파일 고치기]") < prompt.index("[Session Custom Instructions]")
+
+
+# ------------------------------------------------------------------ 기존 파일 고치기
+#
+# 큰 파일의 몇 줄을 고치려고 전체를 다시 출력하면 그 시간을 고스란히 기다립니다. 조심시키는 내용이
+# 실제 서버의 동작과 맞는지는 `tests/test_edit_file_contract.py` 가 봅니다.
+
+
+def test_an_agent_with_edit_file_is_told_to_send_only_what_changes():
+    text = file_editing_guidance(_tools(
+        "filesystem__read_text_file", "filesystem__write_file", "filesystem__edit_file"))
+    assert "다시 쓰지 말고 `filesystem__edit_file` 로 **바꿀 부분만**" in text
+    assert "먼저 `filesystem__read_text_file` 로 파일을 읽고" in text
+    assert "들여쓰기까지 그대로" in text
+    assert "처음 일치하는 한 곳만" in text, "되풀이되는 줄의 첫 일치에 끼어든 것이 v1.1.2 의 고장입니다"
+    assert "비우면 파일 맨 앞에" in text
+    assert "하나도 적용되지 않은" in text, "실패했을 때 무엇을 할지도 알려 줍니다"
+    assert "`./workspace/` 는 붙이지 마세요" in text
+    # 크기가 아니라 전략입니다 — 모델은 자기 출력 토큰을 셀 수 없습니다.
+    assert "자 이상" not in text and "토큰 이하" not in text
+
+
+@pytest.mark.parametrize("names", [
+    (),
+    ("memory__search_nodes",),
+    ("filesystem__read_text_file",),
+    ("filesystem__write_file",),
+    ("sandbox__write_workspace_file", "sandbox__append_workspace_file"),
+    ("myfs__patch_file",),
+])
+def test_the_edit_rule_goes_only_to_agents_holding_edit_file(names):
+    """없는 도구를 부르라고 시키지 않습니다. 샌드박스만 가진 에이전트의 프롬프트도 늘지 않습니다."""
+    assert file_editing_guidance(_tools(*names)) is None
+    assert "[기존 파일 고치기]" not in LLMCaller().build_system_prompt(_agent(), tools=_tools(*names))
+    assert "edit_file" not in LLMCaller().build_system_prompt(_agent(), tools=_tools(*names))
+
+
+def test_no_tools_at_all_gets_no_edit_rule():
+    assert file_editing_guidance(None) is None
+
+
+def test_an_agent_with_both_servers_appends_with_the_sandbox_and_edits_with_filesystem():
+    """가장 흔한 구성입니다 (coder·critic). 두 지침이 각자의 도구를 짚어야 합니다."""
+    prompt = LLMCaller().build_system_prompt(_agent(), tools=_tools(*FS_AND_SANDBOX))
+    assert "`sandbox__append_workspace_file` 로 **뒤에 덧붙이세요.**" in prompt
+    assert "`filesystem__edit_file` 로 **바꿀 부분만**" in prompt
+    assert prompt.index("[파일 쓰기]") < prompt.index("[기존 파일 고치기]")
+
+
+def test_the_edit_rule_finds_the_tool_by_its_name_tail_and_names_only_held_tools():
+    text = file_editing_guidance(_tools("myfs__edit_file", "myfs__read_file"))
+    assert "`myfs__edit_file`" in text and "`myfs__read_file`" in text
+
+    text = file_editing_guidance(_tools(
+        "filesystem__read_file", "filesystem__read_text_file", "filesystem__edit_file"))
+    assert "`filesystem__read_text_file`" in text and "`filesystem__read_file`" not in text
+
+    alone = file_editing_guidance(_tools("filesystem__edit_file", "other__read_text_file"))
+    assert "read_text_file" not in alone, "다른 서버의 읽기 도구는 경로 기준이 다를 수 있습니다"
+    assert "먼저 파일의 실제 내용을 확인하고" in alone
+
+
+def test_the_advice_after_a_cut_names_the_edit_tool_only_when_held():
+    advice = truncation_advice(_tools(*FS_AND_SANDBOX))
+    assert "전체를 다시 보내지 말고 `filesystem__edit_file` 로" in advice
+
+    advice = truncation_advice(_tools("sandbox__write_workspace_file", "sandbox__append_workspace_file"))
+    assert "edit_file" not in advice and "일부를 고치던" not in advice
+    assert "일부를 고치던" not in truncation_advice(_tools("filesystem__write_file"))
 
 
 @pytest.mark.asyncio
@@ -609,6 +681,7 @@ async def test_the_real_turn_carries_the_rule():
     system = sent[0]["messages"][0]
     assert system["role"] == "system"
     assert "[파일 쓰기]" in system["content"]
+    assert "[기존 파일 고치기]" in system["content"]
     assert "filesystem__edit_file" in system["content"]
 
 

@@ -25,6 +25,7 @@ import app.agents.llm as llm_module
 import app.orchestration.tool_gate as gate_module
 from app.agents.base import Agent
 from app.agents.llm import LLMCaller
+from app.agents.llm_tools import file_editing_guidance
 from app.config import RootConfig, add_tool_security_rules_to_conf_file, read_conf_file
 from app.database.models import SessionModel
 from app.database.session import get_session_factory, init_db
@@ -82,7 +83,7 @@ def _manager(tmp_path: Path) -> MCPManager:
     workspace.mkdir(exist_ok=True)
     manager = MCPManager({}, workspace=workspace)
     for server, tools in {
-        "filesystem": ("read_file", "write_file"),
+        "filesystem": ("read_file", "read_text_file", "write_file", "edit_file"),
         "sandbox": ("execute_python_code",),
         "fetch": ("fetch",),
     }.items():
@@ -304,6 +305,16 @@ def test_filter_tools_drops_tools_that_can_never_run(tmp_path, security):
              ("filesystem__read_file", "filesystem__write_file", "sandbox__execute_python_code")]
     kept = gate.filter_tools("coder", tools, _manager(tmp_path))
     assert [t["function"]["name"] for t in kept] == ["filesystem__read_file"]
+
+
+def test_read_only_mode_takes_the_edit_rule_away_with_the_tool(tmp_path, security):
+    """목록에서 빠진 도구를 지침이 부르라고 하면 안 됩니다 (프롬프트는 거른 목록으로 만듭니다)."""
+    gate = ToolGate(session_id="s", mode="read_only")
+    tools = [{"type": "function", "function": {"name": n}} for n in
+             ("filesystem__read_text_file", "filesystem__edit_file")]
+    kept = gate.filter_tools("coder", tools, _manager(tmp_path))
+    assert [t["function"]["name"] for t in kept] == ["filesystem__read_text_file"]
+    assert file_editing_guidance(kept) is None
 
 
 @pytest.mark.asyncio

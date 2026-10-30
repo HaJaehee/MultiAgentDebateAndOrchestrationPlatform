@@ -380,6 +380,26 @@ def test_the_sandbox_append_tool_is_judged_as_a_write_to_its_file():
     assert _verdict(meta, {"filename": "notes.md", "content": "x"}, mode="read_only").effect == DENY
 
 
+@pytest.mark.parametrize("mode", ["read_only", "default", "auto"])
+@pytest.mark.parametrize("path", ["src/app.py", "./workspace/src/app.py", "../outside.py", ".git/config"])
+def test_edit_file_is_judged_exactly_like_write_file(mode, path):
+    """기존 파일 고치기를 기본 지침으로 삼았어도 판정은 쓰기 그대로입니다.
+
+    `edits` 안의 글은 경로로 읽지 않습니다 (`write_file` 의 `content` 와 같습니다).
+    """
+    edit = ToolMeta("filesystem", "edit_file")
+    args = {"path": path, "edits": [{"oldText": "../secret", "newText": "x"}]}
+    edited = _verdict(edit, args, mode=mode)
+    written = _verdict(FS_WRITE, {"path": path, "content": "x"}, mode=mode)
+
+    assert (edited.effect, edited.risk) == (written.effect, written.risk)
+    assert [(a.kind, a.target) for a in profile_call(edit, args, WS).actions if a.kind == "write"] == [
+        (a.kind, a.target) for a in profile_call(FS_WRITE, {"path": path, "content": "x"}, WS).actions
+        if a.kind == "write"
+    ]
+    assert bool(_hard(edit, args)) == bool(_hard(FS_WRITE, {"path": path, "content": "x"}))
+
+
 def test_denials_beat_session_grants_and_allow_rules():
     profile = profile_call(FS_WRITE, {"path": "src/a.py"}, WS)
     policy = Policy(

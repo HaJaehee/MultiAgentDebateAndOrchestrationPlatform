@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.agents.llm_tools import file_tools, is_file_writing_call
+from app.agents.llm_tools import edit_tool, file_tools, is_file_writing_call
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +127,12 @@ def truncation_advice(tools: Optional[List[Dict[str, Any]]] = None) -> str:
             text += (
                 f" `{write}` 로 이어쓰려 하면 앞부분까지 매번 통째로 다시 써야 해서, "
                 f"호출이 점점 커지다 같은 자리에서 또 잘립니다."
+            )
+        edit = edit_tool(tools)
+        if edit:
+            text += (
+                f"\n이미 있는 파일의 일부를 고치던 중이었다면 전체를 다시 보내지 말고 `{edit}` 로 "
+                f"바꿀 부분만 보내세요."
             )
         return text + tail
 

@@ -10,7 +10,7 @@ from app.agents.base import Agent
 from app.agents.ask_user import ask_guidance
 from app.agents.consultation import PEERS_TOOL_PREFIX, consultation_guidance
 from app.agents.llm_context import effective_max_tokens
-from app.agents.llm_tools import binary_file_guidance, file_writing_guidance
+from app.agents.llm_tools import binary_file_guidance, file_editing_guidance, file_writing_guidance
 from app.agents.reasoning import strip_reasoning_trace
 from app.agents.skills import skill_guidance
 
@@ -51,6 +51,10 @@ class RequestBuilderMixin:
         guidance = file_writing_guidance(tools)
         if guidance:
             parts.append(guidance)
+
+        editing = file_editing_guidance(tools)
+        if editing:
+            parts.append(editing)
 
         binary = binary_file_guidance(tools)
         if binary:

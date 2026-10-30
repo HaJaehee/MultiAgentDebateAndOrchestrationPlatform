@@ -35,6 +35,18 @@ pages. The two decisions against this from 2026-10-24 are reversed. A golden mas
 was identical before and after.
 → [Module Boundaries §6.9](architecture/module-boundaries.md) · [ADR-032](../lectures/05-adr/ADR-032-compose-roster-and-feed.md)
 
+**Agents change part of a file with `edit_file` instead of rewriting it.** The standing rule from v1.1.2 says how
+to get a long file out (write the first part, append the rest) and nothing about an existing file, so changing a
+few lines of a large file meant resending all of it, and the wait grew with the file. Agents that hold the
+filesystem server's `edit_file` now get a second rule: send only what changes, rewrite only when most of the file
+changes. A sandbox-only agent's prompt does not grow. Appending still goes to `append_workspace_file` when the agent
+has it, because the reason v1.1.2 gave is still true: on server-filesystem 2026.8.31 `edit_file` changes the first
+match only and an empty search text lands at the top of the file. The rule says so and tells the agent to quote
+neighbouring lines, copy indentation exactly and check the diff, and `tests/test_edit_file_contract.py` holds those
+statements against the real server. The tool gate and the binary write guard treat `edit_file` as before. Limits:
+it has no line-number arguments, so places are named by context only, and it writes a CRLF file back as LF.
+→ [LLM Integration §2.5](agents/llm-integration.md) · [Bundled Servers §2.1](mcp/bundled-servers.md)
+
 ## v1.5
 
 **Tokens and LLM time are measured.** Every LLM call is timed and its reported usage (input, output,

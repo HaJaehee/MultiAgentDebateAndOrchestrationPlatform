@@ -248,14 +248,18 @@ The middle row is the one worth having. The official `@modelcontextprotocol/serv
 `write_file` *completely overwrites*, so a model that follows a naive "split it up" would resend
 everything written so far on every call — 5k, then 10k, then 15k characters — growing quadratically
 and hitting the same `max_tokens` again, only later. Naming the tool that can append, and the one
-that cannot, is the difference between advice that works and advice that loops.
+that cannot, is the difference between advice that works and advice that loops. An agent that holds
+`edit_file` is also told that if it was changing part of an existing file, it should send only that part
+with `edit_file` (§2.5).
 
 **Which append tool, and which write tool to pair it with** ([`file_tools()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm_tools.py)).
 `APPEND_TOOLS` is a priority list, not a set. The sandbox's `append_workspace_file` (AirgappedPySandbox
 v0.8.0) comes first because it is the only real append: the filesystem server's `edit_file` is
 find-and-replace, and used as "append" it inserts at the **first** match of a repeated line (`);`,
 `</div>`) — or at the **top** of the file when the search text is empty. Long TSX files broke that way.
-`edit_file` is named only when nothing better is held. The write tool for the first part is taken from
+For appending, `edit_file` is named only when nothing better is held, and it comes with one more line: put the
+file's last several lines in `oldText` and those lines plus the new content in `newText`. Changing part of an
+existing file is a different job, for which `edit_file` is the right tool (§2.5). The write tool for the first part is taken from
 the **same server** as the append tool: the two servers read paths differently (the filesystem server
 against its allowed folder, the sandbox relative to the workspace), so a first part written by one and a
 rest appended by the other may not land in the same file. With `append_workspace_file` the standing rule
@@ -311,7 +315,35 @@ append tool is named, and which write tool goes with it, is decided as in §2.2;
 `append_workspace_file`, a third line says to read the file's last lines in each result before writing
 the next chunk.
 
-It sits before `[Session Custom Instructions]`, which stay last: if a person tells the agent
+**Changing part of a file that already exists** has its own rule,
+[`file_editing_guidance()`](file:///d:/MultiAgentDebateOrchestration/app/agents/llm_tools.py), given only to
+agents that hold `edit_file` (found by name tail, so a sandbox-only agent's prompt does not grow, and read-only
+mode removes it along with the tool). The writing rule above answers "how do I get a long file out?". It never
+said what to do when three lines of a large file change, so models resent the whole file; that output is time
+the person waits for and budget the turn can run out of. The new rule: send only what changes, and rewrite only
+when most of the file changes. `edit_file` is still find-and-replace, so the rule carries what the server does
+(`applyFileEdits`, server-filesystem 2026.8.31):
+
+| The server | The agent is told |
+| :--- | :--- |
+| Replaces the **first** match and never asks whether it is unique | Quote neighbouring lines until `oldText` matches one place; repeated lines such as `);` or `</div>` alone change the wrong place |
+| Puts an empty `oldText` at the top of the file | Said outright |
+| With no exact match, compares line by line ignoring whitespace, re-indents `newText` by guesswork and reports success (a Python block can come back mis-indented) | Read the file first, copy the lines with their indentation, check the diff in the result |
+| Writes nothing if any edit in the call fails | On "could not find", nothing was applied: read again and correct `oldText` |
+| Applies `edits` in order | Put several changes in one call |
+| Does not strip `./workspace/` (the sandbox does), so the path is not found | Paths are relative to the workspace, with no such prefix |
+
+[`tests/test_edit_file_contract.py`](file:///d:/MultiAgentDebateOrchestration/tests/test_edit_file_contract.py)
+runs each of these against the real server through `MCPManager`. The version range is open (`^2026.8.31`), so
+a release that changes one fails there instead of quietly making the rule wrong. A one-line change in a 200 KB
+file answers with a diff of about 700 characters.
+
+Two limits the rule cannot fix. The tool has no line-number or line-range argument: the place is named by context,
+and replacing a long block means sending it twice (old and new). And the server writes the whole file back with
+LF, so editing a CRLF file changes every line ending without the diff showing it. Files agents write are LF
+already; a file a person made on Windows shows up as an all-lines change in `git diff`.
+
+Both rules sit before `[Session Custom Instructions]`, which stay last: if a person tells the agent
 something different for this session, theirs is the more specific instruction and should win.
 
 ### 2.4. Continuing a truncated answer (v0.6.1)

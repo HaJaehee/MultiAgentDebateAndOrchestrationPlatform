@@ -33,7 +33,7 @@ class _RecordingClient:
 def _manager() -> tuple:
     manager = MCPManager({})
     client = _RecordingClient()
-    for name in ("write_file", "read_file"):
+    for name in ("write_file", "read_file", "edit_file"):
         manager._tool_lookup[f"filesystem__{name}"] = (client, name)  # noqa: SLF001
         manager._tool_lookup[name] = (client, name)  # noqa: SLF001
     manager.clients["filesystem"] = client  # type: ignore[assignment]
@@ -73,6 +73,22 @@ async def test_appending_text_to_a_pptx_is_refused_too():
     )
     assert status == "error"
     assert "REFUSED" in output
+
+
+@pytest.mark.asyncio
+async def test_editing_a_pptx_is_refused_and_editing_text_passes():
+    """고치기를 기본 지침으로 삼아도 가드는 그대로입니다 — `.pptx` 를 찾아 바꾸면 깨진 파일이 됩니다."""
+    manager, client = _manager()
+    edits = [{"oldText": "a", "newText": "b"}]
+
+    output, status = await manager.execute_tool("filesystem__edit_file", {"path": "deck.pptx", "edits": edits})
+    assert status == "error"
+    assert "REFUSED" in output
+    assert client.calls == [], "서버까지 갔습니다"
+
+    output, status = await manager.execute_tool("filesystem__edit_file", {"path": "main.py", "edits": edits})
+    assert status == "success", output
+    assert client.calls == [("edit_file", {"path": "main.py", "edits": edits})]
 
 
 @pytest.mark.asyncio

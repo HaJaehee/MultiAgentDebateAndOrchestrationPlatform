@@ -94,12 +94,12 @@ app/
 │   ├── catalog.py                   155   도구·스킬의 쉬운 말 이름, 고를 수 있는 목록
 │   ├── llm.py                       469   LLMCaller: 호출, 폴백 판단, 한 판 호출
 │   ├── llm_loop.py                  630   도구 루프 (ToolLoop 상태 + 단계별 함수)
-│   ├── llm_request.py               173   시스템 프롬프트·LiteLLM 인자
+│   ├── llm_request.py               177   시스템 프롬프트·LiteLLM 인자
 │   ├── llm_tool_calls.py            281   도구 호출 한 번: 읽기·판정·실행·기록
 │   ├── llm_recovery.py              568   잘린 답·빈 답·새어 나온 도구 호출 되살리기
 │   ├── llm_context.py               464   토큰 어림, 컨텍스트 창 맞춤
-│   ├── llm_budget.py                265   도구 상한·응답 한도 안내
-│   ├── llm_tools.py                 195   도구 이름 찾기, 파일 쓰기 지침
+│   ├── llm_budget.py                271   도구 상한·응답 한도 안내
+│   ├── llm_tools.py                 252   도구 이름 찾기, 파일 쓰기·고치기 지침
 │   ├── llm_fingerprint.py           101   거절 시 요청 지문
 │   ├── llm_usage.py                 169   토큰 및 LLM 실행 시간 계측 (v1.5)
 │   ├── llm_types.py                  51   LLMUnavailableError, 콜백 형식

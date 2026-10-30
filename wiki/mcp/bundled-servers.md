@@ -27,7 +27,8 @@ The platform comes pre-configured with a suite of official and open-source MCP s
 - **Key Tools**:
   - `read_text_file`: Inspects code or configuration files.
   - `write_file`: Creates new files in the workspace.
-  - `edit_file`: Performs targeted edits on existing files.
+  - `edit_file`: Replaces text in an existing file (`edits`: `oldText`/`newText` pairs) and answers with a diff. It takes
+    no line numbers. MADO's standing rule makes it the default for changing part of a file ([LLM Integration §2.5](../agents/llm-integration.md)).
   - `directory_tree`: Inspects project directory structures recursively.
   - `search_files`: Fast regex/glob search across the workspace.
 
@@ -65,8 +66,8 @@ The platform comes pre-configured with a suite of official and open-source MCP s
   - `run_python_file`: Executes a target script inside the workspace.
   - `write_workspace_file`: Saves text verbatim to a workspace file without running anything.
   - `append_workspace_file` (v0.8.0): Adds a chunk to the end of a workspace file and answers with the
-    file's last 8 lines. For files longer than one reply's output limit; MADO's file-writing rule names it
-    ahead of the filesystem server's `edit_file` ([LLM Integration §2.2](../agents/llm-integration.md)).
+    file's last 8 lines. For files longer than one reply's output limit; for appending, MADO's file-writing rule
+    names it ahead of the filesystem server's `edit_file` ([LLM Integration §2.2](../agents/llm-integration.md)).
   - `reset_kernel_state`: Clears kernel state and memory when starting a clean session.
 
 ### 2.5. AnythingLLM Document Search (`kb`, v1.5.1)
