@@ -27,9 +27,9 @@ python -m app.bench --config other.json run ...              # another configura
 }
 ```
 
-Variant fields: `label` (unique), `strategy` (not `graph_debate`), `max_rounds`, `agents`, `models`
-(agent key → model name; the connection settings stay those of `conf.json`), `converge_early`,
-`token_budget`, `custom_instructions`. `//` keys are comments. Every problem is reported at once. Two
+Variant fields: `label` (unique), `strategy` (not `graph_debate`, which needs a graph file), `max_rounds`, `agents`,
+`models` (agent key → model name; the connection settings stay those of `conf.json`), `converge_early`,
+`token_budget`, `sub_debates`, `custom_instructions`. `//` keys are comments. Every problem is reported at once. Two
 examples ship in `bench/`.
 
 ## 2. What a run does

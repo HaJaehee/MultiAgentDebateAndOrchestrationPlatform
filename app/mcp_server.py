@@ -54,7 +54,7 @@ mado_mcp = FastMCP(
 
 
 def _strategies() -> str:
-    return ", ".join(k for k, v in STRATEGY_MAP.items() if not v.runs_graph)
+    return ", ".join(k for k, v in STRATEGY_MAP.items() if not v.uses_graph_file)
 
 
 @mado_mcp.tool()

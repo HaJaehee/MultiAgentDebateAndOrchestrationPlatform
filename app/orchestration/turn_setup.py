@@ -47,6 +47,10 @@ class TurnSetup:
     token_budget: int = 0
     # 전문가 에이전트의 사용자 질문 허용 여부 (`ask__ask_user`, v1.5).
     ask_user: bool = False
+    # 쟁점을 전문가 두 명이 따로 다루는 서브 토론을 허용하는지, 오케스트레이터가 그리는 그래프의 기준이 될
+    # 그래프 파일 id (ADR-034).
+    sub_debates: bool = False
+    base_graph_id: str = ""
 
     def config(self, workspace: Path) -> Dict[str, Any]:
         """턴 기록에 고정해 둘 구성 (`TurnModel.config`). 끊긴 턴은 이 구성으로 마칩니다."""
@@ -61,6 +65,8 @@ class TurnSetup:
             "converge_early": self.converge_early,
             "token_budget": self.token_budget,
             "ask_user": self.ask_user,
+            "sub_debates": self.sub_debates,
+            "graph_id": self.base_graph_id,
         }
 
 
@@ -187,6 +193,8 @@ class TurnPreparer:
             converge_early = bool(session_model.converge_early)
             token_budget = max(0, int(session_model.token_budget or 0))
             ask_user = bool(session_model.ask_user)
+            sub_debates = bool(session_model.sub_debates)
+            base_graph_id = (session_model.graph_id or "").strip()
         else:
             strategy_name = resolve_strategy_name(config.get("strategy"))
             max_rounds = int(config.get("max_rounds") or session_model.max_rounds or 3)
@@ -197,6 +205,8 @@ class TurnPreparer:
             converge_early = bool(config.get("converge_early", True))
             token_budget = max(0, int(config.get("token_budget") or 0))
             ask_user = bool(config.get("ask_user", False))
+            sub_debates = bool(config.get("sub_debates", False))
+            base_graph_id = str(config.get("graph_id") or "")
 
         # 도구 보안: 이 대화의 모드와 "이 대화에서 허용·거부" 목록으로 문지기를 세웁니다.
         self.ctx.tool_gates[session_id] = ToolGate(
@@ -213,8 +223,9 @@ class TurnPreparer:
         if "orchestrator" not in active_keys:
             active_keys = ["orchestrator"] + list(active_keys)
 
-        # 그래프 토론은 그래프에 놓인 에이전트가 곧 참여자입니다 (로스터 체크박스가 아니라).
-        if get_strategy(strategy_name).runs_graph:
+        # 그래프 토론은 그래프에 놓인 에이전트가 곧 참여자입니다 (로스터 체크박스가 아니라). 오케스트레이터가
+        # 그리는 전략은 체크한 전문가로 토론 직전에 그립니다 (`GraphDrafter`).
+        if get_strategy(strategy_name).uses_graph_file:
             if graph_spec is None:
                 graph_spec = await self.graph_for_turn(db, session_model, max_rounds)
             active_keys = ["orchestrator"] + graph_spec.agent_keys()
@@ -259,4 +270,6 @@ class TurnPreparer:
             converge_early=converge_early,
             token_budget=token_budget,
             ask_user=ask_user,
+            sub_debates=sub_debates,
+            base_graph_id=base_graph_id,
         )

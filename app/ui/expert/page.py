@@ -206,6 +206,7 @@ class ExpertPage:
                 curr.converge_early = self.roster_control.state.converge_early
                 curr.token_budget = self.roster_control.state.token_budget
                 curr.ask_user = self.roster_control.state.ask_user
+                curr.sub_debates = self.roster_control.state.sub_debates
                 curr.tool_mode = self.roster_control.state.tool_mode
                 curr.custom_instructions = self.roster_control.state.custom_instructions
                 curr.workspace_dir = self.roster_control.state.workspace_dir
@@ -658,6 +659,7 @@ class ExpertPage:
                 # 다른 설정과 달리 지금 보던 대화에서 물려받지 않고 늘 켠 채로 시작합니다. 이 칸 이전의 대화는
                 # 모두 꺼져 있어(체험 화면을 위한 기본값) 물려받으면 새 대화도 영영 꺼진 채가 됩니다.
                 ask_user=True,
+                sub_debates=self.roster_control.state.sub_debates,
                 tool_mode=self.roster_control.state.tool_mode,
                 active_agents=self.roster_control.get_active_agent_keys(),
                 known_agents=self.roster_control.known_agent_keys(),
@@ -698,6 +700,7 @@ class ExpertPage:
                     converge_early=bool(s_obj.converge_early),
                     token_budget=s_obj.token_budget or 0,
                     ask_user=bool(s_obj.ask_user),
+                    sub_debates=bool(s_obj.sub_debates),
                     tool_mode=s_obj.tool_mode or "",
                     tool_grants=list(s_obj.tool_grants or []),
                     tool_denials=list(s_obj.tool_denials or []),
@@ -735,6 +738,7 @@ class ExpertPage:
                     "turn_started_at": m.turn_started_at,
                     "graph_node_id": m.graph_node_id,
                     "graph_port": m.graph_port,
+                    "turn_meta": m.turn_meta,
                     "llm_meta": m.llm_meta,
                     "tool_calls": [
                         {

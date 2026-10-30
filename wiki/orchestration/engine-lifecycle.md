@@ -24,7 +24,8 @@ flowchart TD
         StrategyOrder["Resolve Speaker Order via DebateStrategy"]
         SpeakerTurn["Speaker Turn (Context + MCP Tool Loop)"]
         RecordMsg["Record Message & Tool Traces in DB"]
-        RoundStart --> StrategyOrder --> SpeakerTurn --> RecordMsg
+        SideDebate["Between rounds: optional sub-debate on one open issue"]
+        RoundStart --> StrategyOrder --> SpeakerTurn --> RecordMsg --> SideDebate
     end
     
     Phase2 --> Phase3[Phase 3: Consensus & Synthesis]

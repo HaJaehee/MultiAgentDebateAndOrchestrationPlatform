@@ -98,7 +98,7 @@ class PlanningPhaseExecutor(PhaseExecutor):
         elif earlier:
             history_snippets = []
             for m in earlier:
-                if m.msg_type == "error":
+                if m.msg_type == "error" or not turns.in_main_record(m):
                     continue
                 history_snippets.append(f"{m.speaker}: {self.conversation.snippet(m, 250)}")
             history_text = "\n".join(history_snippets[-6:])

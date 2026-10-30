@@ -5,11 +5,17 @@
 """
 
 from types import SimpleNamespace
-from typing import Any, List
+from typing import Any, Dict, List
 
 import pytest
 from nicegui import ui
 
+from app.orchestration.turns import (
+    KIND_SPEECH,
+    KIND_SUBDEBATE_CONCLUSION,
+    KIND_SUBDEBATE_OPEN,
+    KIND_SUBDEBATE_SPEECH,
+)
 from app.ui.components.chat_feed.approvals import ApprovalCards, PlanApprovalCard
 from app.ui.components.chat_feed.cards import CardTimeline
 from app.ui.components.chat_feed.decisions import DecisionBar, UnfinishedTurnBar
@@ -51,6 +57,56 @@ def test_messages_are_drawn_and_forgotten():
 
     timeline.clear()
     assert timeline._cards_by_id == {} and timeline._placeholder is not None
+
+
+def _badges(info: Dict[str, Any]) -> List[str]:
+    return [e.text for e in info["card"].descendants() if isinstance(e, ui.badge)]
+
+
+def test_sub_debate_cards_are_labelled_and_only_the_speeches_are_indented():
+    timeline = CardTimeline()
+    timeline.build_status_buttons()
+    timeline.build_area()
+    for msg_id, kind in (("o", KIND_SUBDEBATE_OPEN), ("s", KIND_SUBDEBATE_SPEECH), ("c", KIND_SUBDEBATE_CONCLUSION), ("n", KIND_SPEECH)):
+        timeline.append_message({
+            "id": msg_id, "sender_key": "coder", "sender_name": "Coder", "content": "말", "turn_meta": {"kind": kind},
+        })
+    cards = timeline._cards_by_id
+
+    assert "서브 토론 시작" in _badges(cards["o"])
+    assert "서브 토론" in _badges(cards["s"])
+    assert "서브 토론 결론" in _badges(cards["c"])
+    assert not any("서브 토론" in b for b in _badges(cards["n"]))
+    assert "margin-left" in cards["s"]["card"]._style, "본 토론에서 갈라진 발언만 들여 그립니다"
+    assert "margin-left" not in cards["c"]["card"]._style, "결론은 본 토론으로 돌아온 자리입니다"
+    assert "margin-left" not in cards["n"]["card"]._style
+
+
+def test_sub_debate_cards_carry_no_round_number_because_they_sit_between_rounds():
+    timeline = CardTimeline()
+    timeline.build_status_buttons()
+    timeline.build_area()
+    timeline.append_message({
+        "id": "s", "sender_key": "coder", "sender_name": "Coder", "content": "말", "round_number": 1,
+        "turn_meta": {"kind": KIND_SUBDEBATE_SPEECH},
+    })
+    timeline.append_message({
+        "id": "n", "sender_key": "coder", "sender_name": "Coder", "content": "말", "round_number": 1,
+        "turn_meta": {"kind": KIND_SPEECH},
+    })
+    assert "Round 1" not in _badges(timeline._cards_by_id["s"])
+    assert "Round 1" in _badges(timeline._cards_by_id["n"])
+
+
+def test_a_streaming_sub_debate_speech_is_labelled_from_its_first_chunk():
+    timeline = CardTimeline()
+    timeline.build_status_buttons()
+    timeline.build_area()
+    timeline.start_streaming_message({
+        "id": "s", "sender_key": "coder", "sender_name": "Coder", "content": "",
+        "turn_meta": {"kind": KIND_SUBDEBATE_SPEECH},
+    })
+    assert "서브 토론" in _badges(timeline._active_streams["s"])
 
 
 def test_a_conclusion_card_shows_only_the_actions_that_have_somewhere_to_go():

@@ -40,6 +40,9 @@ class SessionModel(Base):
     # 전문가 에이전트가 발언 도중 사용자에게 확인 질문을 요청할 수 있는지 여부 (`ask__ask_user`, v1.5). 질문 카드를 지원하는
     # 전문가 화면의 세션만 기본 활성화하며, 간이 UI(체험·쉬운 모드)에서는 응답 대기 블로킹을 방지하기 위해 기본 비활성화됩니다.
     ask_user: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # 라운드·단계 경계에서 미해결 쟁점을 전문가 두 명이 따로 다루는 서브 토론을 허용하는지 (ADR-034). 사람이 고르지
+    # 않은 LLM 호출이 늘어나는 기능이라 켜야 돕니다.
+    sub_debates: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # 다른 대화의 특정 턴에서 분기(fork) 생성된 세션인 경우 해당 원본 정보 `{"session_id", "turn_id", "title"}` (v1.5). 없으면 NULL.
     forked_from: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     active_agents: Mapped[List[str]] = mapped_column(JSON, default=list)

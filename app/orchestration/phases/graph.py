@@ -7,7 +7,7 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from sqlalchemy import update
 
@@ -57,8 +57,24 @@ def parse_gate_decision(content: str) -> Optional[Tuple[str, str]]:
     return None
 
 
+async def freeze_graph(db: Any, session_id: str, spec: GraphSpec) -> None:
+    """이 턴에 도는 그래프를 대화에 고정합니다. 다시 연 화면과 저장 문서가 이것을 읽습니다."""
+    try:
+        await db.execute(
+            update(SessionModel)
+            .where(SessionModel.id == session_id)
+            .values(graph_snapshot=spec.dump(), updated_at=SessionModel.updated_at)
+        )
+        await db.commit()
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Could not store the graph snapshot for {session_id}: {exc}")
+        await db.rollback()
+
+
 class GraphRunner(PhaseExecutor):
-    """`graph_debate` 전략의 턴 — 그래프를 고정하고, 단계마다 활성 노드를 돌립니다."""
+    """그래프로 도는 턴(`runs_graph`) — 그래프를 고정하고, 단계마다 활성 노드를 돌립니다."""
 
     async def graph_for_turn(
         self, db: Any, session_model: SessionModel, max_rounds: int
@@ -100,18 +116,7 @@ class GraphRunner(PhaseExecutor):
                 + (f" (외 {len(report.errors) - 3}건)" if len(report.errors) > 3 else "")
             )
 
-        try:
-            await db.execute(
-                update(SessionModel)
-                .where(SessionModel.id == session_model.id)
-                .values(graph_snapshot=spec.dump(), updated_at=SessionModel.updated_at)
-            )
-            await db.commit()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(f"Could not store the graph snapshot for {session_model.id}: {exc}")
-            await db.rollback()
+        await freeze_graph(db, session_model.id, spec)
         return spec
 
     async def run_graph(
@@ -129,8 +134,12 @@ class GraphRunner(PhaseExecutor):
         start_value: List[str],
         replay: Optional[turns.GraphReplay] = None,
         redo: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        between_steps: Optional[Callable[[int], Awaitable[None]]] = None,
     ) -> bool:
-        """그래프를 단계별로 실행합니다. 사용자가 정지 요청을 한 경우 True를 반환합니다."""
+        """그래프를 단계별로 실행합니다. 사용자가 정지 요청을 한 경우 True를 반환합니다.
+
+        `between_steps(단계)` 는 단계를 마치고 장부를 갱신한 뒤, 다음 단계로 가기 전에 부릅니다 (서브 토론).
+        """
         agents = {a.key: a for a in active_agents}
         redo = redo if redo is not None else {}
         scheduler = replay.scheduler if replay is not None else GraphScheduler(spec, max_visits)
@@ -176,7 +185,11 @@ class GraphRunner(PhaseExecutor):
                     control=control,
                     on_event=on_event,
                     redo=redo,
+                    between_steps=between_steps,
                 )
+            elif step and between_steps is not None and not self.heading_to_end(spec, scheduler):
+                # 단계 사이에서 끊긴 턴입니다. 서브 토론이 도중이었으면 여기서 이어 갑니다.
+                await between_steps(step)
 
         while True:
             await self.recorder.apply_interjections(
@@ -275,7 +288,12 @@ class GraphRunner(PhaseExecutor):
             for activation in activations:
                 port, value = outputs[activation.node.id]
                 scheduler.deliver(activation.node.id, port, value)
-            await self.after_graph_step(state, spec, scheduler, orchestrator, step, control, on_event)
+            await self.after_graph_step(state, spec, scheduler, orchestrator, step, control, on_event, between_steps)
+
+    @staticmethod
+    def heading_to_end(spec: GraphSpec, scheduler: GraphScheduler) -> bool:
+        """다음 단계가 최종 합성 노드인가. 그러면 그 단계는 돌지 않고 곧장 합성으로 갑니다."""
+        return any(scheduler.fresh[n.id] for n in spec.nodes if n.type == "end")
 
     async def after_graph_step(
         self,
@@ -286,14 +304,14 @@ class GraphRunner(PhaseExecutor):
         step: int,
         control: Optional[TurnControl],
         on_event: Optional[EventCallback],
+        between_steps: Optional[Callable[[int], Awaitable[None]]] = None,
     ) -> None:
-        heading_to_end = any(
-            scheduler.fresh[n.id] for n in spec.nodes if n.type == "end"
-        )
-        if not heading_to_end and not (control is not None and control.stop_requested):
+        if not self.heading_to_end(spec, scheduler) and not (control is not None and control.stop_requested):
             await self.conversation.update_ledger(
                 state=state, orchestrator=orchestrator, on_event=on_event, reason=f"Step {step}",
             )
+            if between_steps is not None:
+                await between_steps(step)
 
     async def finish_graph_step(
         self,
@@ -309,6 +327,7 @@ class GraphRunner(PhaseExecutor):
         control: Optional[TurnControl],
         on_event: Optional[EventCallback],
         redo: Dict[str, List[Dict[str, Any]]],
+        between_steps: Optional[Callable[[int], Awaitable[None]]] = None,
     ) -> None:
         """중단된 그래프 단계를 이어서 실행합니다."""
         step = replay.step
@@ -349,7 +368,7 @@ class GraphRunner(PhaseExecutor):
         for activation in replay.activations:
             port, value = outputs[activation.node.id]
             replay.scheduler.deliver(activation.node.id, port, value)
-        await self.after_graph_step(state, spec, replay.scheduler, orchestrator, step, control, on_event)
+        await self.after_graph_step(state, spec, replay.scheduler, orchestrator, step, control, on_event, between_steps)
 
     @staticmethod
     async def graph_finished(on_event: Optional[EventCallback], reason: str, steps: int) -> None:
@@ -568,6 +587,11 @@ class GraphRunner(PhaseExecutor):
             )
             context.append({"role": "user", "content": header + "\n" + "\n\n".join(parts)})
 
+        # 서브 토론의 결론은 선을 타고 오지 않습니다. 이 노드의 선이 무엇을 싣든 합류해야 합니다.
+        conclusions = memory.sub_debate_block(state)
+        if conclusions:
+            context.append({"role": "user", "content": conclusions})
+
         context.append({"role": "user", "content": instruction})
         return context
 
@@ -634,12 +658,14 @@ class GraphRunner(PhaseExecutor):
                     )
 
         default_label = "예" if node.default == "yes" else "아니오"
+        conclusions = memory.sub_debate_block(state)
         prompt = [{"role": "user", "content": (
             f"[판정] 그래프 토론의 판정 노드 “{node.display}” 입니다.\n\n"
             f"[목표]\n{state.user_prompt}\n\n"
             + (f"{record.text}\n\n" if record.text else "")
             + "[판정할 내용]\n" + ("\n\n".join(blocks) or "(들어온 발언이 없습니다)") + "\n\n"
-            f"[질문]\n{node.question.strip()}\n\n"
+            + (f"{conclusions}\n\n" if conclusions else "")
+            + f"[질문]\n{node.question.strip()}\n\n"
             f"위 내용만 근거로 질문에 예/아니오로 답하세요. 근거가 부족해 판단할 수 없으면 "
             f"“{default_label}” 로 답하고 그 이유를 적으세요.\n\n"
             '다음 JSON 한 줄로만 답하세요:\n{"decision": "yes" 또는 "no", "reason": "한두 문장"}'

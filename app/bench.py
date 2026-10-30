@@ -65,6 +65,7 @@ class Variant:
     models: Dict[str, str] = field(default_factory=dict)
     converge_early: bool = True
     token_budget: int = 0
+    sub_debates: bool = False
     custom_instructions: str = ""
 
 
@@ -92,7 +93,7 @@ def load_scenario(path: str | Path) -> Scenario:
             problems.append(f"variants[{index}]: {exc}")
             continue
         strategy = STRATEGY_MAP.get(variant.strategy)
-        if strategy is None or strategy.runs_graph:
+        if strategy is None or strategy.uses_graph_file:
             problems.append(f"variants[{index}] '{variant.label}': 지원되지 않는 전략 {variant.strategy}")
         variants.append(variant)
     if not variants:
@@ -179,7 +180,7 @@ async def run_variant(scenario: Scenario, variant: Variant, run_dir: Path, engin
         title=f"{TITLE_PREFIX} {scenario.name} · {variant.label}", strategy=variant.strategy,
         max_rounds=variant.max_rounds, agents=variant.agents, workspace_dir=str(workspace),
         converge_early=variant.converge_early, token_budget=variant.token_budget,
-        custom_instructions=variant.custom_instructions,
+        sub_debates=variant.sub_debates, custom_instructions=variant.custom_instructions,
     )
     sid = created["session_id"]
     await _freeze_models(sid, variant.models)

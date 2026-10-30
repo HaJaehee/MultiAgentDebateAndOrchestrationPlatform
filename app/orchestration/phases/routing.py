@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from app.agents.base import Agent
 
@@ -90,3 +90,29 @@ def parse_assignments(
         seen.add(agent.key)
         assignments.append((agent, task))
     return assignments, reason
+
+
+def parse_sub_debate(
+    content: str, candidates: List[Agent]
+) -> Optional[Tuple[List[Agent], str, str]]:
+    """서브 토론을 열겠다는 답이면 (두 전문가, 쟁점, 사유). 아니면 None.
+
+    지명·분배와 달리 본문에서 에이전트 키를 긁어 오지 않습니다. 형식을 어긴 답에서 추측해 열면 사람이 고른 적
+    없는 비용이 나갑니다. 열지 않아도 토론은 그대로 돕니다.
+    """
+    block = re.search(r"\{.*\}", content or "", re.DOTALL)
+    if block is None:
+        return None
+    try:
+        data = json.loads(block.group(0))
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict) or data.get("open") is not True:
+        return None
+    by_key = {a.key: a for a in candidates}
+    raw = data.get("agents")
+    keys = list(dict.fromkeys(str(k).strip() for k in raw)) if isinstance(raw, list) else []
+    issue = str(data.get("issue") or "").strip()
+    if len(keys) != 2 or not all(k in by_key for k in keys) or not issue:
+        return None
+    return [by_key[k] for k in keys], issue, str(data.get("reason") or "").strip()

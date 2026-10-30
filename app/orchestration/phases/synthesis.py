@@ -267,7 +267,7 @@ class SynthesisPhaseExecutor(PhaseExecutor):
             + memory.text_tokens(agent.model, summary)
             + sum(
                 memory.text_tokens(agent.model, memory.render_message(m))
-                for m in state.messages[start:] if m.msg_type != "error"
+                for m in state.messages[start:] if m.msg_type != "error" and turns.in_main_record(m)
             )
         )
         await self.conversation.ensure_room(
@@ -306,7 +306,7 @@ class SynthesisPhaseExecutor(PhaseExecutor):
         if summary:
             full_cost = sum(
                 memory.text_tokens(model, render(i, m))
-                for i, m in enumerate(state.messages) if m.msg_type != "error"
+                for i, m in enumerate(state.messages) if m.msg_type != "error" and turns.in_main_record(m)
             )
             if full_cost + memory.text_tokens(model, record.text) > budget:
                 start = state.summary_through
@@ -314,7 +314,7 @@ class SynthesisPhaseExecutor(PhaseExecutor):
                 summary = ""
         usable = [
             (i, m) for i, m in enumerate(state.messages)
-            if i >= start and m.msg_type != "error"
+            if i >= start and m.msg_type != "error" and turns.in_main_record(m)
         ]
 
         if agent is None:
@@ -585,7 +585,7 @@ class SynthesisPhaseExecutor(PhaseExecutor):
         """이번 턴의 전문가 발언 목록을 반환합니다. 사용자 입력, 오케스트레이터 메시지, 실패 안내 등은 제외합니다."""
         return [
             m for m in state.messages[state.turn_message_start:]
-            if m.sender_key not in ("user", "orchestrator") and m.msg_type != "error"
+            if m.sender_key not in ("user", "orchestrator") and m.msg_type != "error" and turns.in_main_record(m)
         ]
 
     def debate_code_artifacts(self, state: DebateState, stamp: str) -> List[ArtifactItem]:

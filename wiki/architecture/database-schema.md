@@ -19,8 +19,9 @@ erDiagram
     sessions {
         string id PK "UUID4"
         string title "Session Name"
-        string strategy "sequential_debate | adversarial_debate | orchestrator_led | parallel_dispatch"
+        string strategy "sequential_debate | adversarial_debate | orchestrator_led | parallel_dispatch | graph_debate | adaptive_graph"
         integer max_rounds "Max debate rounds"
+        boolean sub_debates "Allow two-specialist sub-debates between rounds"
         integer parallel_limit "Max agents running at once (parallel_dispatch)"
         json active_agents "List of participating agent keys"
         json known_agents "Agents that existed when the roster was last saved"
@@ -137,8 +138,9 @@ Represents a single multi-agent collaboration workspace or discussion thread.
 | :--- | :--- | :--- | :--- | :--- |
 | `id` | `VARCHAR(36)` | No | `uuid4()` | Primary key. |
 | `title` | `VARCHAR(255)` | No | `'New Debate Session'` | Session title displayed in the sidebar. Defaults to first prompt snippet. |
-| `strategy` | `VARCHAR(50)` | No | `'sequential_debate'` | Selected debate strategy (`sequential_debate`, `adversarial_debate`, `orchestrator_led`, `parallel_dispatch`). Rows saved under the retired `free_debate` / `sequential_review` names are mapped to `sequential_debate` on read by `resolve_strategy_name()`. |
+| `strategy` | `VARCHAR(50)` | No | `'sequential_debate'` | Selected debate strategy (`sequential_debate`, `adversarial_debate`, `orchestrator_led`, `parallel_dispatch`, `graph_debate`, `adaptive_graph`). Rows saved under the retired `free_debate` / `sequential_review` names are mapped to `sequential_debate` on read by `resolve_strategy_name()`. |
 | `max_rounds` | `INTEGER` | No | `3` | Maximum specialist debate rounds per user turn. |
+| `sub_debates` | `BOOLEAN` | No | `False` | Whether two specialists may settle an open issue on the side between rounds or graph steps ([Debate Strategies §2-b](../orchestration/debate-strategies.md)). Off by default because it adds calls nobody chose. |
 | `parallel_limit` | `INTEGER` | No | `3` | How many agents may run concurrently in one round. Read only by `parallel_dispatch`; assignments beyond it queue on a semaphore rather than being dropped. Added by the lightweight migration in `session.py`, so existing databases get `3`. |
 | `active_agents` | `JSON` | No | `[]` | Array of agent keys participating in this session. |
 | `known_agents` | `JSON` | No | `[]` | Every agent that existed when this roster was last saved. `active_agents` is an allow-list, so without this a key missing from it cannot be told apart from an agent that did not exist yet — which made every conversation show newly added agents as switched off. |

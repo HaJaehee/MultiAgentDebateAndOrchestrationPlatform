@@ -51,6 +51,8 @@ to trust it:
 | Adversarial Debate | 제안 ↔ 비판 교차 · 중립은 맨 뒤 (카드 순서와 다를 수 있습니다) |
 | Orchestrator-Led | 매 라운드 오케스트레이터가 지명합니다 · 아래는 지명 실패 시의 순서 |
 | Parallel Dispatch | 동시 실행 (한 번에 최대 N명, 나머지는 순차로 밀림) — arrows become `·` |
+| Graph Debate | 그래프 설정에 따름 — no order is listed |
+| Adaptive Graph | 오케스트레이터가 턴마다 정합니다 — no order is listed |
 
 The preview calls **the same function the engine calls** — `strategy.get_speakers_for_round()`
 — rather than reimplementing the ordering. A second implementation would eventually disagree
@@ -224,6 +226,66 @@ graph TD
 - **File shape**: `GraphSpec.dump()` writes each node's `id`, `type` and only the fields that differ from
   the defaults, with integer `pos`; reading fills the defaults back in. The turn snapshot uses the
   same shape.
+
+### 2.6. Adaptive Graph (`adaptive_graph`) — v1.5.1 ([ADR-034](../../lectures/05-adr/ADR-034-adaptive-graph-and-sub-debates.md))
+- **Key**: `adaptive_graph` · **Display Name**: 적응형 그래프 토론 (Adaptive Graph) · `runs_graph = True`,
+  `draws_graph = True` (`uses_graph_file` is false, which is what the API, the benchmark and the session card check).
+- **Idea**: the same engine as Graph Debate, but the orchestrator draws the graph for this turn instead of a person
+  drawing it in advance. Everything after the drawing — scheduler, wires, gates, overlay, badges, resume — is §2.5.
+- **When**: once, after planning and plan approval and right before the first node, so the drawing takes the approved
+  task split as input. Then it is frozen for the turn. It is **not** changed while running; replay depends on that.
+- **Participants**: the checked specialists. The checkboxes stay live, and drawing an unchecked agent fails validation.
+- **Base graph**: a graph picked in the row (labelled 기준 그래프) is shown to the orchestrator as the thing to adapt. The
+  file is never written. A base that cannot be read means drawing from scratch.
+- **Answer format** (`app/orchestration/graph_draft.py`, no LLM): `{"name", "reason", "nodes", "edges"}`, with edges as
+  `{"from", "to", "port"?, "carry"?}`. Reading fills in what models get wrong: `start`/`end` nodes, edge ids, port names,
+  and `wait: "all"` on a merge of two or more non-gate branches (the two branches of one gate never arrive together, so
+  those stay `any`). Only known fields are read, so a drawing cannot turn off `plan` on the start node.
+- **Limits**: `validate_graph` first, then visit caps clamped to the session's 최대 라운드, at most 12 nodes besides start
+  and end, at most 40 worst-case calls, at least one specialist.
+- **When it goes wrong**: a wrong answer gets one retry that quotes the errors. After that, or on a connection failure,
+  the turn runs the base graph if it validates against the checked agents, otherwise the card order as one chain. The
+  note is recorded with `msg_type="error"` like a failed nomination. With at most one specialist no call is made.
+- **Record**: a note of kind `graph_draft` holds `spec` and `fallback` in `turn_meta`, with the reason and the edges as
+  text. Resume reads this instead of asking again (`turns.drawn_graph`). `sessions.graph_snapshot` is written too, for
+  the reopened screen and the saved document.
+
+---
+
+## 2-b. Sub-debates (any strategy) — v1.5.1
+
+A conversation setting, not a strategy: **쟁점은 따로 토론** (`sessions.sub_debates`, off by default). It sits between
+peer consultation (one question, one answer, kept as the asker's tool output) and another whole round.
+
+```mermaid
+flowchart LR
+    R["Round / step ends<br/>ledger updated"] --> Q{"Open issue<br/>in the ledger?"}
+    Q -->|no| N["Next round / step"]
+    Q -->|yes| A["Orchestrator decides<br/>(tool-less, JSON)"]
+    A -->|no| N
+    A -->|"two agents, one issue"| S["A → B → A"]
+    S --> C["Orchestrator's conclusion"]
+    C --> L["Ledger updated"]
+    L --> N
+```
+
+- **Trigger**: at a boundary between rounds or graph steps (`SubDebateRunner.run_if_needed`). No call is made unless the
+  ledger has an open issue, so an issue-free turn costs what it did. Not after the last round: nothing would read it.
+- **Opening**: only a well-formed `{"open": true, "issue", "agents": [a, b], "reason"}` naming two different participating
+  specialists opens one. Unlike nominations, agent keys are not scraped from prose; a guess would spend calls nobody chose.
+- **Limits**: three speeches, two per turn, one per boundary. Not opened once the token budget is spent or a stop is
+  pending. Inside, peer consultation is off and tool iterations are capped at 3, so it cannot branch again.
+- **What speakers see**: the goal, pinned user record and plan, a digest of the preceding discussion, and this exchange.
+- **Joining back**: speeches of kind `subdebate_speech` are left out of every other speaker's context, including the two
+  participants' next round, and out of the ledger, summaries and synthesis (`turns.in_main_record`). The feed and the saved
+  document keep them. The conclusion stays in the record, and the ledger is updated right after it so the next speaker
+  does not read the issue as still open. Graph nodes read only their wires, so `context_for_node` and `run_gate` add this
+  turn's conclusions explicitly (`memory.sub_debate_block`).
+- **Failure**: a speaker with no response ends the exchange and the orchestrator concludes from what was said. With nothing
+  said, it closes with a note and no conclusion. A stop request ends it without a conclusion; the issue stays open in the
+  ledger.
+- **Resume**: the boundary's record (`turns.sub_debate_at`) holds the issue, the pair and the speeches, so an interrupted
+  sub-debate continues from the next speaker without asking again, and a finished one is not repeated.
 
 ---
 

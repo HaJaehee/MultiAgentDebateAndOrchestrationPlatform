@@ -95,7 +95,7 @@ def active_agent_count(
     `graph_keys` 는 세션 목록 렌더링 중 조회한 그래프 정보를 캐싱하는 딕셔너리입니다. 동일한
     그래프를 참조하는 대화가 여러 개 있더라도 파일 I/O 는 1회만 발생합니다.
     """
-    if not get_strategy(session.strategy).runs_graph:
+    if not get_strategy(session.strategy).uses_graph_file:
         return len(session.active_agents or [])
     graph_id = (session.graph_id or "").strip()
     cache = graph_keys if graph_keys is not None else {}
@@ -684,6 +684,7 @@ class SessionSidebar:
                         "turn_started_at": m.turn_started_at,
                         "graph_node_id": m.graph_node_id,
                         "graph_port": m.graph_port,
+                        "turn_meta": m.turn_meta,
                         "llm_meta": m.llm_meta,
                         "tool_calls": [
                             {

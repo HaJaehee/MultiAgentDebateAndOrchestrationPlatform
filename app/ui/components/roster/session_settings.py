@@ -120,6 +120,7 @@ class SessionSettingsComponent:
         self.on_parallel_changed = on_parallel_changed
         self.converge_switch: Optional[ui.switch] = None
         self.ask_switch: Optional[ui.switch] = None
+        self.sub_debate_switch: Optional[ui.switch] = None
         self.budget_input: Optional[ui.number] = None
         self.tool_mode_select: Optional[ui.select] = None
         self.strategy_select: Optional[ui.select] = None
@@ -142,7 +143,7 @@ class SessionSettingsComponent:
                     options=strategy_options,
                     value=self.state.strategy_name,
                     on_change=self.on_strategy_change,
-                ).props("outlined dense dark options-dense").classes("w-52 text-xs")
+                ).props("outlined dense dark options-dense").classes("w-80 text-xs")
 
             # Max Rounds Slider
             with ui.row().classes("items-center gap-2 min-w-[180px]"):
@@ -168,6 +169,15 @@ class SessionSettingsComponent:
                     "전문가 에이전트가 발언 도중 요구사항이 모호할 때 사용자에게 확인 질문을 요청할 수 있습니다 (턴당 최대 3회). "
                     "채팅 피드에 질문 카드가 표시되며, 5분 이내에 답변이 없으면 자체 가정을 명시하고 계속 진행합니다. "
                     "답변 내용은 후속 발언자들에게도 공유됩니다."
+                )
+                self.sub_debate_switch = ui.switch(
+                    "쟁점은 따로 토론", value=self.state.sub_debates, on_change=self.on_sub_debates_change,
+                ).props("dense dark color=teal-4").classes("text-xs text-slate-300")
+                self.sub_debate_switch.tooltip(
+                    "라운드(그래프는 단계)가 끝날 때 결정 장부에 미해결 쟁점이 있으면, 오케스트레이터가 필요하다고 "
+                    "판단한 경우에 관련 전문가 두 명만 따로 세 번 주고받게 하고 그 결론을 본 토론에 합류시킵니다 "
+                    "(턴당 최대 2회). 판단에 호출 1번, 열리면 발언 3번과 결론·장부 갱신 2번이 더 듭니다. "
+                    "마지막 라운드 뒤에는 열리지 않습니다."
                 )
 
             # 턴 토큰 예산 — 해당 턴의 최대 소모 토큰(입력+출력) 한도. 도달 시 다음 라운드 경계에서 결론 합성으로 이동합니다.
@@ -266,6 +276,8 @@ class SessionSettingsComponent:
             self.budget_input.value = state.token_budget or None
         if self.ask_switch:
             self.ask_switch.value = state.ask_user
+        if self.sub_debate_switch:
+            self.sub_debate_switch.value = state.sub_debates
         if self.tool_mode_select:
             # conf.json 의 기본 모드가 바뀌었을 수 있으니 목록도 새로 그립니다.
             self.tool_mode_select.set_options(self.tool_mode_options(), value=state.tool_mode)
@@ -322,6 +334,10 @@ class SessionSettingsComponent:
 
     def on_ask_user_change(self, e) -> None:
         self.state.ask_user = bool(e.value)
+        self.changes.config_changed_later()
+
+    def on_sub_debates_change(self, e) -> None:
+        self.state.sub_debates = bool(e.value)
         self.changes.config_changed_later()
 
     def on_token_budget_change(self, e) -> None:

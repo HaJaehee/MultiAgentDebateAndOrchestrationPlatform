@@ -41,6 +41,7 @@ class GraphRowComponent:
         self.update_summary = update_summary
         self.row: Optional[ui.column] = None
         self.select: Optional[ui.select] = None
+        self.select_label: Optional[ui.label] = None
         self.status: Optional[ui.label] = None
         self.edit_btn: Optional[ui.button] = None
         # 그래프 미리보기와 실행 표시. 실행 상태의 근거는 `GraphRunTracker` 하나입니다 (graph_run.py).
@@ -67,7 +68,7 @@ class GraphRowComponent:
         with self.row:
             with ui.row().classes("w-full items-center gap-2 flex-wrap"):
                 ui.icon("hub", size="xs").classes("text-teal-400")
-                ui.label("그래프:").classes("text-xs font-semibold text-slate-300")
+                self.select_label = ui.label("그래프:").classes("text-xs font-semibold text-slate-300")
                 self.select = ui.select(
                     options={}, value=None, on_change=self.on_graph_change,
                 ).props("outlined dense dark options-dense clearable").classes("w-64 text-xs")
@@ -139,11 +140,20 @@ class GraphRowComponent:
             options[self.state.graph_id] = f"(파일 없음) {self.state.graph_id}"
         if self.select is not None:
             self.select.set_options(options, value=self.state.graph_id or None)
+        if self.select_label is not None:
+            self.select_label.set_text("기준 그래프:" if strategy.draws_graph else "그래프:")
 
-        self.state.graph_agent_keys = set(graph_agent_keys(self.state.graph_id))
+        # 오케스트레이터가 그리는 전략은 체크한 전문가가 참여합니다. 체크박스가 그대로 살아 있습니다.
+        if strategy.uses_graph_file:
+            self.state.graph_agent_keys = set(graph_agent_keys(self.state.graph_id))
         self.update_summary()
         if self.state.graph_agent_keys != previous_keys:
             self.refresh_cards()
+
+        if strategy.draws_graph:
+            self._sync_drawn_status()
+            self._sync_preview()
+            return
 
         if not self.state.graph_id:
             text, tone = (
@@ -176,6 +186,22 @@ class GraphRowComponent:
             )
         self._sync_preview()
 
+    def _sync_drawn_status(self) -> None:
+        """오케스트레이터가 그리는 전략의 안내. 기준 그래프는 읽지 못해도 처음부터 그리므로 오류가 아닙니다."""
+        if self.status is None:
+            return
+        text = "오케스트레이터가 턴마다 이번 작업에 맞는 실행 그래프를 그립니다"
+        tone = "text-teal-300"
+        if self.state.graph_id:
+            try:
+                name = load_graph(self.state.graph_id).name or self.state.graph_id
+                text += f" · “{name}” 을(를) 기준으로 고쳐 씁니다"
+            except (FileNotFoundError, ValueError):
+                text += f" · 기준 그래프 {self.state.graph_id} 를 읽지 못해 처음부터 그립니다"
+                tone = "text-amber-400"
+        self.status.set_text(text + " · 참여자는 체크한 전문가입니다")
+        self.status.classes(remove="text-red-400 text-amber-400 text-teal-300", add=tone)
+
     def set_run(self, tracker: Optional[Any], active: bool) -> None:
         """이 대화의 그래프 실행 상태를 받습니다 (`GraphRunTracker`). 도는 중이면 active.
 
@@ -195,6 +221,11 @@ class GraphRowComponent:
         tracker = self._run
         if tracker is not None and tracker.spec and self._run_active:
             return tracker.spec, tracker.view(), tracker.summary(active=True)
+        # 오케스트레이터가 그린 그래프는 파일이 없습니다. 끝난 뒤에도 그 턴의 그림을 그대로 보여 줍니다.
+        strategy = STRATEGY_MAP.get(resolve_strategy_name(self.state.strategy_name))
+        if strategy is not None and strategy.draws_graph and tracker is not None and tracker.spec:
+            summary = tracker.summary()
+            return tracker.spec, tracker.view(), (f"지난 턴 · {summary}" if summary else "")
         if not self.state.graph_id:
             return None, None, ""
         try:

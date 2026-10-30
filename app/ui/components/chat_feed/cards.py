@@ -9,6 +9,7 @@ from app.agents.base import style_for_agent
 from app.mcp.policy import OUTCOME_LABELS, describe_verdict, tool_outcome
 from app.orchestration.graph_run import NodeBadges
 from app.orchestration.state import FALLBACK_BADGE, fallback_sentence
+from app.orchestration.turns import in_main_record, sub_debate_label
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.components.chat_feed.common import (
     CLAMP_LINES,
@@ -465,6 +466,10 @@ class CardTimeline:
         # 안내(붉은 테두리)만은 덮지 않습니다 — 그 색이 곧 내용이기 때문입니다.
         if style.get("custom") and msg_type != "error":
             card.style(f"border-color: {style['badge_color']}")
+        # 서브 토론 안의 발언은 한 칸 들여 그립니다. 본 토론에서 갈라져 나왔다는 것이 눈에 보여야 합니다.
+        if not in_main_record(msg):
+            card.style("width: calc(100% - 2rem); margin-left: 2rem")
+        side_label = sub_debate_label(msg)
 
         with card:
             with ui.row().classes("w-full items-center justify-between mb-1.5 no-wrap"):
@@ -499,6 +504,12 @@ class CardTimeline:
                         ui.badge(node_badge, color="teal-10").props("dense text-[12px]").classes(
                             "text-teal-100"
                         ).tooltip("그래프 토론에서 해당 발언을 생성한 노드입니다.")
+                    if side_label:
+                        ui.badge(side_label, color="indigo-10").props("dense text-[12px]").classes(
+                            "text-indigo-100"
+                        ).tooltip(
+                            "전문가 두 명이 쟁점 하나를 따로 다룬 기록입니다. 다른 전문가에게는 결론만 전달됩니다."
+                        )
                     # 이 턴이 작업 공간에서 바꾼 파일 (결론 카드에만, `set_turn_actions` 가 보이게 합니다).
                     changes_btn = ui.button(
                         icon="folder_open", on_click=lambda: self._open_turn_changes(info),
@@ -518,7 +529,8 @@ class CardTimeline:
                     ).props("flat dense round size=12px color=teal-4")
                     skill_btn.tooltip("이 턴에서 도출된 결론을 스킬로 저장합니다 — 초안을 검토·수정한 후 비활성화 상태로 저장")
                     skill_btn.set_visibility(False)
-                    if round_num > 0:
+                    # 서브 토론은 라운드(단계) 사이에 있어 번호를 붙이지 않습니다. 자리가 곧 그 경계입니다.
+                    if round_num > 0 and not side_label:
                         # 그래프 토론의 라운드는 단계입니다 (상태 줄의 "N단계" 와 같은 수).
                         round_word = "Step" if msg.get("graph_node_id") else "Round"
                         ui.badge(f"{round_word} {round_num}", color="slate-700").props("dense text-[12px]")

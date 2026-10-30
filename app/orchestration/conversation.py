@@ -17,7 +17,7 @@ from app.agents.reasoning import strip_reasoning_trace
 from app.agents.skills import skill_tools_for, with_designated_skills
 from app.database.models import SessionModel, TurnModel
 from app.events import EventCallback, EventType
-from app.orchestration import context_memory as memory, plan_gate
+from app.orchestration import context_memory as memory, plan_gate, turns
 from app.orchestration.context import EngineContext
 from app.orchestration.state import DebateMessage, DebateState
 from app.workspace_files import mention_token
@@ -200,7 +200,8 @@ class ConversationMemory:
             return False
         start = state.summary_through
         costs = [
-            0 if m.msg_type == "error" else memory.text_tokens(model, memory.render_message(m))
+            0 if m.msg_type == "error" or not turns.in_main_record(m)
+            else memory.text_tokens(model, memory.render_message(m))
             for m in state.messages[start:]
         ]
         cut = memory.choose_fold_cut(
@@ -237,7 +238,7 @@ class ConversationMemory:
         start = state.summary_through
         items = [
             (index, state.messages[index]) for index in range(start, cut)
-            if state.messages[index].msg_type != "error"
+            if state.messages[index].msg_type != "error" and turns.in_main_record(state.messages[index])
         ]
         if not items:
             return False
@@ -322,7 +323,7 @@ class ConversationMemory:
         start, upto = state.ledger_through, len(state.messages)
         fresh = [
             (index, state.messages[index]) for index in range(start, upto)
-            if state.messages[index].msg_type != "error"
+            if state.messages[index].msg_type != "error" and turns.in_main_record(state.messages[index])
         ]
         if not any(m.sender_key != "user" for _index, m in fresh):
             return False
@@ -463,7 +464,8 @@ class ConversationMemory:
         fresh_start = state.turn_message_start
         for index in range(len(state.messages) - 1, -1, -1):
             msg = state.messages[index]
-            if msg.sender_key == agent.key and msg.msg_type != "error":
+            # 서브 토론에서 한 말은 본 토론의 응답이 아닙니다. 그 앞의 발언은 아직 답하지 않은 것입니다.
+            if msg.sender_key == agent.key and msg.msg_type != "error" and turns.in_main_record(msg):
                 fresh_start = max(fresh_start, index + 1)
                 break
         mentions = {mention_token(agent.name), f"@{agent.key}"}
@@ -493,8 +495,9 @@ class ConversationMemory:
             for index in range(start, len(state.messages)):
                 msg = state.messages[index]
                 # 응답을 못 받은 자리는 맥락에 넣지 않습니다. 실패 안내문을 발언인 양
-                # 읽히게 하면 다음 에이전트가 그것을 논평하기 시작합니다.
-                if msg.msg_type == "error":
+                # 읽히게 하면 다음 에이전트가 그것을 논평하기 시작합니다. 서브 토론 안의 발언도
+                # 넣지 않습니다 — 합류하는 것은 결론입니다.
+                if msg.msg_type == "error" or not turns.in_main_record(msg):
                     continue
                 if msg.sender_key == "user":
                     context.append({

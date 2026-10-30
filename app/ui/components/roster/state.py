@@ -98,6 +98,8 @@ class RosterState:
     token_budget: int = 0
     # 전문가가 발언 도중 사용자에게 질문할 수 있는지 (`ask__ask_user`, v1.5). 새 대화 세션은 기본 활성화합니다.
     ask_user: bool = True
+    # 미해결 쟁점을 전문가 두 명이 따로 다루는 서브 토론을 허용하는지 (ADR-034). 호출이 늘어나므로 켜야 돕니다.
+    sub_debates: bool = False
     # 병렬 지시 전략에서 한 라운드에 동시에 띄울 에이전트 수의 상한.
     # 다른 전략에서는 쓰이지 않으므로 그 전략일 때만 화면에 나옵니다.
     parallel_limit: int = 3
@@ -297,6 +299,7 @@ class RosterState:
         known_keys: Optional[List[str]],
         session_agents: Optional[List[Agent]],
         tool_mode: str,
+        sub_debates: bool = False,
     ) -> None:
         self.agent_pool = agent_pool
         # 잠금 여부와 스냅샷이 선택 규칙과 카드 목록을 함께 정하므로 먼저 반영합니다.
@@ -312,6 +315,7 @@ class RosterState:
         self.converge_early = bool(converge_early)
         self.token_budget = max(0, int(token_budget or 0))
         self.ask_user = bool(ask_user)
+        self.sub_debates = bool(sub_debates)
         self.tool_mode = tool_mode or ""
         self.custom_instructions = instructions
         self.workspace_dir = workspace_dir or ""

@@ -61,18 +61,18 @@ app/
 ├── events.py                         90   토론 이벤트 이름표 EventType
 ├── tool_rules.py                    125   도구 보안 규칙 문법 (read(경로) · net(호스트) …)
 ├── timestamps.py                    176   발언·턴·보고서 시각 표기 (화면·문서·보고서 공용)
-├── session_ops.py                   489   세션 되돌리기·이어받기, 피드 기록 읽기
-├── export.py                        229   대화 → 마크다운 문서
+├── session_ops.py                   491   세션 되돌리기·이어받기, 피드 기록 읽기
+├── export.py                        234   대화 → 마크다운 문서
 ├── export_mermaid.py              1,618   Mermaid → StarUML·HTML 변환 (외부 의존 없음)
 ├── mermaid_lint.py                  491   다이어그램 문법 검사·복구
 ├── workspace_files.py               797   작업 공간 파일 목록·@언급·업로드·다운로드 (경로 안전장치)
 ├── diagnostics.py                   394   이벤트 루프 정체 스택·브라우저 끊김 보고
 ├── security.py                      782   원격 접속 토큰, 접근 제어 미들웨어
-├── headless.py                      250   헤드리스 토론 실행 코어 (REST·MCP 공용) (v1.5)
-├── mcp_server.py                    179   내장 MCP 서버 엔드포인트 /mcp (v1.5)
+├── headless.py                      251   헤드리스 토론 실행 코어 (REST·MCP 공용) (v1.5)
+├── mcp_server.py                    180   내장 MCP 서버 엔드포인트 /mcp (v1.5)
 ├── workspace_checkpoint.py          323   작업 공간 턴 체크포인트·롤백·분기 내보내기 (v1.5)
 ├── session_fork.py                  275   대화 세션 분기(Fork), 비교 데이터 구성 및 결론 평가 (v1.5)
-├── bench.py                         336   전략 벤치마크 하네스 python -m app.bench (v1.5)
+├── bench.py                         337   전략 벤치마크 하네스 python -m app.bench (v1.5)
 ├── graph_store.py                   105   그래프 토론의 그래프 파일 data/graphs/
 │
 ├── config/
@@ -118,30 +118,33 @@ app/
 │   └── exec_scan.py                 343   실행 전 코드 검사
 │
 ├── orchestration/
-│   ├── engine.py                    591   조립과 턴 수명 (run_turn · resume_turn)
+│   ├── engine.py                    592   조립과 턴 수명 (run_turn · resume_turn)
 │   ├── context.py                    51   EngineContext — 서비스가 함께 쓰는 것
-│   ├── turn_setup.py                262   턴 구성·참여자·도구 게이트
+│   ├── turn_setup.py                275   턴 구성·참여자·도구 게이트
 │   ├── recording.py                 633   TurnRecorder — 기록, 재시도, data/unsaved/
-│   ├── speech.py                    756   SpeechRunner — 발언 받기·기록·확정 (조각 묶음·초안은 _ChunkStream·_Speech)
-│   ├── conversation.py              563   ConversationMemory — 맥락·요약·장부
-│   ├── context_memory.py            640   대화 기억 규칙 (LLM 을 부르지 않음)
+│   ├── speech.py                    757   SpeechRunner — 발언 받기·기록·확정 (조각 묶음·초안은 _ChunkStream·_Speech)
+│   ├── conversation.py              566   ConversationMemory — 맥락·요약·장부
+│   ├── context_memory.py            659   대화 기억 규칙 (LLM 을 부르지 않음)
 │   ├── phases/base.py                27   단계 실행기 바탕
 │   ├── phases/planning.py           348   1단계: 계획과 계획 승인
-│   ├── phases/debate.py             397   2단계: 라운드, 발언자 지명
+│   ├── phases/debate.py             416   2단계: 라운드, 발언자 지명
 │   ├── phases/parallel.py           388   병렬 지시 라운드
-│   ├── phases/graph.py              695   그래프 토론
-│   ├── phases/routing.py             92   지명·분배 응답 읽기
+│   ├── phases/graph.py              721   그래프 토론
+│   ├── phases/graph_drafting.py     164   적응형 그래프 토론: 오케스트레이터가 그래프를 그림 (ADR-034)
+│   ├── phases/sub_debate.py         359   서브 토론: 쟁점을 두 전문가가 따로, 결론만 합류 (ADR-034)
+│   ├── phases/routing.py            118   지명·분배 응답 읽기
 │   ├── phases/synthesis.py          766   3단계: 합성, 다이어그램 수선, 산출물
 │   ├── artifacts.py                 289   코드 블록·Mermaid 정규화, 로스터 글
-│   ├── strategies.py                307   토론 전략
+│   ├── strategies.py                330   토론 전략
 │   ├── graph.py                     541   그래프 모델·검증·스케줄러
 │   ├── graph_run.py                 304   그래프 실행 표시
+│   ├── graph_draft.py               265   그래프 작성 프롬프트·응답 읽기·허용 범위 (LLM 을 부르지 않음)
 │   ├── skill_draft.py               143   결론 기반 스킬 초안 생성 (v1.5)
 │   ├── roster_service.py            328   로스터의 conf.json 쓰기·반영·다시 읽기·잠금 규칙 (NiceGUI 없음)
 │   ├── plan_gate.py                 430   계획 승인 규칙 (ADR-028)
 │   ├── tool_gate.py                 453   도구 보안 판정을 토론에 붙임
 │   ├── control.py                   693   정지·개입·한도·승인 제어 채널
-│   ├── turns.py                     517   턴 기록, 끊긴 턴 (ADR-024)
+│   ├── turns.py                     582   턴 기록, 끊긴 턴 (ADR-024)
 │   ├── state.py                     148   DebateState · DebateMessage · ArtifactItem
 │   ├── runner.py                    388   DebateRunner — 백그라운드 턴 시작·끝
 │   ├── turn_run.py                  658   TurnRun — 턴 스냅샷 (이벤트별 리듀서)
@@ -150,15 +153,15 @@ app/
 │
 ├── database/
 │   ├── search.py                    176   대화 세션 및 발언 검색 (FTS5 trigram + LIKE) (v1.5)
-│   ├── models.py                    342   SQLAlchemy ORM
-│   └── session.py                   258   비동기 엔진·세션 팩토리, init_db, 컬럼 이관
+│   ├── models.py                    343   SQLAlchemy ORM
+│   └── session.py                   260   비동기 엔진·세션 팩토리, init_db, 컬럼 이관
 │
 ├── easy/                              비엔지니어 화면 /trial/easy (ADR-029)
 ├── trial/                             체험 서버 /trial
 │
 └── ui/
     ├── run_binding.py                85   화면이 토론에 붙는 구독 (세 화면 공용)
-    ├── expert/page.py               842   전문가 화면 ExpertPage
+    ├── expert/page.py               846   전문가 화면 ExpertPage
     ├── expert/events.py             544   이벤트별 화면 반영
     ├── expert/chrome.py             104   머리 줄, 정보 창
     ├── shared/page.py               119   체험·쉬운 화면 공용 틀
@@ -174,7 +177,7 @@ app/
     ├── components/roster/         3,917   로스터 패널 (control 이 조립 · state · changes · agent_cards · agent_admin · agent_dialogs · mcp_panel · skills_panel · workspace_row · session_settings · graph_row · builder_dialog · widgets · common)
     ├── components/chat_feed/      2,658   토론 피드 (feed 가 조립 · cards · approvals · decisions · mentions · common)
     ├── components/agent_builder_chat.py   111   도우미와 대화해 설계도를 채우는 부분 (전문가·쉬운 화면 공용)
-    ├── components/sidebar.py        829   세션 목록
+    ├── components/sidebar.py        830   세션 목록
     ├── components/artifact_viewer.py   377   산출물 탭, 복사·다운로드
     ├── components/agent_appearance.py   257   카드 색·아이콘 편집기
     ├── components/model_status.py   143   모델 연결 상태 단추와 창

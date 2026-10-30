@@ -11,14 +11,18 @@ from typing import Any, Dict, List
 import pytest
 from nicegui import ui
 
+from app import graph_store
 from app.agents.pool import AgentPool
 from app.agents.skills import Skill
 from app.config import AgentConfig
+from app.orchestration.graph import graph_from_card_order
+from app.orchestration.graph_run import GraphRunTracker
 from app.orchestration.roster_service import Notice, ReloadResult
 from app.ui.components.roster.agent_admin import AgentAdminComponent
 from app.ui.components.roster.agent_cards import AgentCardsComponent
 from app.ui.components.roster.agent_dialogs import AgentDialogs
 from app.ui.components.roster.changes import RosterChanges
+from app.ui.components.roster.graph_row import GraphRowComponent
 from app.ui.components.roster.mcp_panel import McpPanelComponent
 from app.ui.components.roster.session_settings import SessionSettingsComponent, ToolRulesDialog
 from app.ui.components.roster.skills_panel import SkillsPanelComponent
@@ -496,6 +500,90 @@ def test_opening_a_session_moves_the_values_to_the_handles(state, monkeypatch):
 
     assert settings.rounds_slider.value == 4 and settings.custom_instr_input.value == "지침"
     assert settings.rounds_label.text == "4"
+
+
+def test_the_sub_debate_switch_is_off_until_turned_on_and_follows_the_session(state, monkeypatch):
+    monkeypatch.setattr(ui, "timer", lambda *a, **k: None)
+    settings, _ = _settings(state)
+    assert state.sub_debates is False and settings.sub_debate_switch.value is False, "호출이 늘어나므로 켜야 돕니다"
+
+    settings.sub_debate_switch.set_value(True)
+    assert state.sub_debates is True
+
+    state.sub_debates = False
+    settings.sync_from_state()
+    assert settings.sub_debate_switch.value is False
+
+
+def test_the_adaptive_strategy_shows_the_parallel_limit_too(state, monkeypatch):
+    monkeypatch.setattr(ui, "timer", lambda *a, **k: None)
+    settings, _ = _settings(state)
+    settings.strategy_select.set_value("adaptive_graph")
+    assert settings.parallel_row.visible is True, "그린 그래프도 병렬로 돕니다"
+
+
+# ------------------------------------------------------------------ 그래프 줄
+
+
+def _graph_row(state, service=None) -> GraphRowComponent:
+    service = service or StubService()
+    row = GraphRowComponent(
+        state, service, _changes(state, service), refresh_cards=lambda: None, update_summary=lambda: None,
+    )
+    row.build()
+    return row
+
+
+def test_the_adaptive_strategy_needs_no_graph_and_keeps_the_checkboxes(state, tmp_path, monkeypatch):
+    monkeypatch.setattr(graph_store, "graphs_dir", lambda: tmp_path)
+    state.strategy_name = "adaptive_graph"
+    row = _graph_row(state)
+
+    assert row.row.visible is True
+    assert state.graph_agent_keys is None and state.selection_locked is False, "참여자는 체크한 전문가입니다"
+    assert row.select_label.text == "기준 그래프:"
+    assert "오케스트레이터가 턴마다" in row.status.text and "참여자는 체크한 전문가" in row.status.text
+    assert "text-amber-400" not in row.status.classes and "text-red-400" not in row.status.classes, "그래프가 없어도 정상입니다"
+
+
+def test_a_base_graph_is_named_and_a_missing_one_is_only_a_warning(state, tmp_path, monkeypatch):
+    monkeypatch.setattr(graph_store, "graphs_dir", lambda: tmp_path)
+    graph_store.save_graph(graph_from_card_order("base", "기준 줄", ["coder"]))
+    state.strategy_name = "adaptive_graph"
+    state.graph_id = "base"
+    row = _graph_row(state)
+    assert "“기준 줄” 을(를) 기준으로" in row.status.text
+    assert state.graph_agent_keys is None, "기준 그래프가 있어도 체크박스가 정합니다"
+
+    state.graph_id = "nope"
+    row.sync()
+    assert "처음부터 그립니다" in row.status.text and "text-amber-400" in row.status.classes
+
+
+def test_the_hand_drawn_strategy_still_locks_to_the_graph(state, tmp_path, monkeypatch):
+    monkeypatch.setattr(graph_store, "graphs_dir", lambda: tmp_path)
+    graph_store.save_graph(graph_from_card_order("base", "기준 줄", ["coder"]))
+    state.strategy_name = "graph_debate"
+    state.graph_id = "base"
+    row = _graph_row(state)
+    assert row.select_label.text == "그래프:"
+    assert state.graph_agent_keys == {"coder"} and state.selection_locked is True
+
+
+def test_a_finished_drawn_graph_stays_on_screen_without_a_file(state, tmp_path, monkeypatch):
+    monkeypatch.setattr(graph_store, "graphs_dir", lambda: tmp_path)
+    state.strategy_name = "adaptive_graph"
+    row = _graph_row(state)
+    assert row._preview_source()[0] is None, "아직 그린 것이 없습니다"
+
+    spec = graph_from_card_order("drawn-1", "그린 그래프", ["coder"]).dump()
+    tracker = GraphRunTracker(spec)
+    tracker.observe_message({"id": "m1", "graph_node_id": "n1", "graph_port": "out", "round_number": 1})
+    row.set_run(tracker, active=False)
+
+    drawn, view, summary = row._preview_source()
+    assert drawn == spec and view["nodes"]["n1"]["state"] == "done"
+    assert summary.startswith("지난 턴")
 
 
 def test_the_ledger_says_how_long_it_is(state):

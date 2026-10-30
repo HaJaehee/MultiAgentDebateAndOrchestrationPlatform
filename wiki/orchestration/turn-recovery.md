@@ -28,7 +28,7 @@ synthesis message. When the process died mid-turn:
 | :--- | :--- | :--- |
 | **Turn** | `turns` | Status (`running`, `completed`, `failed`, `interrupted`, `abandoned`), phase (`planning`, `debating`, `synthesizing`, `completed`), opening message, the configuration the turn started with (participants, strategy, rounds, parallel limit, custom instructions, workspace), `stopped_early`, pause time and resume count. Written in the **same commit** as the opening request. |
 | **Turn id** | `messages.turn_id`, `tool_calls.turn_id` | Every record belongs to its turn explicitly — no inference from ordering. |
-| **Flow role** | `messages.turn_meta` | `opening`, `interjection`, `plan`, `speech`, `merge`, `gate`, `nomination` (+`speakers`), `assignment` (+`tasks`), `note`, `failure`, `interrupted`, `synthesis`. Recovery reads these values, never the human-facing sentences. |
+| **Flow role** | `messages.turn_meta` | `opening`, `interjection`, `plan`, `speech`, `merge`, `gate`, `nomination` (+`speakers`), `assignment` (+`tasks`), `note`, `failure`, `interrupted`, `synthesis`, `graph_draft` (+`spec`, `fallback`), `subdebate_open` (+`issue`, `agents`), `subdebate_speech`, `subdebate_conclusion`. Recovery reads these values, never the human-facing sentences. |
 | **Tool call, immediately** | `tool_calls` | Committed the moment the tool returns, with `message_id` empty; linked to its speech in the speech's own commit. |
 | **Speech draft** | `speech_drafts` | For a speech that uses tools: the exact messages the model was looking at plus the loop's counters, saved after it asks for tools and after every tool result. Deleted in the speech's own commit. See §5. |
 

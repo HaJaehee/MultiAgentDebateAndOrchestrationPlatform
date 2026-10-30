@@ -373,8 +373,9 @@ class OrchestratorEngine:
             config = dict(turn.config or {})
 
             # 그래프는 그 턴이 시작될 때 고정해 둔 것입니다. 파일은 그 사이 바뀌었을 수 있습니다.
+            # 오케스트레이터가 그린 그래프는 턴의 기록에 있어 토론에 들어갈 때 읽습니다 (`GraphDrafter`).
             graph_spec: Optional[GraphSpec] = None
-            if get_strategy(resolve_strategy_name(config.get("strategy"))).runs_graph:
+            if get_strategy(resolve_strategy_name(config.get("strategy"))).uses_graph_file:
                 if not session_model.graph_snapshot:
                     raise GraphTurnError("이 턴이 돌던 그래프의 기록이 없어 다시 세울 수 없습니다.")
                 graph_spec = parse_graph(session_model.graph_snapshot)

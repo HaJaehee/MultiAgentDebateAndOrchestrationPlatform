@@ -219,14 +219,14 @@ MCP 서버별 연결 상태. `"enabled": false` 로 꺼 둔 서버도 함께 보
 | 엔드포인트 | 설명 |
 | :--- | :--- |
 | `GET /api/sessions?limit=50` | 최근 대화 세션 목록 조회 (세션 ID, 제목, 토론 전략, 참여 에이전트 목록, 진행 여부) |
-| `POST /api/sessions` | 새 대화 세션을 생성합니다. 요청 본문: `title`, `strategy`, `max_rounds`(1~10), `agents`(생략 시 활성화된 전체 에이전트), `custom_instructions`, `workspace_dir`, `converge_early`, `token_budget`. 상태 코드 `201` 반환 |
+| `POST /api/sessions` | 새 대화 세션을 생성합니다. 요청 본문: `title`, `strategy`, `max_rounds`(1~10), `agents`(생략 시 활성화된 전체 에이전트), `custom_instructions`, `workspace_dir`, `converge_early`, `token_budget`, `sub_debates`. 상태 코드 `201` 반환 |
 | `POST /api/sessions/{id}/turns` | 토론 턴 시작 요청: `{"prompt": "...", "attended": false}`. 접수 시 `202`, 이미 진행 중인 경우 `409` |
 | `POST /api/sessions/{id}/stop` | 현재까지의 발언 내용을 바탕으로 최종 결론을 도출하도록 토론 중단(Stop) 요청 |
 | `GET /api/sessions/{id}/status` | 세션 실행 상태 조회: 진행 중인 경우 현재 페이즈, 상태 메시지, 사용자 응답 대기 여부를 반환하며, 유휴 상태인 경우 마지막 턴의 상태 반환 |
 | `GET /api/sessions/{id}/result?wait=0` | 마지막 턴 결과 조회: 최종 결론, 생성된 아티팩트 목록, 결정 장부, 토큰 사용량, 조기 종료 여부, 무응답 에이전트 목록, 변경된 파일 통계 반환. `wait`(초 단위, 최대 600초) 파라미터로 턴 완료까지 롱 폴링 대기 가능 |
 | `GET /api/sessions/{id}/events` | Server-Sent Events(SSE) 스트림: 연결 시 초기 `snapshot` 이벤트, 턴 완료 시 `run_finished` 이벤트 수신. 진행 중인 턴이 없으면 `idle` 이벤트 후 대기 |
 
-오류 발생 시에는 `{"error": "..."}` 형태의 JSON과 함께 적절한 HTTP 상태 코드(`400`: 유효하지 않은 전략/에이전트/빈 요청/그래프 토론, `404`: 세션 없음, `409`: 턴 충돌)가 반환됩니다.
+오류 발생 시에는 `{"error": "..."}` 형태의 JSON과 함께 적절한 HTTP 상태 코드(`400`: 유효하지 않은 전략/에이전트/빈 요청/그래프 토론(`graph_debate`. 그래프 파일이 필요 없는 `adaptive_graph` 는 됩니다), `404`: 세션 없음, `409`: 턴 충돌)가 반환됩니다.
 
 **비대면(Unattended) 턴 실행.** API를 통해 시작된 턴은 기본적으로 사용자가 대화창에 참여하지 않는 `attended=false` 모드로 동작합니다.
 계획 승인 카드를 띄우지 않고 자동 승인하며, 도구 보안 정책상 "사용자 확인(Ask)"으로 분류된 호출은 안전을 위해 자동 거부되고,

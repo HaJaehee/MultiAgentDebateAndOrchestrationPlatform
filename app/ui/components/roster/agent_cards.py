@@ -452,6 +452,8 @@ class AgentCardsComponent:
             )
             if strategy is not None and strategy.runs_graph:
                 ui.label(
+                    "오케스트레이터가 턴마다 정합니다 — 체크한 전문가로 순서, 병렬 처리, 반복을 그립니다."
+                    if strategy.draws_graph else
                     "그래프 설정에 따름 — 참여자, 순서, 병렬 처리, 반복은 선택된 그래프 정의를 따릅니다."
                 ).classes("text-[11px] text-slate-400")
                 return

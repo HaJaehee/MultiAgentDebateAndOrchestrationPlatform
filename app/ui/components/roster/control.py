@@ -323,11 +323,12 @@ class AgentRosterControl:
         tool_mode: str = "",
         tool_grants: Optional[List[str]] = None,
         tool_denials: Optional[List[str]] = None,
+        sub_debates: bool = False,
     ) -> None:
         self.state.apply_session(
             self.service.agent_pool(), active_keys, strategy, max_rounds, instructions, parallel_limit,
             converge_early, token_budget, ask_user, session_id, workspace_dir, personas_locked, personas,
-            known_keys, session_agents, tool_mode,
+            known_keys, session_agents, tool_mode, sub_debates,
         )
         self.tool_rules.set_rules(tool_grants, tool_denials)
 

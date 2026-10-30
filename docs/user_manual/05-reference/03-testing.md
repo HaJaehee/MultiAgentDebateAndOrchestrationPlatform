@@ -29,6 +29,8 @@ pytest -k "snapshot"
 | `test_orchestrator.py` | 에이전트 발언 우선순위 정렬 및 전략별 발언 순서 배치 |
 | `test_speaker_selection.py` | 오케스트레이터의 동적 발언자 지명 및 실패 시 안전 폴백 메커니즘 |
 | `test_parallel_dispatch.py` | 병렬 지시 전략: 비동기 동시 실행, 세부 태스크 분배, 라운드 취합, 동시성 제한 |
+| `test_adaptive_graph.py` | 적응형 그래프 토론: 응답 읽기와 허용 범위, 다시 받기와 물러서기, 기준 그래프, 참여자, 끊긴 턴 재개 |
+| `test_sub_debate.py` | 서브 토론: 여는 조건과 상한, 결론만 합류, 그래프 노드·판정 합류, 실패·정지·개입, 끊긴 턴 재개 |
 | `test_personas.py` | 세션별 페르소나 생애주기: 초안 편집 → 첫 턴 잠금 → 세션 재개 |
 | `test_agent_appearance.py` | 카드 색상/아이콘: 이미지 업로드 → 설정 저장 → UI 렌더링 → 스냅샷 및 폴백 |
 | `test_session_snapshot.py` | **시작된 대화 세션의 완전한 자기완결성 및 외부 설정 격리 보장** |

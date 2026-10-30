@@ -277,7 +277,7 @@ class ParallelRoundRunner(PhaseExecutor):
         roster = format_roster(candidates, with_keys=True)
         recent = [
             f"{m.speaker}: {self.conversation.snippet(m, 300)}"
-            for m in state.messages if m.msg_type != "error"
+            for m in state.messages if m.msg_type != "error" and turns.in_main_record(m)
         ][-8:]
 
         prompt = [{"role": "user", "content": (

@@ -137,14 +137,18 @@ The web application workspace is organized into four primary UI components in [a
 - **Dynamic Live Refresh**: Rendered inside a reactive container (`cards_row`). When personas are updated via the persona editor or config reloads, `refresh_agent_cards()` rebuilds the cards in place, so labels, roles, order, and badges update without a page reload.
 - **Configuration Tooltips**: Hovering over an agent card reveals its configured model, endpoint URL, and sequential thinking mode.
 - **Strategy Dropdown**: Selects between `sequential_debate`, `adversarial_debate`,
-  `orchestrator_led`, and `parallel_dispatch`. Populated from `STRATEGY_MAP`, so a newly
-  registered strategy appears without touching the UI.
+  `orchestrator_led`, `parallel_dispatch`, `graph_debate` and `adaptive_graph`. Populated from `STRATEGY_MAP`, so a
+  newly registered strategy appears without touching the UI.
 - **Agent Cards**: Drag to reorder (writes `debate_priority` to `conf.json`); the ⋮ menu sets `debate_stance` and can disable or delete the agent.
 - **Max Rounds Slider**: Sets the maximum debate depth ($1$ to $10$ rounds).
 - **합의되면 일찍 끝내기** (v1.5, default on): ends the debate when two consecutive ledgers of the turn
   have no open issues and no new decisions ([Conversation Memory §2.6](../orchestration/context-memory.md)).
 - **에이전트 질문 받기** (v1.5): specialists may ask the person a question mid-speech
   ([Ask the User](../agents/ask-user.md)). New conversations start with it on.
+- **쟁점은 따로 토론** (v1.5.1, default off): two specialists may settle an open issue on the side between rounds or graph
+  steps ([Debate Strategies §2-b](../orchestration/debate-strategies.md)). In the feed those speeches are indented and
+  badged 서브 토론, without a round number because they sit between rounds; the opening note and the conclusion stay at
+  full width with their own badges.
 - **토큰 예산** (v1.5, empty = none): the turn concludes at the next round boundary once its input+output
   tokens reach this number.
 - **동시 실행 (Parallel Limit)**: How many agents run at once inside one round, stored as
@@ -159,6 +163,9 @@ The web application workspace is organized into four primary UI components in [a
   the graph and are disabled — in this strategy the graph decides who takes part, and a checkbox that
   changes nothing would mislead. Below it: a read-only preview of the graph, a one-line run summary and
   **크게 보기** — see §1.2.2.
+  For 적응형 그래프 토론 (v1.5.1) the same row appears with the picker labelled **기준 그래프** (optional), the checkboxes stay
+  live because the checked specialists take part, and the preview shows the graph the orchestrator drew, also after the
+  turn ends, since it has no file to read back.
 
 ### 1.2.2. Graph execution overlay (v0.9.0)
 

@@ -207,6 +207,7 @@ class NewSessionBody(BaseModel):
     workspace_dir: str = ""
     converge_early: bool = True
     token_budget: int = 0
+    sub_debates: bool = False
 
 
 class TurnBody(BaseModel):

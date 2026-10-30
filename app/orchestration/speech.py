@@ -168,6 +168,7 @@ class _Speech:
                 "started_at": self.started_at,
                 "graph_node_id": self.graph_node_id,
                 "graph_port": self.graph_port,
+                "turn_meta": turns.meta(self.kind),
             },
         }
 

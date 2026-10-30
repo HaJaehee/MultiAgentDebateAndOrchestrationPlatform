@@ -512,6 +512,25 @@ def open_issue_count(ledger: str) -> Optional[int]:
     return None if items is None else len(items)
 
 
+# ---------------------------------------------------------------- 서브 토론의 결론 (ADR-034)
+
+# 결론 하나의 글자 상한. 서브 토론은 10줄 이내로 쓰게 하지만 모델이 지키리라 믿지 않습니다.
+SUB_DEBATE_CONCLUSION_CHARS = 1500
+
+
+def sub_debate_block(state: DebateState) -> str:
+    """이번 턴 서브 토론의 결론들. 없으면 빈 문자열.
+
+    라운드 전략에서는 결론이 기록에 있어 저절로 읽힙니다. 선으로 받은 것만 보는 그래프 노드와 판정에 넣습니다.
+    """
+    conclusions = [
+        clip_chars(strip_reasoning_trace(m.content).strip(), SUB_DEBATE_CONCLUSION_CHARS, "…(길어 뒷부분을 생략했습니다)")
+        for m in state.messages[state.turn_message_start:]
+        if turns.kind_of(m) == turns.KIND_SUBDEBATE_CONCLUSION and m.msg_type != "error"
+    ]
+    return "\n\n".join(conclusions)
+
+
 # ---------------------------------------------------------------- 3. 요약
 
 

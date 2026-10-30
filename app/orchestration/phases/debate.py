@@ -1,7 +1,8 @@
 """2단계: 전문가 토론.
 
 라운드를 돌리며 전략에 따라 발언 순서를 정하고(오케스트레이터 지명 포함), 라운드 사이에 결정 장부를
-갱신합니다. 병렬 지시 라운드는 `phases/parallel.py`, 그래프 토론은 `phases/graph.py` 가 맡습니다.
+갱신합니다. 병렬 지시 라운드는 `phases/parallel.py`, 그래프 토론은 `phases/graph.py`, 오케스트레이터가 그리는
+그래프는 `phases/graph_drafting.py`, 라운드·단계 사이의 서브 토론은 `phases/sub_debate.py` 가 맡습니다.
 
 각 라운드 종료 시점(`_close_round`)에 조기 종료 조건을 평가합니다 (v1.5): 결정 장부가 수렴했거나
 (`context_memory.ledger_converged`), 턴 토큰 예산이 소진되었으면 이를 세션에 기록하고 조기 결론 합성으로 진행합니다.
@@ -21,8 +22,10 @@ from app.orchestration.artifacts import format_roster
 from app.orchestration.control import TurnControl
 from app.orchestration.phases.base import PhaseExecutor
 from app.orchestration.phases.graph import GraphRunner
+from app.orchestration.phases.graph_drafting import GraphDrafter
 from app.orchestration.phases.parallel import ParallelRoundRunner
 from app.orchestration.phases.routing import parse_speaker_selection
+from app.orchestration.phases.sub_debate import SubDebateRunner
 from app.orchestration.state import DebateState
 from app.orchestration.strategies import BaseDebateStrategy, get_strategy
 
@@ -40,6 +43,8 @@ class DebatePhaseExecutor(PhaseExecutor):
         # 라운드를 병렬로 도는 전략과 그래프로 도는 전략은 각자의 실행기가 맡습니다.
         self.parallel = ParallelRoundRunner(*services)
         self.graph = GraphRunner(*services)
+        self.drafter = GraphDrafter(*services)
+        self.sub_debates = SubDebateRunner(*services)
 
     async def debate(
         self,
@@ -64,6 +69,17 @@ class DebatePhaseExecutor(PhaseExecutor):
             db=db, state=state, control=control, round_number=0, on_event=on_event
         )
 
+        async def _sub_debate(boundary: int) -> None:
+            await self.sub_debates.run_if_needed(
+                db, state, setup, boundary, control=control, on_event=on_event, redo=redo,
+            )
+
+        # 오케스트레이터가 그리는 전략은 여기서 그래프가 정해집니다. 이어 가는 턴은 기록된 그래프를 씁니다.
+        if strategy.draws_graph and setup.graph_spec is None:
+            if control is not None and control.stop_requested:
+                return True
+            setup.graph_spec = await self.drafter.graph_for_turn(db, state, setup, on_event=on_event)
+
         stopped_early = False
         if setup.graph_spec is not None:
             replay = None
@@ -87,6 +103,7 @@ class DebatePhaseExecutor(PhaseExecutor):
                 start_value=start_value,
                 replay=replay,
                 redo=redo,
+                between_steps=_sub_debate,
             )
 
         start_round, spoken, record = 1, set(), turns.RoundRecord()
@@ -143,6 +160,7 @@ class DebatePhaseExecutor(PhaseExecutor):
                     if ending is not None:
                         stopped_early = ending == turns.EARLY_END_BUDGET
                         break
+                    await _sub_debate(round_num)
                 continue
 
             if resuming_round and record.nominated is not None:
@@ -215,6 +233,7 @@ class DebatePhaseExecutor(PhaseExecutor):
                 if ending is not None:
                     stopped_early = ending == turns.EARLY_END_BUDGET
                     break
+                await _sub_debate(round_num)
         return stopped_early
 
     async def _close_round(
@@ -369,7 +388,7 @@ class DebatePhaseExecutor(PhaseExecutor):
         roster = format_roster(candidates, with_keys=True)
         recent = [
             f"{m.speaker}: {self.conversation.snippet(m, 300)}"
-            for m in state.messages if m.msg_type != "error"
+            for m in state.messages if m.msg_type != "error" and turns.in_main_record(m)
         ][-8:]
 
         prompt = [{"role": "user", "content": (

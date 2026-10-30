@@ -73,14 +73,15 @@ async def create_session(
     workspace_dir: str = "",
     converge_early: bool = True,
     token_budget: int = 0,
+    sub_debates: bool = False,
 ) -> Dict[str, Any]:
-    """새 대화 세션을 생성합니다. 그래프 토론은 전용 편집기를 통해 생성해야 하므로 지원되지 않습니다."""
+    """새 대화 세션을 생성합니다. 사람이 그린 그래프가 필요한 그래프 토론은 전용 편집기를 통해 생성해야 하므로 지원되지 않습니다."""
     # 신규 생성이므로 레거시 별칭(`LEGACY_STRATEGY_ALIASES`)은 허용하지 않으며 정확한 전략 식별자를 요구합니다.
     name = (strategy or "").strip()
     chosen = STRATEGY_MAP.get(name)
     if chosen is None:
         raise HeadlessError(400, f"지원되지 않는 토론 전략입니다: {strategy} (지원 전략: {', '.join(STRATEGY_MAP)})")
-    if chosen.runs_graph:
+    if chosen.uses_graph_file:
         raise HeadlessError(400, "그래프 기반 토론은 웹 UI에서 그래프를 선택하여 생성해야 합니다.")
     if not 1 <= int(max_rounds) <= MAX_ROUNDS_LIMIT:
         raise HeadlessError(400, f"max_rounds 값은 1~{MAX_ROUNDS_LIMIT} 사이여야 합니다.")
@@ -98,6 +99,7 @@ async def create_session(
             workspace_dir=(workspace_dir or "").strip(),
             converge_early=bool(converge_early),
             token_budget=max(0, int(token_budget or 0)),
+            sub_debates=bool(sub_debates),
         ))
         await db.commit()
     return {"session_id": sid, "strategy": name, "agents": keys,

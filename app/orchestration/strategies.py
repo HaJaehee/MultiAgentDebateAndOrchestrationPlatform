@@ -58,6 +58,15 @@ class BaseDebateStrategy(ABC):
     # 그래프 스케줄러로 돕니다 (`GraphRunner.run_graph`, `app/orchestration/graph.py`).
     runs_graph: bool = False
 
+    # 그 그래프를 사람 대신 오케스트레이터가 턴마다 그리는 전략인지 (ADR-034). True 면 그래프 파일이
+    # 없어도 돌고, 참여자는 그래프가 아니라 로스터 체크박스가 정합니다 (`GraphDrafter`).
+    draws_graph: bool = False
+
+    @property
+    def uses_graph_file(self) -> bool:
+        """사람이 그린 그래프 파일이 있어야 도는 전략인지."""
+        return self.runs_graph and not self.draws_graph
+
     @property
     @abstractmethod
     def name(self) -> str:
@@ -276,12 +285,26 @@ class GraphDebateStrategy(BaseDebateStrategy):
         return specialists if specialists else active_agents
 
 
+class AdaptiveGraphStrategy(GraphDebateStrategy):
+    """적응형 그래프 토론: 오케스트레이터가 계획을 세운 뒤 이번 턴의 실행 그래프를 직접 그립니다 (ADR-034).
+
+    그린 뒤의 실행은 그래프 토론과 같습니다 — 같은 스케줄러, 같은 재개, 같은 실행 표시. 다른 것은 그래프가
+    어디서 오는가와 참여자를 누가 정하는가입니다. 대화에 그래프를 골라 두면 그것을 기준으로 고쳐 씁니다.
+    여기 있는 순서는 그래프를 그리지 못했을 때 일렬로 이을 순서이기도 합니다.
+    """
+
+    name = "adaptive_graph"
+    display_name = "적응형 그래프 토론 (Adaptive Graph)"
+    draws_graph = True
+
+
 STRATEGY_MAP = {
     "sequential_debate": SequentialDebateStrategy(),
     "adversarial_debate": AdversarialDebateStrategy(),
     "orchestrator_led": OrchestratorLedStrategy(),
     "parallel_dispatch": ParallelDispatchStrategy(),
     "graph_debate": GraphDebateStrategy(),
+    "adaptive_graph": AdaptiveGraphStrategy(),
 }
 
 DEFAULT_STRATEGY = "sequential_debate"

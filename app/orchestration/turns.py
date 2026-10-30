@@ -73,9 +73,24 @@ KIND_EARLY_END = "early_end"
 # 계획 승인 (ADR-028). 계획 발언 뒤, 토론이 시작되기 전에만 나옵니다.
 KIND_PLAN_REVISION = "plan_revision"  # 사람의 계획 수정 요청. 뒤따르는 계획이 앞의 것을 대신합니다
 KIND_APPROVAL = "plan_approval"       # 사람의 계획 승인. 값: plan_id, tasks, changes, approver
+# 오케스트레이터가 그린 이번 턴의 실행 그래프 (ADR-034). 값: spec, fallback
+KIND_GRAPH_DRAFT = "graph_draft"
+# 서브 토론 (ADR-034). 라운드(그래프는 단계) 경계에서 전문가 두 명이 쟁점 하나를 따로 다룹니다.
+KIND_SUBDEBATE_OPEN = "subdebate_open"              # 값: issue, agents
+KIND_SUBDEBATE_SPEECH = "subdebate_speech"          # 그 안의 발언. 본 기록의 맥락에는 싣지 않습니다
+KIND_SUBDEBATE_CONCLUSION = "subdebate_conclusion"  # 오케스트레이터의 결론. 이것이 본 토론에 합류합니다
 
 # 실패로 끝나면 "그 에이전트가 이번 턴에 말하지 못했다" 는 뜻이 되는 자리.
-_SPEAKING_KINDS = (KIND_PLAN, KIND_SPEECH, KIND_MERGE, KIND_SYNTHESIS)
+_SPEAKING_KINDS = (
+    KIND_PLAN, KIND_SPEECH, KIND_MERGE, KIND_SYNTHESIS, KIND_SUBDEBATE_SPEECH, KIND_SUBDEBATE_CONCLUSION,
+)
+
+# 발언 카드와 내보내기에 붙이는 이름.
+SUB_DEBATE_LABELS = {
+    KIND_SUBDEBATE_OPEN: "서브 토론 시작",
+    KIND_SUBDEBATE_SPEECH: "서브 토론",
+    KIND_SUBDEBATE_CONCLUSION: "서브 토론 결론",
+}
 
 
 def draft_key(agent_key: str, kind: str, round_number: int, graph_node_id: Optional[str]) -> str:
@@ -105,6 +120,16 @@ def _get(msg: Any, key: str, default: Any = None) -> Any:
 def kind_of(msg: Any) -> Optional[str]:
     value = _get(msg, "turn_meta")
     return value.get("kind") if isinstance(value, Mapping) else None
+
+
+def in_main_record(msg: Any) -> bool:
+    """본 토론의 기록인가. 서브 토론 안의 발언은 화면과 저장 문서에만 남고, 맥락·장부·합성에는 결론만 갑니다."""
+    return kind_of(msg) != KIND_SUBDEBATE_SPEECH
+
+
+def sub_debate_label(msg: Any) -> Optional[str]:
+    """서브 토론의 기록이면 그 이름. 아니면 None."""
+    return SUB_DEBATE_LABELS.get(kind_of(msg) or "")
 
 
 def fallback_agents(messages: Iterable[Any]) -> List[str]:
@@ -317,6 +342,46 @@ def replay_graph(
     return GraphReplay(scheduler, step)
 
 
+def drawn_graph(messages: Iterable[Any]) -> Optional[Dict[str, Any]]:
+    """이 턴에 오케스트레이터가 그려 기록해 둔 그래프 (`GraphSpec.dump()` 모양). 아직 없으면 None."""
+    found: Optional[Dict[str, Any]] = None
+    for msg in messages:
+        if kind_of(msg) == KIND_GRAPH_DRAFT:
+            spec = (_get(msg, "turn_meta") or {}).get("spec")
+            if isinstance(spec, Mapping):
+                found = dict(spec)
+    return found
+
+
+@dataclass
+class SubDebateRecord:
+    """한 경계에서 열린 서브 토론이 어디까지 갔나 (`sub_debate_at`). 끊긴 턴은 이것으로 이어 갑니다."""
+
+    issue: str
+    agents: List[str]
+    speeches: List[Any] = field(default_factory=list)
+    concluded: bool = False
+
+
+def sub_debate_at(messages: Iterable[Any], boundary: int) -> Optional[SubDebateRecord]:
+    """`boundary` 라운드(그래프는 단계) 끝에 열린 서브 토론. 경계마다 많아야 하나입니다."""
+    record: Optional[SubDebateRecord] = None
+    for msg in messages:
+        if int(_get(msg, "round_number") or 0) != boundary:
+            continue
+        kind = kind_of(msg)
+        if kind == KIND_SUBDEBATE_OPEN:
+            data = _get(msg, "turn_meta") or {}
+            record = SubDebateRecord(
+                issue=str(data.get("issue") or ""), agents=[str(k) for k in data.get("agents") or []],
+            )
+        elif record is not None and kind == KIND_SUBDEBATE_SPEECH:
+            record.speeches.append(msg)
+        elif record is not None and kind == KIND_SUBDEBATE_CONCLUSION:
+            record.concluded = True
+    return record
+
+
 def resume_notice(calls: Sequence[Mapping[str, Any]], output_chars: int = 300) -> str:
     """끊긴 발언을 다시 하는 에이전트에게 붙이는 안내 — 이미 실행한 도구와 결과.
 
@@ -403,10 +468,11 @@ async def abandon_unfinished(db, session_id: str) -> int:
 # ---------------------------------------------------------------- 안내
 
 # 이어 가기를 지원하는 전략. 여기 없는 전략은 합성 중에 끊긴 턴만 이어 갈 수 있고, 그 밖에는 결론
-# 내기·버리기만 고를 수 있습니다. 지금은 다섯 전략 모두입니다 — 지명·분배처럼 LLM 이 정한 경로도
-# 기록에 값으로 남으므로(`round_record`) 다시 묻지 않고 그대로 이어 갑니다.
+# 내기·버리기만 고를 수 있습니다. 지금은 여섯 전략 모두입니다 — 지명·분배·그린 그래프처럼 LLM 이 정한
+# 경로도 기록에 값으로 남으므로(`round_record`, `drawn_graph`) 다시 묻지 않고 그대로 이어 갑니다.
 CONTINUABLE_STRATEGIES = frozenset({
     "sequential_debate", "adversarial_debate", "orchestrator_led", "parallel_dispatch", "graph_debate",
+    "adaptive_graph",
 })
 
 

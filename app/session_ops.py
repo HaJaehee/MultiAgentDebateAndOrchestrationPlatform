@@ -347,6 +347,7 @@ async def continue_session(
         converge_early=source.converge_early,
         token_budget=source.token_budget,
         ask_user=source.ask_user,
+        sub_debates=source.sub_debates,
         active_agents=list(source.active_agents or []),
         known_agents=list(source.known_agents or []),
         custom_instructions=source.custom_instructions or "",
@@ -482,7 +483,8 @@ async def load_feed_messages(db: AsyncSession, session_id: str) -> List[Dict[str
             "sender_role": m.sender_role, "content": m.content, "round_number": m.round_number,
             "msg_type": m.msg_type, "created_at": m.created_at, "started_at": m.started_at,
             "finished_at": m.finished_at, "turn_started_at": m.turn_started_at,
-            "graph_node_id": m.graph_node_id, "graph_port": m.graph_port, "llm_meta": m.llm_meta,
+            "graph_node_id": m.graph_node_id, "graph_port": m.graph_port, "turn_meta": m.turn_meta,
+            "llm_meta": m.llm_meta,
             "tool_calls": [],
         }
         for m in rows

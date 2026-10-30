@@ -17,6 +17,7 @@ from app.mcp.policy import OUTCOME_LABELS, describe_verdict, tool_outcome
 from app.orchestration.graph_run import NodeBadges, node_labels
 from app.orchestration.state import FALLBACK_BADGE, fallback_sentence
 from app.orchestration.strategies import get_strategy
+from app.orchestration.turns import sub_debate_label
 from app.agents.llm_usage import usage_line
 from app.timestamps import speech_time_text, to_local
 
@@ -139,7 +140,8 @@ def build_session_markdown(
     # (지난 턴이 다른 그래프였다면 그 턴의 노드는 id 로 적힙니다).
     graph = session.get("graph_snapshot") if strategy.runs_graph else None
     if graph:
-        meta.append(("그래프", f"{graph.get('name') or graph.get('id')} (data/graphs/{graph.get('id')}.json)"))
+        where = "오케스트레이터가 그림" if strategy.draws_graph else f"data/graphs/{graph.get('id')}.json"
+        meta.append(("그래프", f"{graph.get('name') or graph.get('id')} ({where})"))
     badges = NodeBadges(node_labels(graph))
 
     out.append("| 항목 | 값 |")
@@ -179,6 +181,9 @@ def build_session_markdown(
         node_badge = badges.observe(msg)
         if node_badge:
             header += f" — 노드 “{node_badge}”"
+        side_label = sub_debate_label(msg)
+        if side_label:
+            header += f" — {side_label}"
         out.append(header)
         # 개별 발언의 소모 토큰 및 LLM 소요 시간 (`llm_meta.usage`). 타임스탬프 라인 뒤에 병기합니다.
         used = usage_line((msg.get("llm_meta") or {}).get("usage")) if isinstance(msg.get("llm_meta"), dict) else ""
