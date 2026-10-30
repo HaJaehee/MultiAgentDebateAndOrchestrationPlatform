@@ -542,6 +542,7 @@ class CardTimeline:
             with body:
                 # 수식(`$…$`, `\(…\)` 등)은 MathML 로 그립니다 (`app/ui/math_markdown.py`).
                 md = MathMarkdown(content, extras=FEED_MARKDOWN_EXTRAS)
+                md.on_rendered = self.scroll_to_bottom
 
             tool_container = ui.column().classes("w-full mt-2 gap-1")
             if tool_calls:

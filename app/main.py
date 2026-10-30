@@ -34,6 +34,7 @@ from app.trial import setup_trial
 from app.ui.expert.page import create_ui
 from app.ui.compare_page import create_compare_page
 from app.ui.graph_page import create_graph_page
+from app.ui.math_markdown import warm_up_lexer_plugins
 from app.ui.personas_page import create_personas_page
 from app.ui.theme import FAVICON_SVG
 
@@ -86,6 +87,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _install_process_guards()
     # 이벤트 루프가 붙잡히면 그 순간의 스택을 남깁니다 (data/diagnostics/stalls.log).
     start_loop_watchdog()
+    # 첫 ```mermaid 펜스가 플러그인 import 로 루프를 붙잡지 않게 미리 불러 둡니다 (ADR-033).
+    await asyncio.to_thread(warm_up_lexer_plugins)
 
     # 1. Load configuration
     cfg = get_config()

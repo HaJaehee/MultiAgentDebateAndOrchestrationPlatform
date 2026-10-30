@@ -736,7 +736,18 @@ ignore MathML's `columnalign`/`columnspacing`, so `cases` read as `1x ≥ 0` —
 text instead (`\frac{n(n+1)}{2} \le x^2` → `(n(n+1))/(2) ≤ x²`). `latex2mathml` copies `\text{…}` verbatim, so
 `<`, `>` outside MathML tags are escaped and link/event attributes are stripped on the server, in addition to the
 browser's DOMPurify. Formulas are cached by source, so a streaming card does not convert the same formula again
-on every redraw.
+on every redraw. If Markdown itself cannot convert the text (2,000 `>` raise `RecursionError` in `markdown2`), the
+text is shown as it is in a `<pre>`.
+
+**Long text (v1.5.1).** From `OFFLOAD_CHARS` (20,000) characters a `MathMarkdown` is drawn by one dedicated worker
+thread instead of on the event loop; shorter text is drawn on the spot as before. The element shows its previous
+content until the new one is ready (a new element is empty for that moment). Each element draws one thing at a time
+and then looks at its current `content`, so intermediate versions are skipped and a slow worker does not pile up work.
+`on_rendered` is called after the content goes in; the feed uses it to scroll again, because a long card's height
+changes only then. The worker is single on purpose: this is pure Python under the GIL, so more threads draw nothing
+faster and only make the loop wait longer for its turn (ten streams of 50,000 characters, worst loop delay: on the
+spot 594 ms, a pool of 20 threads 395 ms, one worker 54 ms). `ui.code` is not covered; NiceGUI builds its Markdown
+internally. See [ADR-033](../../lectures/05-adr/ADR-033-render-long-text-off-the-loop.md).
 
 ### 1.3.8. Model connection status
 

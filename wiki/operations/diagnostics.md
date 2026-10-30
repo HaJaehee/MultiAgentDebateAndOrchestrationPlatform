@@ -42,6 +42,10 @@ loop was not busy — it was not given a turn. Either another thread held the GI
 paused (sleep, heavy swapping, a CPU starved by a local model). The record then includes the full stack of
 every other thread.
 
+A thread holding the GIL can be a long regular expression: `re` does not release it while matching, so moving such
+work to a worker thread does not free the loop (20,000 unclosed `\(` stopped it for 8 s from a worker). Bound the
+pattern instead. Pure Python in a worker delays the loop by tens of milliseconds at most.
+
 The console gets one warning per stall (`Event loop stalled for 1.3s at … — stack written to …`), and
 `GET /api/health` carries a summary:
 
@@ -103,8 +107,10 @@ socket listener in the page.
 
 Match `client.log` disconnects to `stalls.log` by time:
 
-1. A stall that starts before the disconnect and lasts over ~12 s → fix what the stack points at (move it off
-   the loop with `asyncio.to_thread`, or make it cheaper).
+1. A stall that starts before the disconnect and lasts over ~12 s → fix what the stack points at (make it cheaper
+   first, as it may be a first-time import or a quadratic loop; otherwise move it off the loop with
+   `asyncio.to_thread`, but see §1 on regular expressions). The reasoning is in
+   [ADR-033](../../lectures/05-adr/ADR-033-render-long-text-off-the-loop.md).
 2. No stall, but long tasks adding up to seconds before the disconnect → the page is drawing too much (see
    [UI Components §1.3.1](../ui/components.md)).
 3. Neither, `reason=transport close` or `transport error`, `delivered_after` small after reconnecting → the network

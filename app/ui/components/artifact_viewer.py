@@ -2,7 +2,7 @@ import json
 import logging
 import uuid
 from typing import Any, Callable, Coroutine, Dict, List, Optional
-from nicegui import ui
+from nicegui import run, ui
 
 from app.export_mermaid import convert_mermaid_to_staruml_mdj, generate_mermaid_standalone_html
 from app.ui.clipboard import copy_to_clipboard
@@ -355,9 +355,12 @@ class ArtifactViewer:
                 type="warning", position="top",
             )
 
-    def _download_mermaid_staruml(self, title: str, content: str) -> None:
+    async def _download_mermaid_staruml(self, title: str, content: str) -> None:
         clean_title = _clean_title_for_filename(title, default="architecture_model")
-        mdj_json = convert_mermaid_to_staruml_mdj(title, content)
+        # 노드 수보다 빠르게 늘어납니다 (2천 개에 0.2초, 1만 개에 3초). 모델이 만든 그림이라 크기를 믿지 않습니다.
+        mdj_json = await run.io_bound(convert_mermaid_to_staruml_mdj, title, content)
+        if mdj_json is None:  # 서버 종료 중
+            return
         filename = f"{clean_title}.mdj"
         ui.download(mdj_json.encode("utf-8"), filename)
         ui.notify(

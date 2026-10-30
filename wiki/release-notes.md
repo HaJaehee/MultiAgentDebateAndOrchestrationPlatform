@@ -27,6 +27,19 @@ stall in the diagnostics example). It now runs in a worker thread. The speech wa
 faster (GIL); the rest of the server keeps moving. A stop during assembly takes effect at once.
 → [LLM Integration §2](agents/llm-integration.md) · `tests/test_llm_offload.py`
 
+**Long Markdown is drawn off the event loop, and what could be fixed was fixed instead.** `MathMarkdown` of 20,000
+characters or more is now drawn by one dedicated worker thread, newest content only, so a long report streaming at
+four redraws a second no longer takes the loop: with ten streams of 50,000 characters the worst loop delay went from
+594 ms to 54 ms. Measuring first changed the plan. The Mermaid check (1.4 ms on a 25,000-character report) and the
+HTML export (3 ms) stay where they are; StarUML conversion moved because it grows faster than the diagram. Most
+render stalls on record were not long text at all: the first ```` ```mermaid ```` fence made Pygments import every
+lexer plugin, IPython and jedi included, on the loop for over a second, so the plugins now load in a thread at
+startup. Two quadratic loops are gone (a 200,000-character report full of formulas: 1.7–2.0 s → 0.33 s). `\(` and
+`\[` are limited to 1,000 and 4,000 characters, because `re` holds the GIL while matching and 20,000 unclosed `\(`
+stopped the server for 8 s even from a worker thread. Text Markdown cannot convert (2,000 `>` raise `RecursionError`)
+is shown as it is.
+→ [UI Components §1.3.7](ui/components.md) · [Diagnostics §1](operations/diagnostics.md) · [ADR-033](../lectures/05-adr/ADR-033-render-long-text-off-the-loop.md)
+
 **The roster and the feed are made of components (no change on screen).** `AgentRosterControl` and `ChatFeed` were
 one object spread over mixin files; each piece now takes what it needs through its constructor and can be read and
 tested alone. The rules for changing `conf.json` and for locking moved to `RosterService`, which does not know
