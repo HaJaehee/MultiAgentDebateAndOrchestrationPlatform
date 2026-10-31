@@ -1,4 +1,4 @@
-"""로스터 패널 — 대화 설정: 전략·라운드·동시 실행 수, 토큰 예산, 도구 보안 모드·규칙, 지침, 결정 장부."""
+"""로스터 패널 — 대화 설정: 전략·라운드·동시 실행 수, 토큰 예산, 도구 보안 모드·규칙, 지침."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from app.orchestration.roster_service import RosterService
 from app.orchestration.strategies import STRATEGY_MAP
 from app.ui.components.roster.changes import RosterChanges
 from app.ui.components.roster.state import RosterState
-from app.ui.math_markdown import MathMarkdown
 
 
 class ToolRulesDialog:
@@ -134,8 +133,6 @@ class SessionSettingsComponent:
         self.parallel_row: Optional[ui.row] = None
         self.parallel_input: Optional[ui.number] = None
         self.custom_instr_input: Optional[ui.textarea] = None
-        self.ledger_expansion: Optional[ui.expansion] = None
-        self.ledger_view: Optional[ui.markdown] = None
 
     def build_controls(self) -> None:
         with ui.row().classes("w-full items-center justify-between gap-3 flex-wrap"):
@@ -273,21 +270,6 @@ class SessionSettingsComponent:
                 on_change=self.on_instructions_change,
             ).props("outlined dark dense autogrow rows=2").classes("w-full text-xs")
 
-        # 결정 장부 — 커스텀 지침 바로 아래. 프롬프트에서는 이번 차례 지시 바로 앞에 들어갑니다.
-        with ui.expansion("결정 장부", icon="fact_check", value=False).classes(
-            "w-full mt-1 bg-slate-800/40 rounded-lg border border-slate-800 text-xs"
-        ) as self.ledger_expansion:
-            ui.label(
-                "오케스트레이터가 각 라운드 및 최종 합성 완료 후 요구사항, 결정 사항, 기각안, "
-                "미해결 쟁점, 담당 업무를 정리합니다. 모든 에이전트의 지시문 앞에 포함되어 "
-                "이전 기록이 생략되더라도 유지됩니다. 읽기 전용이며, "
-                "수정이 필요한 항목은 채팅으로 전달하시면 다음 갱신 시 반영됩니다."
-            ).classes("text-[12px] text-slate-500 leading-snug px-2")
-            self.ledger_view = MathMarkdown("").classes(
-                "w-full px-2 pb-2 text-[11px] text-slate-300 break-words"
-            )
-        self.set_decision_ledger(self.state.decision_ledger)
-
     def sync_from_state(self) -> None:
         """대화를 열 때 값을 손잡이에 옮깁니다. 값이 바뀐 손잡이는 자기 핸들러도 부릅니다."""
         state = self.state
@@ -398,18 +380,6 @@ class SessionSettingsComponent:
         if self.rounds_label:
             self.rounds_label.set_text(str(self.state.max_rounds))
         self.changes.config_changed_later()
-
-    def set_decision_ledger(self, ledger: str) -> None:
-        """결정 장부를 보여 줍니다. 진행 중인 토론이 갱신할 때마다 불립니다."""
-        self.state.decision_ledger = ledger or ""
-        if self.ledger_view is not None:
-            self.ledger_view.set_content(
-                self.state.decision_ledger or "_아직 없음 — 첫 라운드나 최종 합성이 끝나면 채워집니다._"
-            )
-        if self.ledger_expansion is not None:
-            self.ledger_expansion.props(
-                f'caption="{len(self.state.decision_ledger):,}자"' if self.state.decision_ledger else 'caption="비어 있음"'
-            )
 
     def on_instructions_change(self, e) -> None:
         self.state.custom_instructions = e.value

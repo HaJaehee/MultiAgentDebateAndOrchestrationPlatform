@@ -276,7 +276,7 @@ request; every message and tool call of the turn points to it.
 | `error` | `TEXT` | No | `''` | Why a `failed` turn stopped. |
 | `usage` | `JSON` | Yes | - | Tokens and LLM time of the whole turn (v1.5, [LLM Integration §6](../agents/llm-integration.md)). |
 | `checkpoint` | `JSON` | Yes | - | `{start, end, changed}` workspace snapshots (v1.5, [Workspace Checkpoints](../orchestration/workspace-checkpoints.md)); `reverted_at` once reverted. |
-| `memory` | `JSON` | Yes | - | Ledger and summary (with anchors) when the turn completed — used to fork at this turn (v1.5). |
+| `memory` | `JSON` | Yes | - | Ledger and summary (with anchors) when the turn completed — used to fork at this turn (v1.5). A direct ledger edit also updates the latest turn's copy ([Conversation Memory §4.1](../orchestration/context-memory.md#41-editing-it-directly)). |
 | `rating` | `JSON` | Yes | - | A person's 👍/👎 and note from the compare page (v1.5). |
 | `started_at` / `updated_at` / `finished_at` | `DATETIME` | | | Turn timestamps. |
 

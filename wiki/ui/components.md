@@ -210,11 +210,14 @@ The web application workspace is organized into four primary UI components in [a
   - The roster width limits a wide graph to about 30 % zoom, so extra height does not help — hence a
     dialog, not a taller preview.
 - **Custom Instructions Box**: Allows injecting ad-hoc guidelines into all agent prompts for the current session.
-- **결정 장부 (Decision Ledger, v0.8.3)**: a read-only expansion directly under the custom instructions
+- **결정 장부 (Decision Ledger, v0.8.3)**: an expansion directly under the custom instructions
   box, captioned with its character count (`비어 있음` when empty). The orchestrator rewrites it after
   rounds and synthesis; every call carries it directly before the turn instruction. Updated
   live from `ledger_updated`, or from the runner snapshot when a page attaches to a running turn (the
-  database only has it once the turn ends). See [Conversation Memory](../orchestration/context-memory.md).
+  database only has it once the turn ends). When no run is active, `직접 고치기`
+  ([ledger_panel.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/ledger_panel.py)) switches to one
+  input per item: unchecking an item under `미해결 쟁점` closes it, and saving appends a `MADO` note to the feed. See
+  [Conversation Memory §4.1](../orchestration/context-memory.md#41-editing-it-directly).
 - **Persona Settings Button**: Links directly to `/personas/{session_id}`. Displays a lock icon if debate has commenced.
 - **MCP Server Chips**: Displays real-time connection states (Green/Orange/Red) and opens diagnostic tooltips on hover. The tooltip names the transport and shows `command:` for a local server, `url:` for a remote one.
 - **Built-in `peers` chip**: always shown after the configured servers, whether or not `conf.json`

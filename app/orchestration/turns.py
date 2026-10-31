@@ -79,6 +79,8 @@ KIND_GRAPH_DRAFT = "graph_draft"
 KIND_SUBDEBATE_OPEN = "subdebate_open"              # 값: issue, agents
 KIND_SUBDEBATE_SPEECH = "subdebate_speech"          # 그 안의 발언. 본 기록의 맥락에는 싣지 않습니다
 KIND_SUBDEBATE_CONCLUSION = "subdebate_conclusion"  # 오케스트레이터의 결론. 이것이 본 토론에 합류합니다
+# 사람이 결정 장부를 직접 고친 기록 (ADR-038). 유저 발언 기록에 함께 고정됩니다 (`build_user_record`).
+KIND_LEDGER_EDIT = "ledger_edit"
 
 # 실패로 끝나면 "그 에이전트가 이번 턴에 말하지 못했다" 는 뜻이 되는 자리.
 _SPEAKING_KINDS = (

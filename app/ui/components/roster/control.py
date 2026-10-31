@@ -18,6 +18,7 @@ from app.ui.components.roster.agent_cards import AgentCardsComponent
 from app.ui.components.roster.agent_dialogs import AgentDialogs
 from app.ui.components.roster.changes import RosterChanges
 from app.ui.components.roster.graph_row import GraphRowComponent
+from app.ui.components.roster.ledger_panel import LedgerPanelComponent
 from app.ui.components.roster.mcp_panel import McpPanelComponent
 from app.ui.components.roster.session_settings import SessionSettingsComponent, ToolRulesDialog
 from app.ui.components.roster.skills_panel import SkillsPanelComponent
@@ -43,6 +44,8 @@ class AgentRosterControl:
         self.on_tool_rules_changed: Optional[
             Callable[[List[str], List[str]], Coroutine[None, None, None]]
         ] = None
+        # 고친 결정 장부를 저장하는 쪽 (읽었던 장부, 고친 장부). 화면이 채웁니다.
+        self.on_ledger_edited: Optional[Callable[[str, str], Coroutine[None, None, None]]] = None
         # 이 화면이 서버 PC 에서 열렸는가와 보안 감사에서 고른 호출의 대화를 여는 쪽 (화면이 채웁니다).
         # 채우지 않으면 원격으로 봅니다 — 전역 규칙을 고치지 못하는 쪽이 안전합니다.
         self.viewer_is_local: Callable[[], bool] = lambda: False
@@ -104,6 +107,7 @@ class AgentRosterControl:
             on_strategy_changed=self._on_strategy_changed,
             on_parallel_changed=self.cards.refresh_order_preview,
         )
+        self.ledger = LedgerPanelComponent(self.state, self.service, on_save=self._save_ledger)
         self.graph = GraphRowComponent(
             self.state, self.service, self.changes,
             refresh_cards=self.refresh_agent_cards,
@@ -190,6 +194,7 @@ class AgentRosterControl:
                 # 편집 페이지로 가거나 카드 순서로 새로 만듭니다. 토론 중에는 미리보기가 실행 표시가 됩니다.
                 self.graph.build()
                 self.settings.build_notes()
+                self.ledger.build()
 
         return self.expansion
 
@@ -232,6 +237,10 @@ class AgentRosterControl:
         if self.on_tool_rules_changed is not None:
             await self.on_tool_rules_changed(grants, denials)
 
+    async def _save_ledger(self, expected: str, ledger: str) -> None:
+        if self.on_ledger_edited is not None:
+            await self.on_ledger_edited(expected, ledger)
+
     async def _open_tool_call(self, session_id: str, message_id: Optional[str]) -> None:
         if self.on_open_tool_call is not None:
             await self.on_open_tool_call(session_id, message_id)
@@ -271,6 +280,7 @@ class AgentRosterControl:
     def refresh_mcp_lock(self) -> None:
         """토론이 시작·종료된 직후 화면에서 부릅니다 (타이머를 기다리지 않도록)."""
         self.mcp.sync()
+        self.ledger.sync()
 
     def refresh_skills(self, force: bool = False) -> None:
         self.skills.refresh(force)
@@ -283,7 +293,7 @@ class AgentRosterControl:
         self.tool_security.render_rules()
 
     def set_decision_ledger(self, ledger: str) -> None:
-        self.settings.set_decision_ledger(ledger)
+        self.ledger.set_ledger(ledger)
 
     def set_graph_run(self, tracker: Optional[Any], active: bool) -> None:
         self.graph.set_run(tracker, active)
@@ -347,6 +357,8 @@ class AgentRosterControl:
         sub_debates: bool = False,
         sub_debate_rounds: int = DEFAULT_SUB_DEBATE_ROUNDS,
     ) -> None:
+        # 고치던 장부는 지금 대화의 것입니다. 다른 대화나 새로 읽은 기록 위에 남기지 않습니다.
+        self.ledger.discard_draft()
         self.state.apply_session(
             self.service.agent_pool(), active_keys, strategy, max_rounds, instructions, parallel_limit,
             converge_early, token_budget, ask_user, session_id, workspace_dir, personas_locked, personas,

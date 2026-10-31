@@ -36,6 +36,7 @@ pytest -k "snapshot"
 | `test_session_snapshot.py` | **시작된 대화 세션의 완전한 자기완결성 및 외부 설정 격리 보장** |
 | `test_roster_service.py` | 로스터의 conf.json 쓰기·반영·다시 읽기·잠금 규칙을 화면 없이 (`RosterService`) |
 | `test_speech_retry.py` · `test_speech_comments.py` · `test_speech_cards.py` | 발언 하나 다시 실행(자리·버전·실패·맥락·장부·취소), 인라인 코멘트(대상·전달 시점·삭제·갈래), 카드와 창 |
+| `test_ledger_edit.py` | 결정 장부 직접 편집: 형식 왕복, 낡은 화면 충돌, 유저 발언 기록 고정, 재개·갈래·다시 실행, 로스터 패널 |
 | `test_modalities.py` | 입력 모달: 체크한 에이전트에게만 파일 내용 전달, 비우면 요청 불변, 초안에 BASE64 없음, 거절 시 글로 이어 가기, 도구가 돌려준 이미지, 샌드박스 그림 |
 | `test_roster_components.py` | 로스터 하위 컴포넌트를 `AgentRosterControl` 없이 하나씩 (대역 서비스와 콜백) |
 | `test_feed_components.py` | 토론 피드 부품을 `ChatFeed` 없이 하나씩, 그리고 부품을 잇는 조립 규칙 |

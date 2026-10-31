@@ -126,9 +126,10 @@ app/
 │   ├── speech.py                    854   SpeechRunner — 발언 받기·기록·확정 (조각 묶음·초안은 _ChunkStream·_Speech)
 │   ├── speech_retry.py              350   끝난 발언 다시 실행: 대상·버전·모델 고르기·안내 (ADR-036)
 │   ├── speech_comments.py           153   인라인 코멘트: 저장·전달 (ADR-036)
+│   ├── ledger_edit.py               201   결정 장부 직접 편집: 항목 나누기·다시 쓰기·저장 (ADR-038)
 │   ├── session_title.py             124   새 대화의 첫 제목: 첫 공식 발언의 첫 문장
-│   ├── conversation.py              566   ConversationMemory — 맥락·요약·장부
-│   ├── context_memory.py            659   대화 기억 규칙 (LLM 을 부르지 않음)
+│   ├── conversation.py              567   ConversationMemory — 맥락·요약·장부
+│   ├── context_memory.py            665   대화 기억 규칙 (LLM 을 부르지 않음)
 │   ├── phases/base.py                27   단계 실행기 바탕
 │   ├── phases/planning.py           348   1단계: 계획과 계획 승인
 │   ├── phases/debate.py             416   2단계: 라운드, 발언자 지명
@@ -149,7 +150,7 @@ app/
 │   ├── plan_gate.py                 430   계획 승인 규칙 (ADR-028)
 │   ├── tool_gate.py                 453   도구 보안 판정을 토론에 붙임
 │   ├── control.py                   693   정지·개입·한도·승인 제어 채널
-│   ├── turns.py                     587   턴 기록, 끊긴 턴 (ADR-024)
+│   ├── turns.py                     589   턴 기록, 끊긴 턴 (ADR-024)
 │   ├── state.py                     148   DebateState · DebateMessage · ArtifactItem
 │   ├── runner.py                    445   DebateRunner — 백그라운드 턴 시작·끝
 │   ├── turn_run.py                  719   TurnRun — 턴 스냅샷 (이벤트별 리듀서)
@@ -167,7 +168,7 @@ app/
 └── ui/
     ├── run_binding.py                94   화면이 토론에 붙는 구독 (세 화면 공용)
     ├── attention.py                 307   승인 대기 알림: 탭 제목, 데스크톱 알림, 모든 대화 감시
-    ├── expert/page.py             1,037   전문가 화면 ExpertPage
+    ├── expert/page.py             1,047   전문가 화면 ExpertPage
     ├── expert/events.py             568   이벤트별 화면 반영
     ├── expert/chrome.py             106   머리 줄, 정보 창
     ├── shared/page.py               119   체험·쉬운 화면 공용 틀
@@ -180,7 +181,7 @@ app/
     ├── mention_input.py             221   입력창 @언급 창 (브라우저 스크립트)
     ├── diagnostics_script.py        120   브라우저 진단 보고 스크립트
     ├── math_markdown.py             266   LaTeX → MathML 마크다운
-    ├── components/roster/         3,917   로스터 패널 (control 이 조립 · state · changes · agent_cards · agent_admin · agent_dialogs · mcp_panel · skills_panel · workspace_row · session_settings · graph_row · builder_dialog · widgets · common)
+    ├── components/roster/         4,801   로스터 패널 (control 이 조립 · state · changes · agent_cards · agent_admin · agent_dialogs · mcp_panel · skills_panel · workspace_row · session_settings · ledger_panel · graph_row · builder_dialog · widgets · common)
     ├── components/chat_feed/      3,218   토론 피드 (feed 가 조립 · cards · approvals · decisions · mentions · speech_actions · common)
     ├── components/agent_builder_chat.py   111   도우미와 대화해 설계도를 채우는 부분 (전문가·쉬운 화면 공용)
     ├── components/sidebar.py        850   세션 목록
@@ -211,6 +212,7 @@ app/
 | 발언 하나 다시 실행·버전 | `orchestration/speech_retry.py` · 실행은 `orchestration/phases/retry.py`, 창은 `ui/components/chat_feed/speech_actions.py` |
 | 인라인 코멘트 | `orchestration/speech_comments.py` · 드래그 스크립트와 창은 `ui/components/chat_feed/speech_actions.py` |
 | 발언 맥락·요약·결정 장부 | `orchestration/conversation.py` (규칙은 `context_memory.py`) |
+| 결정 장부 직접 편집 | `orchestration/ledger_edit.py` · 패널은 `ui/components/roster/ledger_panel.py` |
 | 새 토론 이벤트 | `events.py` 에 이름 → 스냅샷은 `orchestration/turn_run.py`, 전문가 화면은 `ui/expert/events.py` |
 | 사람을 기다리는 새 물음 | `orchestration/turn_run.py` 의 `waiting_requests` · `events.py` 의 `WAITING_EVENTS` · 문구는 `ui/attention.py` |
 | LLM 호출 파라미터 | `agents/llm_request.py` (`build_completion_kwargs`) |

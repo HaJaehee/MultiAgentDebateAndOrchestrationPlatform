@@ -115,7 +115,7 @@ class RosterState:
     # 그래프 전략일 때 참여자 = 그래프에 놓인 에이전트. 카드 체크박스가 이 값을 따라갑니다.
     graph_agent_keys: Optional[Set[str]] = None
     custom_instructions: str = ""
-    # 이 대화의 결정 장부. 오케스트레이터가 쓰고 사람은 읽기만 합니다.
+    # 이 대화의 결정 장부. 오케스트레이터가 쓰고, 토론이 돌지 않을 때는 사람이 고칠 수 있습니다 (ADR-038).
     decision_ledger: str = ""
     # 이 대화의 작업 공간. 빈 문자열이면 conf.json 기본값을 씁니다.
     workspace_dir: str = ""

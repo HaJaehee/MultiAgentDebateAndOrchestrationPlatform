@@ -325,7 +325,8 @@ class ConversationMemory:
             (index, state.messages[index]) for index in range(start, upto)
             if state.messages[index].msg_type != "error" and turns.in_main_record(state.messages[index])
         ]
-        if not any(m.sender_key != "user" for _index, m in fresh):
+        # 사람의 말과 사람이 장부를 고친 기록만으로는 다시 쓸 것이 없습니다. 고친 값은 이미 장부에 있습니다.
+        if not any(m.sender_key != "user" and turns.kind_of(m) != turns.KIND_LEDGER_EDIT for _index, m in fresh):
             return False
 
         writer = self.tool_less(orchestrator)

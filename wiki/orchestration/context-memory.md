@@ -54,6 +54,9 @@ readable and the text is never paid for twice.
 - The synthesis prompt pins it in front of the transcript and subtracts its size from the transcript
   budget.
 
+- A person's direct edit of the ledger (§4) is pinned here too, labelled `결정 장부 직접 수정`. It is a `system`
+  note rather than a user message, but it carries the same authority.
+
 **This turn's plan** is pinned the same way (`build_plan_pin`, `PLAN_PIN_SHARE = 0.15`, skipped rather
 than clipped when too large), with a reference left in its transcript position.
 
@@ -232,17 +235,50 @@ synthesis (`turns.early_end`).
 - Old databases get the four columns through `_ADDED_COLUMNS`.
 - The same four values are also stored on the turn (`turns.memory`) when it completes, so a fork at an
   earlier turn starts from that turn's memory ([Session Handoff §7](session-handoff.md)).
+- A direct edit (§4.1) is the one write outside a turn. It changes `decision_ledger` on the session and in the
+  latest turn's `memory`, and leaves `ledger_through_id` and `updated_at` alone.
 
 ## 4. UI
 
-The roster shows a read-only **결정 장부** expansion directly under the custom instructions box, with
-the character count as its caption (`비어 있음` when empty). It updates live on `ledger_updated`; a page
-attached to a running turn takes it from the runner snapshot (`decision_ledger`), since the database
-only has it after the turn ends. Wrong entries are corrected by saying so in the chat — the next update
-applies it, and the user record outranks the ledger in every prompt.
+The roster shows a **결정 장부** expansion directly under the custom instructions box, with the character
+count as its caption (`비어 있음` when empty). It updates live on `ledger_updated`; a page attached to a running
+turn takes it from the runner snapshot (`decision_ledger`), since the database only has it after the turn ends.
 
 Events: `ledger_update_started`, `ledger_updated`, `ledger_update_failed`, `context_summarizing`,
 `context_summarized`, `context_summary_failed` — status text in the runner, toasts on the page.
+
+### 4.1. Editing it directly
+
+`직접 고치기` opens one input per item, grouped by section. Text can be changed, items added or removed, and an
+item under `미해결 쟁점` is closed by unchecking it. The decision is
+[ADR-038](../../lectures/05-adr/ADR-038-edit-the-ledger-directly.md).
+
+| | Direct edit | Chat correction |
+| :--- | :--- | :--- |
+| When | Only when no run is active in the conversation | Any time |
+| Takes effect | The next speech, with no LLM call | The next ledger update |
+| Authority over later updates | The pinned user record | The pinned user record |
+
+- **Format.** [`ledger_edit.py`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/ledger_edit.py) parses
+  by the same rules as `ledger_items`, and rewrites the text on save. A section left without items becomes
+  `- 없음`, and a fixed section the model dropped returns in its place, so convergence can read the ledger.
+  Indented lines, lines outside a list and sections the model invented are kept.
+- **No overlap with a turn.** A turn holds the ledger in memory and overwrites the column at its end, so the button
+  is disabled during any run, and an open editor closes with a notice when a run starts or the ledger changes. The
+  save itself only applies if the column still holds the text the editor opened with. On a conflict the page
+  loads the newer ledger and the edit is not kept.
+- **Surviving the next rewrite.** The save adds a `system` note at the end of the conversation
+  (`turn_meta.kind = ledger_edit`) listing what was removed, added or closed, clipped to `NOTE_MAX_CHARS`. The note
+  appears in the timeline and in the user record (§2.1). Without it, the orchestrator could restore an entry
+  because it cannot tell who wrote it. A note alone does not trigger a ledger update.
+- **Later paths.** The latest turn's `memory` gets the same text, so retrying a speech in the next turn or forking at
+  this turn starts from the edit, with the note inside the same boundary. Earlier turns keep what was true then. An
+  interrupted turn has no `memory`; resuming it reads the session column.
+- **Limit.** A save may not grow the ledger past the cap a turn applies to the model (`ledger_edit.char_limit`). A
+  ledger already over it can still be shortened.
+- **Not covered.** An empty ledger has no edit button; the custom instructions take text in advance. There is no
+  HTTP route, and the trial and beginner pages only read. A correction after a retried speech
+  (`_correct_ledger`) sees the edit only as the previous ledger, the same as a later chat message.
 
 ## 5. Tests
 
@@ -251,6 +287,9 @@ reproduction test passes the prompts the engine sent through the real `fit_conte
 the constraint in what would reach the endpoint; disabling the pin makes it fail. Other tests pin the
 tiers message by message, digest parsing, code references, the ledger's position in what `call_agent`
 actually sends, and that everything but the last message is identical between rounds.
+
+[tests/test_ledger_edit.py](file:///d:/MultiAgentDebateOrchestration/tests/test_ledger_edit.py) covers direct edits:
+the format round trip, conflicts, the pin in later prompts, forks, retries and resumes, and the panel.
 
 `tests/conftest.py` now creates the database engine on `:memory:` before every test if none exists.
 The engine is a process-wide singleton fixed by whoever creates it first, and `OrchestratorEngine()`

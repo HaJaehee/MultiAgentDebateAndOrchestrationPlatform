@@ -705,15 +705,6 @@ def test_a_finished_drawn_graph_stays_on_screen_without_a_file(state, tmp_path, 
     assert summary.startswith("지난 턴")
 
 
-def test_the_ledger_says_how_long_it_is(state):
-    settings, _ = _settings(state)
-    settings.set_decision_ledger("가" * 1200)
-    assert state.decision_ledger == "가" * 1200
-    assert settings.ledger_expansion._props["caption"] == "1,200자"
-    settings.set_decision_ledger("")
-    assert settings.ledger_expansion._props["caption"] == "비어 있음"
-
-
 def test_rules_are_counted_on_the_button(state, monkeypatch):
     monkeypatch.setattr(ui, "timer", lambda *a, **k: None)
     _, rules = _settings(state)

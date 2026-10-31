@@ -162,6 +162,7 @@ flowchart TD
 | `app/session_fork.py` | Forking a conversation at a turn, compare data, ratings ([Session Handoff §7](../orchestration/session-handoff.md)) |
 | `app/orchestration/skill_draft.py` | Skill drafts from a turn ([Skills §10](../agents/skills.md)) |
 | `app/orchestration/speech_comments.py` | Inline comments delivered to one agent's next speech, v1.5.1 ([Retrying One Speech §6](../orchestration/speech-revisions.md#6-inline-comments)) |
+| `app/orchestration/ledger_edit.py` | A person's direct edit of the decision ledger, v1.5.1 ([Conversation Memory §4.1](../orchestration/context-memory.md#41-editing-it-directly)) |
 | `app/bench.py` | Strategy comparison harness ([Bench](../operations/bench.md)) |
 | `app/ui/compare_page.py`, `app/ui/components/turn_changes.py`, `app/ui/components/skill_draft_dialog.py` | Compare page and the conclusion card's dialogs |
 

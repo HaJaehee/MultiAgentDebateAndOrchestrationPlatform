@@ -21,7 +21,7 @@ from app.agents.skills import scan_skills
 from app.config import get_config, resolve_workspace_dir
 from app.database.models import ArtifactModel, MessageModel, SessionModel, TurnModel
 from app.database.session import get_session_factory
-from app.orchestration import speech_comments, speech_retry
+from app.orchestration import ledger_edit, speech_comments, speech_retry
 from app.orchestration.graph_run import GraphRunTracker, last_graph_turn, node_labels
 from app.orchestration.runner import get_debate_runner
 from app.orchestration.session_title import DEFAULT_SESSION_TITLE
@@ -130,6 +130,7 @@ class ExpertPage:
         self.workspace_download = WorkspaceDownloadDialog(self.workspace_root)
         self.roster_control.on_open_workspace_download = self.workspace_download.open
         self.roster_control.on_tool_rules_changed = self.on_tool_rules_changed
+        self.roster_control.on_ledger_edited = self.on_ledger_edited
         self.roster_control.viewer_is_local = self.viewer_is_local
         self.roster_control.on_open_tool_call = self.open_tool_call
         self.artifact_viewer = ArtifactViewer(on_open_workspace_files=self.workspace_download.open)
@@ -464,6 +465,15 @@ class ExpertPage:
                 row.tool_grants = list(grants)
                 row.tool_denials = list(denials)
                 await db.commit()
+
+    async def on_ledger_edited(self, expected: str, ledger: str) -> None:
+        """로스터에서 고친 결정 장부를 저장하고, 무엇을 고쳤는지 안내를 피드에 올립니다 (ADR-038)."""
+        if not self.current_session_id:
+            return
+        async with self.session_factory() as db:
+            note = await ledger_edit.save_edit(db, self.current_session_id, expected, ledger)
+        if note is not None:
+            self.chat_feed.append_message(note)
 
     async def on_decision(self, extra: int, request_id: str) -> None:
         """한도에 닿은 에이전트에게 확장 여부를 알려 줍니다 (도구 상한·컨텍스트 공통).

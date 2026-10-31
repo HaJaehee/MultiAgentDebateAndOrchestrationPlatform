@@ -292,7 +292,9 @@ def opening_index(state: DebateState) -> Optional[int]:
 
 def _user_label(state: DebateState, index: int, msg: DebateMessage) -> str:
     when = "이전 턴" if index < state.turn_message_start else "이번 턴"
-    if msg.content.startswith(INTERJECTION_PREFIX):
+    if turns.kind_of(msg) == turns.KIND_LEDGER_EDIT:
+        what = "결정 장부 직접 수정"
+    elif msg.content.startswith(INTERJECTION_PREFIX):
         what = "토론 중 개입"
     elif msg.content.startswith(plan_gate.PLAN_REVISION_PREFIX):
         what = "계획 수정 요청"
@@ -318,11 +320,15 @@ class UserRecord:
 
 
 def build_user_record(state: DebateState, *, model: str, token_cap: int) -> UserRecord:
-    """이 대화에서 사용자가 한 말 (이번 턴을 연 요청은 빼고). 상한 안에서 최근 것부터."""
+    """이 대화에서 사용자가 한 말 (이번 턴을 연 요청은 빼고). 상한 안에서 최근 것부터.
+
+    사람이 결정 장부를 직접 고친 기록도 함께 싣습니다 (ADR-038). 안 그러면 채팅으로 정정한 것은 장부 갱신을
+    이기고 직접 고친 것은 지는, 더 약한 길이 됩니다.
+    """
     skip = opening_index(state)
     candidates = [
         (i, m) for i, m in enumerate(state.messages)
-        if m.msg_type == "user" and i != skip and _user_body(m)
+        if (m.msg_type == "user" or turns.kind_of(m) == turns.KIND_LEDGER_EDIT) and i != skip and _user_body(m)
     ]
     if not candidates or token_cap <= 0:
         return UserRecord()
@@ -468,7 +474,7 @@ def parse_ledger(content: str, max_chars: int = LEDGER_MAX_CHARS) -> Optional[st
 
 
 # 결정 장부 섹션에서 빈 값(항목 없음)으로 인식할 텍스트 집합. 프롬프트 지침('- 없음') 외 모델 변형 표기를 포괄합니다.
-_EMPTY_ITEMS = {"없음", "없음.", "해당 없음", "none", "n/a", "-"}
+EMPTY_ITEMS = {"없음", "없음.", "해당 없음", "none", "n/a", "-"}
 
 
 def ledger_items(ledger: str, title: str) -> Optional[List[str]]:
@@ -487,7 +493,7 @@ def ledger_items(ledger: str, title: str) -> Optional[List[str]]:
         if items is None or not line.startswith(("- ", "* ")):
             continue
         text = line[2:].strip()
-        if text and text.lower() not in _EMPTY_ITEMS:
+        if text and text.lower() not in EMPTY_ITEMS:
             items.append(text)
     return items
 
