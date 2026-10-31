@@ -159,7 +159,7 @@ async def revert_turn_files(db, session_id: str, turn_id: str) -> workspace_chec
 
 
 def _official_speeches(session_id: str) -> Any:
-    """이 대화에서 오케스트레이터의 공식 발언을 고르는 조건. 실패 안내는 발언이 아닙니다."""
+    """세션 내 오케스트레이터의 유효 공식 발언 필터링 조건. 시스템 오류 안내는 제외합니다."""
     return (
         MessageModel.session_id == session_id,
         MessageModel.sender_key == ORCHESTRATOR_KEY,
@@ -168,7 +168,7 @@ def _official_speeches(session_id: str) -> Any:
 
 
 async def _titles_from_speeches(db, session_id: str, ids: Sequence[str], turn_id: Optional[str]) -> Set[str]:
-    """지울 발언에서 따올 수 있는 제목들. 지금 제목이 이 중 하나면 그 발언에서 따온 것입니다."""
+    """삭제 대상 발언으로부터 파생되었을 수 있는 후보 세션 제목 목록을 생성합니다."""
     scope = [MessageModel.id.in_(list(ids))]
     if turn_id:
         scope.append(MessageModel.turn_id == turn_id)

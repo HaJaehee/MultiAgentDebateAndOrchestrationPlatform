@@ -199,7 +199,7 @@ async def list_skills():
 
 @router.get("/api/plugins")
 async def list_plugins():
-    """이번 실행에서 읽은 전략·호스트 도구 플러그인의 결과입니다. 등록되지 못한 것은 `problem` 에 이유가 있습니다."""
+    """로드된 토론 전략 및 호스트 도구 플러그인의 상태 목록입니다. 등록 실패 항목은 `problem` 필드에 사유가 기록됩니다."""
     return {
         "folders": {kind: str(path) for kind, path in get_config().plugins.folders.items()},
         "plugins": [

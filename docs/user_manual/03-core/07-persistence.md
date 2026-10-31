@@ -26,7 +26,7 @@ sessions ─────┬──▶ messages ──────▶ tool_calls
 | 컬럼명 | 데이터 타입 | 설명 및 역할 |
 | :--- | :--- | :--- |
 | `id` | str(36) | 세션 고유 식별자 (UUID v4) |
-| `title` | str(255) | 대화 세션 제목. 새 대화는 오케스트레이터의 첫 공식 발언 첫 문장을 초기 제목으로 받고, 그다음은 사람이 고칩니다 |
+| `title` | str(255) | 대화 세션 제목. 신규 세션은 오케스트레이터의 첫 공식 발언 첫 문장이 초기 제목으로 자동 지정되며, 이후 사용자가 자유롭게 수정할 수 있습니다 |
 | `strategy` | str(50) | 적용된 토론 전략 식별자 (`sequential_debate` 등) |
 | `max_rounds` | int | 세션의 최대 토론 라운드 상한 |
 | `active_agents` | JSON | 세션에서 활성화된 에이전트 키 목록 |
@@ -45,7 +45,7 @@ sessions ─────┬──▶ messages ──────▶ tool_calls
 
 **결정 장부와 누적 요약문은 해당 턴이 온전히 완료되었을 때만 저장합니다.** 사용자가 토론 도중 "요청 되돌리기(Rollback)"를 실행하면 해당 턴의 발언들이 취소 및 삭제되는데, 취소된 발언이 이미 장부에 반영되어 저장되어 있다면 실제로 합의되지 않은 유령 결정 사항이 장부에 남게 되기 때문입니다. 장부와 요약이 어느 발언까지 반영되었는지는 단순 개수가 아니라 고유 발언 ID(`ledger_through_id`, `summary_through_id`)로 정밀하게 추적합니다.
 
-**턴 밖에서 장부를 쓰는 경우는 사람의 직접 편집과 발언 다시 실행의 교정뿐입니다.** 직접 편집은 토론이 돌지 않을 때만 할 수 있고, 편집을 시작할 때 읽은 값이 그대로일 때만 저장합니다. `sessions.decision_ledger` 와 마지막 턴의 `turns.memory` 를 함께 고치고, 반영 지점(`ledger_through_id`)은 그대로 두며, 대화 끝에 `turn_meta.kind = ledger_edit` 안내를 남깁니다 (ADR-038).
+**턴 외부에서 결정 장부를 갱신하는 경우는 사용자의 직접 편집 및 발언 재생성에 따른 장부 교정뿐입니다.** 직접 편집은 토론이 유휴 상태일 때만 수행 가능하며, 낙관적 락을 통해 편집 시작 시점의 장부가 불변일 때만 안전하게 저장됩니다. `sessions.decision_ledger`와 마지막 턴의 `turns.memory`를 동시 갱신하며, 반영 기준 ID(`ledger_through_id`)는 보존하고 대화 타임라인에 `turn_meta.kind = ledger_edit` 안내 레코드를 영구 기록합니다 (ADR-038).
 
 ### `messages` 테이블
 
@@ -61,7 +61,7 @@ sessions ─────┬──▶ messages ──────▶ tool_calls
 | `created_at` | **대화 기록 정렬 기준 타임스탬프** (실제 발언 시각이 아님, 하단 설명 참고) |
 | `turn_id` | 이 기록이 속한 턴 (`turns.id`). 기능 도입 이전의 기록은 NULL |
 | `turn_meta` | 해당 기록이 턴의 흐름에서 맡은 역할 (JSON). `kind`는 `opening` · `interjection` · `plan` · `speech` · `merge` · `gate` · `nomination` · `assignment` · `note` · `failure` · `interrupted` · `synthesis` 중 하나이며, 지명(`speakers`)과 병렬 분배(`tasks`)는 결과를 값으로 함께 기록합니다 |
-| `revisions` | 지금 보이지 않는 이 발언의 버전들 (JSON, [ADR-036](../../../lectures/05-adr/ADR-036-retry-one-speech-and-inline-comments.md)). 다시 실행한 적 없으면 NULL이며, 행에는 늘 지금 버전이 들어 있습니다 |
+| `revisions` | 현재 활성화되지 않은 이전 발언 리비전 이력 (JSON, [ADR-036](../../../lectures/05-adr/ADR-036-retry-one-speech-and-inline-comments.md)). 재생성 이력이 없으면 NULL이며, 본 행에는 항상 최신 활성 버전이 저장됩니다 |
 
 메시지 테이블에는 에이전트의 내부 키(`sender_key`)뿐만 아니라 당시의 표시 이름(`sender_name`)과 역할명(`sender_role`)을 함께 영구 기록합니다. 훗날 관리자가 에이전트를 삭제하거나 이름을 변경하더라도 과거 토론 기록 속의 발언자 정보는 원형 그대로 보존되어야 하기 때문입니다.
 
@@ -214,7 +214,7 @@ SQLAlchemy의 `create_all()` 메서드는 기존에 이미 존재하는 테이�
 
 ## PostgreSQL 로 운영하기
 
-[ADR-041](../../../lectures/05-adr/ADR-041-postgresql-compatibility.md) 이 배경과 측정값을 담고 있습니다. 전체 시험을 Windows 의 PostgreSQL 16.9 에서 돌려 확인했습니다. 다른 버전과 운영체제는 아직 돌려 보지 않았습니다.
+[ADR-041](../../../lectures/05-adr/ADR-041-postgresql-compatibility.md)에 상세 설계 배경과 벤치마크 결과가 기술되어 있습니다. 전체 테스트 스위트를 Windows 환경의 PostgreSQL 16.9에서 전수 실행하여 호환성을 검증했습니다.
 
 ### 준비물
 
@@ -226,13 +226,13 @@ CREATE DATABASE mado ENCODING 'UTF8' LOCALE 'ko_KR.UTF-8' TEMPLATE template0;
 APP_DB_URL=postgresql+asyncpg://mado:비밀번호@db.internal/mado
 ```
 
-| 항목 | 요구 사항 | 어기면 |
+| 설정 항목 | 권장 요구 사항 | 미충족 시 영향 |
 | :--- | :--- | :--- |
-| 인코딩 | `UTF8` | 표현할 수 없는 글자가 든 기록이 실패합니다. 기동 로그에 오류로 남깁니다 |
-| `LC_CTYPE` | UTF-8 로캘 (`C`·`POSIX` 가 아닌 것. Windows 서버는 `Korean_Korea.utf8`) | 한국어가 trigram 색인에 들어가지 않습니다. 결과는 맞지만 훑어서 찾습니다. 기동 로그에 경고로 남깁니다 |
-| 권한 | DB 소유자 또는 `CREATE` 권한 (`pg_trgm` 설치에 필요) | 색인 없이 훑어서 찾습니다. DBA 가 `CREATE EXTENSION pg_trgm` 을 대신 실행해도 됩니다 |
+| 인코딩 | `UTF8` | 인코딩 불가 문자가 포함된 발언 기록 시 INSERT가 실패할 수 있습니다. 기동 로그에 오류가 기록됩니다 |
+| `LC_CTYPE` | UTF-8 로캘 (`C`·`POSIX` 제외, Windows 서버는 `Korean_Korea.utf8`) | 한글 텍스트가 trigram 인덱스에 포함되지 않아 순차 스캔으로 폴백되며 검색 성능이 저하됩니다. 기동 로그에 경고가 기록됩니다 |
+| 권한 | DB 소유자 또는 `CREATE` 권한 (`pg_trgm` 설치 필요) | 인덱스 없이 순차 스캔으로 동작합니다. 사전에 DBA가 `CREATE EXTENSION pg_trgm`을 수동 실행해도 무방합니다 |
 
-표와 색인은 첫 기동 때 스스로 만듭니다. **기존 SQLite 기록은 옮겨 주지 않습니다.** `db_url` 을 바꾸면 빈 DB 에서 시작합니다.
+테이블과 인덱스는 서버 최초 기동 시 자동으로 생성됩니다. **기존 SQLite 데이터베이스의 자동 마이그레이션 도구는 제공되지 않습니다.** `db_url` 설정을 변경하면 초기화된 데이터베이스에서 새로 시작됩니다.
 
 폐쇄망 번들에는 `asyncpg` 휠이 들어 있습니다. PostgreSQL 서버 자체는 번들에 들어 있지 않습니다. PgBouncer 를 쓴다면 `session` 모드로 두거나, `transaction` 모드에서는 주소에 `?prepared_statement_cache_size=0` 을 붙이십시오 (이 모드에서는 아래의 프로세스 잠금이 유지되지 않습니다).
 
@@ -240,12 +240,12 @@ APP_DB_URL=postgresql+asyncpg://mado:비밀번호@db.internal/mado
 
 | 항목 | SQLite | PostgreSQL |
 | :--- | :--- | :--- |
-| 대화 검색 | FTS5 `trigram` + `LIKE` | `ILIKE` + `pg_trgm` GIN. 찾는 규칙과 결과는 같습니다 |
-| 오래 걸리는 검색 | 끝까지 훑습니다 | 최근 발언부터 3초 훑어도 끝나지 않으면 `tsvector` GIN 으로 **낱말 첫머리가 맞는 발언만** 찾고, 사이드바에 그렇게 알립니다. 드문 2글자 낱말이 이 경우입니다 |
-| 외래 키 | 검사하지 않음 | 검사합니다. 대화를 지우면 체험·쉬운 화면의 행도 `ON DELETE CASCADE` 로 함께 지워집니다 |
-| 문자열 길이 | 검사하지 않음 | 똑같이 제한하지 않습니다 (`String(n)` 을 `TEXT` 로 만듭니다) |
-| NUL 문자 | 그대로 저장 | 저장할 수 없어 기록할 때 지웁니다 (JSON 안의 값은 이스케이프되어 그대로 남습니다) |
-| 시각 | 시간대를 버리고 돌려줌 (`as_utc` 가 UTC 로 다시 붙임) | 시간대와 함께 돌려줌 |
+| 대화 검색 | FTS5 `trigram` + `LIKE` | `ILIKE` + `pg_trgm` GIN. 검색 규칙과 결과는 동일합니다 |
+| 검색 지연 처리 | 전체 레코드 순차 검색 | 최근 발언 역순 스캔이 3초 상한을 초과하면 `tsvector` GIN 인덱스를 활용하여 **접두사 일치 발언만** 선별 조회하고 사이드바에 부분 결과임을 안내합니다 |
+| 외래 키 | 기본 검증 미수행 | 엄격 검증. 대화 세션 삭제 시 관련 참조 레코드가 `ON DELETE CASCADE`로 자동 정리됩니다 |
+| 문자열 길이 | 길이 제한 없음 | 동일하게 길이 무제한 지원 (`String(n)`을 `TEXT` 타입으로 매핑) |
+| NUL 문자 | 그대로 저장 | PostgreSQL 제약상 저장 불가하므로 쿼리 전송 전 자동 제거 (JSON 내부 이스케이프 문자열은 유지) |
+| 시각 | 타임존 정보 제외 반환 (`as_utc` 유틸리티로 UTC 바인딩) | 타임존 정보 포함 반환 (asyncpg) |
 
 ### 디스크
 

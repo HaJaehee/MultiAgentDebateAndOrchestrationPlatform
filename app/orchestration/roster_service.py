@@ -1,10 +1,10 @@
-"""로스터의 conf.json 조작과 토론 중 잠금 규칙. NiceGUI 를 모릅니다.
+"""로스터의 conf.json 구성 변경 및 세션 실행 중 잠금 정책을 처리하는 서비스 계층입니다 (UI 독립적).
 
-화면이 하던 일 가운데 화면이 아닌 것을 모았습니다 — 어떤 값을 어디에 쓰는지, 쓴 뒤 돌고 있는 앱에 어떻게
-반영하는지, 지금 바꿔도 되는지. 무엇이 일어났는지는 `Notice` 로 돌려주고, 어떻게 보여 줄지는 화면이 정합니다.
-그래서 `ui.notify` 를 바꿔 끼우지 않고 임시 conf.json 하나로 시험할 수 있습니다 (`tests/test_roster_service.py`).
+UI 컴포넌트에서 비즈니스 로직을 분리하여 conf.json 조작, 런타임 상태 갱신, 세션 진행 상태에 따른 수정 가능 여부 검증을 담당합니다.
+작업 결과는 `Notice` 모델로 반환되며 알림 렌더링 방식은 호출자(UI 계층)가 결정합니다.
+이를 통해 UI 모킹 없이도 독립적인 단위 테스트가 가능합니다 (`tests/test_roster_service.py`).
 
-이 패키지에 두는 것은 러너·MCP 풀·에이전트 풀·설정을 모두 볼 수 있는 가장 낮은 층이기 때문입니다.
+DebateRunner, MCP 매니저, AgentPool 및 시스템 설정을 모두 참조할 수 있는 오케스트레이션 계층에 위치합니다.
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ class ReloadResult:
 
 
 def agent_admin_lock_reason(running_reason: str, personas_locked: bool) -> str:
-    """지금 에이전트 구성을 바꾸면 안 되는 이유. 바꿔도 되면 빈 문자열.
+    """현재 에이전트 구성을 변경할 수 없는 사유를 반환합니다. 변경 가능한 경우 빈 문자열을 반환합니다.
 
     이 하나가 conf.json 을 고치는 조작 전부를 막습니다 — 추가·삭제·비활성화,
     디베이트 진영 배정, 발언 순서(드래그), 도구 할당. 그래서 문구도 그 전부를
@@ -101,7 +101,7 @@ class RosterService:
 
     @staticmethod
     def conf_path() -> str:
-        """지금 앱이 읽고 있는 설정 파일. 없으면 기본값."""
+        """현재 애플리케이션에 로드된 설정 파일 경로를 반환합니다. 미지정 시 기본값을 반환합니다."""
         active = active_config_path()
         return str(active) if active is not None else DEFAULT_CONFIG_PATH
 
@@ -115,7 +115,7 @@ class RosterService:
 
     @staticmethod
     def configured_agents() -> Dict[str, Any]:
-        """conf.json 의 에이전트 전부 (꺼 둔 것 포함). 읽지 못하면 비어 있습니다."""
+        """conf.json에 정의된 전체 에이전트 구성을 조회합니다 (비활성화 에이전트 포함)."""
         try:
             return dict(get_config().agents)
         except Exception as e:  # noqa: BLE001 - 화면은 설정 오류로 죽지 않아야 합니다
@@ -124,7 +124,7 @@ class RosterService:
 
     @staticmethod
     def default_tool_mode() -> str:
-        """conf.json 의 도구 보안 모드. 읽지 못해도 목록은 그려야 하므로 기본값을 돌려줍니다."""
+        """현재 설정된 도구 보안 모드를 반환합니다. 오류 발생 시 안전한 기본값을 반환합니다."""
         try:
             return get_config().tool_security.mode
         except Exception:  # noqa: BLE001
@@ -132,7 +132,7 @@ class RosterService:
 
     @staticmethod
     def tool_security() -> Optional[ToolSecurityConfig]:
-        """지금 걸려 있는 전역 도구 보안 설정. 읽지 못하면 None."""
+        """현재 적용 중인 전역 도구 보안 설정을 조회합니다. 조회 실패 시 None을 반환합니다."""
         try:
             return get_config().tool_security
         except Exception as e:  # noqa: BLE001 - 화면은 설정 오류로 죽지 않아야 합니다
@@ -204,7 +204,7 @@ class RosterService:
 
     @staticmethod
     def running_debate_lock_reason() -> str:
-        """지금 MCP 구성을 바꾸면 안 되는 이유. 바꿔도 되면 빈 문자열.
+        """현재 진행 중인 토론으로 인해 MCP 구성을 변경할 수 없는 사유를 반환합니다. 변경 가능한 경우 빈 문자열을 반환합니다.
 
         서버 프로세스는 이제 작업 공간마다 나뉘지만, **무엇을 어떻게 띄울지는
         여전히 conf.json 하나가 정합니다.** 여기서 서버를 고치면 살아 있는 런타임
@@ -276,7 +276,7 @@ class RosterService:
         set_skill_enabled_in_conf_file(skill_name, enabled, self.conf_path())
 
     def add_tool_rule(self, effect: str, rule: str) -> bool:
-        """전역 규칙 하나를 더합니다. 이미 있으면 False. 도구 보안은 호출마다 지금의 설정을 읽으므로 더 할 일이 없습니다."""
+        """전역 도구 보안 규칙을 추가합니다. 이미 존재하는 규칙이면 False를 반환합니다."""
         return bool(add_tool_security_rules_to_conf_file(effect, [rule], self.conf_path()))
 
     def remove_tool_rule(self, effect: str, rule: str) -> bool:
@@ -286,14 +286,14 @@ class RosterService:
         return replace_tool_security_rule_in_conf_file(effect, old_rule, new_rule, self.conf_path())
 
     def restore_default_deny_rules(self) -> List[str]:
-        """지워진 기본 거부 규칙을 되돌립니다. 지금 있는 규칙은 그대로 둡니다. 되돌린 규칙을 돌려줍니다."""
+        """삭제된 내장 기본 차단(Deny) 규칙들을 복원합니다. 기존 사용자 규칙은 보존되며 복원된 규칙 목록을 반환합니다."""
         return add_tool_security_rules_to_conf_file("deny", list(DEFAULT_TOOL_DENY_RULES), self.conf_path())
 
     # ------------------------------------------------------------ 돌고 있는 앱에 반영
 
     @staticmethod
     def write_conf(write: Callable[[], None]) -> Optional[Notice]:
-        """conf.json 을 고칩니다. 실패하면 알릴 내용을, 성공하면 None 을 돌려줍니다."""
+        """conf.json 설정을 수정합니다. 실패 시 오류 알림을 반환하며, 성공 시 None을 반환합니다."""
         try:
             write()
         except Exception as e:  # noqa: BLE001 - 설정 오류는 화면에 그대로 알립니다
@@ -303,7 +303,7 @@ class RosterService:
 
     @staticmethod
     async def apply_to_running_app(done_message: str, restart_servers: bool = True) -> Notice:
-        """고친 conf.json 을 돌고 있는 앱에 그대로 반영합니다.
+        """수정된 conf.json 구성을 실행 중인 애플리케이션 런타임에 동기화합니다.
 
         파일만 고치고 끝내면 화면과 실제로 떠 있는 서버·에이전트가 어긋납니다.
         다음 기동 때까지 그 사실을 아무도 모르므로 여기서 바로 맞춥니다.
@@ -324,7 +324,7 @@ class RosterService:
         return Notice(done_message, "positive")
 
     async def reload_conf(self, current_pool: AgentPool) -> ReloadResult:
-        """conf.json 을 다시 읽어 에이전트 풀(과 필요하면 MCP 서버)을 갱신합니다.
+        """conf.json을 다시 읽어 에이전트 풀 및 MCP 런타임을 최신 구성으로 갱신합니다.
 
         앱을 다시 띄우지 않고 에이전트를 추가·수정하기 위한 것입니다. 설정
         파일이 깨져 있으면 아무것도 바꾸지 않고 돌아옵니다 — `get_config()` 는

@@ -24,26 +24,26 @@ pytest -k "snapshot"
 | `test_remote_mcp.py` | 원격(HTTP/SSE) MCP 서버: 설정 유효성, 전송 방식 자동 폴백, 인증 토큰 격리 |
 | `test_anythingllm_kb.py` | AnythingLLM 문서 검색(`kb`): Mock AnythingLLM 서버 기반 검색 결과 및 근거 출처 포맷팅, 실패 시 오류 처리, 작업 공간 허용 목록(allowlist), stdio 연결 및 읽기 권한 판정, 실제 도구 루프 연동 검증 (v1.5.1) |
 | `test_llm_offload.py` | 스트림 조립(`stream_chunk_builder`)을 스레드에서: 조립 중에도 다른 코루틴이 도는지, 답·사용량 불변, 조립 중 취소 (v1.5.1) |
-| `test_tool_loading.py` | 도구 스키마 지연 로딩: 나누는 기준, 지침 글 불변, 불러오기·곧바로 호출, 대화 안 기억, 도구 보안, 재개 (ADR-039) |
-| `test_plugins.py` | 플러그인: 폴더와 entry point 에서 읽기, 깨진 플러그인 격리, 이름 가로채기 거부, 폴더 보호, 전략이 터졌을 때 토론이 물러서는 것, 설명서 예제가 실제로 도는 것 (ADR-042) |
-| `test_host_tools.py` | 호스트 도구 레지스트리: 내장 도구의 순서 유지, 플러그인 켜기와 도구 보안 판정, 플러그인 실패, 실제 도구 루프 (ADR-042) |
-| `test_tool_compaction.py` | 오래된 큰 파일 읽기 결과 압축: 줄이는 대상, 스텁 내용, 사용률 조건, 캐시 접두사 불변, 도구 기록 원문, 재개 (ADR-040) |
-| `test_markdown_offload.py` | 긴 마크다운을 일꾼 스레드에서: 그리는 중에도 다른 코루틴이 도는지, 최신 내용만 그리는지, 요소 삭제·실패 처리, 제곱 시간이 들던 세 곳, 서버 시작 시 Pygments 플러그인 미리 불러오기, StarUML 변환 (v1.5.1) |
+| `test_tool_loading.py` | 도구 스키마 지연 로딩: 분할 기준, 지침 프롬프트 불변성, 온디맨드 로드 및 직호출 처리, 세션 내 도구 메모리, 도구 보안 정책, 세션 재개 (ADR-039) |
+| `test_plugins.py` | 플러그인: 디렉터리 및 엔트리포인트 탐색/로드, 오류 플러그인 격리, 예약어 가로채기 차단, 디렉터리 보호, 전략 예외 발생 시 안전 폴백, 매뉴얼 예제 실행 검증 (ADR-042) |
+| `test_host_tools.py` | 호스트 도구 레지스트리: 내장 도구 순서 보존, 플러그인 활성화 및 도구 보안 정책 판정, 플러그인 예외 격리, 도구 루프 연동 (ADR-042) |
+| `test_tool_compaction.py` | 과거 대용량 파일 읽기 결과 압축: 압축 대상 선별, 요약 스텁 내용 검증, 컨텍스트 임계치 조건, 접두사 캐시 보존, 도구 로그 원문 보존 및 세션 재개 (ADR-040) |
+| `test_markdown_offload.py` | 대용량 마크다운의 워커 스레드 오프로드: 백그라운드 렌더링 중 이벤트 루프 논블로킹 보장, 최신 요청 디바운스, 요소 제거/실패 처리, O(N^2) 알고리즘 개선, 기동 시 Pygments 렉서 웜업, StarUML 변환 (v1.5.1) |
 | `test_llm_settings.py` | `llm` 전역 설정 상속, 요청 파라미터 매핑, 단계적 사고 모드 동작 |
 | `test_orchestrator.py` | 에이전트 발언 우선순위 정렬 및 전략별 발언 순서 배치 |
 | `test_speaker_selection.py` | 오케스트레이터의 동적 발언자 지명 및 실패 시 안전 폴백 메커니즘 |
 | `test_parallel_dispatch.py` | 병렬 지시 전략: 비동기 동시 실행, 세부 태스크 분배, 라운드 취합, 동시성 제한 |
-| `test_adaptive_graph.py` | 적응형 그래프 토론: 응답 읽기와 허용 범위, 다시 받기와 물러서기, 기준 그래프, 참여자, 끊긴 턴 재개 |
-| `test_sub_debate.py` | 서브 토론: 여는 조건과 상한, 본 토론과 별개인 라운드 수, 결론만 합류, 그래프 노드·판정 합류, 실패·정지·개입, 끊긴 턴 재개 |
+| `test_adaptive_graph.py` | 적응형 그래프 토론: 모델 응답 파싱 및 안전 상한 검증, 스키마 오류 시 재시도 및 폴백, 기준 템플릿 그래프 기반 조정, 활성 에이전트 검증, 중단된 턴 복구 |
+| `test_sub_debate.py` | 쟁점별 서브 토론: 개설 조건 및 상한 검증, 본 토론과 독립적인 라운드 제어, 결론 중심 맥락 격리/합류, 그래프 노드/판정 연동, 예외/정지/개입 처리, 중단된 턴 복구 |
 | `test_personas.py` | 세션별 페르소나 생애주기: 초안 편집 → 첫 턴 잠금 → 세션 재개 |
 | `test_agent_appearance.py` | 카드 색상/아이콘: 이미지 업로드 → 설정 저장 → UI 렌더링 → 스냅샷 및 폴백 |
 | `test_session_snapshot.py` | **시작된 대화 세션의 완전한 자기완결성 및 외부 설정 격리 보장** |
-| `test_roster_service.py` | 로스터의 conf.json 쓰기·반영·다시 읽기·잠금 규칙을 화면 없이 (`RosterService`) |
-| `test_speech_retry.py` · `test_speech_comments.py` · `test_speech_cards.py` | 발언 하나 다시 실행(자리·버전·실패·맥락·장부·취소), 인라인 코멘트(대상·전달 시점·삭제·갈래), 카드와 창 |
-| `test_ledger_edit.py` | 결정 장부 직접 편집: 형식 왕복, 낡은 화면 충돌, 유저 발언 기록 고정, 재개·갈래·다시 실행, 로스터 패널 |
-| `test_modalities.py` | 입력 모달: 체크한 에이전트에게만 파일 내용 전달, 비우면 요청 불변, 초안에 BASE64 없음, 거절 시 글로 이어 가기, 도구가 돌려준 이미지, 샌드박스 그림 |
-| `test_roster_components.py` | 로스터 하위 컴포넌트를 `AgentRosterControl` 없이 하나씩 (대역 서비스와 콜백) |
-| `test_feed_components.py` | 토론 피드 부품을 `ChatFeed` 없이 하나씩, 그리고 부품을 잇는 조립 규칙 |
+| `test_roster_service.py` | 로스터 도메인 서비스: conf.json 갱신, 런타임 반영 및 잠금 검증 로직을 UI 없이 독립 검증 (`RosterService`) |
+| `test_speech_retry.py` · `test_speech_comments.py` · `test_speech_cards.py` | 단일 발언 재생성(인플레이스 갱신, 리비전 이력, 컨텍스트 복원, 장부 동기화), 인라인 코멘트(에이전트별 주입 및 전달 완료 전환), UI 카드 연동 |
+| `test_ledger_edit.py` | 결정 장부 직접 편집: 항목 단위 파싱 및 마크다운 재구성, 낙관적 동시성 제어 충돌 처리, 사용자 발언 기록 영구 보존, 세션 재개/분기/재생성 연동 |
+| `test_modalities.py` | 입력 모달리티: 활성화된 에이전트에 한해 파일 본문 BASE64 주입, 비활성화 시 텍스트 유지, 세션 초안 내 바이너리 배제, 미지원 시 폴백, 도구 반환 미디어 처리 |
+| `test_roster_components.py` | 로스터 하위 컴포넌트 단위 테스트: Mock 서비스 및 콜백을 통한 독립 검증 |
+| `test_feed_components.py` | 토론 피드 하위 컴포넌트 단위 테스트 및 컴포넌트 조립 규칙 검증 |
 | `test_roster_lock.py` | 토론 백그라운드 진행 중 전역 로스터 및 MCP 설정 변경 차단 잠금 |
 | `test_roster_selection.py` | 신규 에이전트 추가 시 기존 대화 세션의 활성/비활성 목록 정합성 |
 | `test_interaction.py` | 사용자 정지(Stop) 요청 및 중간 개입 메모(Interjection) 정상 반영 |
@@ -62,8 +62,8 @@ pytest -k "snapshot"
 | `test_export.py` | 전체 대화 기록의 마크다운 종합 보고서 내보내기 정합성 |
 | `test_chat_card.py` | 발언 카드 접기/펼치기 상태 및 자동 스크롤 추적 해제/재개 상호작용 |
 | `test_sidebar_times.py` | 세션 목록 카드의 시간 표시 및 실시간 갱신 시점 |
-| `test_attention.py` | 승인 대기 알림: 기다리는 물음 집계, 대화를 가리지 않는 신호, 탭 제목·배지·토스트·데스크톱 알림, 방문자 턴 제외 |
-| `test_session_title.py` | 새 대화의 첫 제목: 첫 문장 추출(사고 과정·머리글 제외), 적는 조건, 지워진 발언의 제목 되돌리기 |
+| `test_attention.py` | 사용자 승인 대기 알림: 대기 요청 집계, 전역 버스 채널 브로드캐스트, 탭 제목/사이드바 배지/토스트/데스크톱 알림 연동, 게스트 턴 격리 |
+| `test_session_title.py` | 신규 세션 자동 제목 생성: 첫 공식 발언 첫 문장 추출(사고 과정 및 헤더 제외), 자동 설정 조건, 발언 삭제 시 제목 복원 로직 |
 | `test_db.py` | SQLAlchemy 비동기 ORM 테이블 스키마, 관계 매핑 및 cascade 삭제 |
 | `test_open_browser.py` | 브라우저 자동 실행 스크립트의 동적 주소 감지 로직 |
 | `test_new_features.py` | 페르소나 영속화, 바인딩 우선순위, MCP roots 프로토콜 응답 |

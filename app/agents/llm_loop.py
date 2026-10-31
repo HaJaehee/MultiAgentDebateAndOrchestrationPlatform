@@ -154,7 +154,7 @@ class ToolLoop:
     checkpoint: Optional[SpeechCheckpoint] = None
     # 발언을 시작할 때의 마지막 사용자 메시지. 창에 맞추다 버리게 되면 다시 붙입니다 (`fit_tool_loop_context`).
     turn_anchor: str = ""
-    # 도구 정의를 나눈 진열대. 도구를 불러오면 `tools` 가 바뀝니다 (`app/agents/tool_loading.py`).
+    # 도구 스키마 지연 로딩 관리 객체. 도구를 동적 로드하면 활성 `tools` 목록이 갱신됩니다 (`app/agents/tool_loading.py`).
     shelf: Optional[ToolShelf] = None
 
     # --- 판마다 바뀌는 것 (체크포인트에 남습니다)
@@ -179,7 +179,7 @@ class ToolLoop:
     leaked_retries: int = 0
     context_asked: bool = False
     announced_bands: Set[Any] = field(default_factory=set)
-    # 이번 판의 도구들이 돌려준 파일. 판의 도구를 다 돌린 뒤 사용자 메시지로 붙입니다 (`_flush_tool_media`).
+    # 현재 루프에서 도구가 반환한 미디어 파일 목록. 해당 라운드 종료 후 사용자 메시지로 주입됩니다 (`_flush_tool_media`).
     tool_media: List[Dict[str, Any]] = field(default_factory=list)
 
     # --- 도구 목록에서 한 번 구해 두는 것
@@ -197,7 +197,7 @@ class ToolLoop:
         self.schema_tokens = tool_schema_tokens(self.agent.model, self.tools)
 
     def _refresh_shelf(self, loaded: Sequence[str]) -> None:
-        """불러온 도구의 정의를 다음 요청부터 싣고, 이 대화의 다음 발언에도 남깁니다."""
+        """동적으로 로드된 도구 스키마를 다음 요청에 주입하고 세션 캐시에 보존합니다."""
         if not loaded or self.shelf is None:
             return
         self.tools = self.shelf.offered()
@@ -209,13 +209,13 @@ class ToolLoop:
         )
 
     def answer_load_tools(self, arguments: Any) -> Tuple[str, str]:
-        """모델이 부른 `tools__load_tools` 를 처리합니다."""
+        """모델의 `tools__load_tools` 호출을 처리하여 요청된 도구 스키마들을 로드합니다."""
         output, status, loaded = load_tools_answer(self.shelf, arguments)
         self._refresh_shelf(loaded)
         return output, status
 
     def note_direct_call(self, fn_name: str, output: str, status: str) -> str:
-        """목록에만 있던 도구를 곧바로 불렀으면 정의를 싣고, 실패했으면 다시 부르라고 덧붙입니다."""
+        """지연 로딩 목록에 있던 도구가 직접 호출된 경우 스키마를 즉시 로드하고 보정 안내를 추가합니다."""
         if self.shelf is None:
             return output
         loaded = self.shelf.load([fn_name])
@@ -302,8 +302,8 @@ class ToolLoopMixin:
         컨텍스트 창도 같은 두 겹으로 지킵니다. 매 판 직전에 `fit_tool_loop_context`
         로 창 안에 맞추고(짝 단위로 덜어냅니다 — 고아 `tool` 메시지는 400 입니다),
         사용률이 띠를 넘으면 `context_pressure_notice` 로 알립니다. 기록을 실제로
-        버려야 하는 첫 순간에는 `context_arbiter` 로 사람에게 묻습니다. 그 앞에서 오래된 큰 파일 읽기
-        결과를 먼저 줄입니다 (`compact_loop_messages`). 다시 읽을 수 있는 것부터 덜어야 덜 잃습니다.
+        컨텍스트 한도 초과 시 절삭에 앞서 오래된 대용량 파일 읽기 결과를 먼저 압축합니다 (`compact_loop_messages`).
+        동일한 인자로 재호출 가능한 파일 읽기 관측을 스텁으로 대체하여 불필요한 맥락 손실을 최소화합니다.
 
         한 판은 이 순서입니다: 창에 맞추기(`_fit_loop_context`) → 한도 안내(`_announce_loop_limits`) →
         LLM 한 판 → 도구 호출이 없으면 답으로 마무리(`_settle_answer`), 있으면 도구 실행
@@ -445,7 +445,7 @@ class ToolLoopMixin:
 
     @staticmethod
     def _compact_loop_outputs(loop: ToolLoop) -> None:
-        """오래된 큰 파일 읽기 결과를 줄입니다. 묻기와 자르기 앞에 두어, 줄여서 맞으면 아무것도 잃지 않습니다."""
+        """오래된 대용량 파일 읽기 관측 결과를 압축(Compaction)합니다. 컨텍스트 절삭 전에 선제 압축하여 맥락을 보존합니다."""
         loop.messages, compacted = compact_loop_messages(
             loop.agent.model, loop.messages, context_budget(loop.agent, loop.window, loop.tools),
         )
@@ -697,10 +697,10 @@ class ToolLoopMixin:
         await self._save_loop_progress(loop)
 
     async def _take_tool_media(self, loop: ToolLoop, fn_name: str, output: str) -> str:
-        """도구가 돌려준 파일을 처리하고 모델이 읽을 글을 돌려줍니다 (`app/mcp/client.py` 의 `ToolOutput`).
+        """도구가 반환한 미디어 파일을 처리하고 모델에 전달할 텍스트 관측 결과를 생성합니다 (`app/mcp/client.py`의 `ToolOutput`).
 
-        이 에이전트가 받는 형식이면 파일로 풀어 두었다가 판 끝에 함께 싣고, 아니면 무엇이 왔는지만 적습니다.
-        어느 쪽이든 BASE64 는 도구 결과의 글에 넣지 않습니다 — 그 글은 모델이 읽고, 화면에 나오고, DB 에 남습니다.
+        에이전트가 지원하는 입력 모달리티인 경우 작업 공간에 저장 후 후속 메시지로 첨부하고, 지원하지 않는 경우 메타데이터 안내만 기록합니다.
+        Base64 원시 데이터는 컨텍스트 폭증을 방지하기 위해 텍스트 출력에 직접 포함하지 않습니다.
         """
         media = getattr(output, "media", None)
         if not media:
@@ -731,10 +731,10 @@ class ToolLoopMixin:
         return "\n\n".join(part for part in (str(output), *notes) if part)
 
     async def _flush_tool_media(self, loop: ToolLoop) -> None:
-        """이번 판에 받은 파일을 사용자 메시지로 붙입니다.
+        """현재 라운드에서 수신한 미디어 파일들을 사용자 메시지 첨부 형태로 결합합니다.
 
-        `role=tool` 에는 붙이지 않습니다. OpenAI 호환 엔드포인트의 도구 결과는 글만 받습니다. 도구 결과 사이에는
-        다른 메시지를 끼울 수 없으므로 (짝이 깨지면 400) 판의 도구를 다 돌린 뒤에 붙입니다.
+        OpenAI 호환 엔드포인트는 `role=tool` 메시지에 순수 텍스트만 허용하므로, 도구 호출 시퀀스가 완료된 직후
+        후속 `role=user` 메시지에 멀티모달 콘텐츠 블록으로 첨부합니다.
         """
         if not loop.tool_media:
             return

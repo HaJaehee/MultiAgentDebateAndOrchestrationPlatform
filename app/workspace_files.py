@@ -21,9 +21,9 @@
 * **코드 블록 안의 `@` 는 언급이 아닙니다.** 붙여 넣은 코드의 `@app.get`, `@Override` 가
   파일이나 에이전트로 해석되면 안 됩니다.
 
-받을 형식을 켠 에이전트(카드의 `모달`)에게는 언급한 파일의 내용도 전달하지만, 그것은 사용자 메시지가 아닙니다.
-보내는 쪽이 `MentionReport.attachment_paths` 를 엔진에 넘기고, 그 에이전트의 이번 턴 발언에만 실립니다
-(`app/agents/media.py`). 글에는 여전히 경로만 남습니다.
+입력 모달리티가 활성화된 에이전트(`allowed_modalities`)에는 언급된 파일의 내용도 함께 주입됩니다.
+`MentionReport.attachment_paths`를 통해 엔진으로 전달되며, 해당 에이전트의 현재 턴 발언에만 동적으로 포함됩니다
+(`app/agents/media.py`). 사용자 메시지 텍스트에는 파일 경로만 안전하게 보존됩니다.
 
 스킬도 언급할 수 있습니다. 스킬 언급은 **같은 줄에서 바로 앞에 언급한 전문가**에게 지정됩니다
 (앞에 없으면 그 줄에서 뒤의 첫 전문가, 그 줄에 아무도 없으면 앞 줄들에서 가장 가까운 전문가).
@@ -390,7 +390,7 @@ class MentionReport:
 
     @property
     def attachment_paths(self) -> List[str]:
-        """엔진에 넘길 언급한 파일의 경로. 받을 형식인지는 에이전트마다 발언할 때 가립니다."""
+        """오케스트레이션 엔진으로 전달할 파일 언급 경로 목록입니다. 에이전트별 지원 모달리티에 따라 필터링됩니다."""
         return [rel for rel, _size in self.files]
 
     def warnings(self) -> List[str]:

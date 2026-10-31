@@ -416,13 +416,13 @@ class LLMConfig(BaseModel):
 # 동료 자문(peers)에서 자문받는 에이전트가 쓰는 도구 호출 상한의 기본값.
 DEFAULT_PEER_TOOL_ITERATIONS = 3
 
-# 서브 토론 한 번의 라운드 수 (ADR-034). 본 토론의 `max_rounds` 와 별개입니다. 한 라운드는 두 전문가가 한 번씩 말하는 것입니다.
+# 서브 토론 세션당 최대 라운드 수 (ADR-034). 본 토론의 `max_rounds`와 독립적이며, 1라운드는 두 참가 에이전트의 교차 발언 1회로 구성됩니다.
 DEFAULT_SUB_DEBATE_ROUNDS = 2
 MAX_SUB_DEBATE_ROUNDS = 5
 
 
 def clamp_sub_debate_rounds(value: Any) -> int:
-    """서브 토론 라운드 수를 쓸 수 있는 범위로 옮깁니다. 값이 없으면 기본값입니다."""
+    """서브 토론 라운드 수를 유효 범위(1~10)로 정규화합니다. 미지정 시 기본값을 반환합니다."""
     if value is None:
         return DEFAULT_SUB_DEBATE_ROUNDS
     return max(1, min(MAX_SUB_DEBATE_ROUNDS, int(value)))
@@ -611,10 +611,10 @@ DEFAULT_CORE_TOOLS = (
 )
 
 class ToolLoadingConfig(BaseModel):
-    """도구 스키마 지연 로딩 설정(`tool_loading`, `app/agents/tool_loading.py`, ADR-039)입니다.
+    """도구 스키마 지연 로딩 설정 모델 (`tool_loading`, `app/agents/tool_loading.py`, ADR-039).
 
-    MCP 도구의 정의는 요청마다 입력 토큰으로 나갑니다. 켜 두면 자주 쓰는 도구의 정의만 싣고, 나머지는
-    `tools__load_tools` 설명의 한 줄 목록으로 보여 줍니다. 진행 중인 대화에도 다음 발언부터 적용합니다.
+    MCP 도구 스키마의 중복 토큰 소비를 방지하기 위해, 핵심 도구만 우선 주입하고 나머지는
+    `tools__load_tools` 카탈로그를 통한 동적 온디맨드 로딩으로 제공합니다. 진행 중인 세션에도 다음 발언부터 즉시 반영됩니다.
     """
 
     enabled: bool = Field(default=True, description="List rarely used MCP tools by one line instead of sending their schemas")
@@ -628,9 +628,9 @@ class ToolLoadingConfig(BaseModel):
     )
 
 class ToolOutputCompactionConfig(BaseModel):
-    """도구 루프의 오래된 큰 파일 읽기 결과를 줄이는 설정(`tool_output_compaction`, `app/agents/tool_compaction.py`, ADR-040)입니다.
+    """도구 실행 관측 결과 압축 설정 모델 (`tool_output_compaction`, `app/agents/tool_compaction.py`, ADR-040).
 
-    모델이 읽는 메시지만 줄고 도구 카드와 DB 의 기록은 원문 그대로입니다. 진행 중인 대화에도 다음 판부터 적용합니다.
+    오래된 대용량 파일 읽기 결과를 스텁으로 압축하여 컨텍스트 윈도우를 확보합니다. 프롬프트 메시지만 압축되며 DB 및 UI 기록은 원형을 보존합니다.
     """
 
     enabled: bool = Field(default=True, description="Replace stale large file reads in the tool loop with a short stub")
@@ -645,10 +645,10 @@ class ToolOutputCompactionConfig(BaseModel):
     )
 
 class PluginsConfig(BaseModel):
-    """외부 플러그인 설정(`plugins`, `app/plugins.py`, ADR-042)입니다.
+    """외부 플러그인 아키텍처 설정 모델 (`plugins`, `app/plugins.py`, ADR-042).
 
-    플러그인은 앱과 같은 권한으로 도는 파이썬 코드입니다. 서버를 시작할 때 한 번만 읽으므로 스킬과 달리
-    고치면 다시 시작해야 합니다. 폴더는 도구로 건드릴 수 없습니다 (`app.mcp.manager.protected_files`).
+    호스트 프로세스 권한으로 실행되는 외부 토론 전략 및 호스트 도구 플러그인 로드 경로를 구성합니다.
+    서버 시작 시 1회 로드되며, 보안을 위해 플러그인 디렉터리는 도구 조작으로부터 보호됩니다 (`app.mcp.manager.protected_files`).
     """
 
     strategies_dir: str = Field(

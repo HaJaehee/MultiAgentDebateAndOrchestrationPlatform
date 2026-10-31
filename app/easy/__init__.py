@@ -13,8 +13,8 @@
 | `loop.py` | 스트리밍 이벤트를 '생각 → 행동 → 관찰' 단계로 구조화 |
 | `pages/` | UI 페이지 라우트 정의 |
 
-설계도(`AgentDraft`)와 도구·스킬의 쉬운 말 설명은 전문가 화면도 쓰므로 `app/agents/draft.py`·`app/agents/catalog.py` 에,
-도우미 대화는 `app/ui/components/agent_builder_chat.py` 에 있습니다.
+에이전트 설계도(`AgentDraft`) 및 비엔지니어 친화적 도구/스킬 카탈로그는 전문가 화면과 공유하므로 `app/agents/draft.py`와 `app/agents/catalog.py`에 위치하며,
+빌더 대화 컴포넌트는 `app/ui/components/agent_builder_chat.py`에 분리되어 있습니다.
 
 사용자 권한 구분:
 

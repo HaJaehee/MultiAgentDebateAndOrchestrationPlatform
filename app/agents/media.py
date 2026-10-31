@@ -1,16 +1,14 @@
-"""멀티모달 입력: @언급한 파일과 도구가 돌려준 파일을 내용째 모델에게 전달합니다 (ADR-035).
+"""멀티모달 입력 처리: @언급 파일 및 도구 반환 미디어 파일의 본문을 모델에 전달합니다 (ADR-035).
 
-에이전트 카드의 `모달` 체크박스(`allowed_modalities`)가 이 에이전트가 직접 받을 형식을 정합니다.
-모두 비어 있으면 이 모듈은 아무 일도 하지 않고, 에이전트는 예전처럼 글과 파일 경로만 받습니다.
+에이전트 카드의 `allowed_modalities` 설정으로 각 에이전트가 직접 수신할 입력 모달리티(이미지, 음성 등)를 결정합니다.
+모달리티 설정이 비어 있으면 본 모듈은 개입하지 않으며, 에이전트는 기존처럼 텍스트와 파일 경로만 전달받습니다.
 
-**메시지에는 파일을 가리키는 블록만 듭니다.** BASE64 는 요청을 보내기 직전에 만들고
-(`materialize_attachments`) 요청이 끝나면 버립니다. 메시지 목록은 판마다 초안으로 DB 에 남고
-(ADR-025), 토큰을 세고, 로그의 지문이 되는데, 거기 수십 MB 의 글자가 끼면 그 모두가 차례로 느려집니다.
-이어 가는 발언은 같은 블록에서 파일을 다시 읽습니다.
+**메시지 이력에는 파일 참조 블록만 보존합니다.** Base64 인코딩은 API 요청 직전에 일시 생성하고
+(`materialize_attachments`) 호출 완료 즉시 메모리에서 해제합니다. 대화 이력은 매 턴 DB에 기록되고
+토큰 계측 및 로깅에 사용되므로, 대용량 바이너리 데이터가 포함될 경우 시스템 전반의 성능이 급격히 저하됩니다.
 
-**첨부는 턴 단위입니다.** 언급한 턴의 발언마다 목표 메시지에 실립니다 — 자르기가 남기는 자리이고,
-매번 같은 자리라 프롬프트 캐시도 깨지 않습니다 (`with_attachments`). 다음 턴에는 실리지 않습니다.
-글에 남은 `[@참조]` 경로는 그대로이니, 다시 보여 주려면 다시 언급합니다.
+**첨부 유효 범위는 단일 턴 단위입니다.** 파일이 언급된 턴의 발언들에만 목표 메시지로 주입되며,
+프롬프트 캐시 효율을 위해 동일한 위치에 배치됩니다 (`with_attachments`). 후속 턴에는 자동으로 포함되지 않습니다.
 """
 
 import asyncio
@@ -117,7 +115,7 @@ _AUDIO_FORMATS = {
 
 
 def modality_of(name: str) -> Optional[Tuple[str, str]]:
-    """파일 이름의 `(형식, MIME)`. 네 형식 어디에도 들지 않으면 None — 경로로만 전달합니다."""
+    """파일 경로로부터 `(모달리티, MIME 타입)`을 판별합니다. 지원 모달리티가 아니면 None을 반환하며 경로로만 전달됩니다."""
     suffix = Path(name).suffix.lower()
     for kind, table in _MIME_BY_EXTENSION.items():
         if suffix in table:
@@ -137,7 +135,7 @@ def modality_of_mime(mime: str) -> Optional[str]:
 
 
 def extensions_of(kind: str) -> List[str]:
-    """이 형식으로 보는 확장자 (점 없이). 체크박스 옆에 보여 줍니다."""
+    """해당 모달리티가 지원하는 파일 확장자 목록(점 제외)을 반환합니다."""
     return [suffix.lstrip(".") for suffix in _MIME_BY_EXTENSION.get(kind, {})]
 
 
@@ -168,7 +166,7 @@ def has_attachments(messages: Iterable[Dict[str, Any]]) -> bool:
 
 
 def attachment_block(path: Path, name: str, kind: str, mime: str, size: int, *, as_text: bool = False) -> Dict[str, Any]:
-    """파일을 가리키는 블록. JSON 으로 그대로 저장되므로 끊긴 발언을 이어 갈 때도 쓸 수 있습니다."""
+    """파일 참조 메타데이터 블록을 생성합니다. JSON 직렬화가 가능하여 세션 복원 시에도 안전하게 재사용됩니다."""
     block: Dict[str, Any] = {
         "type": ATTACHMENT_BLOCK, "path": str(path), "name": name, "kind": kind, "mime": mime, "size": int(size),
     }
@@ -178,7 +176,7 @@ def attachment_block(path: Path, name: str, kind: str, mime: str, size: int, *, 
 
 
 def attachment_tokens(block: Dict[str, Any]) -> int:
-    """이 첨부가 요청에서 차지할 토큰의 어림값."""
+    """해당 첨부 파일이 API 요청에서 소비할 예상 토큰 수를 계산합니다."""
     kind, size = block.get("kind"), int(block.get("size") or 0)
     if block.get("as_text"):
         return max(_MIN_ATTACHMENT_TOKENS, size // _BYTES_PER_TOKEN_TEXT)
@@ -188,9 +186,9 @@ def attachment_tokens(block: Dict[str, Any]) -> int:
 
 
 def without_attachments(messages: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], int]:
-    """첨부 블록을 뺀 메시지와, 뺀 블록의 토큰 어림값. 첨부가 없으면 같은 목록을 돌려줍니다.
+    """첨부 블록을 제외한 순수 메시지 목록과 제외된 첨부들의 추정 토큰 합계를 반환합니다.
 
-    토크나이저는 모르는 블록에서 예외를 올립니다. 첨부는 어차피 글자 수로 셀 수 없습니다.
+    표준 텍스트 토크나이저의 커스텀 멀티모달 블록 파싱 오류를 방지하기 위해 분리 처리합니다.
     """
     if not has_attachments(messages):
         return messages, 0
@@ -282,7 +280,7 @@ def fit_attachments(blocks: List[Dict[str, Any]], token_budget: int) -> List[Dic
 
 
 def with_attachments(prompt: List[Dict[str, Any]], blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """첫 사용자 메시지(목표)에 첨부를 붙입니다. 첨부가 없으면 같은 목록을 돌려줍니다.
+    """첫 번째 사용자 목표 메시지에 멀티모달 첨부 블록들을 주입합니다. 첨부가 없으면 원본 목록을 그대로 반환합니다.
 
     두 자르기(`fit_context_window`, `fit_tool_loop_context`) 모두 이 자리를 남기므로, 긴 토론에서도 끝까지
     보입니다. 라운드마다 같은 자리이니 프롬프트 캐시도 그대로 탑니다.
@@ -385,7 +383,7 @@ def _materialize(agent: Any, messages: List[Dict[str, Any]]) -> List[Dict[str, A
 
 
 async def materialize_attachments(agent: Any, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """보낼 메시지. 첨부 블록을 파일 내용으로 바꿉니다. 첨부가 없으면 같은 목록을 돌려줍니다.
+    """API 전송용 메시지 목록을 생성합니다. 파일 참조 블록을 실제 Base64/텍스트 데이터로 구체화합니다.
 
     파일을 읽고 인코딩하는 동안 다른 발언과 화면이 멈추지 않게 이벤트 루프 밖에서 합니다.
     """
@@ -430,7 +428,7 @@ def store_tool_media(workspace: Any, tool_name: str, kind: str, mime: str, data:
 
 
 def attachment_notices(files: Sequence[Tuple[str, int]], agents: Sequence[Any]) -> Tuple[List[str], List[str]]:
-    """이번에 언급한 파일이 누구에게 직접 가는지. `(안내, 경고)`.
+    """턴 시작 시 언급된 파일들이 어떤 에이전트에 직접 전달되는지 안내 메시지와 경고 목록을 생성합니다.
 
     글에는 경로만 남아 무엇이 실제로 실렸는지 화면에서 알 수 없으므로, 보내는 순간 한 번 알립니다.
     """

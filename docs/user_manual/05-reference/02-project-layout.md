@@ -14,7 +14,7 @@ MultiAgentDebateOrchestration/
 ├── docs/
 │   ├── user_manual/          이 문서 모음 (마크다운)
 │   ├── user_manual_html/     렌더링 산출물 (생성물)
-│   ├── examples/plugins/     복사해서 쓰는 전략·호스트 도구 예제 (앱이 읽지 않음)
+│   ├── examples/plugins/     복사하여 활용 가능한 전략·호스트 도구 플러그인 예제
 │   └── render_user_manual.py 렌더러
 ├── mcp_servers/              자체 내장 MCP 서버 디렉터리
 │   ├── memory_scoped/        세션별 격리 지식 그래프 (공식 memory 포크)
@@ -60,7 +60,7 @@ app/
 ├── api.py                           281   HTTP 엔드포인트 /api/* · /agent-icon
 ├── routes.py                         22   화면 주소 (체험·쉬운 화면)
 ├── events.py                        108   토론 이벤트 이름표 EventType
-├── plugins.py                       224   토론 전략·호스트 도구 플러그인 읽기 (폴더, entry point, ADR-042)
+├── plugins.py                       224   토론 전략 및 호스트 도구 플러그인 로더 (디렉터리 및 엔트리포인트 지원, ADR-042)
 ├── tool_rules.py                    125   도구 보안 규칙 문법 (read(경로) · net(호스트) …)
 ├── timestamps.py                    176   발언·턴·보고서 시각 표기 (화면·문서·보고서 공용)
 ├── session_ops.py                   529   세션 되돌리기·이어받기, 피드 기록 읽기
@@ -90,12 +90,12 @@ app/
 │   ├── pool.py                       78   AgentPool 레지스트리
 │   ├── personas.py                  415   세션별 페르소나·외형, 구성 스냅샷
 │   ├── skills.py                    762   스킬 스캔·도구·지침·스크립트 복사
-│   ├── host_tools.py                362   호스트 도구 레지스트리와 HostToolProvider (ADR-042)
+│   ├── host_tools.py                362   호스트 도구 통합 레지스트리 및 HostToolProvider 기반 인터페이스 (ADR-042)
 │   ├── ask_user.py                  129   에이전트 사용자 질문 ask__ask_user (v1.5)
 │   ├── consultation.py              458   동료 자문 peers__consult_agent
-│   ├── draft.py                     306   에이전트 설계도: 도우미 프롬프트·읽기·거르기, 주인 저장
-│   ├── catalog.py                   155   도구·스킬의 쉬운 말 이름, 고를 수 있는 목록
-│   ├── media.py                     454   입력 모달: 파일 내용을 요청 직전에 싣기, 도구가 돌려준 파일
+│   ├── draft.py                     306   에이전트 설계도 및 프롬프트 빌더, 관리자 설정 저장
+│   ├── catalog.py                   155   도구 및 스킬 카탈로그 메타데이터 및 선택 목록
+│   ├── media.py                     454   입력 모달리티 처리: LLM 요청 직전 멀티모달 파일 주입 및 도구 반환 미디어 처리 (ADR-035)
 │   ├── llm.py                       469   LLMCaller: 호출, 폴백 판단, 한 판 호출
 │   ├── llm_loop.py                  630   도구 루프 (ToolLoop 상태 + 단계별 함수)
 │   ├── llm_request.py               177   시스템 프롬프트·LiteLLM 인자
@@ -103,9 +103,9 @@ app/
 │   ├── llm_recovery.py              568   잘린 답·빈 답·새어 나온 도구 호출 되살리기
 │   ├── llm_context.py               464   토큰 어림, 컨텍스트 창 맞춤
 │   ├── llm_budget.py                271   도구 상한·응답 한도 안내
-│   ├── llm_tools.py                 271   도구 이름 찾기, 파일 쓰기·고치기 지침
-│   ├── tool_loading.py              299   도구 스키마 지연 로딩: 나누기·목록·불러오기·기억 (ADR-039)
-│   ├── tool_compaction.py           130   오래된 큰 파일 읽기 결과를 스텁으로 줄이기 (ADR-040)
+│   ├── llm_tools.py                 271   도구 명칭 해석, 파일 생성 및 부분 수정 프롬프트 지침
+│   ├── tool_loading.py              299   도구 스키마 온디맨드 지연 로딩: 스키마 분할, 동적 로드 및 세션 유지 (ADR-039)
+│   ├── tool_compaction.py           130   과거 대용량 파일 읽기 결과의 스텁(Stub) 압축 최적화 (ADR-040)
 │   ├── llm_fingerprint.py           101   거절 시 요청 지문
 │   ├── llm_usage.py                 169   토큰 및 LLM 실행 시간 계측 (v1.5)
 │   ├── llm_types.py                  51   LLMUnavailableError, 콜백 형식
@@ -129,10 +129,10 @@ app/
 │   ├── turn_setup.py                280   턴 구성·참여자·도구 게이트
 │   ├── recording.py                 673   TurnRecorder — 기록, 재시도, data/unsaved/
 │   ├── speech.py                    854   SpeechRunner — 발언 받기·기록·확정 (조각 묶음·초안은 _ChunkStream·_Speech)
-│   ├── speech_retry.py              350   끝난 발언 다시 실행: 대상·버전·모델 고르기·안내 (ADR-036)
-│   ├── speech_comments.py           153   인라인 코멘트: 저장·전달 (ADR-036)
-│   ├── ledger_edit.py               201   결정 장부 직접 편집: 항목 나누기·다시 쓰기·저장 (ADR-038)
-│   ├── session_title.py             124   새 대화의 첫 제목: 첫 공식 발언의 첫 문장
+│   ├── speech_retry.py              350   완료된 단일 발언 재생성: 대상 선별, 리비전 이력 관리 및 타임라인 안내 (ADR-036)
+│   ├── speech_comments.py           153   문장 단위 인라인 코멘트 영속화 및 에이전트 프롬프트 주입 (ADR-036)
+│   ├── ledger_edit.py               201   결정 장부 항목 단위 직접 편집, 서식 재구성 및 낙관적 락 저장 (ADR-038)
+│   ├── session_title.py             124   신규 대화 세션의 초기 제목 자동 추출: 첫 공식 발언 첫 문장
 │   ├── conversation.py              567   ConversationMemory — 맥락·요약·장부
 │   ├── context_memory.py            665   대화 기억 규칙 (LLM 을 부르지 않음)
 │   ├── phases/base.py                27   단계 실행기 바탕
@@ -140,18 +140,18 @@ app/
 │   ├── phases/debate.py             416   2단계: 라운드, 발언자 지명
 │   ├── phases/parallel.py           388   병렬 지시 라운드
 │   ├── phases/graph.py              721   그래프 토론
-│   ├── phases/graph_drafting.py     164   적응형 그래프 토론: 오케스트레이터가 그래프를 그림 (ADR-034)
-│   ├── phases/sub_debate.py         370   서브 토론: 쟁점을 두 전문가가 따로, 결론만 합류 (ADR-034)
-│   ├── phases/retry.py              253   끝난 발언의 새 버전 받기·되돌리기 (ADR-036)
+│   ├── phases/graph_drafting.py     164   적응형 그래프 토론: 오케스트레이터의 동적 실행 그래프 생성 및 스키마 검증 (ADR-034)
+│   ├── phases/sub_debate.py         370   쟁점별 서브 토론: 두 전문가 간 독립 심층 토론 및 결론 메인 합류 (ADR-034)
+│   ├── phases/retry.py              253   완료된 발언의 신규 버전 생성 및 이전 버전 롤백 (ADR-036)
 │   ├── phases/routing.py            118   지명·분배 응답 읽기
 │   ├── phases/synthesis.py          766   3단계: 합성, 다이어그램 수선, 산출물
 │   ├── artifacts.py                 289   코드 블록·Mermaid 정규화, 로스터 글
-│   ├── strategies.py                401   토론 전략, 전략 등록, 실패하면 우선순위 순서로 물러서기
+│   ├── strategies.py                401   토론 전략 레지스트리 및 전략 실행 실패 시 우선순위 폴백 메커니즘
 │   ├── graph.py                     541   그래프 모델·검증·스케줄러
 │   ├── graph_run.py                 304   그래프 실행 표시
 │   ├── graph_draft.py               265   그래프 작성 프롬프트·응답 읽기·허용 범위 (LLM 을 부르지 않음)
 │   ├── skill_draft.py               143   결론 기반 스킬 초안 생성 (v1.5)
-│   ├── roster_service.py            328   로스터의 conf.json 쓰기·반영·다시 읽기·잠금 규칙 (NiceGUI 없음)
+│   ├── roster_service.py            328   로스터 도메인 서비스: conf.json 갱신, 런타임 반영 및 잠금 검증 (UI 비종속)
 │   ├── plan_gate.py                 430   계획 승인 규칙 (ADR-028)
 │   ├── tool_gate.py                 453   도구 보안 판정을 토론에 붙임
 │   ├── control.py                   693   정지·개입·한도·승인 제어 채널
@@ -210,17 +210,17 @@ app/
 | 하고 싶은 것 | 파일 |
 | :--- | :--- |
 | 설정 항목 추가 | `config/schema.py` (Pydantic 모델) · 화면에서 고치려면 `config/editors.py` |
-| 새 토론 전략 | 앱 코드를 고치지 않습니다. 루트의 `strategies/` 폴더나 `mado.strategies` entry point ([플러그인](../03-core/11-plugins.md)) · 예제는 `docs/examples/plugins/`, 기반 클래스는 `orchestration/strategies.py` |
-| 새 호스트 도구 | 앱 코드를 고치지 않습니다. 루트의 `host_tools/` 폴더나 `mado.host_tools` entry point ([플러그인](../03-core/11-plugins.md)) · 예제는 `docs/examples/plugins/`, 기반 클래스와 레지스트리는 `agents/host_tools.py` |
+| 새 토론 전략 확장 | 코드를 수정하지 않고 프로젝트 루트의 `strategies/` 디렉터리 또는 `mado.strategies` 엔트리포인트를 통해 플러그인으로 등록 ([플러그인 가이드](../03-core/11-plugins.md)) · 예제: `docs/examples/plugins/`, 기반 클래스: `orchestration/strategies.py` |
+| 새 호스트 도구 확장 | 코드를 수정하지 않고 프로젝트 루트의 `host_tools/` 디렉터리 또는 `mado.host_tools` 엔트리포인트를 통해 플러그인으로 등록 ([플러그인 가이드](../03-core/11-plugins.md)) · 예제: `docs/examples/plugins/`, 기반 클래스 및 레지스트리: `agents/host_tools.py` |
 | 토론 흐름 변경 | `orchestration/phases/` (계획·토론·합성) · 턴 수명은 `orchestration/engine.py` |
 | 발언 한 번의 처리 | `orchestration/speech.py` |
-| 새 대화의 첫 제목 | `orchestration/session_title.py` · 적는 자리는 `orchestration/speech.py` 의 `_title_new_session` · 되돌리기는 `session_ops.py` 의 `discard_turn` |
-| 발언 하나 다시 실행·버전 | `orchestration/speech_retry.py` · 실행은 `orchestration/phases/retry.py`, 창은 `ui/components/chat_feed/speech_actions.py` |
-| 인라인 코멘트 | `orchestration/speech_comments.py` · 드래그 스크립트와 창은 `ui/components/chat_feed/speech_actions.py` |
+| 신규 대화의 첫 제목 | `orchestration/session_title.py` · 설정 위치: `orchestration/speech.py`의 `_title_new_session` · 복원 로직: `session_ops.py`의 `discard_turn` |
+| 단일 발언 재생성 및 버전 관리 | `orchestration/speech_retry.py` · 실행 파이프라인: `orchestration/phases/retry.py`, UI 대화상자: `ui/components/chat_feed/speech_actions.py` |
+| 문장별 인라인 코멘트 | `orchestration/speech_comments.py` · 선택 스크립트 및 UI: `ui/components/chat_feed/speech_actions.py` |
 | 발언 맥락·요약·결정 장부 | `orchestration/conversation.py` (규칙은 `context_memory.py`) |
-| 결정 장부 직접 편집 | `orchestration/ledger_edit.py` · 패널은 `ui/components/roster/ledger_panel.py` |
+| 결정 장부 직접 편집 | `orchestration/ledger_edit.py` · UI 편집 패널: `ui/components/roster/ledger_panel.py` |
 | 새 토론 이벤트 | `events.py` 에 이름 → 스냅샷은 `orchestration/turn_run.py`, 전문가 화면은 `ui/expert/events.py` |
-| 사람을 기다리는 새 물음 | `orchestration/turn_run.py` 의 `waiting_requests` · `events.py` 의 `WAITING_EVENTS` · 문구는 `ui/attention.py` |
+| 사용자 승인 대기 상태 정의 | `orchestration/turn_run.py`의 `waiting_requests`, `events.py`의 `WAITING_EVENTS`, 알림 메시지는 `ui/attention.py` |
 | LLM 호출 파라미터 | `agents/llm_request.py` (`build_completion_kwargs`) |
 | 도구 루프 | `agents/llm_loop.py` (`_run_litellm_loop` 와 단계 함수) · 도구 호출 한 번은 `agents/llm_tool_calls.py` |
 | MCP 서버 다루는 방식 | `mcp/manager.py` · 작업 공간별 런타임은 `mcp/pool.py` |
@@ -258,9 +258,9 @@ app/
 
 **`mcp/policy.py` (952줄)** — 도구 호출 판정 한 가지 일을 합니다. 규칙 문법만 `tool_rules.py` 로 내렸습니다.
 
-로스터 패널(`AgentRosterControl`)과 토론 피드(`ChatFeed`)는 생성자로 필요한 것만 받는 하위 컴포넌트를 조립합니다.
-컴포넌트끼리는 서로를 모르므로 파일 하나만 읽고 시험할 수 있습니다 (ADR-032). `LLMCaller` 는 MADOWarGame 구동기가
-상속해 쓰므로 한 클래스를 mixin 파일로 나눈 그대로입니다. 어떻게 나눴는지는 `docs/refactoring-plan.md` 에 있습니다.
+로스터 패널(`AgentRosterControl`)과 토론 피드(`ChatFeed`)는 생성자 주입 기반의 하위 컴포넌트 합성 구조로 조립됩니다.
+컴포넌트 간 상호 의존성이 차단되어 개별 컴포넌트 단위로 격리 테스트를 수행할 수 있습니다 (ADR-032). `LLMCaller`는 MADOWarGame 실행기의
+상속 호환성을 위해 믹스인 분할 구조를 유지하고 있습니다. 세부 구조 개선 내역은 `docs/refactoring-plan.md`에 기술되어 있습니다.
 
 ---
 

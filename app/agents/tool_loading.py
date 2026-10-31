@@ -1,22 +1,16 @@
-"""도구 스키마 지연 로딩 — 자주 쓰는 도구만 정의를 싣고, 나머지는 한 줄 목록으로 보여 줍니다 (ADR-039).
+"""도구 스키마 지연 로딩 (Lazy Tool Schemas) — 핵심 도구만 우선 주입하고 나머지는 동적 로드 카탈로그로 제공합니다 (ADR-039).
 
-MCP 도구의 정의는 요청마다 입력 토큰으로 나갑니다. filesystem·memory·git 만 붙여도 35개에 약 5,300 토큰이고,
-한 발언의 도구 루프가 판을 돌 때마다 다시 나갑니다. 스킬(`app/agents/skills.py`)이 설명 한 줄만 보여 주고
-본문은 부를 때 주는 것과 같은 방식을 도구 정의에도 씁니다.
+MCP 도구 스키마는 매 API 요청마다 입력 토큰으로 소비됩니다. filesystem·memory·git 서버만 연결해도 약 35개 도구에 5,300 토큰에 달하며,
+도구 호출 루프가 반복될 때마다 중복 청구됩니다. 스킬(`app/agents/skills.py`)이 설명 요약만 노출하고 본문은 동적 로드하는 것과 동일한 원리를 도구 스키마에도 적용합니다.
 
-* **나누는 기준.** 지침이 이름을 짚는 도구(`tools_named_by_guidance`), `tool_loading.core_tools`, 도구가 적은
-  서버(`SMALL_SERVER_TOOLS` 이하)는 정의를 싣습니다. 나머지는 `tools__load_tools` 설명의 목록으로 갑니다.
-* **아낄 것이 있을 때만 나눕니다.** 목록으로 아끼는 양이 `tool_loading.min_saving_tokens` 보다 적으면 전부
-  싣습니다. 불러오는 한 판은 대화 전체를 다시 보내는 값을 치르므로, 조금 아끼자고 그 위험을 지지 않습니다.
-* **불러온 도구는 그 대화의 그 에이전트에게 남습니다** (`remember_loaded`). 발언마다 불러오면 아낀 것보다
-  더 쓰게 됩니다. 기억은 프로세스 안에만 있습니다. 재시작으로 잃어도 한 번 더 불러오면 되고, 끊긴 발언은
-  초안에서 되살립니다 (`ToolLoop.snapshot`).
-* **목록의 도구를 곧바로 불러도 실행합니다.** 호출은 평소처럼 도구 보안을 거치고, 그 뒤로 정의를 싣습니다.
-  인자가 틀렸으면 서버가 거절하고, 모델은 다음 판에 정의를 보고 고칩니다.
+* **분할 기준**: 시스템 지침에서 명시적으로 언급된 도구(`tools_named_by_guidance`), 설정된 핵심 도구(`tool_loading.core_tools`),
+  소형 서버(도구 3개 이하)는 즉시 전체 스키마를 주입합니다. 나머지는 `tools__load_tools` 설명 내 카탈로그 목록으로 제공됩니다.
+* **절감 효과 기준**: 절감 가능한 토큰 수가 임계치(`tool_loading.min_saving_tokens`) 미만이면 전체 스키마를 즉시 주입합니다.
+  도구 로드를 위한 추가 턴 왕복(round-trip) 비용이 발생할 수 있기 때문입니다.
+* **세션 캐싱**: 동적으로 로드된 도구는 해당 세션의 에이전트 캐시에 유지됩니다 (`remember_loaded`). 매 턴 반복 로드 오버헤드를 방지합니다.
+* **직접 호출 허용**: 모델이 카탈로그에 명시된 대기 도구를 사전 로드 없이 직접 호출하더라도, 보안 검증을 거쳐 정상 실행 후 다음 턴에 상세 스키마를 주입합니다.
 
-MCP 서버가 아니라 호스트 도구입니다. 목록이 에이전트와 발언마다 다르고, 실제 효과가 이번 요청의 `tools`
-를 바꾸는 것이어서 호스트 밖에서는 할 수 없습니다. 파일·네트워크를 건드리지 않으므로 도구 보안 판정을 받지
-않습니다. 늘 거부될 도구는 목록을 만들기 전에 `tool_gate.filter_tools` 가 이미 뺐습니다.
+본 기능은 외부 MCP가 아닌 인프로세스 호스트 도구로 구현됩니다. 에이전트 및 발언 상태에 따라 동적으로 `tools` 스키마를 조정해야 하기 때문입니다.
 """
 
 from __future__ import annotations
@@ -64,7 +58,7 @@ def _tail_of(name: str) -> str:
 
 
 def catalog_line(tool: Dict[str, Any]) -> str:
-    """`- git__git_log: Shows the commit logs` — 이름과 설명의 첫 문장만 남깁니다."""
+    """도구 스키마 카탈로그용 단일 라인 요약을 생성합니다 (도구명 및 첫 문장 설명)."""
     function = tool.get("function") or {}
     text = " ".join(str(function.get("description") or "").split())
     if text.startswith("[") and "] " in text:
@@ -81,7 +75,7 @@ def catalog_line(tool: Dict[str, Any]) -> str:
 
 
 def catalog_tool(waiting: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
-    """불러올 수 있는 도구의 목록을 설명에 담은 `tools__load_tools` 정의."""
+    """동적 로딩 가능한 도구 목록을 설명에 포함하는 `tools__load_tools` 호스트 도구 스키마를 생성합니다."""
     catalog = "\n".join(catalog_line(tool) for tool in waiting)
     return {
         "type": "function",
@@ -109,7 +103,7 @@ def catalog_tool(waiting: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
 
 @dataclass
 class ToolShelf:
-    """한 발언의 도구: 정의를 싣는 것(`core`, `loaded`, `host`)과 목록에만 있는 것(`waiting`)."""
+    """발언에 제공할 도구 모음: 전체 스키마를 주입하는 도구(`core`, `loaded`, `host`)와 지연 로딩 대기 목록(`waiting`)."""
 
     core: List[Dict[str, Any]] = field(default_factory=list)
     host: List[Dict[str, Any]] = field(default_factory=list)            # 스킬·자문·질문 — 항상 싣습니다
@@ -117,7 +111,7 @@ class ToolShelf:
     loaded: List[Dict[str, Any]] = field(default_factory=list)
 
     def offered(self) -> List[Dict[str, Any]]:
-        """이번 요청에 실을 도구 정의."""
+        """현재 요청에 실제 주입할 활성 도구 스키마 목록을 반환합니다."""
         catalog = [catalog_tool(self.waiting.values())] if self.waiting else []
         return [*self.core, *self.loaded, *self.host, *catalog]
 
@@ -134,7 +128,7 @@ class ToolShelf:
         return [name for name in self.waiting if _server_of(name) == text]
 
     def load(self, names: Iterable[str], *, whole_server: bool = False) -> List[str]:
-        """목록의 도구를 정의를 싣는 쪽으로 옮깁니다. 실제로 옮긴 전체 이름 (없는 이름은 건너뜁니다).
+        """대기 카탈로그의 도구를 활성 스키마 목록으로 이동합니다. 성공적으로 로드된 전체 도구명 목록을 반환합니다.
 
         이름은 전체 이름이나 꼬리(`git_log`)로 찾습니다. `whole_server` 면 서버 키(`git`)도 받습니다.
         """
@@ -146,7 +140,7 @@ class ToolShelf:
         return moved
 
     def holds(self, requested: str) -> bool:
-        """이미 정의를 싣고 있는 도구인가."""
+        """해당 도구의 전체 스키마가 이미 주입되어 있는지 확인합니다."""
         text = (requested or "").strip()
         names = [_name_of(tool) for tool in (*self.core, *self.loaded)]
         return any(text in (name, _tail_of(name), _server_of(name)) for name in names)
@@ -179,7 +173,7 @@ def plan_shelf(
     *,
     session_id: Optional[str] = None,
 ) -> ToolShelf:
-    """이 발언의 MCP 도구를 나눕니다. 나눌 이유가 없으면 전부 싣는 진열대를 돌려줍니다.
+    """현재 발언의 MCP 도구 스키마를 활성 목록과 지연 로딩 목록으로 분할합니다. 분할 필요가 없을 경우 전체 스키마를 유지합니다.
 
     여기서 실패해도 발언은 도구 전부를 싣고 계속합니다.
     """
@@ -217,14 +211,14 @@ _remembered: "OrderedDict[Tuple[str, str], List[str]]" = OrderedDict()
 
 
 def remembered_loaded(session_id: Optional[str], agent_key: str) -> List[str]:
-    """이 대화에서 이 에이전트가 불러온 도구. 불러온 순서입니다 (요청의 앞부분이 그대로여야 캐시에 남습니다)."""
+    """해당 세션에서 특정 에이전트가 동적으로 로드한 도구 목록을 반환합니다 (캐시 보존 순서)."""
     if not session_id:
         return []
     return list(_remembered.get((session_id, agent_key)) or ())
 
 
 def remember_loaded(session_id: Optional[str], agent_key: str, names: Iterable[str]) -> None:
-    """불러온 도구를 그 대화의 그 에이전트의 다음 발언에도 싣게 합니다."""
+    """로드된 도구를 해당 대화 세션의 에이전트 캐시에 등록하여 후속 발언에서도 스키마가 유지되도록 합니다."""
     if not session_id:
         return
     key = (session_id, agent_key)
@@ -246,7 +240,7 @@ def is_load_tool(tool_name: str) -> bool:
 
 
 def tool_loading_guidance(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
-    """목록을 받은 에이전트에게만 붙는 상시 지침. 없으면 None. 목록 자체는 도구 설명에 있습니다."""
+    """지연 로딩 목록이 제공된 에이전트에게 주입되는 동적 도구 로딩 관련 상시 시스템 지침."""
     if LOAD_TOOLS_TOOL not in {_name_of(tool) for tool in tools or ()}:
         return None
     return "\n".join([
@@ -268,7 +262,7 @@ def _requested_names(arguments: Any) -> List[str]:
 
 
 def load_tools_answer(shelf: Optional[ToolShelf], arguments: Any) -> Tuple[str, str, List[str]]:
-    """`tools__load_tools` 를 처리합니다: `(도구 결과, 상태, 새로 불러온 이름)`."""
+    """`tools__load_tools` 호출을 처리하여 요청된 도구 스키마들을 동적으로 로드합니다: `(결과 메시지, 상태, 새로 로드된 도구 목록)`."""
     waiting = list(shelf.waiting) if shelf is not None else []
     available = f"불러올 수 있는 도구: {', '.join(waiting)}" if waiting else "불러올 도구가 남아 있지 않습니다."
     requested = _requested_names(arguments)

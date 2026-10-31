@@ -1,21 +1,18 @@
-"""외부 플러그인 — 코드를 고치지 않고 토론 전략과 호스트 도구를 더합니다 (ADR-042).
+"""외부 플러그인 아키텍처 — 코드 수정 없이 토론 전략 및 호스트 도구를 확장합니다 (ADR-042).
 
-두 곳에서 찾습니다.
+플러그인은 다음 두 경로를 통해 탐색 및 로드됩니다:
 
-* **폴더** — `plugins.strategies_dir`(기본 `strategies/`), `plugins.host_tools_dir`(기본 `host_tools/`). 파일 하나
-  (`voting.py`)나 패키지 폴더 하나(`voting/__init__.py`)가 플러그인 하나입니다. `_` 나 `.` 으로 시작하는 이름은
-  건너뜁니다. 그 안의 구체 클래스(`BaseDebateStrategy`, `HostToolProvider` 의 하위 클래스)를 전부 등록합니다.
-* **entry point** — `mado.strategies`, `mado.host_tools` 그룹. `pip install` 한 패키지가 클래스, 객체, 모듈을 가리킵니다.
+* **로컬 디렉터리**: `plugins.strategies_dir` (기본 `strategies/`), `plugins.host_tools_dir` (기본 `host_tools/`).
+  단일 파일(`voting.py`) 또는 패키지 디렉터리(`voting/__init__.py`) 단위로 탐색하며, `_` 또는 `.`으로 시작하는 항목은 제외합니다.
+  내부에 정의된 구체 구현체(`BaseDebateStrategy`, `HostToolProvider` 상속 클래스)를 자동으로 등록합니다.
+* **파이썬 Entry Point**: `mado.strategies`, `mado.host_tools` 엔트리 포인트 그룹에 등록된 패키지들을 로드합니다.
 
-**앱과 같은 권한으로 도는 코드입니다.** 그래서 이렇게 다룹니다.
-
-* 서버를 시작할 때 한 번만 읽습니다. 스킬처럼 실시간으로 반영하면 파일을 쓸 수 있는 누구나 곧바로 코드를 실행합니다.
-* 폴더는 도구로 건드릴 수 없습니다 (`app.mcp.manager.protected_files`). 기본 작업 공간 안의 폴더는 아예 읽지 않습니다.
-  에이전트가 코드를 실행해 쓸 수 있는 곳이라, 다음 시작 때 앱 권한을 얻는 길이 됩니다.
-* `plugins.disabled` 에 적은 이름은 import 도 하지 않습니다. entry point 는 패키지를 지우지 않고도 이렇게 끕니다.
-
-**깨진 플러그인이 앱을 막지 않습니다.** 설정을 고치려면 화면이 떠야 합니다. 실패는 로그와 `plugin_records()` 에 남고,
-`GET /api/plugins` 와 로스터의 전략 칸에서 볼 수 있습니다.
+**보안 및 실행 격리 원칙**:
+플러그인은 호스트 애플리케이션과 동일한 프로세스 권한으로 동작하므로 다음 보안 규칙을 엄격히 적용합니다:
+* 서버 시작 시점에만 1회 로드합니다 (실시간 동적 핫 리로딩 금지).
+* 기본 작업 공간(`workspace/`) 내부의 플러그인 디렉터리는 탐색 대상에서 원천 차단합니다 (`app.mcp.manager.protected_files`).
+* `plugins.disabled` 목록에 포함된 플러그인은 임포트 자체를 차단합니다.
+* 플러그인 로드 오류가 전체 애플리케이션 기동 실패로 전파되지 않도록 격리 처리하며, 오류 내역은 `plugin_records()` 및 관리 API로 제공합니다.
 """
 
 from __future__ import annotations
@@ -44,7 +41,7 @@ HOST_TOOL_GROUP = "mado.host_tools"
 
 @dataclass(frozen=True)
 class PluginRecord:
-    """플러그인에서 나온 것 하나의 결과. `problem` 이 있으면 등록되지 않았습니다."""
+    """플러그인 로드 결과 모델. 로드 실패 시 `problem` 필드에 오류 원인이 기록됩니다."""
 
     kind: str
     source: str         # 파일·폴더 경로, 또는 `mado.strategies:이름`
@@ -85,7 +82,7 @@ def _describe(exc: BaseException) -> str:
 
 
 def _import_file(kind: str, path: Path) -> ModuleType:
-    """파일이나 패키지 폴더 하나를 import 합니다. 이름은 앱의 모듈과 겹치지 않게 짓습니다."""
+    """단일 파일 또는 패키지 디렉터리를 동적으로 임포트합니다. 네임스페이스 충돌을 방지하기 위해 전용 모듈명을 사용합니다."""
     module_name = f"mado_plugin_{kind}_{path.stem}"
     if path.is_dir():
         spec = importlib.util.spec_from_file_location(
@@ -107,7 +104,7 @@ def _import_file(kind: str, path: Path) -> ModuleType:
 
 
 def _classes_in(module: ModuleType, base: type) -> List[type]:
-    """모듈이 정의한 구체 클래스. 모듈이 가져다 쓴 다른 클래스(`BaseDebateStrategy` 등)는 뺍니다."""
+    """모듈 내에 직접 정의된 구체 구현체 클래스들을 추출합니다. 단순 임포트된 기반 클래스는 제외합니다."""
     own = module.__name__
     return [
         value for value in vars(module).values()
@@ -117,7 +114,7 @@ def _classes_in(module: ModuleType, base: type) -> List[type]:
 
 
 def _adopt(kind: _Kind, source: str, loaded: Any) -> List[PluginRecord]:
-    """import 한 것에서 전략·호스트 도구를 꺼내 등록합니다. 하나가 실패해도 나머지는 등록합니다."""
+    """임포트된 모듈에서 전략 및 호스트 도구 구현체를 추출하여 등록합니다. 개별 등록 실패 시에도 나머지는 정상 등록됩니다."""
     if isinstance(loaded, ModuleType):
         makers: List[Callable[[], Any]] = list(_classes_in(loaded, kind.base))
     elif inspect.isclass(loaded) and issubclass(loaded, kind.base):
@@ -200,7 +197,7 @@ def _load_entry_points(kind: _Kind, disabled: Iterable[str]) -> List[PluginRecor
 
 
 def load_plugins(config: Optional[RootConfig] = None, *, reload: bool = False) -> List[PluginRecord]:
-    """플러그인을 읽어 등록합니다. 시작할 때 한 번이면 되고, 또 불러도 다시 읽지 않습니다.
+    """구성된 모든 플러그인을 탐색하여 레지스트리에 등록합니다. 서버 기동 시 1회 실행되며 중복 로드를 방지합니다.
 
     `reload` 는 시험이 씁니다. 실행 중인 앱은 등록한 것을 내리지 않습니다.
     """

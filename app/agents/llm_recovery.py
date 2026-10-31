@@ -438,7 +438,7 @@ class AnswerRecoveryMixin:
             messages[-1] = {**last, "content": f"{last['content']}\n\n{text}"}
             return
         if last is not None and last.get("role") == "user" and isinstance(last.get("content"), list):
-            # 도구가 돌려준 파일을 실은 메시지입니다 (`_flush_tool_media`).
+            # 도구 실행 결과로 반환된 미디어 파일 첨부 메시지입니다 (`_flush_tool_media`).
             messages[-1] = {**last, "content": [*last["content"], {"type": "text", "text": text}]}
             return
         messages.append({"role": "user", "content": text})

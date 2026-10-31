@@ -1,10 +1,12 @@
-"""예제 호스트 도구: 이번 대화의 작업 공간에 있는 `tickets.md` 에 티켓을 한 줄 적습니다.
+"""예제 호스트 도구: 현재 대화 세션의 작업 공간에 있는 `tickets.md` 파일에 티켓 항목을 추가합니다.
 
-위험 등급을 밝히지 않아 '등급을 모르는 도구' 로 판정됩니다. 기본 모드에서는 부를 때 승인 카드가 뜨고, 읽기 전용
-모드에서는 목록에서 빠지며, 물을 사람이 없는 헤드리스 실행에서는 거부됩니다. 규칙은 `mcp(ticket/create)` 로 겁니다.
+위험 등급을 명시하지 않아 '미분류 도구'로 취급됩니다. 기본 모드에서는 호출 시 승인 카드가 표시되며,
+읽기 전용 모드에서는 도구 목록에서 제외되고, 비대면(헤드리스) 실행 환경에서는 호출이 거부됩니다.
+보안 정책 규칙은 `mcp(ticket/create)` 형태로 지정합니다.
 
-판정은 플러그인 안쪽을 보지 못합니다. 그래서 쓰는 곳을 모델의 인자로 받지 않고, 앱이 알려 준 작업 공간의 고정된
-파일 하나로 제한합니다. 설명: docs/user_manual/03-core/11-plugins.md
+도구 게이트 판정 엔진은 플러그인 내부 구현을 검사할 수 없습니다. 따라서 파일 쓰기 대상을 LLM의 인자로
+받지 않고, 시스템이 주입한 작업 공간 내부의 고정된 파일 하나로 제한하여 안전성을 확보합니다.
+참조 가이드: docs/user_manual/03-core/11-plugins.md
 """
 
 import asyncio
@@ -35,13 +37,13 @@ class TicketTools(HostToolProvider):
         })]
 
     async def run(self, call: HostToolCall) -> Tuple[str, str]:
-        # 줄바꿈을 지워 모델이 파일에 여러 줄을 끼워 넣지 못하게 합니다.
+        # 줄바꿈 문자를 정제하여 모델이 단일 호출로 여러 줄을 임의 삽입하지 못하도록 방지합니다.
         title = " ".join(str(call.arguments.get("title") or "").split())
         if not title:
             return "티켓 제목(`title`)을 적어 주세요.", "error"
         if call.workspace is None:
             return "작업 공간을 알 수 없어 티켓을 적지 못했습니다.", "error"
         line = f"- [ ] {title} ({getattr(call.agent, 'name', '')})"
-        # `run` 은 이벤트 루프에서 돕니다. 파일을 다루는 일은 다른 스레드로 넘겨 토론과 화면을 막지 않습니다.
+        # `run` 메서드는 메인 이벤트 루프에서 실행됩니다. 파일 I/O는 백그라운드 스레드로 오프로드하여 UI 블로킹을 방지합니다.
         await asyncio.to_thread(_append_line, Path(call.workspace) / TICKET_FILE, line)
         return f"`{TICKET_FILE}` 에 적었습니다: {title}", "success"

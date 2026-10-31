@@ -296,10 +296,10 @@ def add_tool_security_rules_to_conf_file(
     return added
 
 def _tool_rule_list(data: Dict[str, Any], effect: str, path: Path) -> List[str]:
-    """파일의 `tool_security.<effect>` 를 설정이 읽는 모양 그대로 꺼냅니다.
+    """설정 파일에서 `tool_security.<effect>` 규칙 목록을 원형 그대로 조회합니다.
 
-    `deny` 가 파일에 없으면 기본 목록이 걸려 있는 것이므로 그 목록을 돌려줍니다. 더하든 지우든
-    그 위에서 고쳐 적어야 나머지 기본 보호가 사라지지 않습니다.
+    `deny` 설정이 파일에 명시되지 않은 경우 내장 기본 차단 규칙 목록을 반환합니다.
+    규칙 수정 시 기본 보안 보호 조치가 유실되지 않도록 보장합니다.
     """
     if effect not in ("deny", "ask", "allow"):
         raise ValueError(f"'{effect}' 는 규칙 종류가 아닙니다 (deny · ask · allow).")
@@ -317,10 +317,10 @@ def remove_tool_security_rule_from_conf_file(
     rule: str,
     config_path: str | Path = DEFAULT_CONFIG_PATH,
 ) -> bool:
-    """`tool_security.<effect>` 에서 규칙 하나를 지웁니다. 지웠으면 True.
+    """`tool_security.<effect>` 목록에서 특정 규칙을 단건 삭제합니다. 삭제 성공 시 True를 반환합니다.
 
-    화면이 들고 있는 목록을 통째로 되쓰지 않고 지금의 파일에서 한 줄만 고칩니다. 그 사이 승인
-    카드의 "항상" 이나 손으로 고친 내용이 낡은 목록에 덮이지 않습니다. 이미 없으면 쓰지 않습니다.
+    화면 캐시 전체를 덮어쓰지 않고 실제 파일에서 해당 항목만 원자적으로 제거하여 동시 변경 유실을 방지합니다.
+    항목이 존재하지 않으면 쓰기 작업을 수행하지 않습니다.
     """
     path = Path(config_path)
     target = str(rule or "").strip()
@@ -341,10 +341,10 @@ def replace_tool_security_rule_in_conf_file(
     new_rule: str,
     config_path: str | Path = DEFAULT_CONFIG_PATH,
 ) -> bool:
-    """`tool_security.<effect>` 의 규칙 하나를 제자리에서 고칩니다. 고쳤으면 True.
+    """`tool_security.<effect>` 목록의 특정 규칙을 인플레이스(In-place)로 수정합니다. 수정 성공 시 True를 반환합니다.
 
-    새 규칙이 틀리면 ValueError 이고 파일은 그대로입니다. 고칠 규칙이 이미 없으면 쓰지 않고
-    False 입니다. 새 규칙이 목록에 이미 있으면 옛 줄만 지워 같은 줄이 둘 남지 않게 합니다.
+    새 규칙의 유효성 검증 실패 시 ValueError를 발생시키며 기존 파일은 보존됩니다.
+    대상 규칙이 없으면 False를 반환합니다. 신규 규칙이 이미 존재하는 경우 중복을 방지하기 위해 기존 항목만 정리합니다.
     """
     wanted = validate_rule_list([new_rule])
     if not wanted:
@@ -492,10 +492,10 @@ def set_agent_allowed_modalities_in_conf_file(
     modalities: List[str],
     config_path: str | Path = DEFAULT_CONFIG_PATH,
 ) -> None:
-    """`agents.<key>.allowed_modalities` 목록을 교체합니다. 빈 목록이면 항목을 지웁니다.
+    """`agents.<key>.allowed_modalities` 설정을 갱신합니다. 빈 목록이면 해당 항목을 설정에서 제거합니다.
 
-    `allowed_skills` 와 같이 **아직 시작되지 않은 대화 세션**에만 적용됩니다. 순서는
-    `INPUT_MODALITIES` 를 따르므로 어떤 순서로 체크해도 파일에 같게 적힙니다.
+    `allowed_skills`와 마찬가지로 **신규 대화 세션**부터 적용됩니다.
+    `INPUT_MODALITIES` 표준 순서로 정렬하여 일관된 직렬화 형식을 유지합니다.
     """
     key = _require_key(agent_key, "에이전트 키")
     unknown = [m for m in modalities if m not in INPUT_MODALITIES]

@@ -95,7 +95,7 @@ async def delete_guest_agent(db: AsyncSession, user_id: str, agent_id: str) -> b
 
 
 async def save_guest_agent(db: AsyncSession, user_id: str, draft: AgentDraft) -> EasyAgentModel:
-    """방문자 전용 '내 에이전트'로 데이터베이스에 저장합니다. 도구는 방문자에게 허용된 것만 보관합니다."""
+    """체험 방문자 전용 맞춤 에이전트를 데이터베이스에 저장합니다. 도구는 방문자 허용 도구로 제한됩니다."""
     require_complete(draft)
     count = (await db.execute(
         select(func.count()).select_from(EasyAgentModel).where(EasyAgentModel.user_id == user_id)

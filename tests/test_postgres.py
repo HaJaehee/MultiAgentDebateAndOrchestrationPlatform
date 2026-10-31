@@ -1,7 +1,7 @@
-"""PostgreSQL 호환 (ADR-041).
+"""PostgreSQL 호환성 및 마이그레이션 검증 스위트 (ADR-041).
 
-SQLite 는 외래 키도, 문자열 길이도, NUL 문자도 검사하지 않습니다. 그래서 `db_url` 만 바꾸면 되는 것처럼 보이던 코드가 실제 서버에서는
-발언 기록 실패로 나타납니다. 앞부분은 서버 없이 보는 시험이고, 뒷부분은 `MADO_TEST_POSTGRES_URL` 이 있을 때 실제 서버로 돕니다.
+SQLite와 PostgreSQL 간의 문법 차이(DATETIME/BOOLEAN 기본값, 외래 키 제약, NUL 바이트, 타임존 핸들링 등)를 검증합니다.
+모의 연결 테스트와 실제 PostgreSQL 인스턴스 연동 테스트(`MADO_TEST_POSTGRES_URL`)를 모두 지원합니다.
 
     MADO_TEST_POSTGRES_URL=postgresql+asyncpg://user@host/mado_test pytest tests/test_postgres.py tests/test_session_search.py
 """

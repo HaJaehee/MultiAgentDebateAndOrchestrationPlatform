@@ -61,8 +61,8 @@ def merge_consecutive_roles(messages: List[Dict[str, Any]]) -> List[Dict[str, An
     발언마다 `[이름 (역할)]:` 머리표가 이미 붙어 있어, 합쳐도 누가 말했는지는
     그대로 남습니다. tool 호출이 얽힌 메시지는 건드리지 않습니다.
 
-    첨부가 실린 사용자 메시지는 본문이 블록 목록이라 (`app/agents/media.py`), 합칠 때 글을 블록으로
-    잇습니다. 건너뛰면 첨부를 켠 에이전트만 위 400 을 다시 만납니다.
+    멀티모달 첨부가 포함된 사용자 메시지는 본문이 블록 목록 형태이므로 (`app/agents/media.py`), 메시지 결합 시
+    텍스트 블록들을 연결합니다. 누락할 경우 첨부 기능이 활성화된 에이전트에서 연속 사용자 메시지로 인한 400 오류가 발생합니다.
     """
     merged: List[Dict[str, Any]] = []
     for msg in messages:
@@ -88,7 +88,7 @@ def _as_blocks(content: Any) -> List[Dict[str, Any]]:
     return list(content) if isinstance(content, list) else [{"type": "text", "text": content}]
 
 def _content_text(content: Any) -> str:
-    """메시지 본문의 글. 블록 목록이면 글 블록만 잇습니다."""
+    """메시지 본문 텍스트를 추출합니다. 블록 목록인 경우 텍스트 블록들만 결합하여 반환합니다."""
     if isinstance(content, list):
         return "\n".join(str(b.get("text") or "") for b in content if isinstance(b, dict))
     return content if isinstance(content, str) else ""
@@ -133,7 +133,7 @@ def _countable_text(msg: Dict[str, Any]) -> str:
     return "\n".join(parts)
 
 def estimate_tokens(model: str, messages: List[Dict[str, Any]]) -> int:
-    """메시지 목록의 토큰 수. 토크나이저를 못 쓰면 글자 수로 어림잡습니다. 첨부는 어림값을 더합니다."""
+    """메시지 목록의 총 토큰 수를 계산합니다. 토크나이저 미지원 시 글자 수 기반으로 추정하며, 멀티모달 첨부의 추정 토큰을 합산합니다."""
     plain, attachments = without_attachments(messages)
     try:
         return int(litellm.token_counter(model=model, messages=plain)) + attachments

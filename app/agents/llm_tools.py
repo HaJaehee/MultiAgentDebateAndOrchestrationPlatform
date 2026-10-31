@@ -1,4 +1,4 @@
-"""발언이 가진 도구를 이름 꼬리로 찾기와, 파일 도구를 가진 에이전트에게 붙는 상시 지침 (쓰기·고치기).
+"""도구 접미사 기반 조회 및 파일 관련 도구를 보유한 에이전트용 상시 시스템 지침 (작성·수정).
 
 도구는 서버 키가 아니라 이름 꼬리(`write_file`, `append_workspace_file` …)로 찾습니다. 지침은 해당
 도구가 있을 때만 붙어, 파일을 만지지 않는 에이전트의 프롬프트는 늘지 않습니다.
@@ -42,11 +42,11 @@ TRUE_APPEND_TOOL = "append_workspace_file"
 # 가진 에이전트는 분할 쓰기 지침(`file_writing_guidance`)을 한 줄도 받지 못했습니다.
 FILE_WRITE_TOOLS = ("write_file", "write_text_file", "create_file", "write_workspace_file")
 
-# 파일의 일부만 고치는 도구 (공식 filesystem 서버의 찾아 바꾸기). 지침에 인자 이름(`oldText`)까지
-# 적으므로, 인자 모양을 모르는 비슷한 이름의 도구(`patch_file` 등)는 넣지 않습니다.
+# 파일의 부분 수정을 담당하는 도구 (공식 filesystem 서버의 patch/edit 계열). 지침에 인자명(`oldText`)까지
+# 명시하므로 스키마가 다른 유사 도구(`patch_file` 등)는 제외합니다.
 EDIT_TOOL = "edit_file"
 
-# 고치기 전에 읽으라고 짚을 도구. 순서가 우선순위입니다 (공식 서버에서 `read_file` 은 옛 이름입니다).
+# 수정 전 파일 조회를 위해 안내할 도구 목록. 우선순위 순으로 정렬합니다.
 FILE_READ_TOOLS = ("read_text_file", "read_file")
 
 def _tool_names(tools: Optional[List[Dict[str, Any]]]) -> List[str]:
@@ -100,17 +100,16 @@ def file_write_tool(tools: Optional[List[Dict[str, Any]]]) -> Optional[str]:
     return _find_tool(tools, FILE_WRITE_TOOLS)
 
 def edit_tool(tools: Optional[List[Dict[str, Any]]]) -> Optional[str]:
-    """파일의 일부만 고칠 수 있는 도구의 이름. 없으면 None."""
+    """파일의 부분 수정을 지원하는 도구 이름을 조회합니다. 없으면 None을 반환합니다."""
     return _find_tool(tools, (EDIT_TOOL,))
 
 def tools_named_by_guidance(
     tools: Optional[List[Dict[str, Any]]], extra_tails: Tuple[str, ...] = (),
 ) -> List[str]:
-    """상시 지침과 한도 안내가 이름을 짚는 도구의 전체 이름.
+    """상시 시스템 지침 및 한도 안내에서 참조하는 핵심 도구들의 전체 이름 목록.
 
-    지침과 **같은 함수로** 고르므로, 이 도구들을 뺀 목록에서 지침을 지어도 같은 글이 나옵니다. 지연
-    로딩(`app/agents/tool_loading.py`)은 이 도구들의 정의를 항상 싣습니다. 부르라고 시키면서 인자는
-    알려 주지 않는 일이 없게 하기 위해서입니다. `extra_tails` 는 다른 모듈이 짚는 도구의 이름 꼬리입니다.
+    도구 지연 로딩(`app/agents/tool_loading.py`) 적용 시에도 이 도구들의 스키마는 항상 즉시 주입됩니다.
+    지침에서 호출을 유도하면서 스키마가 누락되는 현상을 방지하기 위함입니다. `extra_tails`는 타 모듈이 참조하는 도구 접미사 목록입니다.
     """
     named = [
         *file_tools(tools), append_tool(tools), file_write_tool(tools), edit_tool(tools),
@@ -125,7 +124,7 @@ def tools_named_by_guidance(
 def _on_same_server(
     tools: Optional[List[Dict[str, Any]]], anchor: str, suffixes: Tuple[str, ...],
 ) -> Optional[str]:
-    """`anchor` 와 같은 서버의 도구를 `suffixes` 순서대로 찾습니다. 없으면 None."""
+    """`anchor`와 동일한 도구 서버에서 `suffixes` 우선순위에 따라 도구를 검색합니다. 없으면 None을 반환합니다."""
     server = anchor.split("__", 1)[0]
     names = [name for name in _tool_names(tools) if name.split("__", 1)[0] == server]
     for suffix in suffixes:
@@ -236,17 +235,13 @@ def file_writing_guidance(tools: Optional[List[Dict[str, Any]]] = None) -> Optio
     return f"{FILE_WRITING_HEAD}\n{body}"
 
 def file_editing_guidance(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
-    """`edit_file` 을 **가진** 에이전트에게만 붙는, 기존 파일을 고치는 상시 지침. 없으면 None.
+    """`edit_file` 권한을 보유한 에이전트에 주입되는 기존 파일 수정 상시 시스템 지침. 없으면 None을 반환합니다.
 
-    `file_writing_guidance` 가 새 파일과 긴 파일을 어떻게 나누어 쓸지를 말한다면, 이쪽은 이미 있는
-    파일을 다시 쓰지 말라고 말합니다. 큰 파일의 몇 줄을 고치려고 전체를 다시 출력하면 그 시간을
-    고스란히 기다리게 되고, 파일이 크면 응답 한도에 걸려 잘립니다.
+    `file_writing_guidance`가 신규 파일 분할 작성을 다룬다면, 본 지침은 기존 파일의 불필요한 전체 재작성을 방지합니다.
+    대용량 파일의 소량 수정을 위해 파일 전체를 재출력할 경우 불필요한 지연이 발생하고 토큰 한도 초과 위험이 커집니다.
 
-    조심시키는 것들은 전부 서버(`applyFileEdits`)의 실제 동작이고, `tests/test_edit_file_contract.py`
-    가 실제 서버로 지킵니다. 처음 일치한 한 곳만 바꾸고 유일한지 묻지 않으며, 빈 `oldText` 는 파일 맨
-    앞에 들어갑니다 — v1.1.2 에서 긴 TSX 를 깨뜨린 원인이 그대로 남아 있습니다. 공백만 다른 `oldText`
-    도 찾아 주는 대신 새 내용의 들여쓰기를 어림으로 맞춰서, 파이썬이라면 조용히 깨질 수 있습니다.
-    줄 번호나 줄 범위를 받는 인자는 없으므로 고칠 자리는 문맥으로만 짚습니다.
+    지침의 주의사항들은 공식 filesystem 서버(`applyFileEdits`)의 실제 동작 특성을 반영한 것이며,
+    `tests/test_edit_file_contract.py`를 통해 상시 검증됩니다.
     """
     edit = edit_tool(tools)
     if not edit:

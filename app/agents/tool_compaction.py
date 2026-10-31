@@ -1,13 +1,13 @@
-"""도구 루프 안에서 오래된 큰 파일 읽기 결과를 줄입니다 (ADR-040).
+"""도구 루프 내 오래된 대용량 파일 읽기 결과 압축 (Compaction) 모듈 (ADR-040).
 
-도구 결과는 `role=tool` 메시지로 대화에 남아 발언이 끝날 때까지 판마다 다시 나갑니다. 큰 파일을 연달아 읽으면 수만
-자가 컨텍스트 창을 차지하고, 창이 넘치면 `fit_tool_loop_context` 가 그 결과를 부른 모델의 글까지 덩어리째 버립니다.
+도구 실행 결과는 `role=tool` 메시지로 대화 이력에 유지되어 발언 루프마다 반복 전송됩니다. 대용량 파일을 반복 조회하면
+수만 자의 텍스트가 컨텍스트 윈도우를 차지하며, 한도 초과 시 `fit_tool_loop_context`에 의해 모델 발언 전체가 절삭될 수 있습니다.
 
-줄이는 것은 **같은 호출로 다시 얻을 수 있는** 파일 읽기뿐입니다. 명령 실행이나 웹 검색의 결과는 다시 돌리면 달라지거나
-대가가 있어 건드리지 않습니다. 모델이 읽는 메시지만 줄고, 도구 카드와 DB 에 남는 도구 기록(`tool_logs`)은 원문 그대로입니다.
+압축 대상은 **동일한 인자로 재현 가능한 파일 읽기 관측**에 한정됩니다. 셸 실행이나 웹 검색 결과는 부수 효과 및 비결정성으로 인해
+압축 대상에서 제외됩니다. 또한 LLM에 주입되는 프롬프트 메시지만 압축 스텁으로 치환되며, UI 도구 카드 및 DB의 도구 로그(`tool_logs`)는 원문을 온전히 보존합니다.
 
-앞쪽 메시지를 고치면 프로바이더의 접두사 캐시가 그 자리부터 깨집니다. 그래서 창이 `min_usage` 만큼 찼을 때만 줄이고,
-줄일 때는 오래된 것을 한 번에 줄입니다. 그 뒤로는 다시 찰 때까지 앞부분이 그대로라 캐시가 다시 쌓입니다.
+프롬프트 앞부분 수정 시 발생하는 공급자 캐시(Prefix Cache) 무효화를 최소화하기 위해, 컨텍스트 사용량이 임계치(`min_usage`)에 도달했을 때만
+오래된 관측들을 일괄 압축합니다.
 """
 
 import json
@@ -40,14 +40,14 @@ def _clip(text: str, limit: int) -> str:
 
 
 def _arguments_text(call: Dict[str, Any]) -> str:
-    """도구 호출의 인자 글. 모델이 같은 호출을 다시 만들 수 있게 그대로 적습니다."""
+    """도구 호출 인자를 문자열로 포맷팅합니다. 모델이 필요 시 동일한 도구 호출을 재현할 수 있도록 원형을 유지합니다."""
     arguments = (call.get("function") or {}).get("arguments")
     text = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False, default=str)
     return _clip(text, ARGUMENTS_CHARS)
 
 
 def compacted_output(name: str, arguments: str, output: str) -> str:
-    """파일 읽기 결과를 대신할 글: 무엇을 읽었는지, 얼마나 컸는지, 앞뒤 몇 줄, 다시 읽는 법."""
+    """대용량 파일 읽기 결과를 대체할 압축 스텁 텍스트를 생성합니다: 대상 파일, 크기 메타데이터, 선두/후미 발췌본 및 재조회 안내."""
     lines = output.splitlines()
     head = lines[:EXCERPT_HEAD_LINES]
     tail = lines[max(EXCERPT_HEAD_LINES, len(lines) - EXCERPT_TAIL_LINES):]
@@ -70,7 +70,7 @@ def _opens_round(msg: Dict[str, Any]) -> bool:
 def compact_stale_tool_outputs(
     messages: List[Dict[str, Any]], *, stale_rounds: int, min_chars: int,
 ) -> Tuple[List[Dict[str, Any]], int]:
-    """`stale_rounds` 판 이상 지난 큰 파일 읽기 결과를 스텁으로 바꿉니다. `(메시지, 줄인 결과 수)`.
+    """지정된 라운드 수(`stale_rounds`) 이상 경과한 대용량 파일 읽기 관측을 스텁으로 치환합니다. `(압축된 메시지 목록, 압축 건수)`를 반환합니다.
 
     나이는 그 뒤에 나온 도구 호출 판의 수입니다. 메시지만 보고 세므로 끊긴 발언을 이어 가도 그대로입니다. 가장 최근
     판의 나이는 0 입니다. 받은 목록과 메시지는 고치지 않으며, 줄일 것이 없으면 받은 목록을 그대로 돌려줍니다.
@@ -105,7 +105,7 @@ def compact_stale_tool_outputs(
 def compact_loop_messages(
     model: str, messages: List[Dict[str, Any]], budget: int,
 ) -> Tuple[List[Dict[str, Any]], int]:
-    """창의 사용률을 보고 줄일 때만 줄입니다. 여기서 실패해도 발언은 받은 메시지로 계속합니다.
+    """컨텍스트 윈도우 사용률을 점검하여 임계치 초과 시에만 선택적으로 압축을 수행합니다. 실패하더라도 원본 메시지로 발언을 계속 진행합니다.
 
     예산을 넘겼으면 다음 차례는 덩어리째 버리기이므로, 가장 최근 판만 남기고 줄입니다. 스텁은 무엇을 읽었는지와 다시
     읽는 법을 남기지만 버리면 부른 기록까지 사라집니다.

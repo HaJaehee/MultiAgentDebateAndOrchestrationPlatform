@@ -14,7 +14,7 @@
     ├── mcp_sandbox/         AirgappedPySandbox (Python 코드 실행 MCP 서버)
     ├── trial_templates/     체험 서버의 공식 템플릿 (trial.templates_dir)
     ├── skills/              기본 스킬 디렉터리 (skills.dir)
-    ├── docs/                사용 설명서 (마크다운 원본 + 렌더링된 HTML), 플러그인 예제
+    ├── docs/                사용자 설명서 (마크다운 원본 + 렌더링된 HTML) 및 플러그인 예제
     ├── workspace/           에이전트 공용 작업 공간
     └── run_mado.bat|ps1  실행 스크립트 (MCP 경로 환경변수 자동 주입)
 
@@ -211,8 +211,8 @@ def stage_docs() -> None:
     폐쇄망에서는 저장소도 위키도 열 수 없습니다. 설명서가 설치본과 같이 다녀야
     하고, 받는 쪽이 아무것도 실행하지 않아도 읽을 수 있어야 합니다. 그래서
     마크다운 원본과 함께 `docs/user_manual_html/index.html` 을 미리 만들어
-    둡니다 (원본이 있으므로 대상에서 다시 렌더링할 수도 있습니다). 설명서가 가리키는 플러그인
-    예제(`docs/examples/`)도 함께 담습니다.
+    둡니다 (원본이 있으므로 대상에서 다시 렌더링할 수도 있습니다). 설명서가 참조하는 플러그인
+    예제(`docs/examples/`)도 함께 패키징합니다.
 
     렌더링에 실패해도 번들 생성을 막지 않습니다. 설명서는 앱이 도는 데 필요한
     것이 아니고, 원본 마크다운은 이미 담겼습니다.

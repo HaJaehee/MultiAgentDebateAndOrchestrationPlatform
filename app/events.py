@@ -23,7 +23,7 @@ class EventType(StrEnum):
     ROUND_STARTED = "round_started"
     DEBATE_ENDED_EARLY = "debate_ended_early"  # 결정 장부 수렴 또는 토큰 예산 초과로 인한 토론 조기 종료 (v1.5)
     TURN_COMPLETED = "turn_completed"
-    SESSION_TITLED = "session_titled"  # 새 대화의 첫 제목이 오케스트레이터의 첫 공식 발언으로 정해졌습니다
+    SESSION_TITLED = "session_titled"  # 새 대화의 세션 제목이 오케스트레이터의 첫 공식 발언을 기반으로 자동 확정됨
     WORKSPACE_CHECKPOINTED = "workspace_checkpointed"  # 턴 종료 후 워크스페이스 파일 변경 내역 체크포인트 기록 완료 (v1.5)
     RUN_FINISHED = "run_finished"  # 엔진이 아니라 DebateRunner 가 보냅니다
     PERSIST_FAILED = "persist_failed"
@@ -32,8 +32,8 @@ class EventType(StrEnum):
     MESSAGE_STREAM_START = "message_stream_start"
     MESSAGE_STREAM_CHUNK = "message_stream_chunk"
     MESSAGE_ADDED = "message_added"
-    SPEECH_REVISED = "speech_revised"  # 발언 하나를 다시 실행했거나 지난 버전으로 되돌렸습니다 (ADR-036)
-    SPEECH_COMMENTS_DELIVERED = "speech_comments_delivered"  # 인라인 코멘트가 그 에이전트의 발언에 실렸습니다 (ADR-036)
+    SPEECH_REVISED = "speech_revised"  # 단일 발언 재실행 또는 이전 버전 복원 발생 (ADR-036)
+    SPEECH_COMMENTS_DELIVERED = "speech_comments_delivered"  # 대상 에이전트의 발언에 인라인 코멘트 주입 완료 (ADR-036)
     LLM_FALLBACK = "llm_fallback"
     TOOL_EXECUTED = "tool_executed"
     PEER_CONSULTATION_STARTED = "peer_consultation_started"
@@ -89,7 +89,7 @@ DECISION_RESOLVED = {
 # 턴이 끝났다는 신호 둘. 화면은 둘 중 먼저 오는 것으로 입력을 다시 엽니다.
 TURN_END_EVENTS = frozenset({EventType.TURN_COMPLETED, EventType.RUN_FINISHED})
 
-# 사람의 답을 기다리는 물음이 늘거나 줄 수 있는 이벤트 (`TurnRun.waiting_requests`).
+# 사용자 입력 및 승인 대기 상태의 변경을 유발하는 이벤트 목록 (`TurnRun.waiting_requests`).
 # 물음은 턴이 끝날 때도 함께 걷히므로 턴의 끝도 포함합니다.
 WAITING_EVENTS = frozenset({
     EventType.TOOL_BUDGET_EXHAUSTED, EventType.TOOL_BUDGET_RESOLVED,

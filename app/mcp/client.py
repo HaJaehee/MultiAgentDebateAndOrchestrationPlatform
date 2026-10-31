@@ -769,9 +769,9 @@ class MCPClientConnection:
 
     @staticmethod
     def _extract_result(res: Any) -> ToolOutput:
-        """CallToolResult 를 글과 글 아닌 결과로 나눕니다.
+        """MCP `CallToolResult`를 텍스트 출력과 멀티모달 미디어 결과물로 분리합니다.
 
-        글 아닌 결과를 `str()` 로 뭉개면 BASE64 수십만 자가 "글" 이 되어 모델과 화면과 DB 로 갑니다.
+        바이너리 미디어를 단순 문자열로 변환할 경우 대용량 Base64 데이터가 텍스트 컨텍스트로 누출되는 현상을 방지합니다.
         """
         if not hasattr(res, "content"):
             return ToolOutput(str(res))

@@ -102,8 +102,8 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         Executes a turn for the given agent.
         Returns (response_text, tool_call_logs).
 
-        `attachments` 는 이 발언에 내용째 실을 파일입니다 (`media.attachments_for`). 비어 있으면 요청은 글뿐입니다.
-        이어 가는 발언에서는 이미 메시지에 들어 있습니다.
+        `attachments`는 현재 발언에 원문 내용을 직접 포함할 파일 목록입니다 (`media.attachments_for`). 비어 있으면 텍스트 요청만 전달됩니다.
+        세션 재개 발언의 경우 이미 메시지에 포함되어 있습니다.
 
         `preload_skills` 는 유저가 이 에이전트에게 지정한 스킬입니다 (입력창의 `@전문가 @스킬`).
         첫 LLM 호출 전에 호스트가 `load_skill` 을 대신 불러 결과를 넣어 둡니다 (`_preload_skills`).
@@ -293,8 +293,8 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         # 합니다 (서버를 껐거나 연결에 실패했으면 없는 도구를 가리키게 됩니다).
         mcp = mcp or self.mcp_manager
         tools = mcp.get_openai_tools_for_servers(self.resolve_tool_servers(agent))
-        # 호스트 도구는 발언마다 새로 구합니다 (스킬 폴더와 활성화 여부가 실시간이고, 플러그인은 판정을 받습니다).
-        # MCP 도구는 자주 쓰는 것만 정의를 싣고 나머지는 목록으로 보여 줍니다 (`app/agents/tool_loading.py`).
+        # 호스트 도구는 발언 턴마다 새로 조회합니다 (스킬 폴더 스캔 및 활성화 상태가 실시간 반영되며, 플러그인 도구는 보안 판정을 거칩니다).
+        # MCP 도구는 자주 사용하는 핵심 도구 스키마만 선별 주입하고 나머지는 지연 로딩 목록으로 안내합니다 (`app/agents/tool_loading.py`).
         host_tools = host_tools_for(agent)
         if tool_gate is not None:
             tools = tool_gate.filter_tools(agent.key, tools, mcp)
@@ -395,7 +395,7 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         """
         progress = _SPEECH_PROGRESS.get()
         if progress is not None:
-            # 앞선 판의 실패를 도구 루프가 수습했으면 (첨부 거절) 그 표시를 끌고 가지 않습니다.
+            # 직전 라운드의 호출 오류(첨부 모달리티 거절 등)를 도구 루프 내에서 자체 수습한 경우 오류 플래그를 초기화합니다.
             progress.llm_failed = False
         try:
             async with get_llm_gate().slot():
@@ -421,7 +421,7 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         on_chunk: Optional[Callable[[str], Any]],
         tool_choice: str,
     ) -> Tuple[Any, str]:
-        # 첨부 파일은 여기서 내용이 됩니다. 나머지는 파일을 가리키는 블록을 그대로 봅니다 (`app/agents/media.py`).
+        # 첨부 파일은 API 호출 직전에 실제 내용(Base64/텍스트)으로 구체화되며, 그 외에는 파일 참조 블록 상태를 유지합니다 (`app/agents/media.py`).
         kwargs = self.build_completion_kwargs(
             agent, await materialize_attachments(agent, messages), tools, tool_choice,
         )

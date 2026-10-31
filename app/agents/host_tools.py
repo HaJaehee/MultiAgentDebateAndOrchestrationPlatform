@@ -1,26 +1,28 @@
-"""호스트 도구 레지스트리 — 앱이 직접 처리하는 도구를 한 파이프라인으로 다룹니다 (ADR-042).
+"""호스트 도구 레지스트리 — 애플리케이션 내부에서 직접 처리하는 호스트 도구를 단일 파이프라인으로 관리합니다 (ADR-042).
 
-MCP 서버의 도구는 다른 프로세스에서 돌지만, 호스트 도구는 도구 루프 안에서 돕니다. 목록이 에이전트와 발언마다
-달라지거나(`skills`), 사람에게 묻거나(`ask`), 다른 에이전트를 부르거나(`peers`), 이번 요청의 `tools` 를
-바꾸기(`tools`) 때문입니다. 모델에게는 MCP 도구와 똑같은 `접두사__이름` 입니다.
+MCP 서버 도구는 외부 독립 프로세스에서 실행되지만, 호스트 도구는 에이전트의 도구 실행 루프 내부에서 직접 구동됩니다.
+에이전트 및 발언별로 도구 목록이 동적으로 달라지거나(`skills`), 사용자에게 질문하거나(`ask`), 타 에이전트에게 동료 자문을
+요청하거나(`peers`), 현재 요청의 `tools` 스키마를 동적으로 변경(`tools`)하기 위함입니다. LLM 모델에게는 표준 MCP 도구와
+동일한 `접두사__도구명` 형식으로 노출됩니다.
 
-제공자 하나(`HostToolProvider`)가 도구 하나의 네 자리를 함께 답합니다.
+도구 제공자 추상 클래스(`HostToolProvider`)가 도구의 주요 4대 요소를 일관되게 제공합니다.
 
-* **이름** — `prefix` 는 도구 이름의 접두사이자 MCP 서버로 쓸 수 없는 예약어입니다 (`owns`).
-* **정의** — 이번 발언에 줄 도구 (`enabled_for`, `tools_for`).
-* **지침** — 도구를 가진 에이전트의 시스템 프롬프트에 붙는 글 (`guidance`).
-* **실행** — 호출 하나를 받아 `(결과, 상태)` 를 돌려줍니다 (`run`). 실패는 관측입니다. 터져도 발언은 계속됩니다.
+* **식별자** — `prefix`는 도구 이름의 고유 접두사이자 타 MCP 서버와 중복될 수 없는 예약어입니다 (`owns`).
+* **스키마 정의** — 현재 발언 차례에 제공할 도구 JSON 스키마 (`enabled_for`, `tools_for`).
+* **시스템 지침** — 도구가 할당된 에이전트의 시스템 프롬프트에 주입할 동적 지침 (`guidance`).
+* **실행 로직** — 도구 호출 요청을 수신하여 `(결과 문자열, 상태)` 튜플을 반환합니다 (`run`). 도구 실패는 예외 대신
+  관측 메모(Observation)로 변환되어 모델이 오류를 확인하고 자가 교정할 수 있도록 유도합니다.
 
-**플러그인은 기본으로 도구 보안 판정을 받습니다** (`gated`). 내장 도구는 파일과 네트워크에 닿지 않거나 자기
-규칙으로 통제되어 판정을 건너뛰지만, 외부 코드가 무엇을 하는지 앱은 모릅니다. 그래서 등급을 밝히지 않은 플러그인은
-'등급을 모르는 도구' 입니다. 기본 모드에서는 묻고, 읽기 전용에서는 거부되며, 물을 사람이 없으면 거부됩니다.
-규칙은 `mcp(접두사/이름)` 으로 겁니다.
+**플러그인 호스트 도구는 기본적으로 도구 보안 정책의 검증을 거칩니다** (`gated=True`). 내장 호스트 도구는 자체 검증 규칙이
+있어 게이트 판정을 건너뛰지만, 외부 플러그인 코드는 메인 앱 권한으로 실행되므로 필수 검증 대상입니다. 위험 등급을
+선언하지 않은 플러그인은 '미분류 도구'로 취급되어 기본 모드에서는 사용자 승인을 요구하고, 읽기 전용 및 비대면 환경에서는
+호출이 거부됩니다. 세부 정책 규칙은 `mcp(접두사/도구명)` 형식으로 설정합니다.
 
-**플러그인은 `allowed_mcp_servers` 로 켭니다** (`peers` 와 같습니다). 그래서 체험·자문·합성처럼 도구를 비운
-자리에서는 저절로 빠지고, 도구 할당 창에 한 줄로 나옵니다. 받지 않은 에이전트가 이름을 짐작해 불러도 실행하지
-않습니다 (`run_host_tool`).
+**플러그인은 `allowed_mcp_servers`를 통해 활성화됩니다** (`peers`와 동일). 따라서 체험 세션이나 자문, 최종 합성 등
+도구가 비활성화된 단계에서는 자동으로 제외되며, 에이전트 도구 설정 패널에 표시됩니다. 권한이 없는 에이전트가 호출을
+시도하더라도 실행이 안전하게 거부됩니다 (`run_host_tool`).
 
-새 도구는 이 파일을 고치지 않고 `host_tools/` 폴더나 entry point 로 더합니다 (`app/plugins.py`).
+신규 도구는 본 소스코드를 수정하지 않고 `host_tools/` 디렉터리 또는 패키지 엔트리포인트를 통해 플러그인으로 확장합니다 (`app/plugins.py`).
 """
 
 from __future__ import annotations
@@ -61,56 +63,56 @@ TAIL_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
 
 @dataclass(frozen=True)
 class HostToolCall:
-    """호스트 도구 호출 하나. 제공자는 필요한 것만 읽습니다."""
+    """단일 호스트 도구 호출 요청 컨텍스트. 제공자는 필요한 필드만 선별하여 참조합니다."""
 
     agent: Any
-    name: str                                       # 모델이 부른 이름 그대로
+    name: str                                       # 모델이 호출한 전체 도구 식별자
     arguments: Dict[str, Any] = field(default_factory=dict)
     session_id: Optional[str] = None
-    workspace: Optional[Path] = None                # 이번 발언의 작업 공간
-    tools: Optional[List[Dict[str, Any]]] = None    # 이번 발언에 실제로 실린 도구 정의
+    workspace: Optional[Path] = None                # 현재 세션의 작업 공간 디렉터리
+    tools: Optional[List[Dict[str, Any]]] = None    # 현재 턴에 실제로 주입된 도구 스키마 목록
     llm_caller: Optional[Any] = None
-    loop: Optional[Any] = None                      # 도구 루프. `tools__load_tools` 처럼 요청을 바꾸는 도구만 씁니다
+    loop: Optional[Any] = None                      # 활성 도구 루프 인스턴스 (`tools__load_tools` 등 동적 스키마 변경 시 참조)
 
 
 class HostToolProvider(ABC):
-    """호스트 도구 한 묶음.
+    """호스트 도구 제공자 기본 추상 클래스.
 
-    플러그인은 `prefix`·`tails`·`tools_for`·`run` 만 채우면 됩니다. `tools_for` 는 발언마다 불리므로
-    가벼워야 하고, 객체는 대화 전체가 함께 쓰므로 대화별 상태를 속성에 두면 안 됩니다.
+    플러그인 구현체는 `prefix`, `tails`, `tools_for`, `run`을 필수로 구현해야 합니다. `tools_for`는 매 발언마다
+    호출되므로 가벼워야 하며, 제공자 인스턴스는 모든 대화 세션이 공유하므로 세션 가변 상태를 속성에 저장하지 마십시오.
     """
 
     prefix: str = ""
-    # 접두사 뒤의 도구 이름들. 이 밖의 이름은 이 제공자의 도구가 아닙니다.
+    # 접두사 뒤에 붙는 세부 도구 식별자 튜플.
     tails: Collection[str] = ()
-    # 예약어 안내에 쓰는 이름 (예: "사내 용어집 도구"). 비어 있으면 접두사로 짓습니다.
+    # 예약어 충돌 안내 시 사용되는 표시 명칭 (예: "사내 용어집 도구"). 미지정 시 접두사로 대체됩니다.
     label: str = ""
-    # 도구 할당 창에 보이는 한 줄 설명.
+    # 에이전트 도구 설정 패널에 표시되는 요약 설명.
     summary: str = ""
-    # 도구 보안 판정을 받는가. 받지 않으려면 판정 없이 실행해도 안전한 이유가 있어야 합니다.
+    # 도구 보안 정책 검증 대상 여부. False 설정 시 정책 검증을 생략합니다.
     gated: bool = True
-    # 판정에 쓰는 등급 (`app.mcp.policy` 의 read · state · write · net …). 모르면 UNKNOWN 그대로 둡니다.
+    # 도구 보안 판정용 위험 등급 (`app.mcp.policy`의 read, state, write, net 등). 미지정 시 UNKNOWN 처리.
     risk: str = UNKNOWN
-    # 에이전트의 `allowed_mcp_servers` 에 접두사를 넣어 켜는 도구인가.
+    # 에이전트의 `allowed_mcp_servers`에 접두사를 등록하여 활성화 가능한 도구인지 여부.
     assignable: bool = True
 
     def owns(self, tool_name: str) -> bool:
-        """이 제공자의 도구 이름인가. 플러그인은 전체 이름만 받습니다 (맨이름이 MCP 도구를 가로채지 않게)."""
+        """본 제공자가 지원하는 도구 식별자인지 검사합니다. 플러그인은 이름 충돌 방지를 위해 접두사가 포함된 전체 이름만 허용합니다."""
         head, _, tail = (tool_name or "").strip().partition("__")
         return head == self.prefix and tail in self.tails
 
     def enabled_for(self, agent: Any) -> bool:
-        """이 에이전트에게 주는 도구인가."""
+        """해당 에이전트에게 본 도구 권한이 부여되었는지 확인합니다."""
         return self.prefix in (getattr(agent, "allowed_mcp_servers", None) or ())
 
     def risk_of(self, tool_name: str) -> str:
-        """이 도구의 등급. 도구마다 다르면 고쳐 씁니다."""
+        """특정 도구의 위험 등급을 반환합니다. 도구별로 등급이 상이할 경우 오버라이드합니다."""
         return self.risk
 
     def definition(
         self, tail: str, description: str, parameters: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """OpenAI 형식의 도구 정의를 짓습니다."""
+        """OpenAI 규격의 도구 JSON 스키마를 생성합니다."""
         return {
             "type": "function",
             "function": {
@@ -122,15 +124,15 @@ class HostToolProvider(ABC):
 
     @abstractmethod
     def tools_for(self, agent: Any) -> List[Dict[str, Any]]:
-        """이번 발언에 줄 도구 정의. 줄 것이 없으면 빈 목록."""
+        """현재 발언 차례에 제공할 도구 스키마 목록을 반환합니다. 대상 도구가 없으면 빈 리스트를 반환합니다."""
 
     def guidance(self, tools: Optional[List[Dict[str, Any]]]) -> Optional[str]:
-        """이 도구를 가진 에이전트의 시스템 프롬프트에 붙일 글. `tools` 에 이 도구가 없으면 None 이어야 합니다."""
+        """본 도구를 보유한 에이전트의 시스템 프롬프트에 동적 주입할 지침을 반환합니다. 도구가 미포함된 경우 None을 반환해야 합니다."""
         return None
 
     @abstractmethod
     async def run(self, call: HostToolCall) -> Tuple[str, str]:
-        """호출 하나를 실행하고 `(결과, 상태)` 를 돌려줍니다. 상태는 `success` · `error` 입니다."""
+        """단일 도구 호출을 실행하고 `(결과 문자열, 상태)` 튜플을 반환합니다. 상태는 `success` 또는 `error`입니다."""
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +141,7 @@ class HostToolProvider(ABC):
 
 
 class _BuiltinTools(HostToolProvider):
-    """앱에 든 도구. 주고 말고는 각 모듈이 정하고, 모델이 접두사를 빼고 불러도 받습니다."""
+    """내장 호스트 도구 제공자 기본 클래스. 하위 모듈이 권한을 판별하며 접두사가 생략된 원본 호출도 허용합니다."""
 
     gated = False
     assignable = False
@@ -231,7 +233,7 @@ _providers: Dict[str, HostToolProvider] = {
 
 
 def register_host_tool(provider: HostToolProvider) -> None:
-    """제공자를 더합니다. 쓸 수 없으면 ValueError 이고, 그 글이 화면과 로그에 그대로 나갑니다."""
+    """호스트 도구 제공자를 레지스트리에 등록합니다. 유효하지 않은 경우 ValueError가 발생하며 UI 및 로그에 출력됩니다."""
     if not isinstance(provider, HostToolProvider):
         raise ValueError(f"HostToolProvider 가 아닙니다: {type(provider).__name__}")
     prefix = str(provider.prefix or "")
@@ -254,23 +256,23 @@ def register_host_tool(provider: HostToolProvider) -> None:
 
 
 def unregister_host_tool(prefix: str) -> None:
-    """제공자를 뺍니다. 시험이 뒷정리에 씁니다 (실행 중인 앱은 플러그인을 내리지 않습니다)."""
+    """등록된 제공자를 레지스트리에서 등록 해제합니다. 주로 단위 테스트 사후 정리에 사용됩니다."""
     if _providers.pop(prefix, None) is not None:
         RESERVED_SERVER_NAMES.pop(prefix, None)
 
 
 def host_tool_providers() -> List[HostToolProvider]:
-    """등록된 제공자. 등록 순서입니다."""
+    """등록된 모든 호스트 도구 제공자 목록을 등록 순서대로 반환합니다."""
     return list(_providers.values())
 
 
 def assignable_plugin_tools() -> List[HostToolProvider]:
-    """도구 할당 창에 한 줄씩 더할 플러그인. peers 는 자문 상대 고르기가 붙어 화면이 따로 그립니다."""
+    """에이전트 도구 설정 패널에 표시할 플러그인 목록을 반환합니다 (peers는 전용 UI가 제공되므로 제외)."""
     return [p for p in _providers.values() if p.assignable and p.prefix != PEERS_TOOL_PREFIX]
 
 
 def host_tool_switches() -> FrozenSet[str]:
-    """`allowed_mcp_servers` 에 적혀도 MCP 서버가 아닌 이름."""
+    """`allowed_mcp_servers` 목록에 포함될 수 있으나 외부 MCP 서버가 아닌 호스트 도구 예약어 목록."""
     return frozenset(p.prefix for p in _providers.values() if p.assignable)
 
 
@@ -288,15 +290,14 @@ def _owners(tool_name: str) -> Iterator[HostToolProvider]:
 
 
 def find_host_tool(tool_name: str) -> Optional[HostToolProvider]:
-    """이 이름을 처리할 제공자. MCP 도구면 None."""
+    """지정된 도구 이름을 처리할 전용 호스트 도구 제공자를 조회합니다. 일반 MCP 도구인 경우 None을 반환합니다."""
     return next(_owners(tool_name), None)
 
 
 def host_tools_for(agent: Any) -> List[Dict[str, Any]]:
-    """이 발언에 실을 호스트 도구 정의. 제공자 하나가 실패해도 나머지로 발언을 이어 갑니다.
-
-    제공자가 자기 것이 아닌 이름의 도구를 내놓으면 버립니다. 실어 주면 그 호출이 MCP 서버로 가거나
-    다른 제공자에게 가서, 정의를 지은 쪽과 실행하는 쪽이 갈라집니다.
+    """현재 발언 차례에 주입할 호스트 도구 스키마 목록을 취합합니다. 특정 제공자에서 예외가 발생하더라도
+    나머지 정상 도구들로 발언을 계속 진행합니다. 제공자가 등록되지 않은 타 도구 스키마를 반환한 경우
+    호출 라우팅 불일치를 방지하기 위해 해당 항목을 필터링합니다.
     """
     tools: List[Dict[str, Any]] = []
     for provider in _providers.values():
@@ -317,7 +318,7 @@ def host_tools_for(agent: Any) -> List[Dict[str, Any]]:
 
 
 def host_tool_guidance(tools: Optional[List[Dict[str, Any]]]) -> List[str]:
-    """이 발언의 도구에 딸린 상시 지침. 도구를 가진 제공자만 글을 돌려줍니다."""
+    """현재 발언 차례의 도구 구성에 부합하는 호스트 도구 시스템 지침들을 취합하여 반환합니다."""
     parts: List[str] = []
     for provider in _providers.values():
         try:
@@ -331,11 +332,10 @@ def host_tool_guidance(tools: Optional[List[Dict[str, Any]]]) -> List[str]:
 
 
 def host_tool_meta(tool_name: str) -> Optional[ToolMeta]:
-    """도구 보안 판정에 쓸 정보. 판정을 받는 호스트 도구가 아니면 None.
+    """도구 보안 정책 검증에 사용할 메타데이터를 반환합니다. 검증 대상이 아닌 호스트 도구는 None을 반환합니다.
 
-    믿는 서버로 두지 않습니다 (`trusted=False`). 플러그인 도구 이름이 `read_file` 이어도 알려진 도구로
-    풀리면 안 됩니다. 등급은 플러그인이 밝힌 값을 씁니다. 앱과 같은 권한으로 도는 코드라 이 값을 믿는다고
-    더 내주는 것이 없습니다.
+    보안 신뢰 플래그는 기본적으로 비활성화합니다 (`trusted=False`). 플러그인 도구 이름이 `read_file`과 같더라도
+    내장 도구 특권을 얻지 못하도록 차단합니다. 위험 등급은 플러그인이 선언한 값을 사용합니다.
     """
     provider = find_host_tool(tool_name)
     if provider is None or not provider.gated:
@@ -353,7 +353,7 @@ def host_tool_meta(tool_name: str) -> Optional[ToolMeta]:
 
 
 async def run_host_tool(provider: HostToolProvider, call: HostToolCall) -> Tuple[str, str]:
-    """호스트 도구 하나를 실행합니다. 예외는 부르는 쪽(`_execute_tool_safely`)이 관측으로 바꿉니다."""
+    """단일 호스트 도구를 실행합니다. 런타임 예외는 호출자(`_execute_tool_safely`)에서 관측 메모(Observation)로 변환됩니다."""
     if not provider.enabled_for(call.agent):
         return f"'{call.name}' 은 이 에이전트에게 할당되지 않은 도구입니다. 다른 방법으로 진행하세요.", "error"
     output, status = await provider.run(call)

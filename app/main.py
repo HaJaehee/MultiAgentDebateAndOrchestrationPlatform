@@ -88,23 +88,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _install_process_guards()
     # 이벤트 루프가 붙잡히면 그 순간의 스택을 남깁니다 (data/diagnostics/stalls.log).
     start_loop_watchdog()
-    # 첫 ```mermaid 펜스가 플러그인 import 로 루프를 붙잡지 않게 미리 불러 둡니다 (ADR-033).
+    # 첫 번째 mermaid 펜스 렌더링 시 플러그인 동적 로드로 인한 이벤트 루프 블로킹을 방지하기 위해 사전 로드합니다 (ADR-033).
     await asyncio.to_thread(warm_up_lexer_plugins)
 
     # 1. Load configuration
     cfg = get_config()
     logger.info(f"Loaded configuration for host={cfg.app.host}:{cfg.app.port}, db={safe_db_url(cfg.app.db_url)}")
     logger.info(f"Web UI: http://{cfg.app.host}:{cfg.app.port}")
-    # 전략과 호스트 도구 플러그인. 깨진 플러그인은 기록만 남기고 앱은 뜹니다 (ADR-042).
+    # 외부 토론 전략 및 호스트 도구 플러그인을 로드합니다. 플러그인 오류 발생 시 격리 기록 후 애플리케이션 기동을 지속합니다 (ADR-042).
     await asyncio.to_thread(load_plugins)
 
     # 2. Initialize Database Tables
     await init_db(cfg.app.db_url)
     logger.info("Database tables initialized.")
 
-    # 2-b. 서버가 턴 도중에 내려갔다면 그 턴을 "끊김" 으로 적습니다 (ADR-024). 이 DB 를 쓰는
-    # 프로세스가 이것뿐이면 지금 "도는 중" 인 턴은 없습니다. 자동으로 다시 돌리지 않습니다 — 그
-    # 대화를 연 사람이 이어 가기·결론 내기·버리기를 고릅니다.
+    # 2-b. 비정상 종료된 미완료 턴을 "중단됨(interrupted)" 상태로 전이합니다 (ADR-024). 동일 DB를 점유하는
+    # 타 프로세스가 없을 때 안전하게 정리되며, 사용자가 명시적으로 복구 방식(재개/결론/폐기)을
+    # 선택할 수 있도록 대기합니다.
     try:
         async with get_session_factory(cfg.app.db_url)() as db:
             if await no_other_instance(db):
