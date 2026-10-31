@@ -27,9 +27,11 @@ from app.orchestration.runner import get_debate_runner
 from app.config import ORCHESTRATOR_KEY
 from app.events import TURN_END_EVENTS, EventType
 from app.orchestration.strategies import get_strategy
+from app.orchestration.turn_run import WaitingRequest
 from app.orchestration.turns import usage_by_session
 from app.session_ops import continue_session, forget_checkpoints
 from app.routes import compare_url
+from app.ui.attention import waiting_text
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +212,16 @@ def event_changes_session_list(event: Dict[str, Any]) -> bool:
     # 토론이 끝났습니다 — 진행 중 표시를 내려야 합니다. 오류·취소로 끝난 경우
     # `turn_completed` 는 오지 않으므로 `run_finished` 도 함께 봅니다.
     return etype in TURN_END_EVENTS
+
+
+def waiting_badge(requests: Sequence[WaitingRequest]) -> None:
+    """카드의 '승인 대기 N'. 무엇을 기다리는지는 툴팁에 적고, 누르면 카드 선택으로 그 대화가 열립니다."""
+    if not requests:
+        return
+    with ui.badge(f"승인 대기 {len(requests)}", color="amber-9").props("dense").classes(
+        "ml-auto flex-shrink-0 text-[11px] font-semibold"
+    ):
+        ui.tooltip("\n".join(waiting_text(request) for request in requests)).classes("whitespace-pre-line")
 
 
 class SessionSidebar:
@@ -429,6 +441,7 @@ class SessionSidebar:
             return
 
         runner = get_debate_runner()
+        waiting = runner.waiting_by_session()
         graph_keys: Dict[str, List[str]] = {}
 
         with self.container:
@@ -467,6 +480,7 @@ class SessionSidebar:
                             ui.label(title_text).classes(
                                 "text-xs font-semibold truncate min-w-0"
                             ).tooltip(title_text)
+                            waiting_badge(waiting.get(s.id, ()))
 
                     with ui.row().classes(
                         "w-full items-center justify-between no-wrap mt-1 text-xs text-slate-400"
@@ -556,15 +570,16 @@ class SessionSidebar:
         # 찾는 사이에 검색어가 바뀌었거나 페이지가 사라졌으면 그리지 않습니다.
         if not self.alive or query != self.search_query:
             return
+        waiting = get_debate_runner().waiting_by_session()
         self.container.clear()
         with self.container:
             ui.label(
                 f"'{query}' 검색 결과: {len(hits)}건" if hits else f"'{query}'에 대한 검색 결과가 없습니다."
             ).classes("text-[12px] text-slate-400 px-1")
             for hit in hits:
-                self._render_hit(hit)
+                self._render_hit(hit, waiting.get(hit.session_id, ()))
 
-    def _render_hit(self, hit: SearchHit) -> None:
+    def _render_hit(self, hit: SearchHit, waiting: Sequence[WaitingRequest] = ()) -> None:
         is_active = hit.session_id == self.current_session_id
         card_classes = (
             "w-full p-2.5 rounded-lg cursor-pointer box-border "
@@ -574,6 +589,7 @@ class SessionSidebar:
         with ui.card().classes(card_classes).on("click", lambda _, h=hit: self._open_hit(h)):
             with ui.row().classes("w-full items-center justify-between no-wrap gap-1"):
                 ui.label(hit.title or "Untitled Debate").classes("text-xs font-semibold truncate min-w-0")
+                waiting_badge(waiting)
                 if hit.matches:
                     ui.badge(f"{hit.matches}건", color="slate-700").props("dense text-[11px]")
             if hit.snippet:

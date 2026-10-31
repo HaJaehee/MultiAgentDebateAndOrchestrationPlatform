@@ -19,6 +19,7 @@ from app.agents.base import Agent
 from app.agents.catalog import tool_label
 from app.agents.personas import session_roster_agents
 from app.agents.pool import get_agent_pool
+from app.config import get_config
 from app.database.models import SessionModel
 from app.database.session import get_session_factory
 from app.easy.loop import (
@@ -36,12 +37,13 @@ from app.easy.loop import (
 )
 from app.easy.pages.common import Viewer, agent_avatar, easy_header, easy_setup, resolve_viewer
 from app.easy.sessions import load_messages, owned_session
-from app.events import EventType
+from app.events import WAITING_EVENTS, EventType
 from app.mcp.policy import OUTCOME_LABELS, tool_outcome
 from app.orchestration.runner import get_debate_runner
 from app.orchestration.turns import unfinished_turn
 from app.routes import EASY_HOME
 from app.security import is_loopback
+from app.ui.attention import WaitingTabTitle
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.components.chat_feed.feed import ChatFeed
 from app.ui.math_markdown import MathMarkdown
@@ -96,6 +98,8 @@ class EasySessionScreen:
             self.client, self.apply,
             alive=lambda: self.feed is not None and self.feed.alive, name="easy page",
         )
+        # 이 화면에는 다른 대화가 없으니 지금 대화의 물음만 탭 제목에 씁니다 (ADR-037).
+        self.tab_title = WaitingTabTitle(self.client.title, get_config().trial.title)
 
     # ------------------------------------------------------------ 구성
 
@@ -168,6 +172,7 @@ class EasySessionScreen:
             if run.plan_approval:
                 self.feed.set_plan_approval(dict(run.plan_approval))
                 self._ask_attention("수립된 계획에 대한 승인이 필요합니다.")
+            self.tab_title.show(len(run.waiting_requests()))
             self.binding.attach(run)
         else:
             self.feed.set_unfinished_turn(self.unfinished)
@@ -370,7 +375,9 @@ class EasySessionScreen:
         self.feed.set_unfinished_turn(None)
         self.unfinished = None
         try:
-            run = self.runner.start(self.session_id, prompt, workspace=self.workspace)
+            run = self.runner.start(
+                self.session_id, prompt, workspace=self.workspace, announce_waiting=self.viewer.owner,
+            )
         except Exception as exc:  # noqa: BLE001 - 입력이 잠긴 채로 남지 않도록 예외를 포괄합니다
             logger.error("Could not start an easy follow-up: %s", exc, exc_info=True)
             ui.notify(f"요청을 시작하지 못했습니다: {exc}", type="negative")
@@ -393,7 +400,8 @@ class EasySessionScreen:
             return
         try:
             run = self.runner.resume(self.session_id, turn_id, mode, user_prompt=info.prompt,
-                                     workspace=info.workspace_dir or self.workspace)
+                                     workspace=info.workspace_dir or self.workspace,
+                                     announce_waiting=self.viewer.owner)
         except Exception as exc:  # noqa: BLE001
             logger.error("Could not resume an easy turn: %s", exc, exc_info=True)
             ui.notify(f"작업을 재개하지 못했습니다: {exc}", type="negative")
@@ -450,6 +458,10 @@ class EasySessionScreen:
         return accepted
 
     async def apply(self, event: Dict[str, Any]) -> None:
+        if event.get("type") in WAITING_EVENTS:
+            run = self.runner.get(self.session_id)
+            self.tab_title.show(len(run.waiting_requests()) if run is not None else 0)
+
         change = self.timeline.apply(event)
         if change is not None:
             self._update(change)

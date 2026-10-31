@@ -30,7 +30,7 @@ from app.events import EventType
 from app.orchestration.engine import OrchestratorEngine, get_orchestrator_engine
 from app.orchestration.event_bus import BaseEventBus, get_event_bus
 from app.orchestration.plan_gate import PlanApprovalExpired
-from app.orchestration.turn_run import TurnRun
+from app.orchestration.turn_run import TurnRun, WaitingRequest
 from app.orchestration.worker import TaskWorkerPool, get_task_worker_pool
 
 logger = logging.getLogger(__name__)
@@ -89,20 +89,33 @@ class DebateRunner:
         return [r for sid, r in self._runs.items()
                 if sid != session_id and r.status == "running"]
 
+    def waiting_by_session(self) -> Dict[str, List[WaitingRequest]]:
+        """대화별로 사람의 답을 기다리는 물음. 기다리는 것이 없는 대화는 빠집니다.
+
+        사이드바 배지·탭 제목·데스크톱 알림이 읽는 값입니다. 방문자의 턴(`announce_waiting=False`)은
+        그 방문자의 화면만 알면 되므로 뺍니다.
+        """
+        waiting = {
+            sid: run.waiting_requests() for sid, run in self._runs.items() if run.announce_waiting
+        }
+        return {sid: requests for sid, requests in waiting.items() if requests}
+
     def start(self, session_id: str, user_prompt: str,
               workspace: Optional[str] = None,
               skill_designations: Optional[Dict[str, List[str]]] = None,
-              *, attended: bool = True, attachments: Optional[List[str]] = None) -> TurnRun:
+              *, attended: bool = True, attachments: Optional[List[str]] = None,
+              announce_waiting: bool = True) -> TurnRun:
         """토론을 백그라운드에서 시작합니다. 이미 돌고 있으면 그 실행을 돌려줍니다.
 
         `attended=False`는 대화형 사용자가 없는 무인 모드 턴입니다 (API/MCP 헤드리스 실행, `app/headless.py`).
         대화형 승인 다이얼로그를 띄우지 않습니다 (`control.asks_human`).
+        `announce_waiting=False` 는 답할 사람이 주인이 아닌 턴입니다 (체험 방문자 등, `TurnRun.announce_waiting`).
         """
         existing = self._runs.get(session_id)
         if existing is not None and existing.status == "running":
             return existing
 
-        run = TurnRun(session_id, user_prompt, workspace, event_bus=self.event_bus)
+        run = TurnRun(session_id, user_prompt, workspace, announce_waiting=announce_waiting, event_bus=self.event_bus)
         run.control.attended = attended
         self._runs[session_id] = run
 
@@ -115,14 +128,15 @@ class DebateRunner:
         return self._launch(run, body)
 
     def resume(self, session_id: str, turn_id: str, mode: str, user_prompt: str = "",
-               workspace: Optional[str] = None) -> TurnRun:
+               workspace: Optional[str] = None, *, announce_waiting: bool = True) -> TurnRun:
         """끊긴 턴을 백그라운드에서 마무리하거나(`finish`) 이어 갑니다(`continue`)."""
         existing = self._runs.get(session_id)
         if existing is not None and existing.status == "running":
             return existing
 
         run = TurnRun(
-            session_id, user_prompt, workspace, turn_id=turn_id, resume_mode=mode, event_bus=self.event_bus
+            session_id, user_prompt, workspace, turn_id=turn_id, resume_mode=mode,
+            announce_waiting=announce_waiting, event_bus=self.event_bus,
         )
         run.status_text = (
             "끊긴 턴을 지금까지의 발언으로 마무리하는 중..." if mode == "finish"

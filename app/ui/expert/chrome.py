@@ -15,6 +15,7 @@ from app.about import (
     LICENSE_NAME,
 )
 from app.routes import EASY_HOME
+from app.ui.attention import DesktopAlertButton
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.components.access_token import build_access_buttons
 from app.ui.components.model_status import build_model_status_button
@@ -97,6 +98,7 @@ def build_header(drawer: ui.left_drawer, about_dialog: ui.dialog) -> None:
             ui.badge("FastAPI + NiceGUI", color="indigo-8").props("dense")
             ui.badge("MCP Host", color="teal-8").props("dense")
             ui.badge("LiteLLM Multi-Model", color="purple-8").props("dense")
+            DesktopAlertButton()
             info_btn = ui.button(icon="info", on_click=about_dialog.open)
             info_btn.props("flat dense round color=grey-4")
             info_btn.tooltip(f"만든 사람 · 버전 — {APP_VERSION_LABEL}")

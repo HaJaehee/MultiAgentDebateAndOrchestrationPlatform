@@ -23,7 +23,7 @@ All of these must hold:
 1. The tool loop runs it as a host tool, without a tool-security verdict (it touches nothing).
 2. The engine (`SpeechRunner.make_asker`) opens a question card in the feed: the question (Markdown),
    option buttons if given, a free-text box, `건너뛰기`, and a countdown (5 minutes). The card is in the
-   run snapshot, so a refreshed page or another screen shows it too.
+   run snapshot, so a refreshed page or another screen shows it too. A person looking elsewhere is told through the tab title, the sidebar badge and a desktop notification ([UI Components §1.3.11](../ui/components.md#1311-telling-people-who-are-looking-elsewhere-adr-037)); the question's text stays on the card.
 3. The answer comes back as the tool result (`유저의 답: …`). No answer, a skip or a stop returns
    "(답 없음) — state the assumption and continue"; the speech is never cut.
 4. An answer is also queued as an interjection (`[<agent> 의 질문에 대한 답] 질문: … 답: …`), recorded

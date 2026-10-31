@@ -68,7 +68,7 @@ straight back to them.
 `app/ui/` holds two kinds of modules, and every module must be listed as one of them
 (`test_every_ui_module_is_classified`):
 
-- **Shared UI** — `ui/shared/`, `ui/run_binding.py`, the chat feed, the builder conversation
+- **Shared UI** — `ui/shared/`, `ui/run_binding.py`, `ui/attention.py`, the chat feed, the builder conversation
   (`ui/components/agent_builder_chat.py`), model status, appearance editor, markdown and clipboard helpers.
   They depend on no screen.
 - **Expert UI** — `ui/expert/`, the roster panel, sidebar, artifact viewer, workspace download, access token,

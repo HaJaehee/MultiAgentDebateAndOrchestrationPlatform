@@ -212,7 +212,9 @@ The binary-document refusal (`guards.binary_write_refusal`) runs at the same pla
 `TurnControl.ask_tool_approval` hangs a `ToolApprovalRequest` in the same mailbox as the budget and
 context requests; the runner keeps every open card in `TurnRun.approvals` and the snapshot
 (`tool_approvals`), so a refreshed page or a remote viewer sees the same cards. The chat feed stacks them
-above the timeline in a scrolling column.
+above the timeline in a scrolling column. A person in another tab or conversation is told through the tab
+title, the sidebar badge and a desktop notification, which name the tool but not its arguments
+([UI Components §1.3.11](../ui/components.md#1311-telling-people-who-are-looking-elsewhere-adr-037)).
 
 A card shows the agent, the tool, the risk badge, the reasons (which rule, or which actions the mode asks
 about, plus code-scan findings), the code or arguments, an editable **scope** (one rule per line) and a

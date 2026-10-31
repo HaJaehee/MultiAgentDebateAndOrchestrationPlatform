@@ -24,7 +24,7 @@ from app.agents.pool import get_agent_pool
 from app.config import get_config
 from app.database.models import SessionModel
 from app.database.session import get_session_factory
-from app.events import EventType
+from app.events import WAITING_EVENTS, EventType
 from app.orchestration.runner import get_debate_runner
 from app.orchestration.turns import unfinished_turn
 from app.routes import TRIAL_LOGIN_PATH
@@ -41,6 +41,7 @@ from app.trial.store import (
     session_result,
 )
 from app.trial.web import Visitor, current_visitor, is_owner
+from app.ui.attention import WaitingTabTitle
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.components.chat_feed.feed import ChatFeed
 from app.ui.math_markdown import MathMarkdown
@@ -95,6 +96,8 @@ class TrialSessionScreen:
             self.client, self.apply,
             alive=lambda: self.feed is not None and self.feed.alive, name="trial page",
         )
+        # 방문자에게는 이 대화 하나뿐이라 그 물음만 탭 제목에 씁니다 (ADR-037).
+        self.tab_title = WaitingTabTitle(self.client.title, get_config().trial.title)
 
     # ------------------------------------------------------------ 구성
 
@@ -163,6 +166,7 @@ class TrialSessionScreen:
 
         ui.timer(1.0, self.tick_queue)
         if running:
+            self.tab_title.show(len(run.waiting_requests()))
             self.binding.attach(run)
 
     # ------------------------------------------------------------ 진행 단계
@@ -382,7 +386,7 @@ class TrialSessionScreen:
         # 끊긴 요청이 있었다면 새 요청이 그것을 "버려짐" 으로 적습니다. 안내도 걷습니다.
         self.feed.set_unfinished_turn(None)
         try:
-            run = self.runner.start(self.session_id, prompt)
+            run = self.runner.start(self.session_id, prompt, announce_waiting=False)
         except Exception as exc:  # noqa: BLE001 - 입력이 잠긴 채로 남으면 안 됩니다
             logger.error("Could not start a trial follow-up: %s", exc, exc_info=True)
             self.feed.set_busy(False, f"토론을 시작하지 못했습니다: {exc}", "오류")
@@ -411,7 +415,7 @@ class TrialSessionScreen:
         try:
             run = self.runner.resume(
                 self.session_id, turn_id, mode,
-                user_prompt=info.prompt, workspace=info.workspace_dir or None,
+                user_prompt=info.prompt, workspace=info.workspace_dir or None, announce_waiting=False,
             )
         except Exception as exc:  # noqa: BLE001 - 시작하지 못한 사유를 그대로 보여 줍니다
             logger.error("Could not resume a trial turn: %s", exc, exc_info=True)
@@ -463,6 +467,9 @@ class TrialSessionScreen:
     async def apply(self, event: Dict[str, Any]) -> None:
         feed = self.feed
         etype = event.get("type")
+        if etype in WAITING_EVENTS:
+            run = self.runner.get(self.session_id)
+            self.tab_title.show(len(run.waiting_requests()) if run is not None else 0)
         if etype == EventType.STATUS_CHANGED:
             speaker = event.get("speaker", "")
             status = event.get("status", "")

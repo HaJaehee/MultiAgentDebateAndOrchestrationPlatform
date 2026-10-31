@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from app.agents.llm_usage import usage_line
 from app.config import resolve_workspace_dir
-from app.events import DECISION_RESOLVED, Event, EventType
+from app.events import DECISION_RESOLVED, WAITING_CHANNEL, WAITING_EVENTS, Event, EventType
 from app.orchestration.control import TurnControl
 from app.orchestration.event_bus import BaseEventBus, get_event_bus
 from app.orchestration.graph_run import GraphRunTracker
@@ -45,6 +46,20 @@ def _payload(event: Event) -> Dict[str, Any]:
     return {k: v for k, v in event.items() if k != "type"}
 
 
+@dataclass(frozen=True)
+class WaitingRequest:
+    """사람의 답을 기다리는 물음 하나. 다른 탭·다른 대화에 알릴 때 쓰는 만큼만 담습니다.
+
+    `kind` 는 "plan" · "tool" · "question" · "tool_budget" · "context_window" 입니다.
+    도구 인자와 질문 내용은 일부러 뺍니다 — 운영체제 알림으로 나가는 값입니다.
+    """
+
+    id: str
+    kind: str
+    agent_name: str = ""
+    tool_name: str = ""
+
+
 class TurnRun:
     """진행 중이거나 방금 끝난 토론 한 턴."""
 
@@ -57,6 +72,7 @@ class TurnRun:
         turn_id: Optional[str] = None,
         resume_mode: Optional[str] = None,
         retry_target: Optional[str] = None,
+        announce_waiting: bool = True,
         event_bus: Optional[BaseEventBus] = None,
     ):
         self.session_id = session_id
@@ -64,6 +80,9 @@ class TurnRun:
         self.workspace = resolve_workspace_dir(workspace or None)
         self.event_bus = event_bus or get_event_bus()
         self.channel = f"session:{self.session_id}"
+        # 이 턴의 물음을 다른 대화를 보는 화면에도 알릴지. 방문자의 턴이면 답할 사람은 그 방문자이므로
+        # 주인 화면을 울리지 않습니다 (`DebateRunner.waiting_by_session`).
+        self.announce_waiting = announce_waiting
         self.status: str = "running"  # running | completed | failed | cancelled
         self.error: Optional[str] = None
         # 이 실행이 돌리는 턴 (`TurnModel`). 새 턴이면 엔진이 요청을 기록하는 순간
@@ -139,8 +158,14 @@ class TurnRun:
         return len(self._subscribers)
 
     def publish(self, event: Event) -> None:
-        """붙어 있는 화면들에 이벤트를 나눠 줍니다. 큐가 넘친 화면은 떼어 냅니다."""
+        """붙어 있는 화면들에 이벤트를 나눠 줍니다. 큐가 넘친 화면은 떼어 냅니다.
+
+        스냅샷을 고친 뒤에 불립니다 (`apply` 다음, 턴의 끝은 상태를 정한 다음). 그래서 `WAITING_CHANNEL`
+        을 듣는 쪽이 `waiting_requests()` 를 읽으면 언제나 이 이벤트까지 반영된 값입니다.
+        """
         self.event_bus.publish_nowait(self.channel, event)
+        if self.announce_waiting and event.get("type") in WAITING_EVENTS:
+            self.event_bus.publish_nowait(WAITING_CHANNEL, {"session_id": self.session_id})
         for queue in list(self._subscribers):
             if queue.full():
                 logger.warning("Dropping a slow debate subscriber for session %s", self.session_id)
@@ -632,6 +657,32 @@ class TurnRun:
         used = usage_line(event.get("usage"))
         if used:
             self.status_text += f" · {used}"
+
+    def waiting_requests(self) -> List[WaitingRequest]:
+        """지금 사람의 답을 기다리는 물음 전부 — 계획 승인, 도구 승인, 질문, 한도 쪽지.
+
+        끝난 실행은 아무것도 기다리지 않습니다. 취소나 실패로 끝나면 `turn_completed` 가 오지 않아
+        도구 카드와 질문이 목록에 남아 있으므로 상태부터 봅니다.
+        """
+        if self.status != "running":
+            return []
+        waiting: List[WaitingRequest] = []
+        if self.plan_approval:
+            waiting.append(self._waiting("plan", self.plan_approval))
+        waiting.extend(self._waiting("tool", card) for card in self.approvals)
+        waiting.extend(self._waiting("question", card) for card in self.questions)
+        if self.decision_request:
+            waiting.append(self._waiting(str(self.decision_request.get("kind") or "tool_budget"), self.decision_request))
+        return waiting
+
+    @staticmethod
+    def _waiting(kind: str, card: Dict[str, Any]) -> WaitingRequest:
+        return WaitingRequest(
+            id=str(card.get("id") or ""),
+            kind=kind,
+            agent_name=str(card.get("agent_name") or ""),
+            tool_name=str(card.get("tool_name") or "") if kind == "tool" else "",
+        )
 
     def _upsert(self, msg: Dict[str, Any]) -> None:
         msg_id = msg["id"]

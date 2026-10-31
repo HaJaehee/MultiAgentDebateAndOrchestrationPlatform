@@ -35,7 +35,8 @@ EXPERT_UI = (
     "app.ui.components.turn_changes", "app.ui.compare_page", "app.ui.components.skill_draft_dialog",
 )
 SHARED_UI = (
-    "app.ui.shared", "app.ui.run_binding", "app.ui.components.chat_feed", "app.ui.components.model_status",
+    "app.ui.shared", "app.ui.run_binding", "app.ui.attention", "app.ui.components.chat_feed",
+    "app.ui.components.model_status",
     "app.ui.components.agent_appearance", "app.ui.components.quiet_splitter", "app.ui.math_markdown",
     "app.ui.clipboard", "app.ui.theme", "app.ui.mermaid_export", "app.ui.mention_input",
     "app.ui.diagnostics_script", "app.ui.components.agent_builder_chat",

@@ -88,5 +88,20 @@ DECISION_RESOLVED = {
 # 턴이 끝났다는 신호 둘. 화면은 둘 중 먼저 오는 것으로 입력을 다시 엽니다.
 TURN_END_EVENTS = frozenset({EventType.TURN_COMPLETED, EventType.RUN_FINISHED})
 
+# 사람의 답을 기다리는 물음이 늘거나 줄 수 있는 이벤트 (`TurnRun.waiting_requests`).
+# 물음은 턴이 끝날 때도 함께 걷히므로 턴의 끝도 포함합니다.
+WAITING_EVENTS = frozenset({
+    EventType.TOOL_BUDGET_EXHAUSTED, EventType.TOOL_BUDGET_RESOLVED,
+    EventType.CONTEXT_WINDOW_EXHAUSTED, EventType.CONTEXT_WINDOW_RESOLVED,
+    EventType.TOOL_APPROVAL_REQUESTED, EventType.TOOL_APPROVAL_RESOLVED,
+    EventType.PLAN_APPROVAL_REQUESTED, EventType.PLAN_APPROVAL_RESOLVED,
+    EventType.USER_QUESTION_REQUESTED, EventType.USER_QUESTION_RESOLVED,
+    *TURN_END_EVENTS,
+})
+
+# 대화를 가리지 않고 물음의 변화를 듣는 이벤트 버스 채널. 대화별 채널(`session:<id>`)과 달리 바뀐
+# 대화의 id 만 실립니다 — 듣는 쪽은 러너의 `waiting_by_session()` 을 읽습니다.
+WAITING_CHANNEL = "waiting"
+
 Event = Dict[str, Any]
 EventCallback = Callable[[Event], Awaitable[None]]

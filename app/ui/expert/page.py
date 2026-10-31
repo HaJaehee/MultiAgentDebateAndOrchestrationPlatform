@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from nicegui import run as ng_run, ui
 from sqlalchemy import desc, select
 
+from app.about import APP_NAME, APP_SHORT_NAME
 from app.agents.media import attachment_notices
 from app.agents.personas import effective_personas, resync_agent_configs, session_roster_agents
 from app.agents.skills import scan_skills
@@ -28,6 +29,7 @@ from app.orchestration.turns import KIND_SYNTHESIS, kind_of, unfinished_turn
 from app.security import is_loopback
 from app.session_fork import ForkError, fork_session
 from app.session_ops import discard_turn
+from app.ui.attention import ATTENTION_JS, WaitingTabTitle, WaitingWatcher
 from app.ui.components.artifact_viewer import ArtifactViewer, merge_artifacts
 from app.ui.components.chat_feed.feed import ChatFeed
 from app.ui.components.chat_feed.common import clip_reloaded_output
@@ -61,7 +63,7 @@ logger = logging.getLogger(__name__)
 
 def create_ui() -> None:
     """전문가 화면(`/`)을 등록합니다."""
-    @ui.page("/", title="MADO: Multi-Agent Debate & Orchestration Platform", favicon=FAVICON_SVG)
+    @ui.page("/", title=APP_NAME, favicon=FAVICON_SVG)
     async def index_page():
         await ExpertPage().build()
 
@@ -85,6 +87,7 @@ class ExpertPage:
             f"<script>{MENTION_JS}</script>"
             f"<script>{SPEECH_COMMENT_JS}</script>"
             f"<script>{CLIENT_DIAGNOSTICS_JS}</script>"
+            f"<script>{ATTENTION_JS}</script>"
         )
 
         self.sidebar = SessionSidebar(self.on_session_selected, self.on_new_session)
@@ -144,6 +147,14 @@ class ExpertPage:
         self.binding = RunBinding(
             self.client, self.events.apply, alive=lambda: self.chat_feed.alive, name="expert page",
         )
+        # 위 구독은 지금 보는 대화 하나의 것입니다. 승인 대기는 모든 대화를 지켜봅니다 (ADR-037).
+        self.waiting = WaitingWatcher(
+            self.client, self.runner,
+            tab_title=WaitingTabTitle(APP_NAME, APP_SHORT_NAME),
+            is_showing=self.is_showing_run,
+            on_changed=self.sidebar.refresh_list,
+            on_open=self.open_waiting_session,
+        )
 
         build_header(drawer, build_about_dialog())
 
@@ -183,6 +194,7 @@ class ExpertPage:
             await self.on_new_session()
 
         await self.sidebar.refresh_list()
+        self.waiting.start()
 
     # ------------------------------------------------------------ 대화 선택·설정
 
@@ -596,6 +608,19 @@ class ExpertPage:
             self.sidebar.current_session_id = session_id
             await self.on_session_selected(session_id)
             await self.sidebar.refresh_list()
+
+    def is_showing_run(self, session_id: str) -> bool:
+        """이 화면이 그 대화의 진행 중인 실행을 그리고 있는가 — 승인 카드가 이 화면에 떠 있는가."""
+        run = self.runner.get(session_id)
+        return session_id == self.current_session_id and run is not None and self.binding.run is run
+
+    async def open_waiting_session(self, session_id: str) -> None:
+        """데스크톱 알림을 눌렀습니다. 이미 그리고 있는 대화면 카드에 적던 의견이 사라지지 않게 그대로 둡니다."""
+        if self.is_showing_run(session_id):
+            return
+        self.sidebar.current_session_id = session_id
+        await self.on_session_selected(session_id)
+        await self.sidebar.refresh_list()
 
     async def open_search_hit(self, session_id: str, message_id: str) -> None:
         """검색 결과에서 선택된 발언: 해당 대화 세션을 열고 대상 발언 카드로 이동합니다."""

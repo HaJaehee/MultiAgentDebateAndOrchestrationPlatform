@@ -58,7 +58,7 @@ app/
 ├── main.py                          248   조립: FastAPI 서버, lifespan(시작·종료 순서), 화면·라우터·접근 제어, CLI
 ├── api.py                           281   HTTP 엔드포인트 /api/* · /agent-icon
 ├── routes.py                         22   화면 주소 (체험·쉬운 화면)
-├── events.py                         92   토론 이벤트 이름표 EventType
+├── events.py                        107   토론 이벤트 이름표 EventType
 ├── tool_rules.py                    125   도구 보안 규칙 문법 (read(경로) · net(호스트) …)
 ├── timestamps.py                    176   발언·턴·보고서 시각 표기 (화면·문서·보고서 공용)
 ├── session_ops.py                   497   세션 되돌리기·이어받기, 피드 기록 읽기
@@ -150,8 +150,8 @@ app/
 │   ├── control.py                   693   정지·개입·한도·승인 제어 채널
 │   ├── turns.py                     587   턴 기록, 끊긴 턴 (ADR-024)
 │   ├── state.py                     148   DebateState · DebateMessage · ArtifactItem
-│   ├── runner.py                    431   DebateRunner — 백그라운드 턴 시작·끝
-│   ├── turn_run.py                  668   TurnRun — 턴 스냅샷 (이벤트별 리듀서)
+│   ├── runner.py                    445   DebateRunner — 백그라운드 턴 시작·끝
+│   ├── turn_run.py                  719   TurnRun — 턴 스냅샷 (이벤트별 리듀서)
 │   ├── event_bus.py                 114   구독자 큐 이벤트 버스
 │   └── worker.py                    168   태스크 워커 풀
 │
@@ -165,9 +165,10 @@ app/
 │
 └── ui/
     ├── run_binding.py                94   화면이 토론에 붙는 구독 (세 화면 공용)
-    ├── expert/page.py             1,011   전문가 화면 ExpertPage
+    ├── attention.py                 307   승인 대기 알림: 탭 제목, 데스크톱 알림, 모든 대화 감시
+    ├── expert/page.py             1,036   전문가 화면 ExpertPage
     ├── expert/events.py             568   이벤트별 화면 반영
-    ├── expert/chrome.py             104   머리 줄, 정보 창
+    ├── expert/chrome.py             106   머리 줄, 정보 창
     ├── shared/page.py               119   체험·쉬운 화면 공용 틀
     ├── personas_page.py             347   /personas/{id}
     ├── compare_page.py              162   /compare 대화 세션 비교 및 평가 (v1.5)
@@ -181,7 +182,7 @@ app/
     ├── components/roster/         3,917   로스터 패널 (control 이 조립 · state · changes · agent_cards · agent_admin · agent_dialogs · mcp_panel · skills_panel · workspace_row · session_settings · graph_row · builder_dialog · widgets · common)
     ├── components/chat_feed/      3,218   토론 피드 (feed 가 조립 · cards · approvals · decisions · mentions · speech_actions · common)
     ├── components/agent_builder_chat.py   111   도우미와 대화해 설계도를 채우는 부분 (전문가·쉬운 화면 공용)
-    ├── components/sidebar.py        832   세션 목록
+    ├── components/sidebar.py        848   세션 목록
     ├── components/artifact_viewer.py   377   산출물 탭, 복사·다운로드
     ├── components/agent_appearance.py   257   카드 색·아이콘 편집기
     ├── components/model_status.py   143   모델 연결 상태 단추와 창
@@ -209,6 +210,7 @@ app/
 | 인라인 코멘트 | `orchestration/speech_comments.py` · 드래그 스크립트와 창은 `ui/components/chat_feed/speech_actions.py` |
 | 발언 맥락·요약·결정 장부 | `orchestration/conversation.py` (규칙은 `context_memory.py`) |
 | 새 토론 이벤트 | `events.py` 에 이름 → 스냅샷은 `orchestration/turn_run.py`, 전문가 화면은 `ui/expert/events.py` |
+| 사람을 기다리는 새 물음 | `orchestration/turn_run.py` 의 `waiting_requests` · `events.py` 의 `WAITING_EVENTS` · 문구는 `ui/attention.py` |
 | LLM 호출 파라미터 | `agents/llm_request.py` (`build_completion_kwargs`) |
 | 도구 루프 | `agents/llm_loop.py` (`_run_litellm_loop` 와 단계 함수) · 도구 호출 한 번은 `agents/llm_tool_calls.py` |
 | MCP 서버 다루는 방식 | `mcp/manager.py` · 작업 공간별 런타임은 `mcp/pool.py` |

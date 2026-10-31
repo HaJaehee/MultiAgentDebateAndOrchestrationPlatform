@@ -70,6 +70,7 @@ The web application workspace is organized into four primary UI components in [a
     toggle, `모두 선택` / `모두 선택 해제`, a different strategy or a different graph. It is called on every
     keystroke in the instructions box too, so it does not redraw otherwise. Graphs shared by several
     conversations are read once per redraw. Tested in `tests/test_sidebar_agent_count.py`.
+- **승인 대기 badge** (ADR-037): an amber `승인 대기 N` on a conversation whose turn is waiting for a person, in the list and in search results. See §1.3.11.
 - **Per-card actions**: ✏️ rename · 💾 export the whole conversation as Markdown ·
   **» continue in a fresh session** · 🗑 delete. A forked conversation (v1.5) also has a **compare**
   button that opens it next to its original (§1.7, new tab).
@@ -837,6 +838,27 @@ The rules live in [Retrying One Speech and Inline Comments](../orchestration/spe
 - **While it runs**: `start_streaming_message` rewrites the existing card (`_restart_card`) instead of adding one. `ChatFeed.set_single_speech(True)` hides `정지`, locks the input and relabels `긴급 종료` as `다시 실행 취소`, which skips the confirmation because nothing is deleted. When the run ends, the page rebuilds from the database and returns to the card (`reveal_message`).
 - **Versions** (`speech_versions`, `version_caption`): `‹ 2/3 ›` in the card header appears once a past version exists. Stepping changes only what this card shows: body, time line, tool records and failure styling. A banner names the version shown and offers `이 버전으로 되돌리기`, except for a failed attempt.
 - **Inline comments**: cards that can take one carry `data-mado-speech`. The selection script in `speech_actions.py` floats a `코멘트` button over the selected text and sends the id and quote through the global `mado_speech_comment` event. `CardTimeline.can_comment` refuses streaming cards and failure notices. Comments are lines under the card, visible even when the card is collapsed, with `전달 대기` (deletable) or `전달됨`.
+
+### 1.3.11. Telling people who are looking elsewhere (ADR-037)
+
+[app/ui/attention.py](file:///d:/MultiAgentDebateOrchestration/app/ui/attention.py). Approval, question and limit cards sit above one conversation's timeline and wait 3 to 10 minutes. A person in another tab or another conversation used to find out only after the wait had ended. Design record: [ADR-037](../../lectures/05-adr/ADR-037-tell-people-looking-elsewhere.md).
+
+| Signal | When | Where it works |
+| :--- | :--- | :--- |
+| Tab title `(N) 승인 대기 — MADO` | Whenever anything waits, in any conversation | Every browser; correct from the first response after a reload |
+| Sidebar badge `승인 대기 N` | On each waiting conversation, in the list and in search results; the tooltip says what it waits for | Every browser |
+| Toast | When this tab is not drawing that card: another conversation, or a turn started from another tab | Every browser |
+| Desktop notification | When this tab is hidden or unfocused and alerts are on. Clicking it focuses the tab and opens the conversation; it closes when the request is answered or expires | HTTPS or localhost only |
+
+- **What counts** is `TurnRun.waiting_requests()`: plan approval, tool approvals, questions, and tool-budget and context-window notes. A finished run counts nothing, even though a cancelled run leaves cards in its lists.
+- **How a tab hears.** `RunBinding` follows only the conversation on screen, so each expert page also runs a `WaitingWatcher` on the bus channel `WAITING_CHANNEL`. The channel carries only a session id. On each signal the watcher re-reads `DebateRunner.waiting_by_session()` and compares it with the ids it knows, so overlapping or missed signals cannot leave it wrong.
+- **What does not ring.** Requests already waiting when a tab opens set the title and badge but do not notify again; a reload does not re-announce. Visitors' turns (`announce_waiting=False`: every trial turn, beginner turns by a visitor) stay off the channel, because the person who can answer is that visitor.
+- **What leaves the browser.** Notifications carry the conversation title, the agent name and, for tool approvals, the tool name. Arguments and question text stay on the card.
+- **The bell** (`DesktopAlertButton`, left of the info button). Permission must be requested inside the click, so its handler calls `MadoAttention.toggle()` in the browser and only reports the result to the server. The choice is kept in `localStorage["mado.desktopAlerts"]`. States: `ask`, `on`, `off`, `denied` (asks the person to allow it in site settings), `insecure` (plain HTTP) and `unsupported`; the last two say the title and badge still work.
+- **Several tabs.** The notification's `tag` is the request id, so tabs showing the same request produce one notification. A hidden second tab still notifies while the first tab has focus, because tabs do not coordinate.
+- **Trial and beginner pages** show only the title (`WaitingTabTitle`), for their one conversation, driven by the `RunBinding` events they already receive. The brand there is `trial.title`.
+
+**Verified in a browser** (the pane's own permission is `denied`, so `window.Notification` was replaced with a recorder; a real operating-system notification was not seen): the plan card in one conversation set the title and badge and created a notification with `requireInteraction` and no arguments; a second conversation raised the count; clicking the notification opened its conversation; answering closed it in both tabs and restored the title; a second tab on another conversation got the toast, badge, title and notification; a reload kept the title and rang nothing; `off` and a focused tab created no notification; the real pane reported `denied` on the bell, and overriding `isSecureContext` reported `insecure`; a beginner page read `(1) 승인 대기 — MADO 체험` and restored its title after approval. Only plan approval ran end to end; the other kinds share the path and are covered in `tests/test_attention.py`.
 
 ### 1.4. Artifact Viewer ([app/ui/components/artifact_viewer.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/artifact_viewer.py))
 - **Tabs accumulate across turns.** `add_artifacts()` appends a finished turn's artifacts (skipping ids

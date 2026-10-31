@@ -103,7 +103,7 @@ def _render(viewer: Viewer, choices: List[Choice], preselected: List[str], missi
                         db, user_id=viewer.user_id, guest=not viewer.owner,
                         title=text.splitlines()[0][:60], choices=chosen, pool=get_agent_pool(),
                     )
-                get_debate_runner().start(sid, text, workspace=workspace)
+                get_debate_runner().start(sid, text, workspace=workspace, announce_waiting=viewer.owner)
             except Exception as exc:  # noqa: BLE001 - 세션 시작 실패 원인을 사용자에게 안내합니다
                 logger.error("Could not start an easy session: %s", exc, exc_info=True)
                 ui.notify(f"작업을 시작하지 못했습니다: {exc}", type="negative", multi_line=True)

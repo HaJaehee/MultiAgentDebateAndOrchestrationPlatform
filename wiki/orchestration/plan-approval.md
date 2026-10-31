@@ -61,6 +61,9 @@ An approval cannot carry a comment. While any comment box has text the approve b
 button is shown (`plan_gate.card_actions`); `TurnControl.resolve_plan_approval` refuses the same combinations
 for answers that do not come from the card.
 
+A person in another tab or conversation is told through the tab title, the sidebar badge and a desktop
+notification ([UI Components §1.3.11](../ui/components.md#1311-telling-people-who-are-looking-elsewhere-adr-037)).
+
 ## 3. The task list
 
 The plan speech is prose. To let the human edit per-specialist tasks, the engine asks the orchestrator once

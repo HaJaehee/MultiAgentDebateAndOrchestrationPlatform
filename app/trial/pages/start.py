@@ -161,7 +161,7 @@ def build_start() -> None:
                             db, user_id=visitor.id, template=template, template_ref=resolved.ref,
                             values=values, pool=get_agent_pool(),
                         )
-                    get_debate_runner().start(sid, render_prompt(template, values))
+                    get_debate_runner().start(sid, render_prompt(template, values), announce_waiting=False)
                 except TemplateError as exc:
                     ui.notify(str(exc), type="negative")
                     start_button.enable()

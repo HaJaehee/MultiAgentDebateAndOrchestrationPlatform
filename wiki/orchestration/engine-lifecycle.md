@@ -170,6 +170,10 @@ On the UI side ([`app/ui/expert/page.py`](file:///d:/MultiAgentDebateOrchestrati
   event to the page inside the client context, stops at `run_finished`, and unsubscribes on `client.on_delete`.
   The expert page draws events with one handler per event type
   ([`ExpertEventView`](file:///d:/MultiAgentDebateOrchestration/app/ui/expert/events.py)).
+- `RunBinding` follows one conversation. Whether anyone is waiting anywhere travels separately: `TurnRun.publish`
+  sends the session id on `WAITING_CHANNEL` for the events in `WAITING_EVENTS`, always after the snapshot has
+  changed, and each expert page re-reads `DebateRunner.waiting_by_session()`
+  ([UI Components §1.3.11](../ui/components.md#1311-telling-people-who-are-looking-elsewhere-adr-037)).
 - Every component (`ChatFeed`, `AgentRosterControl`, `ArtifactViewer`) exposes `alive` and ignores updates
   aimed at a deleted page.
 - Server shutdown cancels outstanding runs via `DebateRunner.shutdown()`; deleting a
