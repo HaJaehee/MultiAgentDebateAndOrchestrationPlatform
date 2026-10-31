@@ -56,7 +56,7 @@ class ToolRulesDialog:
                 ).classes("text-xs text-slate-400")
                 self._body = ui.column().classes("w-full gap-3")
                 ui.label(
-                    "'항상 허용·거부' 로 저장한 규칙은 conf.json 의 tool_security.allow · deny 에 있습니다."
+                    "'항상 허용·거부' 로 저장한 규칙은 conf.json 에 있고, 옆의 '전역 규칙·감사' 창에서 보고 고칩니다."
                 ).classes("text-[11px] text-slate-500")
         self.render()
         self._dialog.open()
@@ -110,6 +110,7 @@ class SessionSettingsComponent:
         changes: RosterChanges,
         *,
         tool_rules: ToolRulesDialog,
+        on_open_tool_security: Callable[[], Coroutine[None, None, None]],
         on_strategy_changed: Callable[[], None],
         on_parallel_changed: Callable[[], None],
     ):
@@ -117,6 +118,7 @@ class SessionSettingsComponent:
         self.service = service
         self.changes = changes
         self.tool_rules = tool_rules
+        self.on_open_tool_security = on_open_tool_security
         self.on_strategy_changed = on_strategy_changed
         self.on_parallel_changed = on_parallel_changed
         self.converge_switch: Optional[ui.switch] = None
@@ -234,8 +236,14 @@ class SessionSettingsComponent:
                     .props("flat dense no-caps color=emerald-4 size=12px")
                     .tooltip(
                         "승인 카드에서 '이 대화에서 허용·거부' 로 쌓인 규칙을 보고 지웁니다. "
-                        "'항상' 규칙은 conf.json 의 tool_security 에 있습니다."
+                        "'항상' 규칙은 옆의 '전역 규칙·감사' 에 있습니다."
                     )
+                )
+                ui.button(
+                    "전역 규칙·감사", icon="admin_panel_settings", on_click=self.on_open_tool_security,
+                ).props("flat dense no-caps color=emerald-4 size=12px").tooltip(
+                    "conf.json 의 허용·묻기·거부 규칙을 보고 고칩니다 (고치기는 서버 PC 에서만). "
+                    "규칙·모드·고정 보호에 막힌 호출을 대화를 가로질러 모아 봅니다."
                 )
 
             # 동시 실행 상한 — 병렬 지시 전략에서만 뜹니다. 다른 전략에서는

@@ -169,6 +169,7 @@ MultiAgentDebateOrchestration/
 │   │   ├── phases/           # 계획 · 토론(병렬·그래프) · 합성 단계 실행기
 │   │   ├── strategies.py     # 순차 토론, 디베이트, 오케스트레이터 지명, 병렬 지시 전략
 │   │   ├── tool_gate.py      # 도구 보안 게이트 (판정 · 승인 카드 · 세션별 허용)
+│   │   ├── tool_audit.py     # 보안 감사 조회 (규칙·모드·고정 보호가 막은 호출을 대화를 가로질러 모음)
 │   │   ├── plan_gate.py      # 계획 승인 (분담표 · 승인 · 수정 요청 · 완료 확인, ADR-028)
 │   │   ├── runner.py         # 세션별 백그라운드 토론 태스크
 │   │   └── turn_run.py       # 재접속 스냅샷 (이벤트별 리듀서)
@@ -216,6 +217,7 @@ MultiAgentDebateOrchestration/
     ├── test_remote_mcp.py       # 원격(HTTP) MCP 서버 (설정 규칙·전송 방식·토큰 보관)
     ├── test_tool_security_policy.py # 도구 보안 판정 (코드 검사·규칙·모드·고정 보호·비밀 환경변수)
     ├── test_tool_security_gate.py   # 승인 카드·게이트·도구 루프·매니저·러너·설정 기록
+    ├── test_tool_security_panel.py  # 전역 규칙 편집 (conf.json 되쓰기·서버 PC 전용·즉시 적용)·보안 감사 조회와 창
     ├── test_llm_settings.py   # llm 상속, 엔드포인트/단계적 사고 설정
     ├── test_llm_gate.py       # 서버 전역 LLM 동시 요청 상한 제어 (요청 순서·대기열 순위·취소 처리)
     ├── test_model_status.py   # 모델 연결 상태 (연결 묶기·실패 분류·동시 요청 상한 준수·결과 재사용·방문자 비노출)

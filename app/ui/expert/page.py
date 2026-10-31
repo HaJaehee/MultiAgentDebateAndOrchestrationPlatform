@@ -118,6 +118,8 @@ class ExpertPage:
         self.workspace_download = WorkspaceDownloadDialog(self.workspace_root)
         self.roster_control.on_open_workspace_download = self.workspace_download.open
         self.roster_control.on_tool_rules_changed = self.on_tool_rules_changed
+        self.roster_control.viewer_is_local = self.viewer_is_local
+        self.roster_control.on_open_tool_call = self.open_tool_call
         self.artifact_viewer = ArtifactViewer(on_open_workspace_files=self.workspace_download.open)
 
         # 로스터가 카드를 다시 그릴 때마다 채팅 피드도 같은 겉모습을 받습니다.
@@ -569,14 +571,27 @@ class ExpertPage:
         if run.status != "running":
             self.chat_feed.set_busy(False, run.status_text, run.round_info)
 
-    async def open_search_hit(self, session_id: str, message_id: str) -> None:
-        """검색 결과에서 선택된 발언: 해당 대화 세션을 열고 대상 발언 카드로 이동합니다."""
+    async def _show_session(self, session_id: str) -> None:
         if session_id != self.current_session_id:
             self.sidebar.current_session_id = session_id
             await self.on_session_selected(session_id)
             await self.sidebar.refresh_list()
+
+    async def open_search_hit(self, session_id: str, message_id: str) -> None:
+        """검색 결과에서 선택된 발언: 해당 대화 세션을 열고 대상 발언 카드로 이동합니다."""
+        await self._show_session(session_id)
         if not self.chat_feed.reveal_message(message_id):
             ui.notify("해당 발언을 찾을 수 없습니다 (삭제되었을 수 있습니다).", type="warning", position="bottom-right")
+
+    async def open_tool_call(self, session_id: str, message_id: Optional[str]) -> None:
+        """보안 감사에서 고른 호출: 그 대화를 열고, 호출을 담은 발언 카드로 이동합니다.
+
+        끝나지 못한 발언이 낸 호출은 담은 발언이 없으므로 대화만 엽니다.
+        """
+        if message_id:
+            await self.open_search_hit(session_id, message_id)
+        else:
+            await self._show_session(session_id)
 
     async def on_user_question(self, request_id: str, answer: str) -> bool:
         """에이전트의 확인 질문에 답변을 전달합니다. 이미 처리되었거나 토론이 종료된 경우 안내합니다."""

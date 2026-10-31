@@ -5,7 +5,9 @@ Implementation:
 [app/mcp/exec_scan.py](file:///d:/MultiAgentDebateOrchestration/app/mcp/exec_scan.py) (sandbox code scan) ·
 [app/orchestration/tool_gate.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/tool_gate.py) (asking, remembering) ·
 [app/orchestration/control.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/control.py) (`ToolApprovalRequest`) ·
-[app/mcp/manager.py](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py) (last-line hard protection)
+[app/mcp/manager.py](file:///d:/MultiAgentDebateOrchestration/app/mcp/manager.py) (last-line hard protection) ·
+[app/orchestration/tool_audit.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/tool_audit.py) (blocked calls) ·
+[app/ui/components/roster/tool_security_panel.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/roster/tool_security_panel.py) (global rules and audit window)
 
 Until v0.10.0 every MCP tool an agent was allowed to see ran as soon as the model called it. The only
 guards were the servers' own (the filesystem server refuses paths outside its folder) and the binary
@@ -156,7 +158,8 @@ still asks even when an allow rule matches — which is why a card raised by an 
 "remember" buttons (they would have no effect).
 
 `deny` in `conf.json` **replaces** the built-in list (`DEFAULT_TOOL_DENY_RULES`: secret files and
-capture services) so entries can be removed; keep the defaults when adding.
+capture services) so entries can be removed; keep the defaults when adding. The `전역 규칙·감사` window
+(§7.2) keeps them for you.
 
 | Risk | `read_only` | `default` | `review` | `auto` |
 | :--- | :---: | :---: | :---: | :---: |
@@ -250,8 +253,32 @@ each with a delete button. Deleting takes effect from the next tool call. While 
 goes through the running gate (`OrchestratorEngine.set_tool_rules` → `ToolGate.replace_rules`), which is
 then the only writer of the two columns — otherwise a rule a card just added could be overwritten by the
 page's older list. With no debate running, the page writes the session row itself. `conf.json`'s
-`allow`/`deny` are not listed there; they are edited in the file. Grants and denials do not follow a
-session handoff; the mode does.
+rules are not listed there; see §7.2. Grants and denials do not follow a session handoff; the mode does.
+
+### 7.2 The global rules
+
+The `전역 규칙·감사` button next to `대화 규칙 N` opens a window with two tabs, `전역 규칙` and `보안 감사`
+(§8). The first lists `tool_security.deny`, `ask` and `allow` in the order they are judged. On the server
+PC each rule can be edited in place or deleted and each list takes new rules. Every other viewer sees the
+same lists read-only with a notice; `viewer_is_local` decides, the same check the card's "항상" buttons use,
+and every writing function checks it again so a stale page cannot reach the file.
+
+- **Live.** Rules apply to every conversation, started or not, and to a running debate from its next tool
+  call (`ToolGate.policy_for` reads the current config), so nothing locks and no server restarts.
+- **One line at a time.** Each change re-reads the file and touches one rule
+  (`remove_tool_security_rule_from_conf_file`, `replace_tool_security_rule_in_conf_file`,
+  `add_tool_security_rules_to_conf_file`). The page's list is never written back, so a rule a card just
+  added, or a hand edit, is not overwritten. A rule that is already gone is reported and nothing is written.
+- **The built-in deny list survives.** While `conf.json` has no `deny`, the built-in rules apply, are listed
+  with a `기본` badge, and the first change writes them all with it; removing one built-in rule does not drop the
+  others. `기본 거부 규칙 N개 되돌리기` adds back only what is missing and keeps hand-added rules. An empty `deny`
+  stays empty on reload: it is a choice, and the hard protections still apply.
+- **Loosening asks twice.** Deleting a `deny` or `ask` rule asks for a second click; deleting an `allow` rule only
+  tightens, so it does not. Editing needs no second click, because the new text is typed and saved on purpose.
+- **Bad and pointless rules.** A rule that fails the grammar never reaches the file and its input keeps the text.
+  A rule whose exact text is already in a list judged earlier is saved with a warning that it has no effect.
+- **Not here.** `tool_security.agents`, `mode`, `approval_timeout` and `trusted_servers` stay in the file; the
+  window only names the agents that have tightening of their own.
 
 ---
 
@@ -282,6 +309,23 @@ session handoff; the mode does.
 
 The export writes `⛔ <code>tool</code> — 차단` and `**판정**: …` in the same words.
 
+**The `보안 감사` tab** (§7.2) gathers what the settings blocked across conversations, newest first
+(`tool_audit.blocked_tool_calls`): rows with `decision` `deny` or `hard` and `status = denied`.
+
+| Not listed | Why |
+| :--- | :--- |
+| `rejected`, `timeout` | A person refused the card or did not answer. The settings did not decide. |
+| `hard` with `status = error` | The binary document refusal is a format problem the model fixes with another tool, not a security verdict (§6). |
+| A fork's copies | `session_fork` copies tool rows with their timestamps, so one block would count twice. Across conversations only the oldest conversation's row stays; `이 대화만` on the fork still shows its own. |
+
+Filters are `이 대화만` and the verdict kind (`규칙·모드 차단`, `고정 보호`), 100 rows at a time with `더 보기`. The
+verdict column uses `describe_verdict`, so it reads like the feed. Clicking a row shows the arguments (clipped
+at 4,000 characters, since `write_file` holds whole files) and the refusal the model received, with a button that
+opens the conversation at the speech that made the call, or just the conversation when that speech never finished.
+
+This is a view over `tool_calls`, not a separate log: deleting a conversation or discarding a turn removes its rows too.
+Remote viewers can read the tab, as they can already read every conversation with the owner token.
+
 ---
 
 ## 9. Configuration Reference
@@ -303,8 +347,7 @@ validated when the config loads; a bad line fails the load with every problem li
 
 ## 10. Not in This Release
 
-- Editing `conf.json`'s rules and a security log view in the UI (the conversation's rules can be
-  viewed and deleted — §7.1).
+- An append-only security log that outlives its conversation (the audit tab reads `tool_calls` — §8).
 - Marking fetched content as untrusted in the observation fed to the model.
 - OS-level isolation of the sandbox kernel (Windows Job Object / AppContainer, bubblewrap on Linux) —
   the real boundary for code execution.

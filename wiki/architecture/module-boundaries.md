@@ -215,11 +215,12 @@ flowchart TD
     Control --> Skills["SkillsPanelComponent"]
     Control --> Workspace["WorkspaceRowComponent"]
     Control --> Settings["SessionSettingsComponent · ToolRulesDialog"]
+    Control --> Security["ToolSecurityDialog"]
     Control --> Graph["GraphRowComponent"]
     Cards & Admin & Dialogs & Mcp & Workspace & Settings & Graph --> Changes["RosterChanges — the steps of a change"]
-    Cards & Admin & Dialogs & Mcp & Skills & Workspace & Settings & Graph --> Service["RosterService — conf.json, locks, no NiceGUI"]
+    Cards & Admin & Dialogs & Mcp & Skills & Workspace & Settings & Security & Graph --> Service["RosterService — conf.json, locks, no NiceGUI"]
     Changes --> Service
-    Cards & Admin & Dialogs & Mcp & Workspace & Settings & Graph & Changes --> State["RosterState — this conversation's values, no NiceGUI"]
+    Cards & Admin & Dialogs & Mcp & Workspace & Settings & Security & Graph & Changes --> State["RosterState — this conversation's values, no NiceGUI"]
 ```
 
 | Roster piece | Holds |

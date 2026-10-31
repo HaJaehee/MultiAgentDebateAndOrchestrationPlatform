@@ -535,7 +535,12 @@ def _settings(state, service=None, **callbacks):
         return None
 
     rules = ToolRulesDialog(state, on_changed=on_rules)
-    wiring = dict(on_strategy_changed=lambda: None, on_parallel_changed=lambda: None)
+    async def on_open_tool_security():
+        return None
+
+    wiring = dict(
+        on_open_tool_security=on_open_tool_security, on_strategy_changed=lambda: None, on_parallel_changed=lambda: None,
+    )
     wiring.update(callbacks)
     settings = SessionSettingsComponent(state, service, _changes(state, service), tool_rules=rules, **wiring)
     settings.build_controls()

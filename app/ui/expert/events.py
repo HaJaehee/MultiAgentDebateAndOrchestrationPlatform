@@ -299,6 +299,7 @@ class ExpertEventView:
                 type="positive",
                 position="bottom-right",
             )
+            self.page.roster_control.refresh_global_tool_rules()
         elif event.get("decision") == "timeout":
             ui.notify(
                 f"`{event.get('tool_name', '')}` 승인에 응답이 없어 실행하지 않았습니다.",

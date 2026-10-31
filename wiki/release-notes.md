@@ -6,6 +6,15 @@ changed*, not a second copy of the documentation.
 
 ## v1.5.1
 
+**Global tool rules and blocked calls can be managed on screen.** A `전역 규칙·감사` button next to the roster's
+`대화 규칙 N` opens a window with two tabs. `전역 규칙` lists `tool_security.deny`, `ask` and `allow`: on the server PC each
+rule can be added, edited in place or deleted, and everyone else reads them. Changes apply to every conversation and to a
+running debate from its next tool call. Each one re-reads `conf.json` and touches one line, so a rule a card just added is
+not overwritten, and removing one built-in deny rule keeps the others; a button restores any that are missing. `보안 감사`
+gathers the calls blocked by rules, modes and hard protections across conversations, without counting a fork's copies
+twice, and opens the conversation behind any row. Rows live in `tool_calls`, so deleting a conversation removes them too.
+→ [Tool Security §7.2, §8](mcp/tool-security.md#72-the-global-rules) · `tests/test_tool_security_panel.py`
+
 **Agents can receive file content, not just paths.** Each agent card gets a **모달 N** button below 도구 and 스킬, with
 이미지 · 음성 · 동영상 · 문서 boxes (`allowed_modalities`). A file @mentioned in the input bar goes to the model as base64
 for the agents with that format checked, in their speeches of that turn; text documents go as text because many

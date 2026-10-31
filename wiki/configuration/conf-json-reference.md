@@ -219,7 +219,8 @@ protections and the approval card — is in [Tool Security](../mcp/tool-security
 
 Rule syntax: `read(glob)`, `write(glob)`, `delete(glob)`, `exec`, `exec(regex:…)`, `net(host)`,
 `mcp(server/tool)`, `mcp(server)`. Every rule is validated at load; a bad line fails the load and the
-error lists all of them.
+error lists all of them. `deny`, `ask` and `allow` can also be edited from the roster's `전역 규칙·감사` window
+on the server PC ([Tool Security §7.2](../mcp/tool-security.md#72-the-global-rules)).
 
 ```json
 "tool_security": {

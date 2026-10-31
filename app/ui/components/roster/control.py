@@ -22,6 +22,7 @@ from app.ui.components.roster.mcp_panel import McpPanelComponent
 from app.ui.components.roster.session_settings import SessionSettingsComponent, ToolRulesDialog
 from app.ui.components.roster.skills_panel import SkillsPanelComponent
 from app.ui.components.roster.state import RosterState
+from app.ui.components.roster.tool_security_panel import ToolSecurityDialog
 from app.ui.components.roster.workspace_row import WorkspaceRowComponent
 
 
@@ -42,6 +43,10 @@ class AgentRosterControl:
         self.on_tool_rules_changed: Optional[
             Callable[[List[str], List[str]], Coroutine[None, None, None]]
         ] = None
+        # 이 화면이 서버 PC 에서 열렸는가와 보안 감사에서 고른 호출의 대화를 여는 쪽 (화면이 채웁니다).
+        # 채우지 않으면 원격으로 봅니다 — 전역 규칙을 고치지 못하는 쪽이 안전합니다.
+        self.viewer_is_local: Callable[[], bool] = lambda: False
+        self.on_open_tool_call: Optional[Callable[[str, Optional[str]], Coroutine[None, None, None]]] = None
         # 카드를 다시 그릴 때마다 불립니다. 채팅 피드가 같은 겉모습(색·아이콘)으로
         # 발언을 그리게 하는 통로입니다 — 두 화면이 각자 conf.json 을 읽으면
         # 잠긴 대화에서 갈라집니다.
@@ -87,9 +92,15 @@ class AgentRosterControl:
             on_open_download=self._open_workspace_download,
         )
         self.tool_rules = ToolRulesDialog(self.state, on_changed=self._save_tool_rules)
+        self.tool_security = ToolSecurityDialog(
+            self.state, self.service,
+            viewer_is_local=lambda: self.viewer_is_local(),
+            on_open_call=self._open_tool_call,
+        )
         self.settings = SessionSettingsComponent(
             self.state, self.service, self.changes,
             tool_rules=self.tool_rules,
+            on_open_tool_security=self.tool_security.open,
             on_strategy_changed=self._on_strategy_changed,
             on_parallel_changed=self.cards.refresh_order_preview,
         )
@@ -221,6 +232,10 @@ class AgentRosterControl:
         if self.on_tool_rules_changed is not None:
             await self.on_tool_rules_changed(grants, denials)
 
+    async def _open_tool_call(self, session_id: str, message_id: Optional[str]) -> None:
+        if self.on_open_tool_call is not None:
+            await self.on_open_tool_call(session_id, message_id)
+
     # ------------------------------------------------------------ 화면이 쓰는 면
 
     def roster_agents(self) -> List[Agent]:
@@ -262,6 +277,10 @@ class AgentRosterControl:
 
     def set_tool_rules(self, grants: Optional[List[str]], denials: Optional[List[str]]) -> None:
         self.tool_rules.set_rules(grants, denials)
+
+    def refresh_global_tool_rules(self) -> None:
+        """승인 카드의 "항상" 이 conf.json 을 고쳤습니다. 전역 규칙 창이 열려 있으면 맞춥니다."""
+        self.tool_security.render_rules()
 
     def set_decision_ledger(self, ledger: str) -> None:
         self.settings.set_decision_ledger(ledger)

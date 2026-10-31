@@ -279,28 +279,89 @@ def add_tool_security_rules_to_conf_file(
     서비스)을 **대신**하므로, 규칙 한 줄만 적으면 기본 보호가 통째로 사라집니다. 그래서
     `deny` 가 아직 없으면 기본 목록을 먼저 옮겨 적고 그 뒤에 더합니다.
     """
-    if effect not in ("deny", "ask", "allow"):
-        raise ValueError(f"'{effect}' 는 규칙 종류가 아닙니다 (deny · ask · allow).")
     wanted = validate_rule_list(rules)
     if not wanted:
         return []
     path = Path(config_path)
 
     data = read_conf_file(path)
-    section = _section(data, "tool_security")
-    current = section.get(effect)
-    if current is None:
-        current = list(DEFAULT_TOOL_DENY_RULES) if effect == "deny" else []
-    elif not isinstance(current, list):
-        raise ValueError(f"{path.name} 의 tool_security.{effect} 가 목록이 아닙니다.")
+    current = _tool_rule_list(data, effect, path)
     added = [r for r in wanted if r not in current]
     if not added:
         return []
-    section[effect] = list(current) + added
+    _section(data, "tool_security")[effect] = current + added
 
     write_conf_file(path, data)
     reload_config_if_active(path)
     return added
+
+def _tool_rule_list(data: Dict[str, Any], effect: str, path: Path) -> List[str]:
+    """파일의 `tool_security.<effect>` 를 설정이 읽는 모양 그대로 꺼냅니다.
+
+    `deny` 가 파일에 없으면 기본 목록이 걸려 있는 것이므로 그 목록을 돌려줍니다. 더하든 지우든
+    그 위에서 고쳐 적어야 나머지 기본 보호가 사라지지 않습니다.
+    """
+    if effect not in ("deny", "ask", "allow"):
+        raise ValueError(f"'{effect}' 는 규칙 종류가 아닙니다 (deny · ask · allow).")
+    section = data.get("tool_security")
+    section = section if isinstance(section, dict) else {}
+    if effect not in section:
+        return list(DEFAULT_TOOL_DENY_RULES) if effect == "deny" else []
+    current = section[effect]
+    if current is not None and not isinstance(current, (list, str)):
+        raise ValueError(f"{path.name} 의 tool_security.{effect} 가 목록이 아닙니다.")
+    return validate_rule_list(current)
+
+def remove_tool_security_rule_from_conf_file(
+    effect: str,
+    rule: str,
+    config_path: str | Path = DEFAULT_CONFIG_PATH,
+) -> bool:
+    """`tool_security.<effect>` 에서 규칙 하나를 지웁니다. 지웠으면 True.
+
+    화면이 들고 있는 목록을 통째로 되쓰지 않고 지금의 파일에서 한 줄만 고칩니다. 그 사이 승인
+    카드의 "항상" 이나 손으로 고친 내용이 낡은 목록에 덮이지 않습니다. 이미 없으면 쓰지 않습니다.
+    """
+    path = Path(config_path)
+    target = str(rule or "").strip()
+
+    data = read_conf_file(path)
+    current = _tool_rule_list(data, effect, path)
+    if target not in current:
+        return False
+    _section(data, "tool_security")[effect] = [r for r in current if r != target]
+
+    write_conf_file(path, data)
+    reload_config_if_active(path)
+    return True
+
+def replace_tool_security_rule_in_conf_file(
+    effect: str,
+    old_rule: str,
+    new_rule: str,
+    config_path: str | Path = DEFAULT_CONFIG_PATH,
+) -> bool:
+    """`tool_security.<effect>` 의 규칙 하나를 제자리에서 고칩니다. 고쳤으면 True.
+
+    새 규칙이 틀리면 ValueError 이고 파일은 그대로입니다. 고칠 규칙이 이미 없으면 쓰지 않고
+    False 입니다. 새 규칙이 목록에 이미 있으면 옛 줄만 지워 같은 줄이 둘 남지 않게 합니다.
+    """
+    wanted = validate_rule_list([new_rule])
+    if not wanted:
+        raise ValueError("규칙을 비워 둘 수 없습니다. 지우려면 삭제 버튼을 쓰세요.")
+    path = Path(config_path)
+    target = str(old_rule or "").strip()
+
+    data = read_conf_file(path)
+    current = _tool_rule_list(data, effect, path)
+    if target not in current:
+        return False
+    replaced = [wanted[0] if r == target else r for r in current]
+    _section(data, "tool_security")[effect] = list(dict.fromkeys(replaced))
+
+    write_conf_file(path, data)
+    reload_config_if_active(path)
+    return True
 
 def set_agent_allowed_mcp_servers_in_conf_file(
     agent_key: str,

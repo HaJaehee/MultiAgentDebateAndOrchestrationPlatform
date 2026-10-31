@@ -18,13 +18,18 @@ from app.agents.pool import AgentPool, get_agent_pool, reload_agent_pool
 from app.agents.skills import Skill, scan_skills, skills_root
 from app.config import (
     DEFAULT_CONFIG_PATH,
+    DEFAULT_TOOL_DENY_RULES,
     RootConfig,
+    ToolSecurityConfig,
     active_config_path,
     add_agent_to_conf_file,
     add_mcp_server_to_conf_file,
+    add_tool_security_rules_to_conf_file,
     get_config,
     remove_agent_from_conf_file,
     remove_mcp_server_from_conf_file,
+    remove_tool_security_rule_from_conf_file,
+    replace_tool_security_rule_in_conf_file,
     set_agent_allowed_mcp_servers_in_conf_file,
     set_agent_allowed_modalities_in_conf_file,
     set_agent_allowed_skills_in_conf_file,
@@ -35,9 +40,11 @@ from app.config import (
     set_mcp_server_enabled_in_conf_file,
     set_skill_enabled_in_conf_file,
 )
+from app.database.session import get_session_factory
 from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
 from app.orchestration.runner import get_debate_runner
+from app.orchestration.tool_audit import AUDIT_PAGE_SIZE, BlockedCall, blocked_tool_calls
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +129,22 @@ class RosterService:
             return get_config().tool_security.mode
         except Exception:  # noqa: BLE001
             return "default"
+
+    @staticmethod
+    def tool_security() -> Optional[ToolSecurityConfig]:
+        """지금 걸려 있는 전역 도구 보안 설정. 읽지 못하면 None."""
+        try:
+            return get_config().tool_security
+        except Exception as e:  # noqa: BLE001 - 화면은 설정 오류로 죽지 않아야 합니다
+            logger.warning(f"Could not read tool_security from conf.json: {e}")
+            return None
+
+    @staticmethod
+    async def blocked_calls(
+        session_id: Optional[str] = None, decision: str = "", limit: int = AUDIT_PAGE_SIZE,
+    ) -> Tuple[List[BlockedCall], int]:
+        """보안 감사 탭의 목록 (`app.orchestration.tool_audit`)."""
+        return await blocked_tool_calls(get_session_factory(), session_id=session_id, decision=decision, limit=limit)
 
     @staticmethod
     def runtime(workspace: Any) -> Optional[MCPManager]:
@@ -251,6 +274,20 @@ class RosterService:
 
     def set_skill_enabled(self, skill_name: str, enabled: bool) -> None:
         set_skill_enabled_in_conf_file(skill_name, enabled, self.conf_path())
+
+    def add_tool_rule(self, effect: str, rule: str) -> bool:
+        """전역 규칙 하나를 더합니다. 이미 있으면 False. 도구 보안은 호출마다 지금의 설정을 읽으므로 더 할 일이 없습니다."""
+        return bool(add_tool_security_rules_to_conf_file(effect, [rule], self.conf_path()))
+
+    def remove_tool_rule(self, effect: str, rule: str) -> bool:
+        return remove_tool_security_rule_from_conf_file(effect, rule, self.conf_path())
+
+    def replace_tool_rule(self, effect: str, old_rule: str, new_rule: str) -> bool:
+        return replace_tool_security_rule_in_conf_file(effect, old_rule, new_rule, self.conf_path())
+
+    def restore_default_deny_rules(self) -> List[str]:
+        """지워진 기본 거부 규칙을 되돌립니다. 지금 있는 규칙은 그대로 둡니다. 되돌린 규칙을 돌려줍니다."""
+        return add_tool_security_rules_to_conf_file("deny", list(DEFAULT_TOOL_DENY_RULES), self.conf_path())
 
     # ------------------------------------------------------------ 돌고 있는 앱에 반영
 
