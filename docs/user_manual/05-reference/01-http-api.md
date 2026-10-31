@@ -54,6 +54,7 @@ FastAPI 메타데이터, 화면 헤더 배지, 정보 모달(우측 상단 **ⓘ
     "sequential_thinking": { "enabled": true, "mode": "prompt", "max_steps": 5, "show_steps": true },
     "allowed_mcp_servers": ["filesystem", "memory", "fetch"],
     "allowed_skills": ["mermaid-diagrams"],
+    "allowed_modalities": ["image"],
     "card_color": "#009688",
     "icon": "account_tree"
   }

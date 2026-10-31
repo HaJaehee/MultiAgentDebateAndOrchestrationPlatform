@@ -166,6 +166,7 @@ Configures specialist agents in the agent pool.
 | `max_tokens` | `int` | Inherited | Token budget override. |
 | `allowed_mcp_servers` | `list[str]` | `[]` | List of MCP server keys this agent is authorized to call. |
 | `allowed_skills` | `list[str]` | `[]` | Skill names (folders under `skills.dir`) this agent may load. Frozen into a started conversation like `allowed_mcp_servers`; the skills themselves stay live. See [Skills](../agents/skills.md). |
+| `allowed_modalities` | `list[str]` | `[]` | Formats whose content is delivered to this agent's model: `image`, `audio`, `video`, `document`. Empty means text and file paths only. Frozen into a started conversation like `allowed_mcp_servers`. See [Multimodal Input](../agents/multimodal-input.md). |
 | `debate_priority` | `int` | `100` | Speaking order within a round; lower speaks first. Ties keep `conf.json` order, so leaving every agent at the default speaks in file order. Rewritten as `10, 20, 30…` when cards are dragged in the roster. |
 | `debate_stance` | `str` | `"neutral"` | `"proponent"` / `"critic"` / `"neutral"`. Read only by the adversarial strategy, which alternates the two sides. If no agent declares a side, that strategy degrades to a single priority-ordered pass. |
 | `system_prompt` | `str \| list[str]` | `""` | Base persona instruction and behavioral guidelines. An array is joined with newlines. |

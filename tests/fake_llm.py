@@ -123,6 +123,7 @@ class FakeLLMCaller:
         checkpoint: Any = None,
         resume_state: Any = None,
         preload_skills: Any = (),
+        attachments: Any = (),
     ) -> Tuple[str, List[Dict[str, Any]]]:
         self.calls.append(agent.key)
         self.preloads.append((agent.key, list(preload_skills), list(agent.allowed_skills)))

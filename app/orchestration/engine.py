@@ -127,11 +127,15 @@ class OrchestratorEngine:
         on_event: Optional[EventCallback] = None,
         control: Optional[TurnControl] = None,
         skill_designations: Optional[Dict[str, List[str]]] = None,
+        attachments: Optional[List[str]] = None,
     ) -> DebateState:
         """Executes a full multi-agent collaborative debate and synthesis turn.
 
         `skill_designations` 는 입력창에서 `@전문가 @스킬` 로 지정한 것입니다 (전문가 키 → 스킬).
         이 턴에 한해 그 전문가의 `allowed_skills` 밖이어도 주고, 발언마다 미리 불러 둡니다.
+
+        `attachments` 는 입력창에서 @언급한 파일입니다 (작업 공간 기준 경로). 그 형식을 받도록 설정한
+        에이전트에게만 이 턴의 발언마다 내용째 실립니다 (`app/agents/media.py`).
 
         `control` 이 주어지면 발언과 발언 사이마다 사용자의 정지 요청과 개입
         메모를 확인합니다. 정지는 태스크를 죽이는 것이 아니라 남은 라운드를
@@ -164,7 +168,7 @@ class OrchestratorEngine:
                 with measuring() as usage:
                     state = await self._run_turn(
                         session_id, user_prompt, workspace, turn_id, on_event, control,
-                        skill_designations=skill_designations, usage=usage,
+                        skill_designations=skill_designations, attachments=attachments, usage=usage,
                     )
             except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
                 raise
@@ -243,6 +247,7 @@ class OrchestratorEngine:
         control: Optional[TurnControl] = None,
         *,
         skill_designations: Optional[Dict[str, List[str]]] = None,
+        attachments: Optional[List[str]] = None,
         usage: Optional[Usage] = None,
     ) -> DebateState:
         """`run_turn` 의 본문. 런타임은 이미 빌린 상태로 들어옵니다."""
@@ -258,7 +263,7 @@ class OrchestratorEngine:
             # **전에** 여기서 멈춥니다 — 답 없는 요청이 다음 턴의 맥락에 끼어들지 않게.
             setup = await self.preparer.setup(
                 db, session_model, control=control, on_event=on_event,
-                skill_designations=skill_designations,
+                skill_designations=skill_designations, attachments=attachments,
             )
 
             # 2. Initialize Debate State

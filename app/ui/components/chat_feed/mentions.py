@@ -43,7 +43,8 @@ class MentionUpload:
             .props("flat round dense color=slate-4")
             .tooltip(
                 f"워크스페이스에 파일 업로드 — 작업 공간의 {UPLOAD_SUBDIR}/ 에 저장되고, "
-                f"입력창에 @경로가 들어갑니다. 파일 내용은 대화에 붙지 않습니다."
+                f"입력창에 @경로가 들어갑니다. 파일 내용은 대화에 붙지 않고, 카드의 '모달' 에서 그 형식을 켠 "
+                f"에이전트의 모델에게만 직접 전달됩니다."
             )
         )
 
@@ -76,7 +77,8 @@ class MentionUpload:
                 f"저장 위치: {destination}\n"
                 f"파일당 최대 {format_size(MAX_UPLOAD_BYTES)}까지 가능합니다. 동일한 파일명이 존재할 경우 덮어쓰지 않고 "
                 f"'파일명 (2)' 형식으로 저장합니다. 업로드한 파일은 입력창에 @경로 형태로 추가되며, 본문 내용은 대화에 "
-                f"직접 포함되지 않고 에이전트가 필요 시 도구를 통해 읽어옵니다."
+                f"직접 포함되지 않고 에이전트가 필요 시 도구를 통해 읽어옵니다. 카드의 '모달' 에서 그 형식을 켠 "
+                f"에이전트는 내용을 BASE64 로 직접 받습니다."
             ).classes("text-[11px] text-slate-400 leading-snug whitespace-pre-line")
 
             async def handle_upload(ev) -> None:

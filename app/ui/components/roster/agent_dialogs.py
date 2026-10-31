@@ -1,4 +1,4 @@
-"""로스터 패널 — 카드별 창: 도구 할당, 동료 자문(peers) 상대, 스킬 할당."""
+"""로스터 패널 — 카드별 창: 도구 할당, 동료 자문(peers) 상대, 스킬 할당, 입력 모달."""
 
 from __future__ import annotations
 
@@ -7,16 +7,18 @@ from typing import Any, Callable, Dict
 from nicegui import ui
 
 from app.agents.base import Agent
-from app.config import DEFAULT_PEER_TOOL_ITERATIONS, PEERS_TOOL_PREFIX, TOOL_ITERATION_CEILING
+from app.agents.media import MAX_ATTACHMENT_BYTES, MODALITY_LABELS, extensions_of
+from app.config import DEFAULT_PEER_TOOL_ITERATIONS, INPUT_MODALITIES, PEERS_TOOL_PREFIX, TOOL_ITERATION_CEILING
 from app.orchestration.roster_service import RosterService
 from app.ui.components.roster.changes import RosterChanges
 from app.ui.components.roster.common import peer_candidates, peer_selection_summary, unknown_tool_servers
 from app.ui.components.roster.state import RosterState
 from app.ui.components.roster.widgets import peers_choice, skill_state_badge
+from app.workspace_files import format_size
 
 
 class AgentDialogs:
-    """카드별 창: 도구 할당, 동료 자문(peers) 상대, 스킬 할당."""
+    """카드별 창: 도구 할당, 동료 자문(peers) 상대, 스킬 할당, 입력 모달."""
 
     def __init__(self, state: RosterState, service: RosterService, changes: RosterChanges):
         self.state = state
@@ -290,6 +292,68 @@ class AgentDialogs:
                     lambda: self.service.set_agent_skills(agent_key, chosen),
                     f"'{agent.name}' 에이전트의 스킬을 {len(chosen)}개로 저장하였습니다."
                     if chosen else f"'{agent.name}' 에이전트에 스킬을 할당하지 않았습니다.",
+                    # 서버 구성은 그대로입니다. 다시 띄울 이유가 없습니다.
+                    restart_servers=False,
+                )
+
+            with ui.row().classes("w-full justify-end gap-2 mt-3"):
+                ui.button("취소", on_click=dialog.close).props("flat color=grey")
+                ui.button("저장", on_click=do_save).props("unelevated color=indigo-6")
+
+        dialog.open()
+
+    def open_modalities(self, agent_key: str) -> None:
+        """@언급한 파일 중 이 에이전트의 모델에게 내용을 직접 전달할 형식을 고릅니다.
+
+        도구·스킬 할당과 같습니다 — conf.json 에 저장되어 **아직 시작하지 않은 대화**에 걸리고, 이미 시작한
+        대화는 첫 발언 때 고정된 값을 그대로 씁니다. 그래서 같은 잠금을 씁니다. 모두 비워 두면 글과 파일 경로만
+        받습니다.
+        """
+        if self.changes.blocked_for_agent_admin():
+            return
+
+        agent = self.state.find_agent(agent_key)
+        if agent is None:
+            ui.notify(f"'{agent_key}' 에이전트를 찾을 수 없습니다.", type="warning", position="bottom-right")
+            return
+
+        allowed = set(agent.allowed_modalities or [])
+        boxes: Dict[str, ui.checkbox] = {}
+
+        with ui.dialog() as dialog, ui.card().classes(
+            "p-4 w-[520px] max-w-full bg-slate-900 text-white border border-slate-700"
+        ):
+            ui.label(f"{agent.name} · 입력 모달").classes("text-lg font-bold")
+            ui.label(
+                "입력창에서 @언급한 파일 중 체크한 형식은 경로와 함께 내용을 BASE64 로 이 에이전트의 모델에게 직접 "
+                "전달합니다. 모두 비워 두면 기본 동작대로 글과 파일 경로만 받습니다. conf.json 에 저장되어 아직 "
+                "시작되지 않은 세션과 향후 생성할 세션에 적용되고, 이미 시작된 세션은 시작 시점의 구성을 유지합니다."
+            ).classes("text-[12px] text-amber-400 mb-2 leading-snug")
+
+            with ui.column().classes("w-full gap-1"):
+                for kind in INPUT_MODALITIES:
+                    with ui.row().classes("w-full items-start gap-2 no-wrap"):
+                        boxes[kind] = ui.checkbox(value=kind in allowed).props("dense dark color=purple-3")
+                        with ui.column().classes("gap-0 min-w-0"):
+                            ui.label(MODALITY_LABELS[kind]).classes("text-[13px] font-semibold text-slate-200")
+                            ui.label(", ".join(extensions_of(kind))).classes(
+                                "text-[11px] leading-snug text-slate-400"
+                            )
+
+            ui.label(
+                f"파일당 최대 {format_size(MAX_ATTACHMENT_BYTES)}이며, 언급한 턴의 발언에만 실립니다. 도구가 돌려준 "
+                f"이미지·파일도 같은 체크를 따릅니다. 모델이 받지 못하는 형식이면 요청이 거절되므로, 그때는 내용 없이 "
+                f"발언을 이어 가고 발언 앞에 그 사실을 적습니다."
+            ).classes("text-[11px] text-slate-500 mt-2 leading-snug")
+
+            async def do_save() -> None:
+                chosen = [kind for kind, box in boxes.items() if box.value]
+                dialog.close()
+                labels = ", ".join(MODALITY_LABELS[kind] for kind in chosen)
+                await self.changes.apply_conf_change(
+                    lambda: self.service.set_agent_modalities(agent_key, chosen),
+                    f"'{agent.name}' 에이전트가 {labels} 파일을 직접 받도록 저장하였습니다."
+                    if chosen else f"'{agent.name}' 에이전트는 글과 파일 경로만 받도록 저장하였습니다.",
                     # 서버 구성은 그대로입니다. 다시 띄울 이유가 없습니다.
                     restart_servers=False,
                 )

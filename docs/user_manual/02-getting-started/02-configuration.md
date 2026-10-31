@@ -211,6 +211,7 @@ MADO는 기본적으로 로컬 루프백(`127.0.0.1`) 환경에서만 인입 요
 | `enabled` | bool | `true` | 비활성화(`false`) 시 에이전트 풀에 등록되지 않습니다. |
 | `allowed_mcp_servers` | list[str] | `[]` | 해당 에이전트에게 호출 권한이 허용된 MCP 도구 서버 목록입니다. |
 | `allowed_skills` | list[str] | `[]` | 해당 에이전트가 불러 사용할 수 있는 스킬(스킬 폴더명) 목록입니다. [스킬](../03-core/09-skills.md)을 참조하십시오. |
+| `allowed_modalities` | list[str] | `[]` | @언급한 파일과 도구가 돌려준 파일 중 내용을 모델에게 직접 전달할 형식입니다 (`image`, `audio`, `video`, `document`). 비어 있으면 글과 파일 경로만 받습니다. [입력 모달](../04-workflows/01-debate-turn.md#입력-모달-파일-내용을-직접-전달)을 참조하십시오. |
 | `peer_consultation` | object | 없음 | `allowed_mcp_servers` 에 `"peers"` 가 있을 때 물을 상대(`targets`)와 자문받는 쪽의 도구 상한(`max_tool_iterations`, 기본 3)입니다. [동료 자문 (peers)](../03-core/10-peer-consultation.md)을 참조하십시오. |
 | `debate_priority` | int | `100` | 라운드 내 발언 순서입니다. 값이 작을수록 선순위이며, 동일할 경우 파일 선언 순서를 따릅니다. |
 | `debate_stance` | str | `neutral` | 토론 진영 속성이며 `proponent`(제안), `critic`(비판), `neutral`(중립)을 지원합니다 (디베이트 전략에서 활용). |

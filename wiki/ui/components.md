@@ -106,7 +106,7 @@ The web application workspace is organized into four primary UI components in [a
 - **Card anatomy**: drag handle · avatar on the top line, then name with `수정됨` / stance /
   `이 대화 전용` badges and role *below* it (v0.9.1: always stacked — side by side, the row wrapped only
   for long names, so cards disagreed in shape) · participation checkbox · ⋮ menu (stance, disable,
-  delete) · model line · tool button (icon over `도구 N`, `stack`). The checkbox
+  delete) · model line · tool, skill and modal buttons (icon over `도구 N` / `스킬 N` / `모달 N`, `stack`). The checkbox
   scopes to *this conversation*; everything in the ⋮ menu writes to `conf.json`. They are deliberately
   one layer apart — side by side they are indistinguishable and the mistake is expensive.
 - **Card border** (v0.5.1): normally the border reports participation — indigo when enabled, grey when
@@ -497,6 +497,10 @@ synthesis each round. Inlining a file there would recreate, on the input side, t
 removed from the synthesis. So a mention sends only a path and the agent reads what it needs with its
 own tools. File type is therefore irrelevant: PDFs and Office documents are listed and can be
 mentioned; reading them is the job of whichever MCP server handles the format (e.g. an office MCP).
+
+The one exception is outside the message: an agent whose card has that format checked under **모달 N**
+also receives the content, in its own speeches of this turn only. The message text still carries only
+the path. See [Multimodal Input](../agents/multimodal-input.md).
 
 **Flow.**
 

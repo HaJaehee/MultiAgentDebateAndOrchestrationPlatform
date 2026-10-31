@@ -30,7 +30,7 @@ class _EndlessEngine:
         self.entered = []
 
     async def run_turn(self, session_id, user_prompt, on_event=None, control=None,
-                       skill_designations=None):
+                       skill_designations=None, attachments=None):
         self.entered.append(session_id)
         await asyncio.sleep(3600)
 
@@ -42,7 +42,7 @@ class _StubbornEngine:
         self.release = asyncio.Event()
 
     async def run_turn(self, session_id, user_prompt, on_event=None, control=None,
-                       skill_designations=None):
+                       skill_designations=None, attachments=None):
         try:
             await asyncio.sleep(3600)
         except asyncio.CancelledError:

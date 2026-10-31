@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from app.agents.base import Agent
 from app.agents.ask_user import is_ask_tool
+from app.agents.connection import REJECTED, classify
 from app.agents.consultation import is_consultation_tool
 from app.agents.llm_budget import (
     BUDGET_EXTENDED_INSTRUCTION,
@@ -40,8 +41,18 @@ from app.agents.llm_recovery import (
 )
 from app.agents.llm_tools import memory_search_tool, memory_write_tool
 from app.agents.llm_types import BudgetArbiter, ContextArbiter, SpeechCheckpoint
+from app.agents.media import (
+    MODALITY_LABELS,
+    TOOL_MEDIA_HEADER,
+    has_attachments,
+    is_attachment,
+    modality_of_mime,
+    replace_attachments,
+    store_tool_media,
+)
 from app.agents.skills import is_skill_tool
 from app.mcp.manager import MCPManager
+from app.workspace_files import format_size
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +106,13 @@ def close_open_tool_calls(messages: List[Dict[str, Any]]) -> List[str]:
             missing.append(name)
         return missing
     return []
+
+
+# 모델이 첨부가 든 요청을 거절했을 때 발언 앞에 남기는 글. 화면과 기록과 다음 발언자가 함께 읽습니다.
+ATTACHMENTS_REJECTED_NOTICE = (
+    "> ⚠️ **첨부 전달 실패** — 모델이 첨부가 든 요청을 받지 않아 내용 없이 진행합니다: {names}\n"
+    "> (원인: `{reason}`)"
+)
 
 
 CONTEXT_WIDENED_INSTRUCTION = (
@@ -154,6 +172,8 @@ class ToolLoop:
     leaked_retries: int = 0
     context_asked: bool = False
     announced_bands: Set[Any] = field(default_factory=set)
+    # 이번 판의 도구들이 돌려준 파일. 판의 도구를 다 돌린 뒤 사용자 메시지로 붙입니다 (`_flush_tool_media`).
+    tool_media: List[Dict[str, Any]] = field(default_factory=list)
 
     # --- 도구 목록에서 한 번 구해 두는 것
     memory_write: Optional[str] = field(init=False)
@@ -278,9 +298,14 @@ class ToolLoopMixin:
                     return wrapped
                 self._announce_loop_limits(loop)
 
-                message, finish_reason = await self._complete_once(
-                    agent, loop.messages, tools, on_chunk
-                )
+                try:
+                    message, finish_reason = await self._complete_once(
+                        agent, loop.messages, tools, on_chunk
+                    )
+                except Exception as exc:
+                    if await self._drop_rejected_attachments(loop, exc):
+                        continue
+                    raise
                 loop.used += 1
 
                 segment = self._compose_content(agent, message)
@@ -310,6 +335,26 @@ class ToolLoopMixin:
             raise
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Could not save the progress of {loop.agent.name}'s speech: {exc}")
+
+    async def _drop_rejected_attachments(self, loop: ToolLoop, exc: Exception) -> bool:
+        """모델이 첨부가 든 요청을 거절했으면 첨부를 안내 글로 바꿉니다. 다시 부를 수 있게 됐으면 True.
+
+        체크박스는 사람이 고르고 어떤 모델이 무엇을 받는지는 Provider 마다 다릅니다 (Anthropic 은 음성을,
+        많은 모델이 동영상을 받지 않습니다). 첫 판이 거절되면 그 발언 전체를 잃고, 대화가 시작되면 모달은
+        고정되므로 사람이 바로 고칠 수도 없습니다. 그래서 글로 이어 갑니다. 모델에게는 받지 못했다고 적고,
+        사람에게는 발언 앞의 경고로 알립니다.
+        """
+        if not has_attachments(loop.messages) or classify(exc) != REJECTED:
+            return False
+        names = replace_attachments(loop.messages, "모델이 이 형식의 첨부를 받지 않습니다.")
+        reason = f"{type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''}"
+        logger.warning(f"{loop.agent.name} ({loop.agent.model}) rejected attachments {names}: {reason}")
+        notice = ATTACHMENTS_REJECTED_NOTICE.format(names=", ".join(names), reason=reason[:300])
+        loop.segments.append(notice)
+        if loop.on_chunk:
+            await self._emit_chunk(loop.on_chunk, f"{notice}\n\n")
+        await self._save_loop_progress(loop)
+        return True
 
     # ------------------------------------------------------------ 판 앞: 창과 한도
 
@@ -512,6 +557,7 @@ class ToolLoopMixin:
         # 관측까지 통째로 사라집니다.
         for fn_name, fn_args, call_id, _parsed_ok in parsed:
             await self._run_one_tool(loop, fn_name, fn_args, call_id)
+        await self._flush_tool_media(loop)
 
         # 잘렸다는 사실은 **말로** 알려야 합니다. 도구 서버가 돌려준
         # "Input validation error" 만으로는 모델이 원인을 알 수 없어,
@@ -570,6 +616,7 @@ class ToolLoopMixin:
                 output, status = await self._execute_tool_safely(
                     agent, fn_name, fn_args, loop.session_id, loop.mcp, tools=loop.tools,
                 )
+                output = await self._take_tool_media(loop, fn_name, output)
             security = gate.audit if gate is not None else {}
 
         call_log = {
@@ -589,6 +636,57 @@ class ToolLoopMixin:
             "content": output,
         })
         # 도구 하나가 끝날 때마다 남깁니다. 끊기면 그 다음 도구부터 이어 갑니다.
+        await self._save_loop_progress(loop)
+
+    async def _take_tool_media(self, loop: ToolLoop, fn_name: str, output: str) -> str:
+        """도구가 돌려준 파일을 처리하고 모델이 읽을 글을 돌려줍니다 (`app/mcp/client.py` 의 `ToolOutput`).
+
+        이 에이전트가 받는 형식이면 파일로 풀어 두었다가 판 끝에 함께 싣고, 아니면 무엇이 왔는지만 적습니다.
+        어느 쪽이든 BASE64 는 도구 결과의 글에 넣지 않습니다 — 그 글은 모델이 읽고, 화면에 나오고, DB 에 남습니다.
+        """
+        media = getattr(output, "media", None)
+        if not media:
+            return output
+        allowed = set(loop.agent.allowed_modalities or ())
+        workspace = getattr(loop.mcp or self.mcp_manager, "workspace", None)
+        notes: List[str] = []
+        for item in media:
+            kind = modality_of_mime(item.mime)
+            label = MODALITY_LABELS.get(kind, "파일")
+            described = f"{label} ({item.mime or '형식 모름'}, {format_size(item.size)})"
+            if kind in allowed and workspace:
+                try:
+                    block = await asyncio.to_thread(store_tool_media, workspace, fn_name, kind, item.mime, item.data)
+                except Exception as exc:  # noqa: BLE001 - 파일을 못 풀어도 도구 결과의 글은 남습니다
+                    logger.warning(f"Could not store a file returned by {fn_name}: {exc}")
+                    notes.append(f"[도구가 {described} 을 돌려주었지만 앱이 받아 두지 못했습니다.]")
+                    continue
+                loop.tool_media.append(block)
+                notes.append(f"[도구가 {described} 을 돌려주었습니다. 바로 다음 메시지에 첨부합니다.]")
+            elif kind in MODALITY_LABELS:
+                notes.append(
+                    f"[도구가 {described} 을 돌려주었습니다. 이 에이전트는 '{label}' 입력을 받도록 설정되어 있지 않아 "
+                    f"내용을 볼 수 없습니다. 내용을 본 것처럼 말하지 마세요.]"
+                )
+            else:
+                notes.append(f"[도구가 {described} 을 돌려주었습니다. 모델에게 전달할 수 없는 형식입니다.]")
+        return "\n\n".join(part for part in (str(output), *notes) if part)
+
+    async def _flush_tool_media(self, loop: ToolLoop) -> None:
+        """이번 판에 받은 파일을 사용자 메시지로 붙입니다.
+
+        `role=tool` 에는 붙이지 않습니다. OpenAI 호환 엔드포인트의 도구 결과는 글만 받습니다. 도구 결과 사이에는
+        다른 메시지를 끼울 수 없으므로 (짝이 깨지면 400) 판의 도구를 다 돌린 뒤에 붙입니다.
+        """
+        if not loop.tool_media:
+            return
+        blocks: List[Dict[str, Any]] = [{"type": "text", "text": TOOL_MEDIA_HEADER}]
+        for block in loop.tool_media:
+            if is_attachment(block):
+                blocks.append({"type": "text", "text": f"- {block['name']}"})
+            blocks.append(block)
+        loop.tool_media = []
+        loop.messages.append({"role": "user", "content": blocks})
         await self._save_loop_progress(loop)
 
     # ------------------------------------------------------------ 상한에 닿았을 때

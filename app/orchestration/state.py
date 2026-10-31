@@ -91,6 +91,9 @@ class DebateState(BaseModel):
     # 입력창에서 `@전문가 @스킬` 로 지정한 스킬 (전문가 키 → 스킬). 이 턴에만 걸리고, 그 전문가의
     # 발언마다 미리 불립니다 (`SpeechRunner.speak`). 개입 메모로 더해질 수 있습니다.
     skill_designations: Dict[str, List[str]] = Field(default_factory=dict)
+    # 입력창에서 @언급한 파일 (작업 공간 기준 경로). 받을 형식을 켠 에이전트의 이번 턴 발언마다 내용째 실립니다
+    # (`app/agents/media.py`). 개입 메모로 더해질 수 있습니다.
+    attachments: List[str] = Field(default_factory=list)
     messages: List[DebateMessage] = Field(default_factory=list)
     tool_records: List[Dict[str, Any]] = Field(default_factory=list)
     is_consensus_reached: bool = False

@@ -26,6 +26,7 @@ from app.config import (
     remove_agent_from_conf_file,
     remove_mcp_server_from_conf_file,
     set_agent_allowed_mcp_servers_in_conf_file,
+    set_agent_allowed_modalities_in_conf_file,
     set_agent_allowed_skills_in_conf_file,
     set_agent_debate_order_in_conf_file,
     set_agent_debate_stance_in_conf_file,
@@ -226,6 +227,9 @@ class RosterService:
 
     def set_agent_skills(self, agent_key: str, skills: List[str]) -> None:
         set_agent_allowed_skills_in_conf_file(agent_key, skills, self.conf_path())
+
+    def set_agent_modalities(self, agent_key: str, modalities: List[str]) -> None:
+        set_agent_allowed_modalities_in_conf_file(agent_key, modalities, self.conf_path())
 
     def set_mcp_enabled(self, server_name: str, enabled: bool) -> None:
         set_mcp_server_enabled_in_conf_file(server_name, enabled, self.conf_path())

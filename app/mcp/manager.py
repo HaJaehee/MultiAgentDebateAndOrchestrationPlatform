@@ -19,6 +19,7 @@ from app.mcp.client import (
     MCPClientConnection,
     MCPToolDefinition,
     MCPToolError,
+    ToolOutput,
     clip_tool_output,
 )
 from app.mcp.guards import binary_write_refusal
@@ -715,7 +716,10 @@ class MCPManager:
                 actual_tool_name, arguments,
                 scope=compose_scope(client.server_name, scope, actor),
             )
-            return clip_tool_output(result if isinstance(result, str) else str(result)), "success"
+            text = clip_tool_output(result if isinstance(result, str) else str(result))
+            # 글이 잘려도 도구가 돌려준 파일은 함께 갑니다.
+            media = getattr(result, "media", ())
+            return (ToolOutput(text, media) if media else text), "success"
         except MCPToolError as e:
             # 서버가 보고한 실패 메시지를 그대로 전달합니다 (모델이 읽고 교정).
             return clip_tool_output(e.message), "error"

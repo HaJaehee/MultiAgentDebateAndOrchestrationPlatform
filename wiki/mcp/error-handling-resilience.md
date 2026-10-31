@@ -104,6 +104,9 @@ import from the environment (see
 | `MCP_TOOL_TIMEOUT` | `180` s | The call is abandoned, the session is closed and reopened (a late reply must not mix into the next call's answer), and the agent is told the tool did not answer. |
 | `MCP_TOOL_MAX_CHARS` | `200000` | Head and tail are kept, the middle elided. Servers really do return tens of megabytes; passing that on breaks token counting, the DB write, and the browser in turn. |
 
+The character limit applies to text only. Images, audio and blob resources are separated from the text before it, so
+base64 is never counted, shown or stored as text; see [Multimodal Input §5](../agents/multimodal-input.md#5-files-returned-by-tools).
+
 Without a timeout, an unresponsive server — a runaway script, a dropped remote, a CLI
 waiting on stdin — holds the turn open forever, and cancellation cannot reach a coroutine
 that is simply stuck.

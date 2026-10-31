@@ -75,6 +75,7 @@ class AgentRosterControl:
             self.state, self.service, self.changes,
             open_tools=self.dialogs.open_tools,
             open_skills=self.dialogs.open_skills,
+            open_modalities=self.dialogs.open_modalities,
             open_delete=self.admin.open_delete_dialog,
             disable_agent=self.admin.disable_agent,
             on_selection_changed=self.update_summary_badge,

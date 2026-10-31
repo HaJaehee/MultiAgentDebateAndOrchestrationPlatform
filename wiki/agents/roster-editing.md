@@ -15,6 +15,7 @@ Six operations share one surface and **one lock**:
 | Disable / delete | the card's **⋮ menu** | `enabled` / section removal |
 | Tool assignment | the card's **도구 N** button | `allowed_mcp_servers` |
 | Skill assignment | the card's **스킬 N** button | `allowed_skills` |
+| Input formats | the card's **모달 N** button | `allowed_modalities` ([Multimodal Input](multimodal-input.md)) |
 
 A sixth `conf.json` edit — the card's colour and icon — rides along but is not part of that lock. It
 is set in the **에이전트 추가** dialog (where it is simply part of adding an agent) and in the persona

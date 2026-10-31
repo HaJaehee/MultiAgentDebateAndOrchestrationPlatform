@@ -18,6 +18,7 @@ from app.agents import llm_fallback, llm_usage
 from app.agents.ask_user import QUESTION_WAIT_SECONDS, Asker, asking
 from app.agents.base import Agent
 from app.agents.llm_types import LLMUnavailableError
+from app.agents.media import attachments_for
 from app.agents.skills import with_designated_skills
 from app.config import TOOL_ITERATION_CEILING
 from app.database.models import MessageModel, SpeechDraftModel, ToolCallRecordModel, utc_now
@@ -636,6 +637,7 @@ class SpeechRunner:
                     checkpoint=speech.checkpoint if state.turn_id else None,
                     resume_state=speech.draft_state,
                     preload_skills=designated,
+                    attachments=attachments_for(agent, state.attachments, state.workspace_dir),
                 )
             # 다이어그램 교정 같은 후처리는 시간이 걸립니다. 그동안 카드가 마지막 조각
             # 직전에서 멈춰 보이지 않게, 흘러온 글을 먼저 다 내보냅니다.

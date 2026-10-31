@@ -38,6 +38,8 @@ class TurnSetup:
     memory_budget: int
     # 입력창에서 @전문가 @스킬 로 지정한 것 (전문가 키 → 스킬). 이 턴에만 겁니다.
     skill_designations: Dict[str, List[str]] = field(default_factory=dict)
+    # 입력창에서 @언급한 파일 (작업 공간 기준 경로). 이 턴에만 겁니다.
+    attachments: List[str] = field(default_factory=list)
     # 동료 자문(peers)의 상대가 될 수 있는 이 대화의 에이전트 전부. 참여자는 이번 턴의 사본이고,
     # 참여하지 않는 에이전트는 첫 턴에 고정한 스냅샷입니다 — 자문 상대를 고른 에이전트는 이번
     # 토론에 참여하지 않는 전문가에게도 물을 수 있습니다 (`peer_consultation.targets`).
@@ -63,6 +65,7 @@ class TurnSetup:
             "custom_instructions": self.custom_instructions,
             "workspace_dir": str(workspace),
             "skill_designations": {k: list(v) for k, v in self.skill_designations.items()},
+            "attachments": list(self.attachments),
             "converge_early": self.converge_early,
             "token_budget": self.token_budget,
             "ask_user": self.ask_user,
@@ -95,6 +98,13 @@ def clean_skill_designations(
     return out
 
 
+def clean_attachments(paths: Optional[Any]) -> List[str]:
+    """첨부 경로의 빈 값과 중복을 뺍니다. 작업 공간 안인지는 읽을 때 봅니다 (`media.attachments_for`)."""
+    if not isinstance(paths, (list, tuple)):
+        return []
+    return [p for p in dict.fromkeys(str(x).strip() for x in paths) if p]
+
+
 def new_state(session_id: str, user_prompt: str, workspace: Path, setup: "TurnSetup") -> DebateState:
     return DebateState(
         session_id=session_id,
@@ -108,6 +118,7 @@ def new_state(session_id: str, user_prompt: str, workspace: Path, setup: "TurnSe
         status="planning",
         memory_budget=setup.memory_budget,
         skill_designations={k: list(v) for k, v in setup.skill_designations.items()},
+        attachments=list(setup.attachments),
         ask_user=setup.ask_user,
     )
 
@@ -173,11 +184,12 @@ class TurnPreparer:
         config: Optional[Dict[str, Any]] = None,
         graph_spec: Optional[GraphSpec] = None,
         skill_designations: Optional[Dict[str, List[str]]] = None,
+        attachments: Optional[List[str]] = None,
     ) -> "TurnSetup":
         """턴의 구성과 참여자를 세웁니다. 도구 보안 문지기도 여기서 섭니다.
 
         `config` 가 없으면 지금 대화 설정으로(새 턴), 있으면 그 구성으로(끊긴 턴) 세웁니다.
-        스킬 지정도 같습니다 — 새 턴은 `skill_designations` 를, 끊긴 턴은 고정해 둔 것을 씁니다.
+        스킬 지정과 첨부도 같습니다 — 새 턴은 넘겨받은 것을, 끊긴 턴은 고정해 둔 것을 씁니다.
         도구 보안(모드·허용·거부)은 어느 쪽이든 **지금** 대화 설정을 따릅니다 — 사람이 끊긴
         사이에 조인 보안을 이어 가는 턴이 우회하면 안 됩니다.
         """
@@ -192,6 +204,7 @@ class TurnPreparer:
             active_keys = session_model.active_agents or ["orchestrator", "architect", "coder", "critic"]
             custom_instructions = session_model.custom_instructions or ""
             designations = skill_designations
+            attached = attachments
             converge_early = bool(session_model.converge_early)
             token_budget = max(0, int(session_model.token_budget or 0))
             ask_user = bool(session_model.ask_user)
@@ -205,6 +218,7 @@ class TurnPreparer:
             active_keys = list(config.get("active_agents") or session_model.active_agents or [])
             custom_instructions = str(config.get("custom_instructions") or "")
             designations = config.get("skill_designations")
+            attached = config.get("attachments")
             converge_early = bool(config.get("converge_early", True))
             token_budget = max(0, int(config.get("token_budget") or 0))
             ask_user = bool(config.get("ask_user", False))
@@ -270,6 +284,7 @@ class TurnPreparer:
             graph_spec=graph_spec,
             memory_budget=memory_budget,
             skill_designations=clean_skill_designations(designations, active_keys),
+            attachments=clean_attachments(attached),
             consult_pool=consult_pool,
             converge_early=converge_early,
             token_budget=token_budget,

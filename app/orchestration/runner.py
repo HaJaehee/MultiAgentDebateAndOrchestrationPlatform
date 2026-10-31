@@ -92,7 +92,7 @@ class DebateRunner:
     def start(self, session_id: str, user_prompt: str,
               workspace: Optional[str] = None,
               skill_designations: Optional[Dict[str, List[str]]] = None,
-              *, attended: bool = True) -> TurnRun:
+              *, attended: bool = True, attachments: Optional[List[str]] = None) -> TurnRun:
         """토론을 백그라운드에서 시작합니다. 이미 돌고 있으면 그 실행을 돌려줍니다.
 
         `attended=False`는 대화형 사용자가 없는 무인 모드 턴입니다 (API/MCP 헤드리스 실행, `app/headless.py`).
@@ -109,7 +109,7 @@ class DebateRunner:
         async def body(on_event) -> None:
             await self.engine.run_turn(
                 session_id=session_id, user_prompt=user_prompt, on_event=on_event,
-                control=run.control, skill_designations=skill_designations,
+                control=run.control, skill_designations=skill_designations, attachments=attachments,
             )
 
         return self._launch(run, body)
@@ -268,10 +268,11 @@ class DebateRunner:
         return produced
 
     def interject(self, session_id: str, text: str,
-                  skill_designations: Optional[Dict[str, List[str]]] = None) -> bool:
+                  skill_designations: Optional[Dict[str, List[str]]] = None,
+                  attachments: Optional[List[str]] = None) -> bool:
         """진행 중인 토론에 사용자 메시지를 끼워 넣습니다."""
         run = self._runs.get(session_id)
-        return run.interject(text, skill_designations) if run is not None else False
+        return run.interject(text, skill_designations, attachments) if run is not None else False
 
     def resolve_decision(self, session_id: str, extra: int,
                          request_id: Optional[str] = None) -> bool:

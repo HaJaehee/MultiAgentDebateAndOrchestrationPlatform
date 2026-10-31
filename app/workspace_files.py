@@ -21,6 +21,10 @@
 * **코드 블록 안의 `@` 는 언급이 아닙니다.** 붙여 넣은 코드의 `@app.get`, `@Override` 가
   파일이나 에이전트로 해석되면 안 됩니다.
 
+받을 형식을 켠 에이전트(카드의 `모달`)에게는 언급한 파일의 내용도 전달하지만, 그것은 사용자 메시지가 아닙니다.
+보내는 쪽이 `MentionReport.attachment_paths` 를 엔진에 넘기고, 그 에이전트의 이번 턴 발언에만 실립니다
+(`app/agents/media.py`). 글에는 여전히 경로만 남습니다.
+
 스킬도 언급할 수 있습니다. 스킬 언급은 **같은 줄에서 바로 앞에 언급한 전문가**에게 지정됩니다
 (앞에 없으면 그 줄에서 뒤의 첫 전문가, 그 줄에 아무도 없으면 앞 줄들에서 가장 가까운 전문가).
 지정은 글로만 전하지 않습니다 — 보내는 쪽이 `MentionReport.skill_designations` 를 엔진에 넘기고,
@@ -384,6 +388,11 @@ class MentionReport:
             out.setdefault(agent.key, []).append(skill)
         return out
 
+    @property
+    def attachment_paths(self) -> List[str]:
+        """엔진에 넘길 언급한 파일의 경로. 받을 형식인지는 에이전트마다 발언할 때 가립니다."""
+        return [rel for rel, _size in self.files]
+
     def warnings(self) -> List[str]:
         out = []
         if self.missing:
@@ -557,8 +566,8 @@ def build_reference_block(report: MentionReport, root: Path) -> str:
         for rel in report.dirs:
             parts.append(f"- {rel}/ (폴더)")
         parts.append(
-            "파일 내용은 붙이지 않았습니다. 필요하면 그 형식을 다루는 파일 도구로 이 경로를 "
-            "직접 읽으세요."
+            "이 글에는 파일 내용을 붙이지 않았습니다. 앱이 내용을 따로 실어 주지 않았다면 그 형식을 다루는 "
+            "파일 도구로 이 경로를 직접 읽으세요."
         )
     if report.agents:
         if len(parts) > 1:

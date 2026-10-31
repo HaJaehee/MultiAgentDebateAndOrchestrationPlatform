@@ -12,6 +12,7 @@ import litellm
 
 from app.agents.base import Agent
 from app.agents.llm_budget import TOOL_BUDGET_FINAL_COUNTDOWN
+from app.agents.media import without_attachments
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,9 @@ def merge_consecutive_roles(messages: List[Dict[str, Any]]) -> List[Dict[str, An
 
     발언마다 `[이름 (역할)]:` 머리표가 이미 붙어 있어, 합쳐도 누가 말했는지는
     그대로 남습니다. tool 호출이 얽힌 메시지는 건드리지 않습니다.
+
+    첨부가 실린 사용자 메시지는 본문이 블록 목록이라 (`app/agents/media.py`), 합칠 때 글을 블록으로
+    잇습니다. 건너뛰면 첨부를 켠 에이전트만 위 400 을 다시 만납니다.
     """
     merged: List[Dict[str, Any]] = []
     for msg in messages:
@@ -68,13 +72,26 @@ def merge_consecutive_roles(messages: List[Dict[str, Any]]) -> List[Dict[str, An
             and prev.get("role") == msg.get("role")
             and msg.get("role") in ("user", "assistant")
             and not prev.get("tool_calls") and not msg.get("tool_calls")
-            and isinstance(prev.get("content"), str) and isinstance(msg.get("content"), str)
         )
-        if mergeable:
+        if mergeable and isinstance(prev.get("content"), str) and isinstance(msg.get("content"), str):
             prev["content"] = f"{prev['content']}\n\n{msg['content']}"
+        elif mergeable and msg.get("role") == "user" and _is_blocks(prev) and _is_blocks(msg):
+            prev["content"] = _as_blocks(prev["content"]) + _as_blocks(msg["content"])
         else:
             merged.append(dict(msg))
     return merged
+
+def _is_blocks(msg: Dict[str, Any]) -> bool:
+    return isinstance(msg.get("content"), (str, list))
+
+def _as_blocks(content: Any) -> List[Dict[str, Any]]:
+    return list(content) if isinstance(content, list) else [{"type": "text", "text": content}]
+
+def _content_text(content: Any) -> str:
+    """메시지 본문의 글. 블록 목록이면 글 블록만 잇습니다."""
+    if isinstance(content, list):
+        return "\n".join(str(b.get("text") or "") for b in content if isinstance(b, dict))
+    return content if isinstance(content, str) else ""
 
 def _rough_tokens(text: str) -> int:
     """토크나이저 없이 어림한 토큰 수. 모자라게 세느니 넘치게 셉니다.
@@ -116,11 +133,12 @@ def _countable_text(msg: Dict[str, Any]) -> str:
     return "\n".join(parts)
 
 def estimate_tokens(model: str, messages: List[Dict[str, Any]]) -> int:
-    """메시지 목록의 토큰 수. 토크나이저를 못 쓰면 글자 수로 어림잡습니다."""
+    """메시지 목록의 토큰 수. 토크나이저를 못 쓰면 글자 수로 어림잡습니다. 첨부는 어림값을 더합니다."""
+    plain, attachments = without_attachments(messages)
     try:
-        return int(litellm.token_counter(model=model, messages=messages))
+        return int(litellm.token_counter(model=model, messages=plain)) + attachments
     except Exception:  # noqa: BLE001 - 토큰 계산 실패가 호출을 막아서는 안 됩니다
-        return sum(_rough_tokens(_countable_text(m)) + 4 for m in messages)
+        return sum(_rough_tokens(_countable_text(m)) + 4 for m in plain) + attachments
 
 @lru_cache(maxsize=64)
 def _schema_tokens(model: str, payload: str) -> int:
@@ -394,8 +412,7 @@ def fit_tool_loop_context(
         # 앞선 자르기에서 이미 다시 붙였으면(자리가 모자라 줄여 붙였을 수도 있어 원문과 다를
         # 수 있습니다) 그 표시로 알아봅니다. 그 자리는 목표 메시지라 버려지지 않습니다.
         return any(
-            isinstance(m.get("content"), str)
-            and (keep in m["content"] or KEPT_TURN_NOTICE in m["content"])
+            keep in _content_text(m.get("content")) or KEPT_TURN_NOTICE in _content_text(m.get("content"))
             for m in head + [m for b in blocks for m in b]
         )
 

@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from nicegui import run as ng_run, ui
 from sqlalchemy import desc, select
 
+from app.agents.media import attachment_notices
 from app.agents.personas import effective_personas, resync_agent_configs, session_roster_agents
 from app.agents.skills import scan_skills
 from app.config import resolve_workspace_dir
@@ -43,6 +44,7 @@ from app.ui.mermaid_export import MERMAID_EXPORT_JS, MERMAID_IMAGE_JS
 from app.ui.run_binding import RunBinding
 from app.ui.theme import CUSTOM_CSS, FAVICON_SVG
 from app.workspace_files import (
+    MentionReport,
     UPLOAD_SUBDIR,
     agents_for_mentions,
     expand_mentions,
@@ -289,12 +291,12 @@ class ExpertPage:
     def upload_destination(self) -> str:
         return str(self.workspace_root() / UPLOAD_SUBDIR)
 
-    async def with_references(self, text: str) -> Tuple[str, Dict[str, List[str]]]:
+    async def with_references(self, text: str) -> Tuple[str, MentionReport]:
         """보낼 글의 @언급을 풀어 참조 블록을 붙입니다. 뺀 언급은 알려 줍니다.
 
-        파일 내용은 붙이지 않습니다 — 경로만. 전문가 지목도 글로만 전달합니다. 스킬 지정만은
-        글과 함께 (전문가 키 → 스킬) 로도 돌려줍니다. 엔진이 그 전문가의 발언마다 스킬을 미리
-        불러 두려면 글이 아니라 값으로 받아야 합니다.
+        글에는 파일 내용을 붙이지 않습니다 — 경로만. 전문가 지목도 글로만 전달합니다. 스킬 지정과 언급한
+        파일은 글과 함께 값으로도 돌려줍니다(`MentionReport`). 엔진이 그 전문가의 발언마다 스킬을 미리
+        불러 두고, 받을 형식을 켠 에이전트에게 파일 내용을 실으려면 글이 아니라 값으로 받아야 합니다.
         """
         skills = await ng_run.io_bound(self.mention_skills)
         expanded, report = await ng_run.io_bound(
@@ -302,7 +304,15 @@ class ExpertPage:
         )
         for warning in report.warnings():
             ui.notify(warning, type="warning", position="bottom-right", multi_line=True)
-        return expanded, report.skill_designations
+        active = set(self.roster_control.get_active_agent_keys())
+        notices, oversized = attachment_notices(
+            report.files, [a for a in self.roster_control.roster_agents() if a.key in active],
+        )
+        for warning in oversized:
+            ui.notify(warning, type="warning", position="bottom-right", multi_line=True)
+        for notice in notices:
+            ui.notify(notice, type="info", position="bottom-right", multi_line=True)
+        return expanded, report
 
     # ------------------------------------------------------------ 턴 제어
 
@@ -313,7 +323,7 @@ class ExpertPage:
         못하고 돌아갈 때는 반드시 다시 풀어 주어야 합니다.
         """
         try:
-            prompt, skill_designations = await self.with_references(prompt)
+            prompt, mentions = await self.with_references(prompt)
             if not self.current_session_id:
                 self.current_session_id = await self.create_new_session_db(title=prompt[:30])
                 self.sidebar.current_session_id = self.current_session_id
@@ -338,7 +348,7 @@ class ExpertPage:
             # 사유는 아래 실패 경로를 통해 화면에 그대로 나옵니다.
             run = self.runner.start(
                 self.current_session_id, prompt, self.roster_control.state.workspace_dir,
-                skill_designations=skill_designations,
+                skill_designations=mentions.skill_designations, attachments=mentions.attachment_paths,
             )
         except Exception as exc:  # noqa: BLE001 - 입력이 잠긴 채로 남으면 안 됩니다
             logger.error(f"Could not start the debate: {exc}", exc_info=True)
@@ -454,11 +464,12 @@ class ExpertPage:
         새 턴을 열지 않고(러너는 세션당 하나만 돌립니다) 진행 중인 토론의
         다음 발언 차례에 유저 발언으로 끼워 넣습니다.
         """
-        outgoing, skill_designations = (
-            await self.with_references(text) if self.current_session_id else (text, {})
+        outgoing, mentions = (
+            await self.with_references(text) if self.current_session_id else (text, MentionReport())
         )
         if not self.current_session_id or not self.runner.interject(
-            self.current_session_id, outgoing, skill_designations=skill_designations
+            self.current_session_id, outgoing,
+            skill_designations=mentions.skill_designations, attachments=mentions.attachment_paths,
         ):
             # 마지막 발언과 화면 갱신 사이에 눌린 경우. 글을 삼키지 않습니다.
             self.chat_feed.restore_input(text)

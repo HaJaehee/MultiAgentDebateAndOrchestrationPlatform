@@ -92,6 +92,7 @@ app/
 │   ├── consultation.py              458   동료 자문 peers__consult_agent
 │   ├── draft.py                     306   에이전트 설계도: 도우미 프롬프트·읽기·거르기, 주인 저장
 │   ├── catalog.py                   155   도구·스킬의 쉬운 말 이름, 고를 수 있는 목록
+│   ├── media.py                     454   입력 모달: 파일 내용을 요청 직전에 싣기, 도구가 돌려준 파일
 │   ├── llm.py                       469   LLMCaller: 호출, 폴백 판단, 한 판 호출
 │   ├── llm_loop.py                  630   도구 루프 (ToolLoop 상태 + 단계별 함수)
 │   ├── llm_request.py               177   시스템 프롬프트·LiteLLM 인자

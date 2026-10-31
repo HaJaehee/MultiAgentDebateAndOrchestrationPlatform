@@ -207,7 +207,7 @@ class _HangingEngine:
         self.cancelled = False
 
     async def run_turn(self, session_id, user_prompt, on_event=None, control=None,
-                       skill_designations=None):
+                       skill_designations=None, attachments=None):
         import asyncio
 
         for index in (1, 2):

@@ -437,6 +437,10 @@ class AnswerRecoveryMixin:
         if last is not None and last.get("role") == "user" and isinstance(last.get("content"), str):
             messages[-1] = {**last, "content": f"{last['content']}\n\n{text}"}
             return
+        if last is not None and last.get("role") == "user" and isinstance(last.get("content"), list):
+            # 도구가 돌려준 파일을 실은 메시지입니다 (`_flush_tool_media`).
+            messages[-1] = {**last, "content": [*last["content"], {"type": "text", "text": text}]}
+            return
         messages.append({"role": "user", "content": text})
 
     async def _ask_context(

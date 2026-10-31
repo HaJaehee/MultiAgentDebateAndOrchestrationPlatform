@@ -71,6 +71,8 @@ class TurnControl:
         self._notes: List[str] = []
         # 개입 메모와 함께 온 스킬 지정 (전문가 키 → 스킬). 메모와 같은 때에 꺼내 갑니다.
         self._skill_designations: Dict[str, List[str]] = {}
+        # 개입 메모에서 언급한 파일 (작업 공간 기준 경로). 메모와 같은 때에 꺼내 갑니다.
+        self._attachments: List[str] = []
         # 사람의 답을 기다리는 쪽지들 (id -> 쪽지). 도구 상한과 컨텍스트 창이
         # 같은 우편함을 씁니다 — 기다리는 방식도, 답을 받는 방식도 같습니다.
         #
@@ -113,7 +115,12 @@ class TurnControl:
         """아직 토론에 반영되지 않고 대기 중인 개입 메모."""
         return list(self._notes)
 
-    def add_note(self, text: str, skill_designations: Optional[Dict[str, List[str]]] = None) -> bool:
+    def add_note(
+        self,
+        text: str,
+        skill_designations: Optional[Dict[str, List[str]]] = None,
+        attachments: Optional[List[str]] = None,
+    ) -> bool:
         """개입 메모를 대기열에 넣습니다. 빈 문자열은 무시하고 False 를 돌려줍니다."""
         cleaned = (text or "").strip()
         if not cleaned:
@@ -122,6 +129,7 @@ class TurnControl:
         for key, skills in (skill_designations or {}).items():
             bucket = self._skill_designations.setdefault(key, [])
             bucket.extend(s for s in skills if s not in bucket)
+        self._attachments.extend(p for p in (attachments or []) if p not in self._attachments)
         return True
 
     def drain_notes(self) -> List[str]:
@@ -133,6 +141,11 @@ class TurnControl:
         """메모와 함께 온 스킬 지정을 전부 꺼내고 비웁니다."""
         designations, self._skill_designations = self._skill_designations, {}
         return designations
+
+    def drain_attachments(self) -> List[str]:
+        """메모와 함께 온 첨부 경로를 전부 꺼내고 비웁니다."""
+        attachments, self._attachments = self._attachments, []
+        return attachments
 
     # -------------------------------------------------- 결정 요청 (공통)
 

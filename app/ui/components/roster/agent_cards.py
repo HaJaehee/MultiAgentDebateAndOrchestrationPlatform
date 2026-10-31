@@ -7,6 +7,7 @@ from typing import Any, Callable, List, Optional
 from nicegui import ui
 
 from app.agents.base import Agent
+from app.agents.media import MODALITY_LABELS
 from app.config import DEBATE_STANCES, ORCHESTRATOR_KEY
 from app.orchestration.roster_service import RosterService
 from app.orchestration.strategies import STRATEGY_MAP, resolve_strategy_name
@@ -36,6 +37,7 @@ class AgentCardsComponent:
         *,
         open_tools: Callable[[str], None],
         open_skills: Callable[[str], None],
+        open_modalities: Callable[[str], None],
         open_delete: Callable[[str], None],
         disable_agent: Callable[[str], Any],
         on_selection_changed: Callable[[], None],
@@ -46,6 +48,7 @@ class AgentCardsComponent:
         self.changes = changes
         self.open_tools = open_tools
         self.open_skills = open_skills
+        self.open_modalities = open_modalities
         self.open_delete = open_delete
         self.disable_agent = disable_agent
         self.on_selection_changed = on_selection_changed
@@ -336,6 +339,28 @@ class AgentCardsComponent:
                 else:
                     skills_button.tooltip("해당 에이전트가 불러 사용할 수 있는 스킬을 선택합니다.")
 
+            # 입력창에서 @언급한 파일 중 이 에이전트가 내용을 직접 받을 형식입니다. 할당은 도구·스킬과 같은
+            # 규칙(구성 잠금)을 따릅니다. 비어 있으면 글과 파일 경로만 받습니다.
+            modalities = agent.allowed_modalities or []
+            with ui.row().classes("w-full items-center gap-1 no-wrap"):
+                modalities_button = ui.button(
+                    f"모달 {len(modalities)}",
+                    icon="perm_media",
+                    on_click=lambda _, k=agent.key: self.open_modalities(k),
+                ).props("flat dense no-caps stack size=sm color=purple-3").classes(
+                    "flex-shrink-0"
+                ).style("font-size: 11px")  # size=sm 이 글자 크기를 인라인(10px)으로 박아 클래스로는 못 바꿉니다
+                ui.label(", ".join(MODALITY_LABELS.get(m, m) for m in modalities) or "없음").classes(
+                    "text-[12px] text-slate-500 truncate"
+                )
+                if tools_reason:
+                    modalities_button.disable()
+                    modalities_button.tooltip(tools_reason)
+                else:
+                    modalities_button.tooltip(
+                        "@언급한 파일 중 이 에이전트의 모델에게 내용을 BASE64 로 직접 전달할 형식을 선택합니다."
+                    )
+
             ui.tooltip(
                 f"model: {agent.model}\r\n"
                 f"endpoint: {agent.endpoint_label}\r\n"
@@ -343,7 +368,8 @@ class AgentCardsComponent:
                 f"sequential thinking: "
                 f"{f'{agent.sequential_thinking.mode} (max {agent.sequential_thinking.max_steps} steps)' if agent.sequential_thinking.enabled else 'disabled'}\r\n"
                 f"mcp: {', '.join(agent.allowed_mcp_servers) or '-'}\r\n"
-                f"skills: {', '.join(agent.allowed_skills) or '-'}"
+                f"skills: {', '.join(agent.allowed_skills) or '-'}\r\n"
+                f"modalities: {', '.join(agent.allowed_modalities) or '-'}"
             ).classes("whitespace-pre-line text-[11px]")
         return True
 

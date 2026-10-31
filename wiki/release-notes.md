@@ -6,6 +6,16 @@ changed*, not a second copy of the documentation.
 
 ## v1.5.1
 
+**Agents can receive file content, not just paths.** Each agent card gets a **모달 N** button below 도구 and 스킬, with
+이미지 · 음성 · 동영상 · 문서 boxes (`allowed_modalities`). A file @mentioned in the input bar goes to the model as base64
+for the agents with that format checked, in their speeches of that turn; text documents go as text because many
+providers refuse them as base64. With every box empty the request is exactly as before: text and file paths. Content
+is read only when the request is sent, so drafts, tool records and the database hold paths. If a model refuses, the
+speech continues without the content and says so at the top. MCP tools benefit too: `ImageContent`, `AudioContent` and
+blob resources no longer become base64 text. They follow the same boxes, and the sandbox returns new charts as images
+when the host asks (`SANDBOX_INLINE_IMAGES`; MADO does).
+→ [Multimodal Input](agents/multimodal-input.md) · [ADR-035](../lectures/05-adr/ADR-035-agent-input-modalities.md) · `tests/test_modalities.py`
+
 **The orchestrator can draw the turn's graph, and two specialists can settle one issue on the side.** A sixth
 strategy, 적응형 그래프 토론 (`adaptive_graph`), has the orchestrator draw an execution graph after the plan is approved and
 freeze it for the turn: same schema, same validation, same scheduler and resume as a hand-drawn graph, with the checked

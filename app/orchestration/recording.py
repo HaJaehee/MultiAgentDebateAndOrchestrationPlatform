@@ -30,7 +30,7 @@ from app.orchestration import context_memory as memory, plan_gate, turns
 from app.orchestration.context import EngineContext
 from app.orchestration.control import TurnControl
 from app.orchestration.state import DebateMessage, DebateState
-from app.orchestration.turn_setup import TurnSetup, clean_skill_designations
+from app.orchestration.turn_setup import TurnSetup, clean_attachments, clean_skill_designations
 
 logger = logging.getLogger(__name__)
 
@@ -402,6 +402,7 @@ class TurnRecorder:
             return 0
         notes = control.drain_notes()
         await self.add_skill_designations(db, state, control.drain_skill_designations())
+        await self.add_attachments(db, state, control.drain_attachments())
         for note in notes:
             await self.record_user_message(
                 db=db,
@@ -430,7 +431,21 @@ class TurnRecorder:
                 if name not in bucket:
                     bucket.append(name)
                     added = True
-        if not added or not state.turn_id:
+        if added:
+            await self._update_turn_config(
+                db, state, "skill_designations", {k: list(v) for k, v in state.skill_designations.items()},
+            )
+
+    async def add_attachments(self, db, state: DebateState, paths: List[str]) -> None:
+        """개입 메모에서 언급한 파일을 남은 발언에 겁니다. 끊겼다 이어 가도 남도록 턴 기록에도 적습니다."""
+        fresh = [p for p in clean_attachments(paths) if p not in state.attachments]
+        if fresh:
+            state.attachments.extend(fresh)
+            await self._update_turn_config(db, state, "attachments", list(state.attachments))
+
+    async def _update_turn_config(self, db, state: DebateState, key: str, value: Any) -> None:
+        """턴 기록에 고정해 둔 구성의 한 항목을 바꿉니다."""
+        if not state.turn_id:
             return
         try:
             turn = await db.get(TurnModel, state.turn_id)
@@ -438,10 +453,10 @@ class TurnRecorder:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - 적지 못해도 이번 턴에는 걸립니다
-            logger.warning(f"Could not read turn {state.turn_id} to save skill designations: {exc}")
+            logger.warning(f"Could not read turn {state.turn_id} to save {key}: {exc}")
             return
         if config is not None:
-            config["skill_designations"] = {k: list(v) for k, v in state.skill_designations.items()}
+            config[key] = value
             await self.set_turn(db, state, config=config)
 
     async def load_history(

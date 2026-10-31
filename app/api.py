@@ -119,6 +119,7 @@ async def list_agents():
             "sequential_thinking": a.sequential_thinking.model_dump(exclude={"prompt_template"}),
             "allowed_mcp_servers": a.allowed_mcp_servers,
             "allowed_skills": a.allowed_skills,
+            "allowed_modalities": a.allowed_modalities,
             "card_color": a.card_color,
             "icon": a.icon,
         }

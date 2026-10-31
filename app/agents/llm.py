@@ -23,7 +23,7 @@ from app.agents.base import Agent
 from app.agents.connection import SERVER_ERROR, classify
 from app.agents.ask_user import ask_tools_for
 from app.agents.consultation import consultation_tools_for
-from app.agents.llm_context import fit_context_window, merge_consecutive_roles, place_ledger_last
+from app.agents.llm_context import context_budget, fit_context_window, merge_consecutive_roles, place_ledger_last
 from app.agents.llm_fingerprint import request_fingerprint
 from app.agents.llm_gate import get_llm_gate
 from app.agents.llm_loop import ToolLoopMixin
@@ -32,6 +32,7 @@ from app.agents.llm_request import RequestBuilderMixin
 from app.agents.llm_tool_calls import ToolCallMixin
 from app.agents.llm_tools import memory_search_tool
 from app.agents.llm_types import BudgetArbiter, ContextArbiter, LLMUnavailableError, SpeechCheckpoint
+from app.agents.media import fit_attachments, materialize_attachments, with_attachments, without_attachments
 from app.agents.skills import skill_tools_for
 from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
@@ -95,10 +96,14 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         checkpoint: Optional[SpeechCheckpoint] = None,
         resume_state: Optional[Dict[str, Any]] = None,
         preload_skills: Sequence[str] = (),
+        attachments: Sequence[Dict[str, Any]] = (),
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Executes a turn for the given agent.
         Returns (response_text, tool_call_logs).
+
+        `attachments` 는 이 발언에 내용째 실을 파일입니다 (`media.attachments_for`). 비어 있으면 요청은 글뿐입니다.
+        이어 가는 발언에서는 이미 메시지에 들어 있습니다.
 
         `preload_skills` 는 유저가 이 에이전트에게 지정한 스킬입니다 (입력창의 `@전문가 @스킬`).
         첫 LLM 호출 전에 호스트가 `load_skill` 을 대신 불러 결과를 넣어 둡니다 (`_preload_skills`).
@@ -150,6 +155,7 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
                 budget_arbiter=budget_arbiter, context_arbiter=context_arbiter,
                 on_context_trim=trim_callback, mcp=mcp, ledger=ledger, tool_gate=tool_gate,
                 checkpoint=checkpoint, resume_state=resume_state, preload_skills=preload_skills,
+                attachments=attachments,
             )
 
         route = llm_fallback.route_for(agent)
@@ -274,6 +280,7 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         checkpoint: Optional[SpeechCheckpoint] = None,
         resume_state: Optional[Dict[str, Any]] = None,
         preload_skills: Sequence[str] = (),
+        attachments: Sequence[Dict[str, Any]] = (),
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """`agent` 의 연결 그대로 한 번 부릅니다 (`call_agent` 가 물러설지 말지를 정합니다)."""
         # Retrieve available tools for this agent
@@ -302,7 +309,9 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
                  "content": self.build_system_prompt(agent, custom_instructions, tools)}
             ]
             prompt = place_ledger_last(messages, ledger)
-            formatted_messages.extend(prompt)
+            formatted_messages.extend(with_attachments(
+                prompt, fit_attachments(list(attachments), context_budget(agent, tools=tools)),
+            ))
             # 발언을 시작할 때의 마지막 사용자 메시지(장부 + 이번 차례 지시). 도구 루프가 넘쳐
             # 이것을 버리게 되면 다시 붙입니다 (`fit_tool_loop_context` 의 `keep`).
             turn_anchor = (
@@ -380,6 +389,9 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         여기서 기다립니다. 스트리밍이 끝날 때까지 자리를 쥡니다 (`app/agents/llm_gate.py`).
         """
         progress = _SPEECH_PROGRESS.get()
+        if progress is not None:
+            # 앞선 판의 실패를 도구 루프가 수습했으면 (첨부 거절) 그 표시를 끌고 가지 않습니다.
+            progress.llm_failed = False
         try:
             async with get_llm_gate().slot():
                 # 게이트 대기 시간은 제외하고, 모델 응답 소요 시간만 측정합니다 (`llm_usage`).
@@ -404,7 +416,10 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         on_chunk: Optional[Callable[[str], Any]],
         tool_choice: str,
     ) -> Tuple[Any, str]:
-        kwargs = self.build_completion_kwargs(agent, messages, tools, tool_choice)
+        # 첨부 파일은 여기서 내용이 됩니다. 나머지는 파일을 가리키는 블록을 그대로 봅니다 (`app/agents/media.py`).
+        kwargs = self.build_completion_kwargs(
+            agent, await materialize_attachments(agent, messages), tools, tool_choice,
+        )
         streamed_any = False
         try:
             response = await litellm.acompletion(**kwargs, stream=True)
@@ -425,7 +440,7 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
             # 조립은 동기 함수라 루프 위에서 돌면 끝날 때까지 다른 발언 스트림·대화·화면이 모두 멈춥니다.
             # 스레드로 보내도 GIL 때문에 빨라지지는 않지만 루프가 그동안 차례를 받습니다. 목록은 복사해 넘깁니다.
             complete_response = await asyncio.to_thread(
-                litellm.stream_chunk_builder, chunks, messages=list(messages),
+                litellm.stream_chunk_builder, chunks, messages=list(without_attachments(messages)[0]),
             )
             llm_usage.note_response(complete_response)
             return complete_response.choices[0].message, self._finish_reason(complete_response)

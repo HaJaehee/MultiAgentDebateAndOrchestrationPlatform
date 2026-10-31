@@ -14,6 +14,7 @@ from app.config.schema import (
     BARE_KEY_PATTERN,
     DEBATE_PRIORITY_STEP,
     DEBATE_STANCES,
+    INPUT_MODALITIES,
     DEFAULT_PEER_TOOL_ITERATIONS,
     DEFAULT_TOOL_DENY_RULES,
     ORCHESTRATOR_KEY,
@@ -421,6 +422,36 @@ def set_agent_allowed_skills_in_conf_file(
         agent["allowed_skills"] = names
     else:
         agent.pop("allowed_skills", None)
+
+    write_conf_file(path, data)
+    reload_config_if_active(path)
+
+def set_agent_allowed_modalities_in_conf_file(
+    agent_key: str,
+    modalities: List[str],
+    config_path: str | Path = DEFAULT_CONFIG_PATH,
+) -> None:
+    """`agents.<key>.allowed_modalities` 목록을 교체합니다. 빈 목록이면 항목을 지웁니다.
+
+    `allowed_skills` 와 같이 **아직 시작되지 않은 대화 세션**에만 적용됩니다. 순서는
+    `INPUT_MODALITIES` 를 따르므로 어떤 순서로 체크해도 파일에 같게 적힙니다.
+    """
+    key = _require_key(agent_key, "에이전트 키")
+    unknown = [m for m in modalities if m not in INPUT_MODALITIES]
+    if unknown:
+        raise ValueError(
+            f"쓸 수 없는 입력 형식입니다: {', '.join(map(str, unknown))}. "
+            f"{' | '.join(INPUT_MODALITIES)} 중에서 고르세요."
+        )
+    names = [m for m in INPUT_MODALITIES if m in modalities]
+    path = Path(config_path)
+
+    data = read_conf_file(path)
+    agent = _entry(data, "agents", key, path)
+    if names:
+        agent["allowed_modalities"] = names
+    else:
+        agent.pop("allowed_modalities", None)
 
     write_conf_file(path, data)
     reload_config_if_active(path)

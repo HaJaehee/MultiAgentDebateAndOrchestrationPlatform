@@ -164,6 +164,8 @@ class Agent(BaseModel):
     max_continuations: int = 2
     allowed_mcp_servers: List[str] = Field(default_factory=list)
     allowed_skills: List[str] = Field(default_factory=list)
+    # 파일 내용을 직접 받을 입력 형식 (`app/agents/media.py`). 비어 있으면 글과 파일 경로만 받습니다.
+    allowed_modalities: List[str] = Field(default_factory=list)
     allow_peer_consultation: bool = False
     # 이 에이전트가 동료 자문(peers)으로 물을 때의 상대와 도구 상한 (`PeerConsultationConfig`).
     peer_consultation: PeerConsultationConfig = Field(default_factory=PeerConsultationConfig)

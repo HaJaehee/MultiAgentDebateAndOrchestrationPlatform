@@ -6,11 +6,12 @@ import signal
 import sys
 import threading
 from collections import deque
+from dataclasses import dataclass
 from functools import lru_cache
 
 import anyio
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 import mcp.types as types
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -97,6 +98,39 @@ TOOL_CALL_TIMEOUT = positive_float_env("MCP_TOOL_TIMEOUT", 180.0)
 # (큰 파일 읽기, 재귀 디렉터리 목록). 그대로 두면 컨텍스트 계산·DB 기록·화면
 # 렌더링이 차례로 무너지고, 그 무게가 프로세스 전체를 끌고 갑니다.
 MAX_TOOL_OUTPUT_CHARS = int(positive_float_env("MCP_TOOL_MAX_CHARS", 200_000))
+
+
+# 이 호스트가 스스로 띄우는 서버에게 알리는 값. 샌드박스는 이것이 있을 때만 새로 만든 그림을 `ImageContent` 로도
+# 돌려줍니다 — 결과를 글로 뭉개는 다른 호스트에서는 BASE64 가 컨텍스트로 쏟아지기 때문입니다. 서버의 `env` 에
+# 같은 이름을 적으면 그쪽이 우선합니다.
+HOST_SERVER_ENV = {"SANDBOX_INLINE_IMAGES": "1"}
+
+
+@dataclass(frozen=True)
+class ToolMedia:
+    """도구가 돌려준 글 아닌 결과 하나 (MCP 의 `ImageContent` · `AudioContent` · blob 리소스)."""
+
+    mime: str
+    data: str  # BASE64
+
+    @property
+    def size(self) -> int:
+        return len(self.data) * 3 // 4
+
+
+class ToolOutput(str):
+    """글 아닌 결과를 함께 들고 다니는 도구 결과.
+
+    도구 실행의 결과는 곳곳에서 `(문자열, 상태)` 로 약속되어 있고, 문자열로 쓰는 쪽은 첨부를 알 필요가
+    없습니다. 받는 쪽(도구 루프)만 `media` 를 읽습니다 (`ToolLoopMixin._take_tool_media`).
+    """
+
+    media: Tuple[ToolMedia, ...]
+
+    def __new__(cls, text: str, media: Iterable[ToolMedia] = ()) -> "ToolOutput":
+        instance = super().__new__(cls, text)
+        instance.media = tuple(media)
+        return instance
 
 
 def clip_tool_output(text: str, limit: int = MAX_TOOL_OUTPUT_CHARS) -> str:
@@ -371,7 +405,7 @@ class MCPClientConnection:
         return StdioServerParameters(
             command=self.command,
             args=self.args,
-            env=server_environment(os.environ, self.env),
+            env=server_environment(os.environ, {**HOST_SERVER_ENV, **(self.env or {})}),
         )
 
     async def _serve(self) -> None:
@@ -673,12 +707,13 @@ class MCPClientConnection:
                 # 한도를 두지 않으면 응답하지 않는 서버 하나가 이 발언을,
                 # 나아가 토론 전체를 영원히 붙잡습니다.
                 res = await asyncio.wait_for(call, timeout=TOOL_CALL_TIMEOUT)
-                text = clip_tool_output(self._extract_result_text(res))
+                result = self._extract_result(res)
+                text = clip_tool_output(str(result))
                 if getattr(res, "isError", False):
                     # 도구는 실행됐지만 실패했다. 서버 메시지를 그대로 올려
                     # 모델이 보고 스스로 고칠 수 있게 한다.
                     raise MCPToolError(self.server_name, tool_name, text)
-                return text
+                return ToolOutput(text, result.media)
             except MCPToolError:
                 raise
             except asyncio.CancelledError:
@@ -733,14 +768,29 @@ class MCPClientConnection:
         )
 
     @staticmethod
-    def _extract_result_text(res: Any) -> str:
-        """CallToolResult 에서 텍스트 콘텐츠를 뽑아냅니다."""
-        if hasattr(res, "content"):
-            texts = []
-            for item in res.content:
-                if hasattr(item, "text"):
-                    texts.append(item.text)
+    def _extract_result(res: Any) -> ToolOutput:
+        """CallToolResult 를 글과 글 아닌 결과로 나눕니다.
+
+        글 아닌 결과를 `str()` 로 뭉개면 BASE64 수십만 자가 "글" 이 되어 모델과 화면과 DB 로 갑니다.
+        """
+        if not hasattr(res, "content"):
+            return ToolOutput(str(res))
+        texts: List[str] = []
+        media: List[ToolMedia] = []
+        for item in res.content:
+            kind = getattr(item, "type", "")
+            if kind in ("image", "audio") and isinstance(getattr(item, "data", None), str):
+                media.append(ToolMedia(getattr(item, "mimeType", "") or "", item.data))
+            elif kind == "resource":
+                resource = getattr(item, "resource", None)
+                if isinstance(getattr(resource, "blob", None), str):
+                    media.append(ToolMedia(getattr(resource, "mimeType", "") or "", resource.blob))
                 else:
-                    texts.append(str(item))
-            return "\n".join(texts)
-        return str(res)
+                    texts.append(str(getattr(resource, "text", "") or ""))
+            elif kind == "resource_link":
+                texts.append(f"[리소스 링크] {getattr(item, 'name', '')}: {getattr(item, 'uri', '')}")
+            elif hasattr(item, "text"):
+                texts.append(item.text)
+            else:
+                texts.append(str(item))
+        return ToolOutput("\n".join(texts), media)

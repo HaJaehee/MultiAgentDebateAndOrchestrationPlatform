@@ -257,7 +257,7 @@ request; every message and tool call of the turn points to it.
 | `status` | `VARCHAR(20)` | No | `'running'` | `running`, `completed`, `failed` (engine exception), `interrupted` (found `running` at start-up), `abandoned` (a new request was sent instead of resuming). |
 | `phase` | `VARCHAR(20)` | No | `'planning'` | `planning`, `debating`, `synthesizing`, `completed` — the first hint of where to resume. |
 | `opening_message_id` | `VARCHAR(36)` | Yes | - | The request that opened the turn. |
-| `config` | `JSON` | No | `{}` | Participants, strategy, rounds, parallel limit, custom instructions and workspace at the start. A resumed turn finishes with these even if the roster changed meanwhile. |
+| `config` | `JSON` | No | `{}` | Participants, strategy, rounds, parallel limit, custom instructions, workspace, skill designations and mentioned files (`attachments`: workspace paths, never content) at the start. A resumed turn finishes with these even if the roster changed meanwhile. |
 | `stopped_early` | `BOOLEAN` | No | `0` | Set when synthesis starts after a stop request, so a turn cut during synthesis keeps that fact. |
 | `paused_seconds` / `resumed_count` | `INTEGER` | No | `0` | Time spent interrupted and times resumed; the report's elapsed time names them. |
 | `error` | `TEXT` | No | `''` | Why a `failed` turn stopped. |

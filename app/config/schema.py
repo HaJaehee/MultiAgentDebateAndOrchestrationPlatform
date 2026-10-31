@@ -234,6 +234,9 @@ DEBATE_PRIORITY_STEP = 10
 
 DEBATE_STANCES = ("proponent", "critic", "neutral")
 
+# 에이전트가 파일 내용을 직접 받을 수 있는 입력 형식 (`AgentConfig.allowed_modalities`, ADR-035).
+INPUT_MODALITIES = ("image", "audio", "video", "document")
+
 TOOL_SECURITY_MODES = ("read_only", "default", "review", "auto")
 
 # 기본 거부 규칙. conf.json 에 `deny` 를 적으면 **이 목록을 대신합니다** (합치지 않습니다) —
@@ -486,6 +489,12 @@ class AgentConfig(BaseModel):
     # 에이전트 설정이므로 대화 스냅샷에 함께 보존됩니다. 스킬 내용과 활성화/비활성화 상태는 스냅샷에 고정되지 않습니다.
     allowed_skills: List[str] = Field(
         default_factory=list, description="Skill names (folders under skills.dir) this agent can load"
+    )
+    # 입력창에서 @언급한 파일과 도구가 돌려준 파일 중 이 에이전트가 내용을 직접 받을 형식 (`app/agents/media.py`).
+    # 비어 있으면 글과 파일 경로만 받습니다. 도구 서버 할당처럼 대화 스냅샷에 함께 고정됩니다.
+    allowed_modalities: List[Literal["image", "audio", "video", "document"]] = Field(
+        default_factory=list,
+        description="Input formats delivered to this agent's model as content: image | audio | video | document",
     )
     peer_consultation: PeerConsultationConfig = Field(default_factory=PeerConsultationConfig)
     # 토론에서의 자리. 예전에는 전략 코드가 'architect' 다음 'coder' 하는 식으로

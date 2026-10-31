@@ -308,11 +308,14 @@ async def test_reconnect_needs_a_runtime(state, notes, ui_page):
 
 
 def _cards(state, service=None, **callbacks):
-    calls: Dict[str, List[Any]] = {name: [] for name in ("tools", "skills", "delete", "disable", "selection", "disabled")}
+    calls: Dict[str, List[Any]] = {
+        name: [] for name in ("tools", "skills", "modalities", "delete", "disable", "selection", "disabled")
+    }
     service = service or StubService()
     wiring = dict(
         open_tools=lambda k: calls["tools"].append(k),
         open_skills=lambda k: calls["skills"].append(k),
+        open_modalities=lambda k: calls["modalities"].append(k),
         open_delete=lambda k: calls["delete"].append(k),
         disable_agent=lambda k: calls["disable"].append(k),
         on_selection_changed=lambda: calls["selection"].append(1),
@@ -329,6 +332,28 @@ def test_cards_are_drawn_from_the_state_alone(state):
     assert cards.built
     names = [e.text for e in cards.cards_row.descendants() if getattr(e, "text", None) in ("Architect", "Coder", "Critic")]
     assert names == ["Architect", "Coder", "Critic"]
+
+
+def _texts(row) -> List[str]:
+    return [e.text for e in row.descendants() if getattr(e, "text", None)]
+
+
+def test_every_card_has_a_modal_button_below_tools_and_skills(state):
+    state.find_agent("coder").allowed_modalities = ["image", "document"]
+    cards, _ = _cards(state)
+    texts = _texts(cards.cards_row)
+
+    assert texts.count("모달 0") == 3 and texts.count("모달 2") == 1, "오케스트레이터 포함 모든 카드"
+    assert "이미지, 문서" in texts
+    first = (texts.index("도구 0"), texts.index("스킬 0"), texts.index("모달 0"))
+    assert first == tuple(sorted(first)), "도구, 스킬 아래에 놓입니다"
+
+
+def test_the_modal_button_locks_with_the_roster(state):
+    state.personas_locked = True
+    cards, _ = _cards(state)
+    buttons = [e for e in cards.cards_row.descendants() if str(getattr(e, "text", "")).startswith("모달 ")]
+    assert buttons and not any(b.enabled for b in buttons)
 
 
 def test_a_toggle_updates_the_state_and_tells_the_panel(state):
@@ -391,8 +416,60 @@ def test_dialogs_stay_shut_while_the_roster_is_locked(state, notes, monkeypatch)
 
     dialogs.open_tools("coder")
     dialogs.open_skills("coder")
+    dialogs.open_modalities("coder")
 
     assert opened == []
+
+
+@pytest.mark.asyncio
+async def test_the_modal_dialog_offers_the_four_formats_and_saves_the_checked_ones(state, notes, ui_page, monkeypatch):
+    state.find_agent("coder").allowed_modalities = ["audio"]
+    service = StubService()
+    dialogs = AgentDialogs(state, service, _changes(state, service))
+    handlers: Dict[str, Any] = {}
+    real_button = ui.button
+
+    def spying_button(text="", *args, on_click=None, **kwargs):
+        handlers[text] = on_click
+        return real_button(text, *args, on_click=on_click, **kwargs)
+
+    monkeypatch.setattr(ui, "button", spying_button)
+    with ui_page:
+        dialogs.open_modalities("coder")
+
+    root = ui_page.layout
+    texts = _texts(root)
+    for label in ("이미지", "음성", "동영상", "문서"):
+        assert label in texts
+    boxes = [e for e in root.descendants() if isinstance(e, ui.checkbox)]
+    assert [b.value for b in boxes] == [False, True, False, False], "지금 설정이 체크되어 열립니다"
+
+    boxes[0].value, boxes[1].value, boxes[3].value = True, False, True
+    await handlers["저장"]()
+    assert ("set_agent_modalities", "coder", ["image", "document"]) in service.writes
+
+
+@pytest.mark.asyncio
+async def test_clearing_every_box_goes_back_to_text_and_paths(state, notes, ui_page, monkeypatch):
+    state.find_agent("coder").allowed_modalities = ["image"]
+    service = StubService()
+    dialogs = AgentDialogs(state, service, _changes(state, service))
+    handlers: Dict[str, Any] = {}
+    real_button = ui.button
+
+    def spying_button(text="", *args, on_click=None, **kwargs):
+        handlers[text] = on_click
+        return real_button(text, *args, on_click=on_click, **kwargs)
+
+    monkeypatch.setattr(ui, "button", spying_button)
+    with ui_page:
+        dialogs.open_modalities("coder")
+    for box in (e for e in ui_page.layout.descendants() if isinstance(e, ui.checkbox)):
+        box.value = False
+
+    await handlers["저장"]()
+    assert ("set_agent_modalities", "coder", []) in service.writes
+    assert any(w[0] == "apply" and "글과 파일 경로만" in w[1] for w in service.writes)
 
 
 def test_an_unknown_agent_is_reported(state, notes):

@@ -157,16 +157,21 @@ class TurnRun:
         self._emit({"type": EventType.STOP_REQUESTED})
         return True
 
-    def interject(self, text: str, skill_designations: Optional[Dict[str, List[str]]] = None) -> bool:
+    def interject(
+        self,
+        text: str,
+        skill_designations: Optional[Dict[str, List[str]]] = None,
+        attachments: Optional[List[str]] = None,
+    ) -> bool:
         """토론 중인 에이전트들에게 사용자 메시지를 끼워 넣습니다.
 
         곧바로 반영되지는 않습니다. 지금 발언 중인 에이전트의 프롬프트는 이미
         만들어져 나갔으므로, 엔진이 다음 발언자로 넘어가는 지점에서 꺼내 갑니다.
-        `skill_designations` (전문가 키 → 스킬) 도 그때 함께 반영됩니다.
+        `skill_designations` (전문가 키 → 스킬) 와 `attachments` (언급한 파일) 도 그때 함께 반영됩니다.
         """
         if self.status != "running":
             return False
-        if not self.control.add_note(text, skill_designations):
+        if not self.control.add_note(text, skill_designations, attachments):
             return False
         self._emit({
             "type": EventType.INTERJECTION_QUEUED,

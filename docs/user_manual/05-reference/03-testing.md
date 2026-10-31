@@ -35,6 +35,7 @@ pytest -k "snapshot"
 | `test_agent_appearance.py` | 카드 색상/아이콘: 이미지 업로드 → 설정 저장 → UI 렌더링 → 스냅샷 및 폴백 |
 | `test_session_snapshot.py` | **시작된 대화 세션의 완전한 자기완결성 및 외부 설정 격리 보장** |
 | `test_roster_service.py` | 로스터의 conf.json 쓰기·반영·다시 읽기·잠금 규칙을 화면 없이 (`RosterService`) |
+| `test_modalities.py` | 입력 모달: 체크한 에이전트에게만 파일 내용 전달, 비우면 요청 불변, 초안에 BASE64 없음, 거절 시 글로 이어 가기, 도구가 돌려준 이미지, 샌드박스 그림 |
 | `test_roster_components.py` | 로스터 하위 컴포넌트를 `AgentRosterControl` 없이 하나씩 (대역 서비스와 콜백) |
 | `test_feed_components.py` | 토론 피드 부품을 `ChatFeed` 없이 하나씩, 그리고 부품을 잇는 조립 규칙 |
 | `test_roster_lock.py` | 토론 백그라운드 진행 중 전역 로스터 및 MCP 설정 변경 차단 잠금 |
