@@ -70,6 +70,12 @@ The web application workspace is organized into four primary UI components in [a
     toggle, `모두 선택` / `모두 선택 해제`, a different strategy or a different graph. It is called on every
     keystroke in the instructions box too, so it does not redraw otherwise. Graphs shared by several
     conversations are read once per redraw. Tested in `tests/test_sidebar_agent_count.py`.
+- **First title**: a conversation with a placeholder title (`New Collaborative Debate`, `API Debate`) takes the first sentence of the orchestrator's first official speech
+  ([session_title.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/session_title.py)), announced by `session_titled` so the list redraws at once. It is written before the plan card opens, so the waiting notification (§1.3.11) already carries it.
+  - **Not sentences**: thought (`Thought N`, the native trace, `<think>`), headings, labels such as `**핵심 목표**`, `1. 핵심 목표` or `핵심 목표:`, block quotes (the attachment-failure notice has this shape), code and tables. Markdown marks are removed and the title is cut at 80 characters. A speech with only headings uses the first one; a speech that is all thought gives no title, and the next official speech of that turn tries again.
+  - **Who wins**: the write is conditional on the placeholder, so a rename made earlier, or while the plan streams, stays. Beginner and trial conversations start with their own title and are not touched. A conversation that already had an official orchestrator speech in an earlier turn keeps its name, placeholder or not, so old conversations do not change. A failed plan is not an official speech; the next turn's plan titles the conversation.
+  - **Discarding**: when `discard_turn` removes the speech the title came from and no official speech is left, the placeholder returns (plan card `거부`, 긴급 종료, discarding an unfinished turn). A title the person changed stays.
+  - Another tab's list picks up the new title at its next redraw, like a rename made in another tab.
 - **승인 대기 badge** (ADR-037): an amber `승인 대기 N` on a conversation whose turn is waiting for a person, in the list and in search results. See §1.3.11.
 - **Per-card actions**: ✏️ rename · 💾 export the whole conversation as Markdown ·
   **» continue in a fresh session** · 🗑 delete. A forked conversation (v1.5) also has a **compare**

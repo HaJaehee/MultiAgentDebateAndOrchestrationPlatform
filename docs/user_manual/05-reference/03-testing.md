@@ -58,6 +58,7 @@ pytest -k "snapshot"
 | `test_chat_card.py` | 발언 카드 접기/펼치기 상태 및 자동 스크롤 추적 해제/재개 상호작용 |
 | `test_sidebar_times.py` | 세션 목록 카드의 시간 표시 및 실시간 갱신 시점 |
 | `test_attention.py` | 승인 대기 알림: 기다리는 물음 집계, 대화를 가리지 않는 신호, 탭 제목·배지·토스트·데스크톱 알림, 방문자 턴 제외 |
+| `test_session_title.py` | 새 대화의 첫 제목: 첫 문장 추출(사고 과정·머리글 제외), 적는 조건, 지워진 발언의 제목 되돌리기 |
 | `test_db.py` | SQLAlchemy 비동기 ORM 테이블 스키마, 관계 매핑 및 cascade 삭제 |
 | `test_open_browser.py` | 브라우저 자동 실행 스크립트의 동적 주소 감지 로직 |
 | `test_new_features.py` | 페르소나 영속화, 바인딩 우선순위, MCP roots 프로토콜 응답 |

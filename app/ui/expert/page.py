@@ -24,6 +24,7 @@ from app.database.session import get_session_factory
 from app.orchestration import speech_comments, speech_retry
 from app.orchestration.graph_run import GraphRunTracker, last_graph_turn, node_labels
 from app.orchestration.runner import get_debate_runner
+from app.orchestration.session_title import DEFAULT_SESSION_TITLE
 from app.orchestration.strategies import resolve_strategy_name
 from app.orchestration.turns import KIND_SYNTHESIS, kind_of, unfinished_turn
 from app.security import is_loopback
@@ -820,7 +821,7 @@ class ExpertPage:
 
     # ------------------------------------------------------------ 대화 기록 불러오기
 
-    async def create_new_session_db(self, title: str = "New Collaborative Debate") -> str:
+    async def create_new_session_db(self, title: str = DEFAULT_SESSION_TITLE) -> str:
         sid = str(uuid.uuid4())
         async with self.session_factory() as db:
             new_session = SessionModel(

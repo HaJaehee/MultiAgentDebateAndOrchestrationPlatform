@@ -26,7 +26,7 @@ sessions ─────┬──▶ messages ──────▶ tool_calls
 | 컬럼명 | 데이터 타입 | 설명 및 역할 |
 | :--- | :--- | :--- |
 | `id` | str(36) | 세션 고유 식별자 (UUID v4) |
-| `title` | str(255) | 대화 세션 제목 |
+| `title` | str(255) | 대화 세션 제목. 새 대화는 오케스트레이터의 첫 공식 발언 첫 문장을 초기 제목으로 받고, 그다음은 사람이 고칩니다 |
 | `strategy` | str(50) | 적용된 토론 전략 식별자 (`sequential_debate` 등) |
 | `max_rounds` | int | 세션의 최대 토론 라운드 상한 |
 | `active_agents` | JSON | 세션에서 활성화된 에이전트 키 목록 |

@@ -196,7 +196,7 @@ def event_changes_session_list(event: Dict[str, Any]) -> bool:
     """이 토론 이벤트가 세션 목록에 보이는 것을 바꾸는가.
 
     목록에 보이는 것은 세 가지입니다: **첫 사용자 발언 시각**, 진행 중 표시(스피너),
-    그리고 제목·에이전트 수. 이 중 토론이 도는 동안 바뀌는 것은 앞의 둘입니다.
+    그리고 제목·에이전트 수. 이 중 토론이 도는 동안 바뀌는 것은 앞의 둘과, 새 대화의 첫 제목입니다.
 
     예전에는 `turn_completed` 에서만 목록을 다시 그렸습니다. 그런데 카드의 시각은
     세션 행이 아니라 **사용자 발언 행**에서 오고, 그 행은 토론이 시작된 뒤에
@@ -209,6 +209,8 @@ def event_changes_session_list(event: Dict[str, Any]) -> bool:
         # 사용자 발언이 방금 기록되었습니다. 이 대화의 '시작 시각' 이 생기는
         # 순간입니다 (개입 발언이면 이미 있는 값이라 결과는 그대로입니다).
         return ((event.get("message") or {}).get("sender_key")) == "user"
+    if etype == EventType.SESSION_TITLED:
+        return True
     # 토론이 끝났습니다 — 진행 중 표시를 내려야 합니다. 오류·취소로 끝난 경우
     # `turn_completed` 는 오지 않으므로 `run_finished` 도 함께 봅니다.
     return etype in TURN_END_EVENTS

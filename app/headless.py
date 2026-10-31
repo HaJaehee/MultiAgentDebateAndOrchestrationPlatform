@@ -28,6 +28,7 @@ from app.database.session import get_session_factory
 from app.events import EventType
 from app.orchestration import turns
 from app.orchestration.runner import get_debate_runner
+from app.orchestration.session_title import API_SESSION_TITLE
 from app.orchestration.strategies import DEFAULT_STRATEGY, STRATEGY_MAP
 
 # SSE 스트림 유휴 시 연결 유지를 위한 하트비트(빈 줄) 전송 간격 (프록시/클라이언트 타임아웃 방지).
@@ -93,7 +94,7 @@ async def create_session(
     async with get_session_factory()() as db:
         db.add(SessionModel(
             id=sid,
-            title=(title or "").strip()[:200] or "API Debate",
+            title=(title or "").strip()[:200] or API_SESSION_TITLE,
             strategy=name,
             max_rounds=int(max_rounds),
             active_agents=keys,

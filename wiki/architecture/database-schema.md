@@ -149,7 +149,7 @@ Represents a single multi-agent collaboration workspace or discussion thread.
 | Column | Type | Nullable | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `id` | `VARCHAR(36)` | No | `uuid4()` | Primary key. |
-| `title` | `VARCHAR(255)` | No | `'New Debate Session'` | Session title displayed in the sidebar. Defaults to first prompt snippet. |
+| `title` | `VARCHAR(255)` | No | `'New Debate Session'` | Session title displayed in the sidebar. A conversation with a placeholder title takes the first sentence of the orchestrator's first official speech; after that only the person changes it (`app/orchestration/session_title.py`). |
 | `strategy` | `VARCHAR(50)` | No | `'sequential_debate'` | Selected debate strategy (`sequential_debate`, `adversarial_debate`, `orchestrator_led`, `parallel_dispatch`, `graph_debate`, `adaptive_graph`). Rows saved under the retired `free_debate` / `sequential_review` names are mapped to `sequential_debate` on read by `resolve_strategy_name()`. |
 | `max_rounds` | `INTEGER` | No | `3` | Maximum specialist debate rounds per user turn. |
 | `sub_debates` | `BOOLEAN` | No | `False` | Whether two specialists may settle an open issue on the side between rounds or graph steps ([Debate Strategies §2-b](../orchestration/debate-strategies.md)). Off by default because it adds calls nobody chose. |

@@ -20,6 +20,7 @@ from app.database.models import (
     TURN_FAILED,
     TURN_RUNNING,
     MessageModel,
+    SessionModel,
     SpeechDraftModel,
     ToolCallRecordModel,
     TurnModel,
@@ -29,6 +30,7 @@ from app.events import EventCallback, EventType
 from app.orchestration import context_memory as memory, plan_gate, turns
 from app.orchestration.context import EngineContext
 from app.orchestration.control import TurnControl
+from app.orchestration.session_title import PLACEHOLDER_TITLES
 from app.orchestration.state import DebateMessage, DebateState
 from app.orchestration.turn_setup import TurnSetup, clean_attachments, clean_skill_designations
 
@@ -626,6 +628,29 @@ class TurnRecorder:
                 await db.rollback()
             except Exception:  # noqa: BLE001
                 logger.debug("Rollback after a failed turn update also failed", exc_info=True)
+
+    async def title_new_session(self, db, session_id: str, title: str) -> bool:
+        """자리표시 제목인 대화에만 제목을 적습니다. 적었으면 True. 못 적어도 턴은 계속됩니다.
+
+        읽고 나서 쓰지 않고 조건을 쓰기에 겁니다. 계획이 흐르는 동안 사람이 이름을 바꿔도 덮어쓰지 않습니다.
+        """
+        try:
+            result = await db.execute(
+                update(SessionModel)
+                .where(SessionModel.id == session_id, SessionModel.title.in_(PLACEHOLDER_TITLES))
+                .values(title=title)
+            )
+            await db.commit()
+            return bool(result.rowcount)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Could not title session {session_id}: {type(exc).__name__}: {exc}")
+            try:
+                await db.rollback()
+            except Exception:  # noqa: BLE001
+                logger.debug("Rollback after a failed title update also failed", exc_info=True)
+            return False
 
     async def mark_turn_failed(self, turn_id: str, exc: BaseException) -> None:
         """예외로 멈춘 턴을 "실패" 로 적습니다. 새 DB 세션을 씁니다 — 멈춘 쪽 세션은 깨졌을 수 있습니다."""

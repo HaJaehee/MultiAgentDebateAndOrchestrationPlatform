@@ -28,7 +28,7 @@
 
 ```python
 SessionModel(
-    title="New Debate Session",
+    title="New Collaborative Debate",
     strategy="sequential_debate",
     max_rounds=3,
     active_agents=[...],      # 현재 켜져 있는 활성 에이전트 목록
@@ -36,6 +36,13 @@ SessionModel(
     personas_locked=False,
 )
 ```
+
+`New Collaborative Debate` 는 자리표시 제목입니다. 첫 요청에 대한 **오케스트레이터의 첫 공식 발언 첫 문장**이 초기 제목이 됩니다.
+
+- 사고 과정, 머리글, `핵심 목표:` 같은 이름표, 인용은 문장으로 치지 않습니다.
+- 그전에 이름을 지었으면 그 이름을 유지하고, 한 번 정해진 뒤로는 사람이 이름 변경 버튼으로만 고칩니다.
+- 계획 카드의 거부나 긴급 종료로 그 발언이 지워지면 제목도 자리표시로 돌아갑니다 (사람이 고친 제목은 그대로입니다).
+- 이 기능 전부터 있던 대화의 이름은 바뀌지 않습니다.
 
 이 단계에서 자유롭게 설정할 수 있는 항목은 다음과 같습니다:
 

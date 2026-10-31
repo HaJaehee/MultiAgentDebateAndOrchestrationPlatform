@@ -27,9 +27,9 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import (
@@ -44,8 +44,9 @@ from app.database.models import (
     utc_now,
 )
 from app import workspace_checkpoint
-from app.config import resolve_workspace_dir
+from app.config import ORCHESTRATOR_KEY, resolve_workspace_dir
 from app.mcp.manager import carry_over_memory_graph
+from app.orchestration.session_title import DEFAULT_SESSION_TITLE, title_from_speech
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +158,24 @@ async def revert_turn_files(db, session_id: str, turn_id: str) -> workspace_chec
     return result
 
 
+def _official_speeches(session_id: str) -> Any:
+    """이 대화에서 오케스트레이터의 공식 발언을 고르는 조건. 실패 안내는 발언이 아닙니다."""
+    return (
+        MessageModel.session_id == session_id,
+        MessageModel.sender_key == ORCHESTRATOR_KEY,
+        MessageModel.msg_type != "error",
+    )
+
+
+async def _titles_from_speeches(db, session_id: str, ids: Sequence[str], turn_id: Optional[str]) -> Set[str]:
+    """지울 발언에서 따올 수 있는 제목들. 지금 제목이 이 중 하나면 그 발언에서 따온 것입니다."""
+    scope = [MessageModel.id.in_(list(ids))]
+    if turn_id:
+        scope.append(MessageModel.turn_id == turn_id)
+    rows = await db.execute(select(MessageModel.content).where(*_official_speeches(session_id), or_(*scope)))
+    return {title_from_speech(content) for content in rows.scalars().all()} - {""}
+
+
 async def discard_turn(
     db,
     session_id: str,
@@ -179,7 +198,12 @@ async def discard_turn(
     도구 기록을 먼저 지웁니다. `messages.id` 를 가리키는 행이라, 발언을 먼저
     지우면 아무도 가리키지 않는 기록이 남습니다 (SQLite 가 외래키를 검사하지
     않아 조용히 남을 뿐입니다).
+
+    제목이 지워진 발언에서 따온 것이고 공식 발언이 하나도 남지 않으면 제목도 되돌립니다. 계획 카드의 거부가 이
+    길로 오는데, 고쳐 보낸 요청의 대화가 거부한 계획의 이름을 달고 있으면 안 됩니다. 사람이 고친 제목은 그대로입니다.
     """
+    discarded_titles = await _titles_from_speeches(db, session_id, _clean(message_ids), turn_id)
+
     if turn_id:
         await forget_checkpoints(db, session_id, [turn_id])
         await db.execute(delete(SpeechDraftModel).where(
@@ -235,6 +259,14 @@ async def discard_turn(
         session = await db.get(SessionModel, session_id)
         if session is not None and session.personas_locked:
             session.personas_locked = False
+
+    if discarded_titles:
+        speeches_left = await db.scalar(
+            select(func.count()).select_from(MessageModel).where(*_official_speeches(session_id))
+        )
+        session = await db.get(SessionModel, session_id)
+        if not speeches_left and session is not None and session.title in discarded_titles:
+            session.title = DEFAULT_SESSION_TITLE
 
     await db.commit()
     logger.info(

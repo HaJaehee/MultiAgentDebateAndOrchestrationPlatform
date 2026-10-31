@@ -20,10 +20,10 @@ from app.agents.base import Agent
 from app.agents.llm_types import LLMUnavailableError
 from app.agents.media import attachments_for
 from app.agents.skills import with_designated_skills
-from app.config import TOOL_ITERATION_CEILING
+from app.config import ORCHESTRATOR_KEY, TOOL_ITERATION_CEILING
 from app.database.models import MessageModel, SpeechDraftModel, ToolCallRecordModel, utc_now
 from app.events import EventCallback, EventType
-from app.orchestration import speech_comments, turns
+from app.orchestration import session_title, speech_comments, turns
 from app.orchestration.context import EngineContext
 from app.orchestration.control import TurnControl, asks_human
 from app.orchestration.recording import TurnRecorder
@@ -627,10 +627,27 @@ class SpeechRunner:
                 "total_dropped": state.context_dropped,
                 "where": "speech",
             })
+        if recorded:
+            await self._title_new_session(speech, content, final_type)
         return await self._publish_speech(
             speech, content=content, final_type=final_type, tool_logs=tool_logs,
             finished_at=finished_at, turn_started_at=turn_started_at, llm_meta=llm_meta,
         )
+
+    async def _title_new_session(self, speech: _Speech, content: str, final_type: str) -> None:
+        """새 대화의 첫 제목을 이 발언으로 정합니다. 계획 승인 카드와 그 알림보다 먼저 적습니다."""
+        state = speech.state
+        if final_type == "error" or speech.agent.key != ORCHESTRATOR_KEY or speech.revision is not None:
+            return
+        if not session_title.is_new_conversation(state.messages[:state.turn_message_start]):
+            return
+        title = session_title.title_from_speech(content)
+        if not title:
+            return
+        async with (speech.db_lock or nullcontext()):
+            titled = await self.recorder.title_new_session(speech.db, state.session_id, title)
+        if titled and speech.on_event:
+            await speech.on_event({"type": EventType.SESSION_TITLED, "session_id": state.session_id, "title": title})
 
     @staticmethod
     async def _pending_comments(

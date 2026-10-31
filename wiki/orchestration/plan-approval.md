@@ -53,7 +53,7 @@ flowchart TD
 | :--- | :--- |
 | **Approve** | The tasks and criteria as edited on the card become the approved assignment. Recorded as an orchestrator note with `turn_meta.kind = plan_approval` (`plan_id`, `tasks`, `changes`, `approver`). |
 | **Revise** | The comments are recorded as a user message (`plan_revision`), including any task or criterion the human edited on the card — nothing typed is dropped. The orchestrator rewrites the plan from the previous plan plus the request, and the card opens again. No cap on revisions: each one takes a human click. |
-| **Reject** | The card's button runs the existing abort: the request and the plan are deleted and the request text returns to the input bar. |
+| **Reject** | The card's button runs the existing abort: the request and the plan are deleted and the request text returns to the input bar. A first title taken from that plan goes back to the placeholder, unless the person has renamed the conversation. |
 | **Stop** | The pending approval is closed without approving; the debate sees the stop and goes straight to synthesis. |
 | **No answer** | After `plan_approval.timeout` the turn is parked (`PlanApprovalExpired`): status `failed`, phase `approval`, nothing executed. "이어서 진행" reopens the card with the same plan and the same task list. The run ends with `parked = true`, which the screen reports as a wait that ended, not as an error. |
 

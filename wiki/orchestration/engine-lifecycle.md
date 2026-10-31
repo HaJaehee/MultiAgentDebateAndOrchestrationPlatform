@@ -116,6 +116,7 @@ string and goes out as JSON unchanged). Senders and receivers never spell an eve
 | `round_started` | `round`, `max_rounds` | Displays round transition notifications. |
 | `message_stream_start` | `msg_id`, `sender_key`, `sender_name`, `sender_role` | Creates an in-flight streaming message card in the chat feed. |
 | `message_stream_chunk` | `message_id`, `delta` | Appends streaming token chunks to the active markdown message card. |
+| `session_titled` | `session_id`, `title` | A new conversation got its first title, just before the speech's `message_added`. The sidebar redraws ([UI Components §1.1](../ui/components.md#11-session-sidebar-appuicomponentssidebarpy)). |
 | `message_added` | `message` dictionary | Finalizes or appends color-coded message bubble to feed. |
 | `speech_revised` | `message_id`, `agent_name`, `ok`, `restored` | A single-speech run has a result: a new version, a failed attempt or a restored version. Toast ([Retrying One Speech](speech-revisions.md)). |
 | `speech_comments_delivered` | `ids`, `message_id`, `agent_name` | Inline comments went out with this speech; their lines on the cards change to `전달됨` ([Retrying One Speech §6](speech-revisions.md#6-inline-comments)). |

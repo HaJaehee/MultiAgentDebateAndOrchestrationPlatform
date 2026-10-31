@@ -58,17 +58,17 @@ app/
 ├── main.py                          248   조립: FastAPI 서버, lifespan(시작·종료 순서), 화면·라우터·접근 제어, CLI
 ├── api.py                           281   HTTP 엔드포인트 /api/* · /agent-icon
 ├── routes.py                         22   화면 주소 (체험·쉬운 화면)
-├── events.py                        107   토론 이벤트 이름표 EventType
+├── events.py                        108   토론 이벤트 이름표 EventType
 ├── tool_rules.py                    125   도구 보안 규칙 문법 (read(경로) · net(호스트) …)
 ├── timestamps.py                    176   발언·턴·보고서 시각 표기 (화면·문서·보고서 공용)
-├── session_ops.py                   497   세션 되돌리기·이어받기, 피드 기록 읽기
+├── session_ops.py                   529   세션 되돌리기·이어받기, 피드 기록 읽기
 ├── export.py                        239   대화 → 마크다운 문서
 ├── export_mermaid.py              1,618   Mermaid → StarUML·HTML 변환 (외부 의존 없음)
 ├── mermaid_lint.py                  491   다이어그램 문법 검사·복구
 ├── workspace_files.py               797   작업 공간 파일 목록·@언급·업로드·다운로드 (경로 안전장치)
 ├── diagnostics.py                   394   이벤트 루프 정체 스택·브라우저 끊김 보고
 ├── security.py                      782   원격 접속 토큰, 접근 제어 미들웨어
-├── headless.py                      255   헤드리스 토론 실행 코어 (REST·MCP 공용) (v1.5)
+├── headless.py                      256   헤드리스 토론 실행 코어 (REST·MCP 공용) (v1.5)
 ├── mcp_server.py                    180   내장 MCP 서버 엔드포인트 /mcp (v1.5)
 ├── workspace_checkpoint.py          323   작업 공간 턴 체크포인트·롤백·분기 내보내기 (v1.5)
 ├── session_fork.py                  291   대화 세션 분기(Fork), 비교 데이터 구성 및 결론 평가 (v1.5)
@@ -122,10 +122,11 @@ app/
 │   ├── engine.py                    678   조립과 턴 수명 (run_turn · resume_turn · retry_speech)
 │   ├── context.py                    51   EngineContext — 서비스가 함께 쓰는 것
 │   ├── turn_setup.py                280   턴 구성·참여자·도구 게이트
-│   ├── recording.py                 648   TurnRecorder — 기록, 재시도, data/unsaved/
-│   ├── speech.py                    837   SpeechRunner — 발언 받기·기록·확정 (조각 묶음·초안은 _ChunkStream·_Speech)
+│   ├── recording.py                 673   TurnRecorder — 기록, 재시도, data/unsaved/
+│   ├── speech.py                    854   SpeechRunner — 발언 받기·기록·확정 (조각 묶음·초안은 _ChunkStream·_Speech)
 │   ├── speech_retry.py              350   끝난 발언 다시 실행: 대상·버전·모델 고르기·안내 (ADR-036)
 │   ├── speech_comments.py           153   인라인 코멘트: 저장·전달 (ADR-036)
+│   ├── session_title.py             124   새 대화의 첫 제목: 첫 공식 발언의 첫 문장
 │   ├── conversation.py              566   ConversationMemory — 맥락·요약·장부
 │   ├── context_memory.py            659   대화 기억 규칙 (LLM 을 부르지 않음)
 │   ├── phases/base.py                27   단계 실행기 바탕
@@ -166,7 +167,7 @@ app/
 └── ui/
     ├── run_binding.py                94   화면이 토론에 붙는 구독 (세 화면 공용)
     ├── attention.py                 307   승인 대기 알림: 탭 제목, 데스크톱 알림, 모든 대화 감시
-    ├── expert/page.py             1,036   전문가 화면 ExpertPage
+    ├── expert/page.py             1,037   전문가 화면 ExpertPage
     ├── expert/events.py             568   이벤트별 화면 반영
     ├── expert/chrome.py             106   머리 줄, 정보 창
     ├── shared/page.py               119   체험·쉬운 화면 공용 틀
@@ -182,7 +183,7 @@ app/
     ├── components/roster/         3,917   로스터 패널 (control 이 조립 · state · changes · agent_cards · agent_admin · agent_dialogs · mcp_panel · skills_panel · workspace_row · session_settings · graph_row · builder_dialog · widgets · common)
     ├── components/chat_feed/      3,218   토론 피드 (feed 가 조립 · cards · approvals · decisions · mentions · speech_actions · common)
     ├── components/agent_builder_chat.py   111   도우미와 대화해 설계도를 채우는 부분 (전문가·쉬운 화면 공용)
-    ├── components/sidebar.py        848   세션 목록
+    ├── components/sidebar.py        850   세션 목록
     ├── components/artifact_viewer.py   377   산출물 탭, 복사·다운로드
     ├── components/agent_appearance.py   257   카드 색·아이콘 편집기
     ├── components/model_status.py   143   모델 연결 상태 단추와 창
@@ -206,6 +207,7 @@ app/
 | 새 토론 전략 | `orchestration/strategies.py` |
 | 토론 흐름 변경 | `orchestration/phases/` (계획·토론·합성) · 턴 수명은 `orchestration/engine.py` |
 | 발언 한 번의 처리 | `orchestration/speech.py` |
+| 새 대화의 첫 제목 | `orchestration/session_title.py` · 적는 자리는 `orchestration/speech.py` 의 `_title_new_session` · 되돌리기는 `session_ops.py` 의 `discard_turn` |
 | 발언 하나 다시 실행·버전 | `orchestration/speech_retry.py` · 실행은 `orchestration/phases/retry.py`, 창은 `ui/components/chat_feed/speech_actions.py` |
 | 인라인 코멘트 | `orchestration/speech_comments.py` · 드래그 스크립트와 창은 `ui/components/chat_feed/speech_actions.py` |
 | 발언 맥락·요약·결정 장부 | `orchestration/conversation.py` (규칙은 `context_memory.py`) |
