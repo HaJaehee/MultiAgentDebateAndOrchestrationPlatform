@@ -262,3 +262,4 @@ live, so it is used from the next speech. Tests: `tests/test_skill_draft.py`.
 - [Agent Pool & Roles](agent-pool-and-roles.md) · [Roster Editing](roster-editing.md)
 - [Session Personas §6](session-personas.md) — what a started conversation freezes
 - [Tool Security](../mcp/tool-security.md) — why skill reads skip the gate, and how a skill script's run is judged
+- [LLM Integration §5.4](llm-integration.md#54-sending-only-the-tool-definitions-that-get-used-adr-039) — the same one-line catalog for MCP tool definitions

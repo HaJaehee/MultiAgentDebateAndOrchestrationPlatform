@@ -634,7 +634,8 @@ Two of those terms were missing until v0.7.0, and both produced requests that di
   tool list — the server then either answered 400 or let the model write only what was left of its
   window, which surfaces as `finish_reason='length'` on a response that barely started. The same term
   now applies inside the tool loop (`fit_tool_loop_context`), in the pressure notices, in the context
-  arbiter's numbers, in the request fingerprint, and in the synthesis transcript bound.
+  arbiter's numbers, in the request fingerprint, and in the synthesis transcript bound. It counts what the
+  request actually carries, which since ADR-039 is usually much less than every tool ([§5.4](#54-sending-only-the-tool-definitions-that-get-used-adr-039)).
 - **The effective `max_tokens`** (`effective_max_tokens()`). In `native` mode with a thinking budget
   at least as large as `max_tokens`, the request carries both added together. Only the request used
   that value; the budget, the notices, the logs and the footers all used the configured number.
@@ -711,6 +712,60 @@ The tools are now sent with `tool_choice: "none"`, which satisfies both requirem
 the tools are defined, and the model cannot call them. LiteLLM maps `"none"` onto each provider's
 equivalent. `build_completion_kwargs()` takes the choice as a parameter; every other call site
 still passes `"auto"`.
+
+### 5.4. Sending only the tool definitions that get used (ADR-039)
+
+[app/agents/tool_loading.py](file:///d:/MultiAgentDebateOrchestration/app/agents/tool_loading.py). §5.1 made the
+budget count tool definitions; this makes there be fewer of them. The design copies
+[skills](skills.md#1-progressive-disclosure): a one-line catalog per request, the full text on demand.
+
+`plan_shelf()` splits the speech's MCP tools, after `tool_gate.filter_tools`, into two groups:
+
+| Group | Who | What the model sees |
+| :--- | :--- | :--- |
+| Sent | Tools the standing rules name (`tools_named_by_guidance`), `tool_loading.core_tools`, and every tool of a server with 3 or fewer | The full schema, as before |
+| Waiting | The rest | One line in the description of `tools__load_tools`: `- git__git_log: Shows the commit logs` |
+
+Host tools (skills, peers, ask) are always sent. If the catalog would save less than
+`tool_loading.min_saving_tokens` per request, nothing is split and the request is the same as before.
+
+Measured against the real servers with the `openai/gpt-4o` tokenizer:
+
+| Servers | Tools sent | Tokens per request | Saved |
+| :--- | :--- | :--- | :--- |
+| filesystem + memory + git | 35 → 11 | 5,292 → 2,175 | 59% |
+| + sandbox | 42 → 16 | 8,078 → 4,465 | 45% |
+| filesystem + memory | 23 → 9 | 3,731 → 1,861 | 50% |
+| filesystem + sandbox | 21 → 11 | 4,868 → 3,477 | 29% |
+| git | 12 → 3 | 1,563 → 479 | 69% |
+| filesystem, memory or sandbox alone | unchanged | unchanged | not split |
+
+**Loading.** `tools__load_tools` takes `names` (a full name; a tail like `git_log` or a server key like `git` also
+works). The result says what was loaded, and the schemas go out in `tools` from the next request. `ToolLoop` updates
+`tools` and `schema_tokens` together, so the budget, the pressure notices and the wrap-up call all see the new list.
+The call runs in-process and skips the tool gate; it reads no files and no network. Loaded tools are judged like any
+other on each call. `mcp_servers.tools` is reserved.
+
+**Calling a listed tool without loading it.** It runs, through the gate as usual, and its schema is sent from then on.
+A refused call loads nothing. If the call fails, the result gets one more line asking the model to read the schema and
+call again. A tool name that only equals a server key loads nothing.
+
+**Kept for the conversation.** A load costs a full round that resends the conversation, so loading again on every
+speech would spend more than it saves. Loaded names are remembered per (conversation, agent), in load order, and sent
+from that agent's next speech on. Same order means the request prefix stays the same. The memory lives in the process
+and is bounded (`MAX_REMEMBERED`); after a restart one more load restores it. A cut speech restores its own list from
+the draft (`loaded_tools`, `SPEECH_STATE_VERSION` 2).
+
+**The rules that name tools still hold.** `tools_named_by_guidance()` uses the same functions as the rules, so
+`file_writing_guidance()`, `file_editing_guidance()`, `binary_file_guidance()`, `truncation_advice()` and the memory
+notices read the same with the split list. `tests/test_tool_loading.py` compares them. `ConversationMemory.tools_for()`
+goes through `plan_shelf()` too, so the synthesis budget counts what the speech sends.
+
+**What it costs.** The first use of a listed tool takes one more round, and that round invalidates the provider's
+prefix cache once because `tools` changes. How often agents load in real debates has not been measured yet: if
+tool cards keep showing `tools__load_tools` for the same tool, add it to `core_tools`. A model that ignores
+the catalog can answer without tools it would otherwise have used; turn off `tool_loading.enabled` for those. Tests:
+`tests/test_tool_loading.py`.
 
 ---
 

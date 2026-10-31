@@ -496,6 +496,24 @@
     "dir": "${SKILLS_DIR:-skills}",
     "disabled": []
   },
+  "// tool_loading": [
+    "도구 스키마 지연 로딩 — MCP 도구의 정의는 요청마다 입력 토큰으로 나갑니다 (filesystem·memory·git 35개에 약 5,300 토큰).",
+    "자주 쓰는 도구의 정의만 싣고, 나머지는 tools__load_tools 설명에 한 줄 목록으로 보여 줍니다. 에이전트는 필요할 때 불러와 씁니다.",
+    "불러온 도구는 그 대화의 그 에이전트의 다음 발언에도 실립니다. 진행 중인 대화에도 다음 발언부터 적용됩니다.",
+    "",
+    "enabled: false 면 지금처럼 모든 정의를 싣습니다. 목록을 잘 쓰지 못하는 모델을 쓸 때 끄세요.",
+    "core_tools: 정의를 항상 실을 도구. 도구 이름(git_log), 전체 이름(git__git_log), 서버 키(git)를 적을 수 있습니다.",
+    "            파일 쓰기·고치기처럼 상시 지침이 이름을 짚는 도구와, 도구가 3개 이하인 서버는 적지 않아도 항상 실립니다.",
+    "min_saving_tokens: 목록으로 요청당 이만큼 아끼지 못하면 나누지 않고 전부 싣습니다."
+  ],
+  "tool_loading": {
+    "enabled": true,
+    "core_tools": [
+      "read_text_file", "list_directory", "search_files", "add_observations", "execute_python_code",
+      "list_workspace_files", "git_status", "git_diff_unstaged"
+    ],
+    "min_saving_tokens": 1000
+  },
   "// agents": [
     "에이전트 정의.",
     "각 에이전트는 llm 값을 상속하며, 필요한 항목만 덮어쓰면 됩니다.",

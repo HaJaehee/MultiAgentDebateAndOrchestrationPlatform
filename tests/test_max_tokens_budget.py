@@ -46,7 +46,7 @@ from app.agents.llm_context import (
     max_tokens_label,
     tool_schema_tokens,
 )
-from app.config import SequentialThinkingConfig
+from app.config import SequentialThinkingConfig, ToolLoadingConfig
 
 MODEL = "openai/gpt-4o"
 
@@ -192,6 +192,11 @@ async def test_the_synthesis_transcript_leaves_room_for_tool_definitions(monkeyp
     # 턴이 끝나도 풀에는 그 폴더의 런타임(도구 없음)이 유휴로 남아 먼저 잡힙니다.
     # 여기서는 도구 목록만 바꿔 보려는 것이라 호출기의 매니저를 쓰게 합니다.
     monkeypatch.setattr(engine.ctx, "mcp_for", lambda state: None)
+    # 정의를 전부 싣는 경우로 봅니다. 나누면 정의가 작아져 이 크기의 전사에서는 차이가 나지 않습니다.
+    monkeypatch.setattr(
+        "app.agents.tool_loading.get_config",
+        lambda: SimpleNamespace(tool_loading=ToolLoadingConfig(enabled=False)),
+    )
     llm.mcp_manager = _Tools([])
     without = engine.synthesis_phase.build_synthesis_prompt(state, orchestrator)[0]["content"]
     llm.mcp_manager = _Tools(_tools(35))

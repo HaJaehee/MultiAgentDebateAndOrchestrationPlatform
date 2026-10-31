@@ -161,6 +161,7 @@ MultiAgentDebateOrchestration/
 │   │   ├── base.py           # Agent 모델, 카드 색상·아이콘 해석 및 폴백
 │   │   ├── personas.py       # 세션별 페르소나 해석·저장·고정
 │   │   ├── skills.py         # 스킬 디렉터리 스캔 및 에이전트별 스킬 도구 (skills__load_skill 등)
+│   │   ├── tool_loading.py   # 도구 스키마 지연 로딩: 자주 쓰는 것만 싣고 나머지는 한 줄 목록 (ADR-039)
 │   │   ├── llm.py            # LiteLLM 호출기 (곁가지는 llm_request · llm_recovery · llm_tool_calls · llm_context · llm_budget · llm_tools · reasoning)
 │   │   ├── llm_loop.py       # 도구 루프 (ToolLoop 상태와 단계별 함수)
 │   │   ├── llm_gate.py       # 서버 전역 LLM 동시 요청 상한 제어 및 대기열 관리 (app.llm_concurrency)
@@ -222,6 +223,7 @@ MultiAgentDebateOrchestration/
     ├── test_abort_turn.py       # 긴급 중단 (해당 턴 정리, 시작 전 상태 롤백)
     ├── test_workspace_mentions.py # @멘션 (경로 전달·경로 안전·코드 블록 제외) & 업로드
     ├── test_skill_mentions.py     # @전문가 @스킬 지정 (짝짓기·이번 턴 한정·발언 첫머리 불러오기·재개)
+    ├── test_tool_loading.py       # 도구 스키마 지연 로딩 (나누기·불러오기·대화 안 기억·재개)
     ├── test_diagnostics.py        # 루프 정체 스택 기록·브라우저 보고 (Connection lost 원인 진단)
     ├── test_math_markdown.py      # 수식 렌더링 (MathML 변환·가격/코드 제외·맨몸 명령·대체 표시·이스케이프)
     ├── test_remote_mcp.py       # 원격(HTTP) MCP 서버 (설정 규칙·전송 방식·토큰 보관)
@@ -703,6 +705,25 @@ python docs/render_user_manual.py
 - 스크립트(`*.py`)가 포함된 스킬은 `run_python_file` 실행 도구를 보유한 에이전트가 호출할 때 작업 공간의 `.mado/skills/<이름>/` 디렉터리로 복사되며, 에이전트는 해당 경로를 지정하여 샌드박스에서 실행합니다. 스크립트는 인자 없이 실행되므로 입력 및 출력은 작업 공간 내의 파일로 주고받습니다.
 
 자세한 규격과 작성 방법은 [스킬 매뉴얼](docs/user_manual/03-core/09-skills.md)을 참조하십시오.
+
+### 도구 스키마 지연 로딩 `tool_loading`
+
+MCP 도구의 정의는 요청마다 입력 토큰으로 나갑니다. 자주 쓰는 도구의 정의만 싣고, 나머지는 `tools__load_tools` 설명에 한 줄씩 보여 주면 에이전트가 필요할 때 불러옵니다. `filesystem`, `memory`, `git` 기준으로 요청당 5,292토큰이 2,175토큰으로 줄어듭니다.
+
+```json
+"tool_loading": {
+  "enabled": true,
+  "core_tools": ["read_text_file", "list_directory", "search_files", "add_observations", "execute_python_code", "list_workspace_files", "git_status", "git_diff_unstaged"],
+  "min_saving_tokens": 1000
+}
+```
+
+- 파일 쓰기·고치기처럼 상시 지침이 이름을 짚는 도구와 도구가 3개 이하인 서버는 항상 실립니다. `core_tools` 에는 그 밖에 항상 실을 도구의 이름(`git_log`), 전체 이름(`git__git_log`), 서버 키(`git`)를 적습니다.
+- 요청당 `min_saving_tokens` 를 아끼지 못하는 에이전트는 나누지 않고 전부 싣습니다.
+- 불러온 도구는 그 대화의 그 에이전트의 다음 발언에도 실립니다. 목록의 도구를 처음 쓸 때 한 판이 더 듭니다. 같은 도구를 자주 불러오면 `core_tools` 에 넣으십시오.
+- 목록을 잘 쓰지 못하는 모델을 쓴다면 `enabled` 를 `false` 로 두십시오.
+
+자세한 내용은 [ADR-039](lectures/05-adr/ADR-039-lazy-tool-schemas.md)와 [LLM Integration §5.4](wiki/agents/llm-integration.md)를 참조하십시오.
 
 ### MCP 도구 구성 `mcp_servers`
 

@@ -51,6 +51,13 @@ from app.agents.media import (
     store_tool_media,
 )
 from app.agents.skills import is_skill_tool
+from app.agents.tool_loading import (
+    CALLED_BEFORE_LOADING_NOTE,
+    ToolShelf,
+    is_load_tool,
+    load_tools_answer,
+    remember_loaded,
+)
 from app.mcp.manager import MCPManager
 from app.workspace_files import format_size
 
@@ -58,7 +65,7 @@ logger = logging.getLogger(__name__)
 
 
 # 초안의 형식. 필드를 바꾸면 올립니다 — 모르는 형식의 초안은 이어 가지 않고 발언을 처음부터 합니다.
-SPEECH_STATE_VERSION = 1
+SPEECH_STATE_VERSION = 2
 
 
 # 도구 단위로 이어 가는 발언의 첫 판 앞에 붙는 안내.
@@ -149,6 +156,8 @@ class ToolLoop:
     checkpoint: Optional[SpeechCheckpoint] = None
     # 발언을 시작할 때의 마지막 사용자 메시지. 창에 맞추다 버리게 되면 다시 붙입니다 (`fit_tool_loop_context`).
     turn_anchor: str = ""
+    # 도구 정의를 나눈 진열대. 도구를 불러오면 `tools` 가 바뀝니다 (`app/agents/tool_loading.py`).
+    shelf: Optional[ToolShelf] = None
 
     # --- 판마다 바뀌는 것 (체크포인트에 남습니다)
     messages: List[Dict[str, Any]] = field(default_factory=list)
@@ -182,9 +191,40 @@ class ToolLoop:
     schema_tokens: int = field(init=False)
 
     def __post_init__(self) -> None:
+        self._read_tools()
+
+    def _read_tools(self) -> None:
         self.memory_write = memory_write_tool(self.tools)
         self.memory_search = memory_search_tool(self.tools)
         self.schema_tokens = tool_schema_tokens(self.agent.model, self.tools)
+
+    def _refresh_shelf(self, loaded: Sequence[str]) -> None:
+        """불러온 도구의 정의를 다음 요청부터 싣고, 이 대화의 다음 발언에도 남깁니다."""
+        if not loaded or self.shelf is None:
+            return
+        self.tools = self.shelf.offered()
+        self._read_tools()
+        remember_loaded(self.session_id, self.agent.key, loaded)
+        logger.info(
+            f"{self.agent.name} loaded tool schemas ({', '.join(loaded)}): "
+            f"tools={len(self.tools)}, schema≈{self.schema_tokens:,} tok"
+        )
+
+    def answer_load_tools(self, arguments: Any) -> Tuple[str, str]:
+        """모델이 부른 `tools__load_tools` 를 처리합니다."""
+        output, status, loaded = load_tools_answer(self.shelf, arguments)
+        self._refresh_shelf(loaded)
+        return output, status
+
+    def note_direct_call(self, fn_name: str, output: str, status: str) -> str:
+        """목록에만 있던 도구를 곧바로 불렀으면 정의를 싣고, 실패했으면 다시 부르라고 덧붙입니다."""
+        if self.shelf is None:
+            return output
+        loaded = self.shelf.load([fn_name])
+        self._refresh_shelf(loaded)
+        if loaded and status == "error":
+            return f"{output}\n\n{CALLED_BEFORE_LOADING_NOTE}"
+        return output
 
     def restore(self, saved: Dict[str, Any]) -> None:
         """끊긴 발언의 초안에서 진행 상태를 되살립니다. 상한은 줄이지 않습니다."""
@@ -197,6 +237,9 @@ class ToolLoop:
         self.leaked_retries = int(saved.get("leaked_retries") or 0)
         self.context_asked = bool(saved.get("context_asked"))
         self.announced_bands = set(saved.get("announced_bands") or [])
+        if self.shelf is not None:
+            # 기억은 프로세스 안에만 있어 재시작하면 비어 있습니다. 불러온 도구는 초안이 압니다.
+            self._refresh_shelf(self.shelf.load(saved.get("loaded_tools") or []))
 
     def snapshot(self) -> Dict[str, Any]:
         """이어 갈 수 있게 넘길 진행 상태 (형식 `SPEECH_STATE_VERSION`)."""
@@ -212,6 +255,7 @@ class ToolLoop:
             "context_asked": self.context_asked,
             "announced_bands": sorted(self.announced_bands, key=str),
             "turn_anchor": self.turn_anchor,
+            "loaded_tools": self.shelf.loaded_names() if self.shelf is not None else [],
         }
 
     def answer(self) -> Tuple[str, List[Dict[str, Any]]]:
@@ -245,6 +289,7 @@ class ToolLoopMixin:
         checkpoint: Optional[SpeechCheckpoint] = None,
         resume_state: Optional[Dict[str, Any]] = None,
         preload_skills: Sequence[str] = (),
+        shelf: Optional[ToolShelf] = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """도구 루프. 상한은 두 겹의 안전장치와 함께 돕니다.
 
@@ -268,7 +313,7 @@ class ToolLoopMixin:
         loop = ToolLoop(
             agent=agent, tools=tools, on_chunk=on_chunk, on_tool_call=on_tool_call,
             on_context_trim=on_context_trim, session_id=session_id, mcp=mcp, tool_gate=tool_gate,
-            checkpoint=checkpoint, turn_anchor=turn_anchor,
+            checkpoint=checkpoint, turn_anchor=turn_anchor, shelf=shelf,
             messages=list(messages), limit=max_tool_iterations or agent.max_tool_iterations,
             window=agent.max_context_window,
         )
@@ -300,7 +345,7 @@ class ToolLoopMixin:
 
                 try:
                     message, finish_reason = await self._complete_once(
-                        agent, loop.messages, tools, on_chunk
+                        agent, loop.messages, loop.tools, on_chunk
                     )
                 except Exception as exc:
                     if await self._drop_rejected_attachments(loop, exc):
@@ -322,7 +367,7 @@ class ToolLoopMixin:
 
             if not await self._extend_tool_budget(loop, budget_arbiter):
                 return await self._wrap_up_without_tools(
-                    agent, loop.messages, loop.segments, loop.tool_logs, loop.limit, on_chunk, tools=tools
+                    agent, loop.messages, loop.segments, loop.tool_logs, loop.limit, on_chunk, tools=loop.tools
                 )
 
     async def _save_loop_progress(self, loop: ToolLoop) -> None:
@@ -605,18 +650,24 @@ class ToolLoopMixin:
             # 해당 도구 호출 시 정상적으로 보안 판정을 받게 됩니다.)
             gate = (
                 None
-                if (is_skill_tool(fn_name) or is_consultation_tool(fn_name) or is_ask_tool(fn_name))
+                if (
+                    is_skill_tool(fn_name) or is_consultation_tool(fn_name) or is_ask_tool(fn_name)
+                    or is_load_tool(fn_name)
+                )
                 else await self._check_tool_gate(
                     loop.tool_gate, agent, fn_name, fn_args, loop.mcp or self.mcp_manager,
                 )
             )
             if gate is not None and not gate.allowed:
                 output, status = gate.output, gate.status or "denied"
+            elif is_load_tool(fn_name):
+                output, status = loop.answer_load_tools(fn_args)
             else:
                 output, status = await self._execute_tool_safely(
                     agent, fn_name, fn_args, loop.session_id, loop.mcp, tools=loop.tools,
                 )
                 output = await self._take_tool_media(loop, fn_name, output)
+                output = loop.note_direct_call(fn_name, output, status)
             security = gate.audit if gate is not None else {}
 
         call_log = {

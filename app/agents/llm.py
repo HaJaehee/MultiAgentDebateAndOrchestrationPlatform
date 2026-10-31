@@ -6,7 +6,8 @@
 곁가지는 옆 모듈에 있습니다: 도구 루프(`llm_loop`), 요청 만들기(`llm_request`), 사고 과정(`reasoning`), 컨텍스트 창 맞춤(`llm_context`), 한도 안내
 (`llm_budget`), 도구 이름·쓰기 지침(`llm_tools`), 요청 지문(`llm_fingerprint`), 응답 되살리기
 (`llm_recovery`), 도구 호출 처리(`llm_tool_calls`), 예외와 콜백 형식(`llm_types`), 전역 모델 폴백
-(`llm_fallback`), 서버 전체 동시 요청 상한(`llm_gate`), 토큰·시간 계측(`llm_usage`).
+(`llm_fallback`), 서버 전체 동시 요청 상한(`llm_gate`), 토큰·시간 계측(`llm_usage`), 도구 스키마 지연
+로딩(`tool_loading`).
 """
 
 import asyncio
@@ -34,6 +35,7 @@ from app.agents.llm_tools import memory_search_tool
 from app.agents.llm_types import BudgetArbiter, ContextArbiter, LLMUnavailableError, SpeechCheckpoint
 from app.agents.media import fit_attachments, materialize_attachments, with_attachments, without_attachments
 from app.agents.skills import skill_tools_for
+from app.agents.tool_loading import plan_shelf
 from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
 
@@ -296,7 +298,13 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         if tool_gate is not None:
             tools = tool_gate.filter_tools(agent.key, tools, mcp)
         # 스킬 도구는 발언이 진행될 때마다 스킬 디렉터리와 활성화 여부를 새로 조회하여 동적으로 생성합니다 (`app/agents/skills.py`).
-        tools = tools + skill_tools_for(agent) + consultation_tools_for(agent) + ask_tools_for(agent)
+        # MCP 도구는 자주 쓰는 것만 정의를 싣고 나머지는 목록으로 보여 줍니다 (`app/agents/tool_loading.py`).
+        shelf = plan_shelf(
+            agent, tools,
+            skill_tools_for(agent) + consultation_tools_for(agent) + ask_tools_for(agent),
+            session_id=session_id,
+        )
+        tools = shelf.offered()
 
         if resume_state is not None:
             # 끊긴 발언을 이어 갑니다. 모델이 보던 메시지를 그대로 씁니다 — 프롬프트를 다시 만들면
@@ -344,6 +352,7 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
                 context_arbiter=context_arbiter, on_context_trim=on_context_trim,
                 mcp=mcp, turn_anchor=turn_anchor, tool_gate=tool_gate,
                 checkpoint=checkpoint, resume_state=resume_state, preload_skills=preload_skills,
+                shelf=shelf,
             )
         except LLMUnavailableError:
             raise

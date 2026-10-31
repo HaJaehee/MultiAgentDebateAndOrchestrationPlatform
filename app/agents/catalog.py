@@ -79,9 +79,10 @@ _ACTIONS: Dict[str, str] = {
     "sequentialthinking": "단계별로 생각하기",
     "load_skill": "업무 매뉴얼(스킬) 펼쳐 보기",
     "read_skill_file": "업무 매뉴얼 부록 읽기",
+    "load_tools": "도구 꺼내 오기",
 }
 # 행동의 대상으로 표시할 인자 키 목록. 앞선 순서부터 우선 탐색합니다.
-_TARGET_ARGS = ("path", "file_path", "url", "name", "query", "paths")
+_TARGET_ARGS = ("path", "file_path", "url", "name", "query", "paths", "names")
 
 
 def tool_label(tool_name: str, arguments: Any = None) -> str:

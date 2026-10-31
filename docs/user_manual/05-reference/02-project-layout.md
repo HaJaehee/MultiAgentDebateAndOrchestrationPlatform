@@ -100,7 +100,8 @@ app/
 │   ├── llm_recovery.py              568   잘린 답·빈 답·새어 나온 도구 호출 되살리기
 │   ├── llm_context.py               464   토큰 어림, 컨텍스트 창 맞춤
 │   ├── llm_budget.py                271   도구 상한·응답 한도 안내
-│   ├── llm_tools.py                 252   도구 이름 찾기, 파일 쓰기·고치기 지침
+│   ├── llm_tools.py                 271   도구 이름 찾기, 파일 쓰기·고치기 지침
+│   ├── tool_loading.py              299   도구 스키마 지연 로딩: 나누기·목록·불러오기·기억 (ADR-039)
 │   ├── llm_fingerprint.py           101   거절 시 요청 지문
 │   ├── llm_usage.py                 169   토큰 및 LLM 실행 시간 계측 (v1.5)
 │   ├── llm_types.py                  51   LLMUnavailableError, 콜백 형식

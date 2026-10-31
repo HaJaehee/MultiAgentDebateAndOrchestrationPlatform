@@ -15,6 +15,7 @@ from app.agents.llm_context import context_budget, estimate_tokens
 from app.agents.llm_tools import memory_search_tool
 from app.agents.reasoning import strip_reasoning_trace
 from app.agents.skills import skill_tools_for, with_designated_skills
+from app.agents.tool_loading import plan_shelf
 from app.database.models import SessionModel, TurnModel
 from app.events import EventCallback, EventType
 from app.orchestration import context_memory as memory, plan_gate, turns
@@ -562,6 +563,9 @@ class ConversationMemory:
             gate = self.ctx.gate_for(state) if state else None
             if gate is not None:
                 tools = gate.filter_tools(agent.key, tools, mcp)
-            return tools + skill_tools_for(agent) + consultation_tools_for(agent)
+            return plan_shelf(
+                agent, tools, skill_tools_for(agent) + consultation_tools_for(agent),
+                session_id=state.session_id if state else None,
+            ).offered()
         except Exception:  # noqa: BLE001 - 도구 목록을 못 구해도 합성은 진행합니다
             return []

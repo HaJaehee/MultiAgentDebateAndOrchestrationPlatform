@@ -598,6 +598,30 @@ class SkillsConfig(BaseModel):
     # 비활성화할 스킬의 이름 목록입니다. 목록에 없는 스킬은 활성화 상태로 유지되며, 폴더를 추가하면 즉시 사용할 수 있습니다.
     disabled: List[str] = Field(default_factory=list)
 
+# 거의 모든 발언이 쓰는 도구. 나머지는 한 줄 목록으로만 보입니다. `read_text_file` 은 지침이 `edit_file` 과 함께
+# 짚지만, 읽기 전용 모드처럼 고치는 도구가 빠진 발언에서도 있어야 하므로 여기에도 둡니다.
+DEFAULT_CORE_TOOLS = (
+    "read_text_file", "list_directory", "search_files", "add_observations", "execute_python_code",
+    "list_workspace_files", "git_status", "git_diff_unstaged",
+)
+
+class ToolLoadingConfig(BaseModel):
+    """도구 스키마 지연 로딩 설정(`tool_loading`, `app/agents/tool_loading.py`, ADR-039)입니다.
+
+    MCP 도구의 정의는 요청마다 입력 토큰으로 나갑니다. 켜 두면 자주 쓰는 도구의 정의만 싣고, 나머지는
+    `tools__load_tools` 설명의 한 줄 목록으로 보여 줍니다. 진행 중인 대화에도 다음 발언부터 적용합니다.
+    """
+
+    enabled: bool = Field(default=True, description="List rarely used MCP tools by one line instead of sending their schemas")
+    core_tools: List[str] = Field(
+        default_factory=lambda: list(DEFAULT_CORE_TOOLS),
+        description="Tools whose schema is always sent: a tool name (git_log), a full name (git__git_log) or a server key (git)",
+    )
+    min_saving_tokens: int = Field(
+        default=1000, ge=0,
+        description="Send every schema unless the catalog saves at least this many tokens per request",
+    )
+
 # 스킬 도구의 접두사입니다 (`skills__load_skill`). MCP 도구와 동일한 `서버__도구` 형태이므로,
 # 동일한 이름의 MCP 서버가 등록되면 도구 이름 충돌이 발생합니다.
 SKILL_TOOL_PREFIX = "skills"
@@ -611,6 +635,10 @@ PEERS_TOOL_PREFIX = "peers"
 # MCP 서버로 등록하지 않으나, 동일한 이름의 MCP 서버 등록 시 도구명 충돌을 방지하기 위해 예약어로 지정합니다.
 ASK_TOOL_PREFIX = "ask"
 
+# 도구 불러오기의 접두사입니다 (`tools__load_tools`, app/agents/tool_loading.py). MCP 서버가 아니라 앱이
+# 직접 처리하는 도구이므로, 동일한 이름의 MCP 서버 등록 시 도구명 충돌을 방지하기 위해 예약어로 지정합니다.
+TOOL_LOADING_PREFIX = "tools"
+
 # 필수 에이전트의 키. 토론을 이끌고 합성하는 오케스트레이터는 `agents` 에 이 키로 있어야 합니다.
 ORCHESTRATOR_KEY = "orchestrator"
 
@@ -618,6 +646,7 @@ RESERVED_SERVER_NAMES = {
     SKILL_TOOL_PREFIX: f"스킬 도구 이름({SKILL_TOOL_PREFIX}__load_skill)",
     PEERS_TOOL_PREFIX: f"동료 자문 도구 이름({PEERS_TOOL_PREFIX}__consult_agent)",
     ASK_TOOL_PREFIX: f"사용자 질문 도구 이름({ASK_TOOL_PREFIX}__ask_user)",
+    TOOL_LOADING_PREFIX: f"도구 불러오기 이름({TOOL_LOADING_PREFIX}__load_tools)",
 }
 
 class RootConfig(BaseModel):
@@ -629,6 +658,7 @@ class RootConfig(BaseModel):
     plan_approval: PlanApprovalConfig = Field(default_factory=PlanApprovalConfig)
     trial: TrialConfig = Field(default_factory=TrialConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    tool_loading: ToolLoadingConfig = Field(default_factory=ToolLoadingConfig)
 
     # 치환 **전** 의 "mcp_servers" 원문. 작업 공간을 런타임마다 다르게 풀 때
     # 이걸 그 작업 공간으로 다시 풉니다. 이미 치환된 경로 문자열을 찾아 바꾸는
@@ -735,6 +765,11 @@ class RootConfig(BaseModel):
             raise ValueError(
                 f"\"mcp_servers.{ASK_TOOL_PREFIX}\" cannot be used: '{ASK_TOOL_PREFIX}__' is the prefix of the "
                 f"built-in ask-the-user tool ({ASK_TOOL_PREFIX}__ask_user). Rename the MCP server."
+            )
+        if TOOL_LOADING_PREFIX in self.mcp_servers:
+            raise ValueError(
+                f"\"mcp_servers.{TOOL_LOADING_PREFIX}\" cannot be used: '{TOOL_LOADING_PREFIX}__' is the prefix of the "
+                f"built-in tool catalog ({TOOL_LOADING_PREFIX}__load_tools). Rename the MCP server."
             )
         return self
 

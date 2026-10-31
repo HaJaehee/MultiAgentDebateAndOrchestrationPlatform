@@ -103,6 +103,25 @@ def edit_tool(tools: Optional[List[Dict[str, Any]]]) -> Optional[str]:
     """파일의 일부만 고칠 수 있는 도구의 이름. 없으면 None."""
     return _find_tool(tools, (EDIT_TOOL,))
 
+def tools_named_by_guidance(
+    tools: Optional[List[Dict[str, Any]]], extra_tails: Tuple[str, ...] = (),
+) -> List[str]:
+    """상시 지침과 한도 안내가 이름을 짚는 도구의 전체 이름.
+
+    지침과 **같은 함수로** 고르므로, 이 도구들을 뺀 목록에서 지침을 지어도 같은 글이 나옵니다. 지연
+    로딩(`app/agents/tool_loading.py`)은 이 도구들의 정의를 항상 싣습니다. 부르라고 시키면서 인자는
+    알려 주지 않는 일이 없게 하기 위해서입니다. `extra_tails` 는 다른 모듈이 짚는 도구의 이름 꼬리입니다.
+    """
+    named = [
+        *file_tools(tools), append_tool(tools), file_write_tool(tools), edit_tool(tools),
+        memory_write_tool(tools), memory_search_tool(tools),
+    ]
+    edit = edit_tool(tools)
+    if edit:
+        named.append(_on_same_server(tools, edit, FILE_READ_TOOLS))
+    named.extend(_find_tool(tools, (tail,)) for tail in extra_tails)
+    return [name for name in dict.fromkeys(named) if name]
+
 def _on_same_server(
     tools: Optional[List[Dict[str, Any]]], anchor: str, suffixes: Tuple[str, ...],
 ) -> Optional[str]:

@@ -13,6 +13,7 @@ from app.agents.llm_context import effective_max_tokens
 from app.agents.llm_tools import binary_file_guidance, file_editing_guidance, file_writing_guidance
 from app.agents.reasoning import strip_reasoning_trace
 from app.agents.skills import skill_guidance
+from app.agents.tool_loading import tool_loading_guidance
 
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,10 @@ class RequestBuilderMixin:
         asking = ask_guidance(tools)
         if asking:
             parts.append(asking)
+
+        loading = tool_loading_guidance(tools)
+        if loading:
+            parts.append(loading)
 
         if custom_instructions:
             parts.append(f"[Session Custom Instructions]:\n{custom_instructions}")

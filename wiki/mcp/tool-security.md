@@ -84,6 +84,10 @@ If the gate itself raises, the call is **denied** (`gate-error`). If there is no
 
 ## 4. From Calls to Actions
 
+`tools__load_tools` never reaches this pipeline either: it only changes which definitions the next request carries, and
+tools that are always denied are removed before the catalog is built. Every call of a loaded or listed tool is judged here
+as usual ([LLM Integration §5.4](../agents/llm-integration.md#54-sending-only-the-tool-definitions-that-get-used-adr-039)).
+
 Skill tools (`skills__load_skill`, `skills__read_skill_file`) never reach this pipeline: they are host tools
 that read the operator's skill files inside the install folder, and who may use them is decided by
 `allowed_skills` and the skill's on/off switch. Their records carry no verdict. See

@@ -23,7 +23,8 @@ The configuration file is loaded, validated, and normalized by [app/config/](fil
     }
   },
   "tool_security": { },
-  "skills": { }
+  "skills": { },
+  "tool_loading": { }
 }
 ```
 
@@ -39,6 +40,7 @@ The configuration file is loaded, validated, and normalized by [app/config/](fil
 | `agents.<key>.allow_fallback` | `true` by default; `false` keeps this agent on its own model even when `llm.fallback` is on |
 | `tool_security` | Allow / ask / deny for MCP tool calls |
 | `skills` | Where skill folders live and which are turned off |
+| `tool_loading` | Which MCP tool definitions go out with every request, and which wait in a one-line catalog |
 
 ### 1.1. Comments
 
@@ -247,6 +249,20 @@ scripts: [Skills](../agents/skills.md).
 | `disabled` | `list[str]` | `[]` | Skills turned off. Anything not listed is on. Written by the roster's skill switches. |
 
 `mcp_servers.skills` is rejected: `skills__` is the prefix of the built-in skill tools.
+
+### 2.8. `tool_loading` Object
+
+MCP tool definitions go out with every request. With this on, the rarely used ones appear as one line each in the
+description of `tools__load_tools`, and an agent loads them when it needs them. Applies to started conversations from
+their next speech. Full design: [LLM Integration §5.4](../agents/llm-integration.md#54-sending-only-the-tool-definitions-that-get-used-adr-039).
+
+| Key | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `enabled` | `bool` | `true` | `false` sends every definition. Turn it off for a model that does not use the catalog. |
+| `core_tools` | `list[str]` | `read_text_file`, `list_directory`, `search_files`, `add_observations`, `execute_python_code`, `list_workspace_files`, `git_status`, `git_diff_unstaged` | Definitions always sent, as a tool name (`git_log`), a full name (`git__git_log`) or a server key (`git`). Listing them replaces the default. Tools the standing rules name, and servers with 3 or fewer tools, are always sent and need no entry. |
+| `min_saving_tokens` | `int` | `1000` | Send every definition unless the catalog saves at least this much per request. |
+
+`mcp_servers.tools` is rejected: `tools__` is the prefix of the built-in catalog tool.
 
 ---
 
