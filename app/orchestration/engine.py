@@ -91,7 +91,7 @@ class OrchestratorEngine:
     # ------------------------------------------------------------------ 진행 중인 턴의 도구 보안
 
     async def set_tool_rules(self, session_id: str, grants: List[str], denials: List[str]) -> bool:
-        """진행 중인 턴의 "이 대화에서" 규칙을 갈아 끼웁니다. 도는 턴이 없으면 False.
+        """진행 중인 턴의 세션 도구 규칙을 갱신합니다. 실행 중인 턴이 없으면 False를 반환합니다.
 
         True 면 저장까지 게이트가 했습니다. 토론 중에는 게이트가 이 목록의 유일한
         기록자여야, 카드에서 방금 더한 규칙을 화면의 옛 목록이 덮지 않습니다.
@@ -103,10 +103,10 @@ class OrchestratorEngine:
         return True
 
     def set_tool_mode(self, session_id: str, mode: str) -> bool:
-        """진행 중인 턴의 도구 보안 모드를 바꿉니다. 도는 턴이 없으면 False.
+        """진행 중인 턴의 도구 보안 모드를 변경합니다. 실행 중인 턴이 없으면 False를 반환합니다.
 
-        저장은 화면이 합니다 (세션 DB). 여기서는 이미 세워진 문지기에 알려, 수많은 승인
-        카드를 보고 모드를 바꾼 사람이 다음 턴까지 기다리지 않게 합니다.
+        영속 저장은 UI(세션 DB)가 담당하며, 활성화된 게이트 인스턴스에 즉시 통지하여
+        모드를 변경한 사용자가 다음 턴까지 대기할 필요 없이 즉시 적용되도록 합니다.
         """
         gate = self.ctx.tool_gates.get(session_id)
         if gate is None:
@@ -371,10 +371,9 @@ class OrchestratorEngine:
 
             # 3. Record User Message in DB
             #
-            # 이 요청이 기록된 시각이 이 턴의 시작입니다. 보고서와 저장 문서의 "총 경과"
-            # 가 여기서 셉니다 — 기록에 남는 시각이라, 문서를 읽는 사람이 "요청 시각 →
-            # 합성 종료" 로 같은 값을 다시 얻을 수 있습니다. 턴 기록은 이 요청과 같은
-            # 커밋에 들어갑니다.
+            # 본 요청이 커밋된 시각이 해당 턴의 공식 시작 시각입니다. 최종 보고서의 총 소요 시간은
+            # 이 시각을 기준으로 산출되어, 보고서를 열람하는 사용자가 요청 시각부터 합성 완료까지의
+            # 경과 시간을 일관되게 재확인할 수 있습니다. 턴 메타데이터는 시작 요청과 동일 트랜잭션에 기록됩니다.
             turn_config = setup.config(workspace)
             opening = await self.recorder.record_user_message(
                 db=db,
@@ -405,7 +404,7 @@ class OrchestratorEngine:
             # 4. Phase 1: Master Orchestrator Goal Analysis & Planning
             plan_message = await self.planning_phase.plan(db, state, setup, on_event=on_event, control=control)
 
-            # 4-b. 계획 승인 (ADR-028). 사람이 계획을 확인하기 전에는 아무도 발언하지 않습니다.
+            # 4-b. 계획 승인 (ADR-028). 사용자가 계획을 검토·승인하기 전에는 토론 발언을 개시하지 않습니다.
             # 수정을 요청하면 계획이 다시 쓰이므로, 토론은 여기서 돌려받은 계획에서 시작합니다.
             plan_message = await self.planning_phase.approve_plan(
                 db, state, setup, plan_message, on_event=on_event, control=control,
@@ -531,10 +530,9 @@ class OrchestratorEngine:
                 await db.execute(delete(SpeechDraftModel).where(SpeechDraftModel.id.in_(stale)))
                 await db.commit()
 
-            # 끝나지 못한 발언이 실행한 도구는 "끊겼다" 는 안내에 잇습니다. 그 발언의 글은 기록되지
-            # 않았으므로 남아 있지 않다는 것도 함께 적습니다. 이어 가면 그 에이전트가 다시 말할 때
-            # 이 기록을 관찰로 건넵니다. 초안이 있는 발언은 초안에서 이어 가므로 빼고, 그 도구 기록은
-            # 이어 간 발언에 그대로 이어집니다.
+            # 미완료 발언에서 실행된 도구 로그는 "중단됨" 안내와 연계됩니다. 해당 발언 본문은
+            # DB에 커밋되지 않아 보존되지 않음을 명시합니다. 턴 재개 시 해당 에이전트가 재발언할 때
+            # 이 도구 실행 이력을 맥락으로 전달합니다.
             redo = await self.recorder.note_interrupted_speeches(
                 db, state, setup, [o for o in orphans if o.id not in owned], on_event=on_event,
             )

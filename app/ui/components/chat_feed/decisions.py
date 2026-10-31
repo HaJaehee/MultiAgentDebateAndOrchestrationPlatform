@@ -1,4 +1,4 @@
-"""토론 피드 — 답을 기다리는 줄: 끊긴 턴(이어 가기·결론·버리기)과 한도 쪽지(도구 상한·컨텍스트 창)."""
+"""토론 피드 — 사용자 입력 대기 큐: 중단된 턴 복구(재개/결론/폐기) 및 한도 결정 요청(도구 상한/컨텍스트 윈도우)."""
 
 import time
 from typing import Any, Callable, Coroutine, Dict, Optional
@@ -161,7 +161,7 @@ class DecisionBar:
         self.alive = alive
         # 한도에 닿은 에이전트에게 보내는 답. (늘려 줄 양, 요청 id).
         # 0 이면 "지금까지의 것으로 마무리하라" 입니다. 도구 상한과 컨텍스트 창이
-        # 같은 통로를 씁니다 — 무엇에 답하는지는 쪽지의 `kind` 가 들고 있습니다.
+        # 동일한 채널을 사용하며, 응답 대상 유형은 요청 객체의 `kind` 필드에서 판별합니다.
         self.on_decision = on_decision
         # 도구 상한 안내 줄. 에이전트가 답을 기다리며 멈춰 있는 동안만 보입니다.
         self.bar: Optional[ui.row] = None

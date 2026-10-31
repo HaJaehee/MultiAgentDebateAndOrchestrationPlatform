@@ -23,7 +23,7 @@
 
 과거에는 채팅 입력 이벤트 핸들러 내부에서 `engine.run_turn()` 코루틴을 직접 `await`하여 동기적으로 실행했습니다. 그러나 사용자가 브라우저 페이지를 새로고침하거나 페르소나 관리 화면으로 이동하면 다음과 같은 치명적인 문제가 발생했습니다:
 
-- NiceGUI 프레임워크가 해당 웹소켓 클라이언트 연결을 정리하면서, 백그라운드에서 UI를 갱신하려던 코루틴이 참조하던 부모 엘리먼트 슬롯이 즉시 소멸했습니다. 이로 인해 `The parent element this slot belongs to has been deleted.` 예외가 터지며 **진행 중이던 토론 전체가 비정상 중단**되었습니다.
+- NiceGUI 프레임워크가 해당 웹소켓 클라이언트 연결을 정리하면서, 백그라운드에서 UI를 갱신하려던 코루틴이 참조하던 부모 엘리먼트 슬롯이 즉시 소멸했습니다. 이로 인해 `The parent element this slot belongs to has been deleted.` 예외가 발생하며 **진행 중이던 토론 전체가 비정상 중단**되었습니다.
 - 프로세스가 살아남더라도 브라우저를 새로고침한 사용자는 진행 중인 토론 상태를 다시 조회할 방법이 없었습니다.
 
 ```text
@@ -159,7 +159,7 @@ for round_num in 1..max_rounds:                     ← parallel_dispatch 전용
 
 ## 실시간 사용자 제어 통로 (TurnControl)
 
-`TurnControl`은 웹 브라우저 UI와 백그라운드 엔진 사이에서 비동기 제어 명령을 주고받는 가벼운 우편함 역할을 수행합니다.
+`TurnControl`은 웹 브라우저 UI와 백그라운드 엔진 사이에서 비동기 제어 명령을 중개하는 스레드 안전 메시지 큐 역할을 수행합니다.
 
 ```python
 class TurnControl:

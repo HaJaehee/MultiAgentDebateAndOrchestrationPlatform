@@ -68,17 +68,17 @@ class CardTimeline:
         # 있으면 자동 스크롤을 멈춥니다 — 읽는 중에 화면이 밑으로 끌려가면 읽을 수가 없습니다.
         # 카드 상태까지 들고 있는 것은 "카드 모두 접기" 가 그것을 접어야 하기 때문입니다.
         # 스트리밍 카드는 펼쳐진 채로 그려지지만 여기 들어오지 않습니다. 그건
-        # 사람이 편 것이 아니라 기본 상태이고, 그것까지 세면 토론이 도는 동안
-        # 자동 스크롤이 영영 꺼집니다.
+        # 사용자가 수동으로 펼친 것이 아닌 기본 렌더링 상태이며, 이를 포함할 경우 토론 실행 중
+        # 자동 스크롤 추적이 영구적으로 비활성화됩니다.
         self._user_expanded: Dict[str, Dict[str, Any]] = {}
         # 그래프 토론 발언에 붙는 노드 배지 ("구현 · 2회차"). 이름은 화면이 그 대화의 그래프에서 줍니다.
         self._node_badges = NodeBadges()
-        # 사람이 직접 스크롤을 움직였는지. 카드를 접고 나서도 쏟아지는 출력을
-        # 거슬러 올라가려면 이것이 필요합니다 — 펼침 여부와 무관하게, 휠을
-        # 굴리는 것 자체가 "내가 볼 곳은 내가 정한다" 는 뜻입니다.
+        # 사용자가 뷰포트 스크롤을 수동 조작했는지 여부. 카드를 축소한 후에도 실시간 출력을
+        # 거슬러 탐색할 수 있도록 보장합니다 — 카드 상태와 관계없이 휠 스크롤 조작은
+        # 사용자의 수동 탐색 의도로 취급합니다.
         self._scroll_detached: bool = False
-        # 바닥 재조정이 예약돼 있는지, 그리고 그것이 사람이 요청한 것인지
-        # (`scroll_to_bottom` 주석 참고).
+        # 최하단 스크롤 재조정 작업의 예약 여부 및 사용자 명시적 조작에 의한 트리거 여부
+        # (`scroll_to_bottom` docstring 참조).
         self._scroll_settle_pending: bool = False
         # 다시 그려야 할 스트리밍 카드가 있는지. 조각은 내용에 덧붙이기만 하고,
         # 실제 그리기는 화면의 시계(`flush_streams`)가 모아서 합니다.
@@ -129,11 +129,11 @@ class CardTimeline:
             with self.message_container:
                 self.render_empty_placeholder()
 
-        # 사람이 스크롤을 잡는 순간 따라가기를 놓습니다.
+        # 사용자가 스크롤을 직접 조작하는 즉시 자동 추적을 해제합니다.
         #
-        # 스크롤 위치가 아니라 **휠·터치 자체**를 봅니다. 위치로 판단하면
-        # 우리가 부른 자동 스크롤과 사람이 굴린 것을 구분할 수 없어, 매
-        # 청크마다 스스로 떼었다 붙였다 하게 됩니다.
+        # 스크롤 위치 변화가 아닌 실제 **마우스 휠 및 터치 제스처 이벤트**를 감지합니다. 위치만으로
+        # 판단할 경우 시스템에 의한 자동 스크롤과 사용자 입력을 분별할 수 없어
+        # 스트리밍 청크마다 추적 상태가 불안정해지는 것을 방지합니다.
         #
         # throttle 은 이벤트 수를 줄이려는 것입니다 (휠 한 번에 수십 개가
         # 옵니다). `leading_events` 가 기본값이라 첫 틱은 그대로 도착하므로
@@ -313,9 +313,8 @@ class CardTimeline:
 
         # 확정본이 비어 있으면 흘려보낸 것을 그대로 둡니다. `.get(key, default)` 는
         # 키가 있고 값이 "" 일 때 기본값을 쓰지 않으므로, 예전에는 빈 확정본 하나가
-        # 사람이 읽고 있던 카드를 백지로 만들었습니다 — 게다가 그 카드는 짧아진
-        # 탓에 `is_clampable` 을 통과하지 못해 펼치기 버튼도 달리지 않아, 접힌
-        # 것인지 사라진 것인지 구분할 단서조차 없었습니다.
+        # 사용자가 열람 중이던 발언 카드가 공백으로 치환되는 문제가 발생했습니다 — 게다가 축소된
+        # 길이로 인해 펼치기 트리거가 비활성화되어 내용이 누락되었는지 확인하기 어려웠습니다.
         final_content = msg.get("content") or info["content"]
         info["markdown"].set_content(final_content)
         info["content"] = final_content
@@ -360,9 +359,9 @@ class CardTimeline:
                     self._render_tool_accordion(tc)
 
         # 발언이 끝났으므로 접습니다. 여기가 이 기능이 실제로 걸리는 자리입니다 —
-        # 그리는 동안에는 펼쳐 두고, 다 쓰고 나면 세 줄로 줄입니다. 단, 사람이
-        # 직접 펼쳐 둔 카드는 건드리지 않습니다. 읽고 있는 글을 화면이 접어
-        # 버리면 그것대로 남의 손이 끼어든 것입니다.
+        # 스트리밍 중에는 확장 렌더링하고, 작성이 완료되면 간략히 축소합니다. 단, 사용자가
+        # 직접 수동 확장한 카드는 상태를 보존합니다. 열람 중인 카드가 임의로 축소되는
+        # 사용성 저하를 방지하기 위함입니다.
         if (info.get("id") or "") not in self._user_expanded:
             self._apply_clamp(info, collapsed=True)
         self.scroll_to_bottom()
@@ -405,7 +404,7 @@ class CardTimeline:
         self.refresh_follow_button()
 
     def scroll_to_bottom(self, force: bool = False) -> None:
-        """맨 아래로. `force` 는 사람이 직접 요청했거나 화면을 새로 그린 경우입니다.
+        """스크롤을 최하단으로 이동합니다. `force`는 사용자의 명시적 요청 또는 뷰 강제 리렌더링 시 설정됩니다.
 
         두 번 부릅니다. 브라우저는 이번 갱신에서 늘어난 내용을 **아직 배치하기
         전에** 스크롤 명령을 실행하므로, 한 번만 부르면 늘 방금 도착한 만큼 뒤에
@@ -433,7 +432,7 @@ class CardTimeline:
         self._scroll_settle_forced = False
         if not self.alive or self.scroll_area is None or self.scroll_area.is_deleted:
             return
-        # 예약해 둔 사이에 사람이 스크롤을 잡았거나 카드를 펼쳤다면 그 손을 이깁니다.
+        # 지연 타이머 대기 중 사용자가 스크롤을 수동 조작하거나 카드를 조작한 경우 사용자 상태를 보존합니다.
         if not forced and not self.following:
             return
         self.scroll_area.scroll_to(pixels=SCROLL_TO_BOTTOM_PX)

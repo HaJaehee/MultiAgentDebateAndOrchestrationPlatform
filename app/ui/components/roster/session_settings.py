@@ -25,7 +25,7 @@ class ToolRulesDialog:
         on_changed: Callable[[List[str], List[str]], Coroutine[None, None, None]],
     ):
         self.state = state
-        # 규칙을 지웠을 때 저장하는 쪽 (허용, 거부). DB 와 도는 토론을 아는 화면이 답니다.
+        # 세션 규칙 삭제 시 영속화 콜백 (허용/거부). DB 및 활성 토론 상태를 관리하는 UI 계층에서 처리합니다.
         self.on_changed = on_changed
         self.button: Optional[ui.button] = None
         self._dialog: Optional[ui.dialog] = None
@@ -51,8 +51,8 @@ class ToolRulesDialog:
                         "flat round dense color=grey-4"
                     )
                 ui.label(
-                    "승인 카드에서 '이 대화에서 허용·거부' 로 쌓인 규칙입니다. 이 대화에만 걸리고 "
-                    "다음 턴에도 이어집니다. 지우면 다음 도구 호출부터 다시 모드와 설정대로 판정합니다."
+                    "승인 카드에서 '이 대화에서 허용/거부'로 등록된 세션 규칙입니다. 현재 세션에만 적용되며 "
+                    "후속 턴에도 유지됩니다. 삭제 시 다음 도구 호출부터 기본 보안 모드 및 전역 설정으로 환원됩니다."
                 ).classes("text-xs text-slate-400")
                 self._body = ui.column().classes("w-full gap-3")
                 ui.label(
@@ -315,7 +315,7 @@ class SessionSettingsComponent:
         self.changes.config_changed_later()
 
     def sync_parallel_visibility(self) -> None:
-        """'동시 실행' 은 여럿이 동시에 도는 전략(병렬 지시 · 그래프 토론)에서만 의미가 있습니다."""
+        """'동시 실행' 옵션은 복수 에이전트가 병렬 실행되는 전략(병렬 지시 및 그래프 토론)에서 유효합니다."""
         if self.parallel_row is None:
             return
         strategy = STRATEGY_MAP.get(self.state.strategy_name)

@@ -21,7 +21,7 @@
 
 새 전략은 이 파일을 고치지 않고 `strategies/` 폴더나 entry point 로 더합니다 (`app/plugins.py`, ADR-042).
 앱 밖에서 온 코드이므로 엔진은 전략을 직접 부르지 않고 `speakers_for_round` · `instruction_for_turn` 으로
-부릅니다. 전략이 터지거나 이상한 답을 줘도 토론은 우선순위 순서로 돕니다.
+부릅니다. 전략 실행 중 예외가 발생하거나 비정상 응답이 반환되어도 토론은 우선순위 순서로 안전하게 진행됩니다.
 """
 
 import logging
@@ -368,8 +368,8 @@ def speakers_for_round(
 ) -> Tuple[List[Agent], str]:
     """전략에게 이번 라운드의 발언자를 묻습니다: `(발언자, 문제)`. 정상이면 문제는 빈 문자열입니다.
 
-    전략이 터지거나, 아무도 부르지 않거나, 이 토론에 없는 에이전트만 부르면 우선순위 순서로 물러서고 그 이유를
-    돌려줍니다. 부르는 쪽이 기록에 남겨, 사람이 고른 전략대로 돌았다고 믿지 않게 합니다. 전략은 순수 함수여야
+    전략 실행 중 예외가 발생하거나, 발언자를 지정하지 않거나, 미참여 에이전트를 지정하면 우선순위 순서로 폴백하고 사유를
+    반환합니다. 호출 측이 이력을 기록하여 사용자가 선택한 전략과의 차이를 인지할 수 있도록 합니다. 전략은 순수 함수여야
     하지만(LLM 호출은 엔진 몫입니다) 플러그인이 지키는지는 앱이 알 수 없습니다.
     """
     if not active_agents:
@@ -391,7 +391,7 @@ def speakers_for_round(
 def instruction_for_turn(
     strategy: BaseDebateStrategy, agent: Agent, speakers: List[Agent], index: int, state: DebateState,
 ) -> str:
-    """이 발언 차례의 지침. 전략이 터지거나 글이 아닌 것을 주면 지침 없이 진행합니다."""
+    """해당 발언 차례의 지침을 생성합니다. 전략 실행 중 예외가 발생하거나 비정상 값이 반환되면 지침 없이 진행합니다."""
     try:
         text = strategy.turn_instruction(agent, speakers, index, state)
     except Exception as exc:  # noqa: BLE001 - 지침 한 줄 때문에 발언을 막지 않습니다

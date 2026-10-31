@@ -542,7 +542,7 @@ class SessionSidebar:
                             ).props("flat round dense size=10px color=amber-4")
                             if is_running:
                                 # 돌고 있는 토론의 결론은 아직 없습니다. 지금
-                                # 이어받으면 인수인계 쪽지가 반쪽짜리가 됩니다.
+                                # 이어받을 경우 인수인계 메모의 정합성이 결여됩니다.
                                 continue_btn.disable()
                                 continue_btn.tooltip(
                                     "토론이 진행 중입니다. 토론이 종료된 후 이어받으십시오."

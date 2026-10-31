@@ -2,8 +2,8 @@
 
 ## 무엇이 문제였나
 
-토론 한 턴은 사람의 요청으로 시작해 합성으로 끝나는데, 그 경계를 따로 적지 않았습니다.
-턴이 끝났다는 표시는 합성 발언의 `turn_started_at` 뿐이라, 서버가 턴 도중에 내려가면:
+토론의 각 턴은 사용자 요청으로 시작하여 합성으로 종료되나, 이전에는 명시적 경계 마커가 없었습니다.
+턴 완료 표시는 합성 발언의 `turn_started_at`뿐이어서, 서버가 실행 도중 중단되면:
 
 * 진행 중이던 발언은 사라지고(취소는 기록하지 않고 올려 보냅니다), 끝난 발언만 남습니다.
 * 남은 발언은 "끊겼다" 는 표시 없이 피드에 있다가, 다음 요청의 맥락에 조용히 섞입니다.
@@ -12,16 +12,16 @@
 
 ## 여기서 하는 일
 
-1. **기록의 자리** — 발언마다 턴의 흐름에서 맡은 자리(`turn_meta`)를 적습니다 (아래 KIND_*).
-   끊긴 턴을 다시 세울 때 사람이 읽는 문장이 아니라 이것을 읽습니다.
-2. **감지** — 서버가 뜰 때 "도는 중" 으로 남은 턴을 "끊김" 으로 바꿉니다
-   (`mark_interrupted_turns`). 프로세스가 하나뿐이라(ADR-001) 기동 시점의 "도는 중" 은 곧
-   죽은 턴입니다.
-3. **안내** — 끊긴 턴이 있는 대화를 열면 무엇이 남았는지 요약합니다 (`unfinished_turn`).
-   사람이 이어 가기 · 지금까지로 결론 내기 · 버리기를 고릅니다. 자동으로 재개하지 않습니다 —
-   사람 없이 LLM 비용이 나가고 도구가 실행되면 안 됩니다.
-4. **재구성** — 기록에서 실패한 에이전트, 계획의 자리, 개입 수 등을 다시 셉니다. LLM 도, 엔진도
-   모르는 순수 함수라 테스트가 기록만 가지고 확인합니다.
+1. **기록의 자리** — 발언마다 턴 흐름상 역할(`turn_meta`)을 명시합니다 (하단 KIND_* 참조).
+   중단된 턴을 복원할 때 자연어 본문 대신 이 메타데이터를 파싱합니다.
+2. **감지** — 서버 기동 시 "실행 중" 상태로 잔류된 턴을 "중단됨" 상태로 전환합니다
+   (`mark_interrupted_turns`). 단일 프로세스 아키텍처(ADR-001)상 기동 시점의 "실행 중" 턴은
+   비정상 종료된 턴입니다.
+3. **안내** — 중단된 턴이 존재하는 세션 진입 시 잔여 상태를 요약합니다 (`unfinished_turn`).
+   사용자가 재개(이어가기) / 현 상태로 결론 / 폐기 중 선택합니다. 사용자 승인 없이
+   불필요한 LLM 과금이나 도구 실행이 발생하는 것을 방지하기 위해 자동 재개하지 않습니다.
+4. **재구성** — 기록에서 실패 에이전트, 계획 위치, 개입 횟수 등을 재산출합니다. 순수 함수 구조로
+   설계되어 테스트가 DB 기록만으로 무결성을 검증합니다.
 
 실제로 이어 가는 일은 `OrchestratorEngine.resume_turn` 이 합니다.
 """
@@ -56,8 +56,8 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------- 기록의 자리
 
-KIND_OPENING = "opening"            # 턴을 연 사람 요청
-KIND_INTERJECTION = "interjection"  # 토론 도중 사람의 개입
+KIND_OPENING = "opening"            # 턴을 시작한 사용자 요청
+KIND_INTERJECTION = "interjection"  # 토론 진행 중 사용자 개입
 KIND_PLAN = "plan"                  # 오케스트레이터 계획
 KIND_SPEECH = "speech"              # 전문가 발언 (라운드·병렬·그래프 노드)
 KIND_MERGE = "merge"                # 오케스트레이터 취합 (병렬 라운드 끝, 그래프 취합 노드)
@@ -71,15 +71,15 @@ KIND_SYNTHESIS = "synthesis"        # 턴을 마무리한 합성
 # 토론 조기 종료 및 결론 합성 전환 안내 메시지 유형 (v1.5). 값: reason (`converged` · `budget`), round
 KIND_EARLY_END = "early_end"
 # 계획 승인 (ADR-028). 계획 발언 뒤, 토론이 시작되기 전에만 나옵니다.
-KIND_PLAN_REVISION = "plan_revision"  # 사람의 계획 수정 요청. 뒤따르는 계획이 앞의 것을 대신합니다
-KIND_APPROVAL = "plan_approval"       # 사람의 계획 승인. 값: plan_id, tasks, changes, approver
+KIND_PLAN_REVISION = "plan_revision"  # 사용자의 계획 수정 요청. 후속 계획이 이전 계획을 대체합니다
+KIND_APPROVAL = "plan_approval"       # 사용자의 계획 승인. 값: plan_id, tasks, changes, approver
 # 오케스트레이터가 그린 이번 턴의 실행 그래프 (ADR-034). 값: spec, fallback
 KIND_GRAPH_DRAFT = "graph_draft"
 # 서브 토론 (ADR-034). 라운드(그래프는 단계) 경계에서 전문가 두 명이 쟁점 하나를 따로 다룹니다.
 KIND_SUBDEBATE_OPEN = "subdebate_open"              # 값: issue, agents
 KIND_SUBDEBATE_SPEECH = "subdebate_speech"          # 그 안의 발언. 본 기록의 맥락에는 싣지 않습니다
 KIND_SUBDEBATE_CONCLUSION = "subdebate_conclusion"  # 오케스트레이터의 결론. 이것이 본 토론에 합류합니다
-# 사람이 결정 장부를 직접 고친 기록 (ADR-038). 유저 발언 기록에 함께 고정됩니다 (`build_user_record`).
+# 사용자가 결정 장부를 직접 편집한 기록 (ADR-038). 유저 발언 기록에 함께 고정됩니다 (`build_user_record`).
 KIND_LEDGER_EDIT = "ledger_edit"
 
 # 실패로 끝나면 "그 에이전트가 이번 턴에 말하지 못했다" 는 뜻이 되는 자리.
@@ -148,8 +148,8 @@ def fallback_agents(messages: Iterable[Any]) -> List[str]:
 def failed_agents(messages: Iterable[Any]) -> List[str]:
     """이번 턴에 응답을 받지 못한 에이전트 (기록 순서).
 
-    엔진이 도는 동안 `DebateState.failed_agent_keys` 에 쌓는 것과 같은 기준입니다 — 발언이
-    실패로 끝났거나(`msg_type="error"`), 병렬·그래프 발언이 예외로 끝났다는 안내가 남은 경우.
+    엔진 실행 중 `DebateState.failed_agent_keys`에 누적되는 기준과 동일합니다 — 발언이
+    실패로 끝났거나(`msg_type="error"`), 병렬/그래프 발언이 예외로 끝났다는 안내가 남은 경우.
     지명·분배 실패 안내처럼 에이전트가 아니라 경로가 실패한 기록은 세지 않습니다.
     """
     keys: List[str] = []
@@ -168,8 +168,8 @@ def failed_agents(messages: Iterable[Any]) -> List[str]:
 def plan_position(messages: Sequence[Any], start: int = 0) -> Optional[int]:
     """이번 턴 계획 발언의 자리. 계획이 없거나 실패했으면 None.
 
-    사람이 수정을 요청해 계획을 다시 썼으면 (ADR-028) 계획 발언이 여럿입니다. 그때는
-    **마지막으로 성공한** 계획입니다 — 다시 쓰다 실패했으면 그 앞의 계획이 여전히 유효합니다.
+    사용자가 수정을 요청하여 계획이 재생성된 경우 (ADR-028) 복수의 계획 발언이 존재할 수 있습니다. 그때는
+    **마지막으로 성공한** 계획을 채택합니다 — 재생성 실패 시 직전 유효 계획이 유지됩니다.
     """
     found: Optional[int] = None
     for index in range(start, len(messages)):
@@ -220,12 +220,12 @@ _ROUND_KINDS = (KIND_SPEECH, KIND_NOMINATION, KIND_ASSIGNMENT, KIND_MERGE, KIND_
 def round_progress(messages: Iterable[Any]) -> Tuple[int, Set[str]]:
     """라운드 전략이 어디까지 돌았나 — (마지막 라운드, 그 라운드에 이미 발언한 에이전트).
 
-    실패로 끝난 발언도 "발언한 것" 으로 셉니다 (병렬 발언이 예외로 끝난 안내 포함). 도는 중이던
-    엔진도 실패한 발언자를 다시 부르지 않고 다음 사람으로 넘어갔습니다. 아직 어떤 라운드도
-    시작되지 않았으면 (0, 빈 집합).
+    실패로 종료된 발언도 발언 완료로 계산합니다 (예외 안내 포함). 실행 중이던
+    엔진도 실패한 발언자를 재호출하지 않고 다음 에이전트로 전환했습니다. 아직 라운드가
+    시작되지 않은 경우 (0, 빈 집합).
 
-    순서는 자리가 아니라 **에이전트 키**로 맞춥니다. 끊긴 사이에 카드 순서를 바꿨어도, 그
-    라운드에 아직 말하지 않은 사람만 지금의 순서대로 이어서 말합니다.
+    순서는 표시 위치가 아닌 **에이전트 키**를 기준으로 판정합니다. 중단 중 카드 순서가 변경되었더라도,
+    해당 라운드에서 아직 발언하지 않은 에이전트만 현재 순서대로 이어서 발언합니다.
     """
     rows = [m for m in messages if kind_of(m) in _ROUND_KINDS]
     if not rows:
@@ -293,7 +293,7 @@ def replay_graph(
     스케줄러는 결정적입니다 — 같은 출력을 같은 순서로 넣으면 같은 노드를 같은 단계에 깨웁니다.
     노드가 낸 발언에는 단계(`round_number`)·노드·나간 핀이 적혀 있으므로, 단계마다 `ready()` 로
     깨운 노드의 출력을 기록에서 찾아 넣으면 끊기기 직전의 받은편지함과 방문 수가 그대로 섭니다.
-    판정 노드의 값은 도는 중과 같이 "판정 기록 + 판정한 입력" 입니다.
+    게이트 판정 노드의 값은 실행 중 상태와 동일하게 "판정 기록 + 판정 대상 입력"입니다.
 
     마지막 단계에서 출력이 없는 노드가 있으면 그 단계가 끊긴 것이고, 그 노드들이 `pending` 입니다.
     그보다 앞 단계에서 출력이 빠져 있으면 기록이 이 그래프와 맞지 않는 것이라 ValueError.
@@ -323,7 +323,7 @@ def replay_graph(
                 continue
             value = [_get(msg, "id")]
             if activation.node.type == "gate":
-                # 도는 중의 판정 노드가 내보낸 값과 같게 — 판정 기록 + 판정한 입력 (`GraphRunner.run_gate`).
+                # 실행 중 게이트 노드가 출력한 값과 동일하게 유지 — 판정 기록 + 판정 대상 입력 (`GraphRunner.run_gate`).
                 seen: List[str] = []
                 for _edge, ids in activation.inputs:
                     for mid in ids:
@@ -417,7 +417,7 @@ def resume_notice(calls: Sequence[Mapping[str, Any]], output_chars: int = 300) -
 # ---------------------------------------------------------------- 감지
 
 async def mark_interrupted_turns(db) -> Dict[str, int]:
-    """기동할 때 "도는 중" 으로 남은 턴을 정리합니다. {"interrupted": n, "completed": m}.
+    """서버 기동 시 미완료("실행 중") 상태로 잔류된 턴을 복구/정리합니다. {"interrupted": n, "completed": m}.
 
     합성 발언까지 기록된 턴은 사실상 끝난 턴입니다 — 합성 뒤에는 산출물 저장(밀리초)과 장부
     갱신이 남는데, 장부는 반영 지점이 발언 id 로 적혀 있어 다음 턴이 이어 접습니다(ADR-020).

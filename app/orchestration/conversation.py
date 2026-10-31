@@ -85,9 +85,8 @@ class ConversationMemory:
     def routing_record(self, state: DebateState, agent: Agent) -> str:
         """발언자 지명·태스크 분배 프롬프트에 넣을 사용자 발언 기록 (짧은 몫).
 
-        유저가 승인한 태스크 분담이 있으면 (ADR-028) 함께 싣습니다. 지명과 라운드별 분배는
-        오케스트레이터가 그때그때 정하는데, 승인된 분담을 모르고 정하면 사람이 확인한 것과
-        다른 일을 시키게 됩니다.
+        유저가 승인한 태스크 분담이 있으면 (ADR-028) 프롬프트에 포함합니다. 승인된 태스크를
+        인지하지 못하여 사용자가 검토·승인한 방향과 상이한 작업이 할당되는 것을 방지합니다.
         """
         record = memory.build_user_record(
             state, model=agent.model,
@@ -326,7 +325,7 @@ class ConversationMemory:
             (index, state.messages[index]) for index in range(start, upto)
             if state.messages[index].msg_type != "error" and turns.in_main_record(state.messages[index])
         ]
-        # 사람의 말과 사람이 장부를 고친 기록만으로는 다시 쓸 것이 없습니다. 고친 값은 이미 장부에 있습니다.
+        # 사용자 발언 및 장부 직접 수정 이력만으로는 재작성 대상이 없습니다. 수정한 값은 이미 장부에 반영되어 있습니다.
         if not any(m.sender_key != "user" and turns.kind_of(m) != turns.KIND_LEDGER_EDIT for _index, m in fresh):
             return False
 
@@ -433,7 +432,7 @@ class ConversationMemory:
         참조로 바꿔 토큰을 두 번 쓰지 않습니다.
 
         요약은 원문 전체가 이 발언자의 창에 들어가지 않을 때만 씁니다 (`use_summary`
-        를 주지 않으면 여기서 판단). 창이 큰 에이전트는 원문을 그대로 읽습니다.
+        를 주지 않으면 여기서 판단). 컨텍스트 윈도우가 충분한 에이전트는 원문을 직접 참조합니다.
         """
         budget = self.speech_budget(agent, state)
         record = memory.build_user_record(
@@ -466,7 +465,7 @@ class ConversationMemory:
         fresh_start = state.turn_message_start
         for index in range(len(state.messages) - 1, -1, -1):
             msg = state.messages[index]
-            # 서브 토론에서 한 말은 본 토론의 응답이 아닙니다. 그 앞의 발언은 아직 답하지 않은 것입니다.
+            # 서브 토론의 발언은 메인 토론의 직접 응답이 아닙니다. 해당 발언 이전의 메인 토론 내용은 미응답 상태로 유지됩니다.
             if msg.sender_key == agent.key and msg.msg_type != "error" and turns.in_main_record(msg):
                 fresh_start = max(fresh_start, index + 1)
                 break
@@ -510,9 +509,9 @@ class ConversationMemory:
                     role_label = f"[{msg.speaker}]"
                     context.append({
                         "role": "assistant" if msg.sender_key == agent.key else "user",
-                        # 사고 과정은 기록과 화면에만 남기고 프롬프트에는 싣지 않습니다.
-                        # 자기 발언도 같습니다 — `show_steps` 는 사람이 무엇을 볼지를
-                        # 정하는 스위치이지, 모델이 무엇을 읽을지를 정하는 것이 아닙니다.
+                        # 사고 과정은 히스토리 로그와 UI 표시에만 유지하고 프롬프트에는 주입하지 않습니다.
+                        # 자기 발언도 동일합니다 — `show_steps`는 사용자의 UI 열람 여부를
+                        # 제어하는 설정이지, 모델 프롬프트 주입 여부를 결정하는 옵션이 아닙니다.
                         "content": f"{role_label}:\n{body_for(index, msg)}",
                     })
 

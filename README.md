@@ -174,7 +174,7 @@ MultiAgentDebateOrchestration/
 │   │   └── pool.py           # 동적 에이전트 풀 레지스트리
 │   ├── orchestration/        # 멀티 에이전트 토론
 │   │   ├── engine.py         # 조립과 턴 수명 (run_turn · resume_turn)
-│   │   ├── speech.py         # 발언 한 번 (스트리밍 · 확정 기록 · 한도 쪽지)
+│   │   ├── speech.py         # 단일 발언 생명주기 (스트리밍 · 확정 기록 · 한도 승인 요청)
 │   │   ├── speech_retry.py   # 끝난 발언 하나 다시 실행 (버전 · 되돌리기, ADR-036)
 │   │   ├── speech_comments.py # 인라인 코멘트 (그 에이전트의 다음 발언에만 전달, ADR-036)
 │   │   ├── ledger_edit.py    # 결정 장부 직접 편집 (항목 단위 · 사용자 발언 기록에 고정, ADR-038)

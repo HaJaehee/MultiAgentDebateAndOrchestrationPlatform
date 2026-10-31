@@ -602,7 +602,7 @@ class MCPClientConnection:
                     return
                 except (ProcessLookupError, OSError, ValueError, RuntimeError):
                     continue
-                except BaseException:  # noqa: BLE001 - 정리 경로는 절대 터지지 않습니다
+                except BaseException:  # noqa: BLE001 - 리소스 정리 경로는 절대 실패하지 않도록 보호
                     logger.debug("Ignoring an error while terminating an MCP server", exc_info=True)
                     return
             return

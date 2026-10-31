@@ -42,7 +42,7 @@ def _reduces(*types: EventType) -> Callable[[Reducer], Reducer]:
 
 
 def _payload(event: Event) -> Dict[str, Any]:
-    """`type` 을 뺀 나머지. 카드·쪽지는 이것을 그대로 들고 있습니다."""
+    """`type` 필드를 제외한 페이로드 딕셔너리. UI 카드 및 요청 컴포넌트가 직접 참조합니다."""
     return {k: v for k, v in event.items() if k != "type"}
 
 
@@ -80,7 +80,7 @@ class TurnRun:
         self.workspace = resolve_workspace_dir(workspace or None)
         self.event_bus = event_bus or get_event_bus()
         self.channel = f"session:{self.session_id}"
-        # 이 턴의 물음을 다른 대화를 보는 화면에도 알릴지. 방문자의 턴이면 답할 사람은 그 방문자이므로
+        # 본 세션의 대기 상태를 타 세션 화면에도 브로드캐스트할지 여부. 방문자 세션인 경우 해당 방문자에게만 국한되므로
         # 주인 화면을 울리지 않습니다 (`DebateRunner.waiting_by_session`).
         self.announce_waiting = announce_waiting
         self.status: str = "running"  # running | completed | failed | cancelled
@@ -106,18 +106,18 @@ class TurnRun:
         self.task: Optional[asyncio.Task] = None
         self._subscribers: Set["asyncio.Queue[Dict[str, Any]]"] = set()
 
-        # 사람이 이 턴에 끼어드는 통로. 엔진이 발언 사이마다 꺼내 봅니다.
+        # 사용자의 턴 개입 통로. 엔진이 각 발언 턴 사이에 확인합니다.
         self.control = TurnControl()
         # 지금 어느 단계인지. 최종 합성에 들어간 뒤로는 개입을 실을 자리가 없어,
         # 화면에 "이번 턴에는 반영되지 않는다" 고 정확히 알려야 합니다.
         self.phase: str = "planning"
 
-        # 한도에 닿아 사람의 답을 기다리는 쪽지 (도구 상한 또는 컨텍스트 창).
+        # 자원 한도 도달로 사용자 응답을 대기 중인 요청 객체 (도구 상한 또는 컨텍스트 윈도우).
         # 스냅샷에 들어가므로 새로고침하거나 나중에 붙은 화면에서도 같은 물음이
         # 보입니다 (기다리는 쪽은 엔진이고, 답할 수 있는 창이 3분뿐입니다).
         self.decision_request: Optional[Dict[str, Any]] = None
 
-        # 도구 승인 카드 (도구 보안 판정이 "묻기" 인 호출). 한도 쪽지와 달리 여러 장이
+        # 도구 승인 요청 카드 (보안 판정이 '확인'인 호출). 한도 요청과 달리 복수 건이
         # 동시에 떠 있을 수 있습니다 — 병렬 라운드의 발언자마다 하나씩. 스냅샷에 들어가
         # 새로고침한 화면과 원격 화면에서도 같은 카드가 보입니다.
         self.approvals: List[Dict[str, Any]] = []
@@ -171,7 +171,7 @@ class TurnRun:
                 logger.warning("Dropping a slow debate subscriber for session %s", self.session_id)
                 self._subscribers.discard(queue)
 
-    # -------------------------------------------------- 사람의 개입
+    # -------------------------------------------------- 사용자 개입
 
     def request_stop(self) -> bool:
         """남은 라운드를 접고 지금까지의 토론으로 합성하도록 요청합니다.
@@ -218,7 +218,7 @@ class TurnRun:
         도구 상한이든 컨텍스트 창이든 흐름은 같습니다 — 답을 받은 에이전트는 그
         자리에서 이어서 돌거나(확장), 지금까지의 것으로 마무리합니다. 어느 쪽이든
         지금까지의 발언은 그대로 남습니다. 어느 물음에 답하는지는 화면에 떠 있는
-        쪽지의 `kind` 가 정합니다.
+        요청 객체의 `kind` 필드가 결정합니다.
         """
         if self.status != "running":
             return False
@@ -397,9 +397,9 @@ class TurnRun:
         self.round_info = "Tool limit"
 
     def _clear_answered_decision(self, event: Event) -> None:
-        # 답이 난 쪽지만 걷습니다. 병렬 라운드에서는 그 사이 다른 에이전트가
-        # 낸 새 쪽지가 화면에 올라와 있을 수 있고, 그걸 같이 지우면 답할
-        # 곳이 사라집니다.
+        # 처리가 완료된 요청만 정리합니다. 병렬 라운드에서는 그 사이 타 에이전트가
+        # 생성한 신규 요청이 UI에 존재할 수 있으며, 일괄 정리 시 응답 통로가
+        # 소실될 수 있기 때문입니다.
         shown_id = (self.decision_request or {}).get("id")
         if not event.get("id") or event.get("id") == shown_id:
             self.decision_request = None
@@ -659,7 +659,7 @@ class TurnRun:
             self.status_text += f" · {used}"
 
     def waiting_requests(self) -> List[WaitingRequest]:
-        """지금 사람의 답을 기다리는 물음 전부 — 계획 승인, 도구 승인, 질문, 한도 쪽지.
+        """현재 사용자 응답을 대기 중인 모든 요청을 집계합니다 — 계획 승인, 도구 승인, 질의, 한도 결정 요청.
 
         끝난 실행은 아무것도 기다리지 않습니다. 취소나 실패로 끝나면 `turn_completed` 가 오지 않아
         도구 카드와 질문이 목록에 남아 있으므로 상태부터 봅니다.

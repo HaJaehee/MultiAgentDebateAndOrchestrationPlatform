@@ -90,7 +90,7 @@ class DebateRunner:
                 if sid != session_id and r.status == "running"]
 
     def waiting_by_session(self) -> Dict[str, List[WaitingRequest]]:
-        """대화별로 사람의 답을 기다리는 물음. 기다리는 것이 없는 대화는 빠집니다.
+        """세션별 사용자 응답 대기 요청 목록을 반환합니다. 대기 중인 항목이 없는 세션은 제외됩니다.
 
         사이드바 배지·탭 제목·데스크톱 알림이 읽는 값입니다. 방문자의 턴(`announce_waiting=False`)은
         그 방문자의 화면만 알면 되므로 뺍니다.
@@ -109,7 +109,7 @@ class DebateRunner:
 
         `attended=False`는 대화형 사용자가 없는 무인 모드 턴입니다 (API/MCP 헤드리스 실행, `app/headless.py`).
         대화형 승인 다이얼로그를 띄우지 않습니다 (`control.asks_human`).
-        `announce_waiting=False` 는 답할 사람이 주인이 아닌 턴입니다 (체험 방문자 등, `TurnRun.announce_waiting`).
+        `announce_waiting=False`는 응답 주체가 세션 소유자가 아닌 턴입니다 (게스트 방문자 등, `TurnRun.announce_waiting`).
         """
         existing = self._runs.get(session_id)
         if existing is not None and existing.status == "running":
@@ -284,15 +284,13 @@ class DebateRunner:
     async def abort(self, session_id: str) -> Optional[Dict[str, Any]]:
         """토론을 즉시 끊고, 이 턴이 남긴 것의 목록을 돌려줍니다.
 
-        `request_stop()` 과 정반대입니다. 정지는 "여기까지의 논의로 결론을
-        내라" 는 뜻이라 진행 중인 발언을 끝까지 받고 합성까지 갑니다. 여기서는
-        요청 **자체가 틀렸을** 때를 다룹니다 — 그 답을 기다릴 이유가 없으므로
-        발언 도중이라도 끊고, 지운 자리를 사람이 다시 쓰게 합니다.
+        `request_stop()`과 상반된 강제 취소입니다. 정상 정지는 현재까지의 논의를 기반으로
+        합성 결론을 도출하지만, 본 메서드는 시작 프롬프트의 오류 등으로 즉각 취소할 때 사용됩니다 —
+        불필요한 대기 없이 진행 중인 발언을 즉시 중단하고 사용자가 프롬프트를 재작성할 수 있도록 합니다.
 
-        지우는 일은 하지 않습니다. 무엇을 지워야 하는지만 알려 줍니다 (기록은
-        DB 를 아는 쪽의 몫입니다). 돌려주는 값:
+        데이터베이스 삭제는 호출 측에서 처리하며, 삭제 대상 식별 정보만 반환합니다:
 
-            {"prompt": 사람이 보냈던 글, "message_ids": [...], "artifact_ids": [...],
+            {"prompt": 사용자 원본 프롬프트, "message_ids": [...], "artifact_ids": [...],
              "turn_id": 턴 기록 id 또는 None}
 
         진행 중인 토론이 없으면 None.
@@ -337,9 +335,9 @@ class DebateRunner:
         return run.resolve_decision(extra, request_id) if run is not None else False
 
     async def set_tool_rules(self, session_id: str, grants: List[str], denials: List[str]) -> bool:
-        """진행 중인 토론의 "이 대화에서" 규칙을 바꿉니다. 도는 토론이 없으면 False.
+        """진행 중인 토론의 세션 도구 규칙을 갱신합니다. 실행 중인 토론이 없으면 False를 반환합니다.
 
-        False 면 저장은 부른 쪽(화면)이 합니다. 도는 토론이 있으면 그 게이트가 저장합니다
+        False인 경우 호출 측(UI)에서 저장하며, 실행 중인 토론이 존재하면 해당 게이트가 직접 저장합니다
         (`OrchestratorEngine.set_tool_rules`).
         """
         run = self._runs.get(session_id)

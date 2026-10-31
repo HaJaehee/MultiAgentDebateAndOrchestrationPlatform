@@ -44,7 +44,7 @@ class EventType(StrEnum):
     INTERJECTION_QUEUED = "interjection_queued"
     INTERJECTIONS_DEFERRED = "interjections_deferred"
 
-    # 한도에 닿아 사람에게 묻는 쪽지 (`<kind>_exhausted` / `<kind>_resolved`)
+    # 한도 도달에 따른 사용자 결정 요청 (`<kind>_exhausted` / `<kind>_resolved`)
     TOOL_BUDGET_EXHAUSTED = "tool_budget_exhausted"
     TOOL_BUDGET_RESOLVED = "tool_budget_resolved"
     CONTEXT_WINDOW_EXHAUSTED = "context_window_exhausted"
@@ -80,7 +80,7 @@ class EventType(StrEnum):
     ARTIFACTS_SYNTHESIZED = "artifacts_synthesized"
 
 
-# 한도 쪽지의 종류(`DecisionRequest.kind`) → 답이 났을 때 보내는 이벤트.
+# 결정 요청 종류(`DecisionRequest.kind`) → 응답 처리 시 발행하는 이벤트 매핑.
 DECISION_RESOLVED = {
     "tool_budget": EventType.TOOL_BUDGET_RESOLVED,
     "context_window": EventType.CONTEXT_WINDOW_RESOLVED,

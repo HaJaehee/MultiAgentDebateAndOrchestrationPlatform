@@ -16,8 +16,8 @@ Claude Code · Zed · Antigravity 의 도구 권한에서 가져온 것들입니
 기본 서버(filesystem · git · memory · sandbox · fetch)의 인자 모양을 알므로,
 그 서버들은 인자 단위까지 봅니다 (`KNOWN_TOOLS`). 모르는 서버는 도구 단위입니다.
 
-이 모듈은 순수합니다 — 판정에 필요한 것은 전부 인자로 받습니다. 사람에게 묻고
-기록하는 쪽은 `app/orchestration/tool_gate.py` 입니다.
+본 모듈은 순수 함수 계층입니다 — 판정에 필요한 모든 상태를 인자로 전달받습니다. 사용자 승인 대기 및
+이력 기록은 `app/orchestration/tool_gate.py`에서 담당합니다.
 """
 
 from __future__ import annotations
@@ -765,7 +765,7 @@ def narrow_rules(profile: CallProfile) -> List[str]:
 
 
 def denial_covers(rule_texts: Sequence[str], profile: CallProfile) -> bool:
-    """사람이 고친 거부 범위가 지금 이 호출을 막는가. 막지 못하는 범위는 저장해도 소용없습니다."""
+    """사용자가 수정한 거부 범위가 해당 호출을 차단하는지 검증합니다. 차단하지 못하는 규칙은 저장을 허용하지 않습니다."""
     try:
         rules = parse_rules(rule_texts)
     except ValueError:
@@ -776,10 +776,10 @@ def denial_covers(rule_texts: Sequence[str], profile: CallProfile) -> bool:
 
 
 def grant_covers(rule_texts: Sequence[str], profile: CallProfile, mode: str) -> bool:
-    """사람이 고친 허용 범위가 지금 이 호출을 덮는가 (Antigravity 의 범위 검증).
+    """사용자가 수정한 허용 범위가 해당 호출을 포괄하는지 검증합니다 (Antigravity 식 범위 검증).
 
-    덮지 못하는 범위로 "이 대화에서 허용" 을 누르면, 방금 허락한 호출이 다음 판에
-    다시 물어집니다. 사람은 허락했다고 생각하므로 그 전에 알려야 합니다.
+    포괄하지 못하는 규칙으로 세션 허용을 등록하면 방금 승인한 호출이 다음 호출 시
+    재확인될 수 있으므로 사전에 유효성을 검증합니다.
     """
     try:
         rules = parse_rules(rule_texts)
@@ -815,7 +815,7 @@ def tool_always_denied(meta: ToolMeta, policy: Policy) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# 도구 기록을 사람에게 보여줄 말 — 채팅 피드와 세션 저장 파일이 같은 말을 씁니다
+# 도구 실행 및 보안 판정 내역의 사용자 표시 형식 — 채팅 피드 및 세션 아카이브 공통 표준
 # ---------------------------------------------------------------------------
 #
 # 한 줄에 두 가지만 답합니다. **결과**(도구가 돌았는가, 어떻게 끝났는가)는 제목 줄의
@@ -839,7 +839,7 @@ def tool_outcome(status: str, security: Optional[Mapping[str, Any]] = None) -> s
     """도구가 돌았는가와 그 결과 — `success` · `error` · `blocked`.
 
     `blocked` 는 실행하지 않은 호출입니다. 보안 판정뿐 아니라 문서 형식 거부(텍스트 도구로
-    .pptx)도 여기 듭니다 — 사람에게 중요한 것은 "도구가 돌았는가" 입니다.
+    .pptx)도 여기 듭니다 — 사용자 관점에서 핵심적인 기준은 도구의 실제 실행 여부입니다.
     """
     decision = str((security or {}).get("decision") or "")
     if status == "denied" or decision in _BLOCKING_DECISIONS:

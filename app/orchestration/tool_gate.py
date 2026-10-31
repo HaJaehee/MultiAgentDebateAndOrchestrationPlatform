@@ -1,8 +1,8 @@
 """도구 보안 판정을 토론에 붙이는 자리.
 
-판정 자체는 `app/mcp/policy.py` 의 순수 함수가 합니다. 여기서 하는 일은 그 판정에
-**지금 이 대화와 이 발언자**의 사정을 입히고, "묻기" 가 나오면 사람에게 묻고, 답을
-기억하는 것입니다.
+보안 판정 로직은 `app/mcp/policy.py`의 순수 함수가 전담합니다. 본 모듈은 판정 로직에
+**현재 세션 및 발언자 맥락**을 결합하고, '확인(ask)' 판정 시 사용자 승인을 요청하며 결과를
+캐싱합니다.
 
 * 설정은 매번 **지금의** conf.json 에서 읽습니다. 대화가 시작된 뒤에 조인 규칙도 곧바로
   걸려야 합니다 (에이전트 설정처럼 대화에 고정되지 않습니다).
@@ -13,10 +13,10 @@
   창에서 보고 지울 수 있습니다.
 * 같은 발언자가 이번 턴에 이미 거부된 호출을 똑같이 다시 하면 묻지 않고 거부합니다. 모델이
   거부를 읽고도 같은 호출을 되풀이하면 카드가 끝없이 쌓입니다.
-* 물을 사람이 없으면(배치 실행 · 테스트) "묻기" 는 거부입니다 — Claude Code 의 `dontAsk`.
+* 대화형 사용자가 부재한 경우(배치 실행/헤드리스) "확인" 판정은 안전하게 거부(Denied) 처리됩니다 — Claude Code의 `dontAsk` 원칙.
 
-게이트가 스스로 터지면 **거부**합니다 (fail closed). 판정을 못 했는데 실행하는 것은 보안
-장치가 없는 것과 같습니다.
+게이트 자체에 예외가 발생하면 **안전하게 거부**(Fail Closed) 처리합니다. 보안 판정이 불가능한 상태에서
+도구를 임의 실행하지 않습니다.
 """
 
 from __future__ import annotations
@@ -119,7 +119,7 @@ def _preview(arguments: Any) -> str:
     return text
 
 
-# 사람이 거부한 호출에 붙는 다음 행동. 사람의 판단이라 모델이 우회로를 찾으면 안 됩니다.
+# 사용자가 거부한 도구 호출에 부여되는 후속 지침. 사용자 결정이므로 모델이 우회로를 시도하지 않도록 제한합니다.
 _DENIED_BY_USER_NEXT_ACTION = (
     "유저의 결정을 따르세요. 같은 호출을 다시 하지 말고, 같은 결과를 내는 다른 도구로 "
     "돌아가지도 마십시오. 이 작업 없이 진행하거나, 꼭 필요하면 이유를 발언에 적어 "
@@ -128,7 +128,7 @@ _DENIED_BY_USER_NEXT_ACTION = (
 
 
 class ToolGate:
-    """한 대화의 한 턴 동안 도구 호출을 판정하고 물어보는 문지기."""
+    """세션 턴 동안 도구 호출 권한을 판정하고 사용자 승인을 중개하는 보안 게이트."""
 
     def __init__(
         self,
@@ -149,7 +149,7 @@ class ToolGate:
         self.control = control
         self.on_event = on_event
         self.save_rules = save_rules
-        # 이번 턴에 사람이 거부한 호출 (발언자·도구·인자) → 모델에게 돌려준 문구.
+        # 이번 턴에 사용자가 거부한 호출 (발언자·도구·인자) → 모델에 반환된 거부 사유.
         self._rejected: Dict[str, str] = {}
 
     # -------------------------------------------------- 규칙 묶음
@@ -223,7 +223,7 @@ class ToolGate:
     # -------------------------------------------------- 판정
 
     async def check(self, agent: Any, tool_name: str, arguments: Dict[str, Any], mcp: Any) -> GateResult:
-        """호출 하나를 판정합니다. 게이트가 터지면 거부합니다."""
+        """단일 도구 호출을 판정합니다. 게이트 내부 예외 발생 시 안전하게 거절(Fail Closed)합니다."""
         try:
             return await self._check(agent, tool_name, arguments, mcp)
         except asyncio.CancelledError:
@@ -269,7 +269,7 @@ class ToolGate:
 
         if verdict.effect == DENY:
             if verdict.source == "denial":
-                # 사람이 이 대화에서 거부한 범위입니다. 설정의 거부와 구분해 기록합니다.
+                # 사용자가 세션 내에서 명시적으로 거부한 규칙 범위입니다. 전역 설정 거부와 구분하여 기록합니다.
                 return GateResult(
                     False,
                     refusal_text(tool_name, verdict.explain(), _DENIED_BY_USER_NEXT_ACTION),
@@ -358,7 +358,7 @@ class ToolGate:
     def _scope_problem(
         self, scope: List[str], decision: str, profile: CallProfile, mode: str,
     ) -> Optional[str]:
-        """사람이 고친 범위가 쓸 수 있는지. 문제가 있으면 그 설명."""
+        """사용자가 수정한 허용 범위의 유효성을 검증합니다. 이상이 있을 경우 사유 반환."""
         try:
             parse_rules(scope)
         except ValueError as exc:
@@ -394,9 +394,9 @@ class ToolGate:
                 await self._save()
             if decision.endswith("_always"):
                 if approver != "local":
-                    # 화면이 원격에는 버튼을 보여주지 않습니다. 그래도 들어오면 이 대화로
-                    # 좁힙니다 — conf.json 을 고치는 것은 서버 PC 앞의 사람만 합니다.
-                    note = "원격 답이라 conf.json 에 저장하지 않고 이 대화에만 적용했습니다."
+                    # 원격 화면에서는 버튼이 비활성화되나, 우회 호출 시 세션 규칙으로 범위를
+                    # 제한합니다 — conf.json 수정은 로컬 콘솔 사용자에게만 허용됩니다.
+                    note = "원격 클라이언트 응답이므로 conf.json에 저장하지 않고 세션에만 적용했습니다."
                     decision = "allow_session" if allow else "deny_session"
                 else:
                     try:

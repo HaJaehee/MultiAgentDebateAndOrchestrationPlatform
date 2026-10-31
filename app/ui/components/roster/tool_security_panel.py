@@ -60,9 +60,9 @@ def audit_row(call: BlockedCall) -> Dict[str, str]:
 class ToolSecurityDialog:
     """`도구 보안` 줄의 '전역 규칙·감사' 창.
 
-    규칙을 고치는 것은 서버 PC 앞의 사람만 합니다 (승인 카드의 "항상" 과 같은 원칙). 버튼을 감추는 것으로
-    끝내지 않고 고치는 함수마다 다시 확인합니다. 규칙은 모든 대화에 걸리는 설정이라 대화 잠금과 무관하고,
-    토론 중에 고쳐도 다음 도구 호출부터 걸립니다 (`ToolGate.policy_for` 가 호출마다 지금의 설정을 읽습니다).
+    전역 보안 규칙 수정은 로컬 콘솔 사용자에게만 허용됩니다 (승인 카드의 "항상" 옵션과 동일 원칙). 버튼 비활성화 외에도
+    수정 핸들러 레벨에서 인가를 재검증합니다. 전역 규칙은 세션 잠금 상태와 무관하게 즉시 반영되며,
+    진행 중인 토론에서도 다음 도구 호출부터 즉각 적용됩니다 (`ToolGate.policy_for`가 호출 시점마다 최신 설정을 참조).
     """
 
     def __init__(
@@ -338,8 +338,8 @@ class ToolSecurityDialog:
     def _build_audit(self) -> None:
         with ui.column().classes("w-full gap-2"):
             ui.label(
-                "규칙·모드·고정 보호가 막은 도구 호출만 모읍니다. 승인 카드에서 사람이 거부했거나 답하지 않은 호출과 "
-                "문서 형식 거부는 들어가지 않습니다. 대화를 지우면 그 대화의 기록도 함께 지워집니다."
+                "규칙·모드·고정 보호에 의해 차단된 도구 호출 목록입니다. 승인 카드에서 사용자가 수동 거부했거나 무응답 처리된 호출 및 "
+                "문서 형식 거부는 제외됩니다. 세션 삭제 시 해당 감사 로그도 함께 정리됩니다."
             ).classes("text-xs text-slate-400 leading-snug")
             with ui.row().classes("w-full items-center gap-3"):
                 ui.switch("이 대화만", value=self._only_this_session, on_change=self._on_scope_change).props(

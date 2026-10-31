@@ -143,7 +143,7 @@ DECISION_STYLES = {
     },
 }
 
-# 도구 승인 카드. 한도 쪽지(앰버·주황)와 다른 물음이라 하늘색으로 구분합니다.
+# 도구 실행 승인 카드. 한도 결정 요청(앰버/주황)과 구분하기 위해 스카이블루 색상을 적용합니다.
 APPROVAL_CARD_CLASSES = (
     "w-full gap-1.5 px-3 py-2 rounded-lg text-xs border bg-sky-950/50 border-sky-700/70"
 )
@@ -151,7 +151,7 @@ APPROVAL_CARD_CLASSES = (
 QUESTION_CARD_CLASSES = (
     "w-full gap-1.5 px-3 py-2 rounded-lg text-xs border bg-violet-950/50 border-violet-600/70"
 )
-# 계획 승인 카드 (ADR-028). 도구 승인(하늘색)·한도 쪽지(앰버·주황)와 다른 물음이라 초록으로 구분합니다.
+# 계획 승인 카드 (ADR-028). 도구 승인(하늘색) 및 한도 결정 요청(앰버/주황)과 구분하기 위해 녹색 계열을 적용합니다.
 PLAN_CARD_CLASSES = (
     "w-full gap-2 px-3 py-2 rounded-lg text-xs border bg-emerald-950/40 border-emerald-700/70"
 )

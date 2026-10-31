@@ -18,7 +18,7 @@ from app.ui.components.roster.state import RosterState
 from app.ui.math_markdown import MathMarkdown
 
 _READY_TIP = "항목을 고치거나 미해결 쟁점을 닫습니다. 저장하면 다음 발언부터 반영됩니다."
-_RUNNING_TIP = "토론이 끝난 뒤에 고칠 수 있습니다. 지금 전할 말은 입력창으로 보내 주십시오."
+_RUNNING_TIP = "토론이 끝난 뒤에 수정할 수 있습니다. 진행 중인 피드백은 채팅 입력창으로 전달해 주십시오."
 
 
 class LedgerPanelComponent:
@@ -92,7 +92,7 @@ class LedgerPanelComponent:
             self.discard_draft()
         if self.edit_button is None or self.edit_tooltip is None:
             return
-        # 비어 있으면 고칠 항목이 없습니다. 미리 줄 말은 바로 위의 세션 지침이 받습니다.
+        # 비어 있으면 수정할 항목이 없습니다. 사전 지침은 상단의 세션 지침 입력을 통해 전달합니다.
         self.edit_button.set_visibility(bool(self.state.decision_ledger) and not self.editing)
         self.edit_button.set_enabled(not running)
         self.edit_tooltip.set_text(_RUNNING_TIP if running else _READY_TIP)
@@ -216,7 +216,7 @@ class LedgerPanelComponent:
         if self._running():
             self.sync()
             return
-        # 알림은 편집칸을 닫기 전에 띄웁니다. 이 핸들러는 저장 버튼의 슬롯에서 도는데, 닫으면 그 슬롯이 사라집니다.
+        # 알림 표시는 편집 폼을 닫기 전에 실행합니다. 본 핸들러는 저장 버튼의 DOM 슬롯에서 실행되므로 폼 종료 시 슬롯이 소멸되기 때문입니다.
         try:
             await self.on_save(self.base, ledger)
         except ledger_edit.LedgerEditError as exc:

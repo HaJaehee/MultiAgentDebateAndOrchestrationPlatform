@@ -1,12 +1,12 @@
-"""진행 중인 토론에 사람이 끼어드는 통로.
+"""실행 중인 토론에 사용자가 개입(Interjection)하는 통로.
 
-토론 태스크는 한번 뜨면 끝까지 혼자 도는 것이 원래 설계였습니다. 그래서
+토론 태스크는 기동 후 완료 시점까지 자율 실행되는 구조로 설계되었습니다. 그래서
 "지금까지만 정리하고 멈춰" 나 "그 방향 말고 이쪽으로" 를 전할 방법이 없었고,
 할 수 있는 것은 태스크를 통째로 죽이는 것(`DebateRunner.cancel()`)뿐이었습니다.
 그러면 진행 중이던 발언은 잘리고 최종 합성 단계는 아예 돌지 않아, 지금까지의
 토론으로 산출물을 뽑을 기회가 사라집니다.
 
-`TurnControl` 은 그 사이에 놓이는 아주 작은 우편함입니다. 화면 쪽 코루틴이
+`TurnControl`은 그 사이에 위치하는 스레드 안전 메시지 큐입니다. UI 코루틴이
 여기에 요청을 넣어 두면, 엔진이 발언과 발언 사이의 안전한 지점에서 꺼내 봅니다.
 
 * **정지 요청** — 태스크를 죽이지 않습니다. 진행 중인 발언은 끝까지 받고,
@@ -14,8 +14,8 @@
 * **개입 메모** — 다음 발언자의 맥락에 유저 발언으로 끼어듭니다. 메모에 @전문가 @스킬 지정이
   있었으면 그것도 함께 넘어가, 남은 발언부터 그 전문가에게 스킬이 미리 불립니다.
 * **도구 예산 확장 요청** — 여기서는 방향이 반대입니다. 도구 호출 상한을 다 쓴
-  에이전트가 사람에게 쪽지를 내밀고, 답(상한 확장 / 즉시 마무리)이 올 때까지
-  그 발언만 기다립니다. 답이 없으면 시간이 지나 스스로 마무리로 갑니다.
+  에이전트가 사용자에게 결정 요청을 전달하고, 응답(상한 확장 / 즉시 마무리)이 올 때까지
+  해당 발언이 대기합니다. 응답이 없으면 타임아웃 후 자체 마무리로 전이합니다.
 * **도구 승인 요청** — 도구 보안 판정이 "묻기" 인 호출. 답(이번만 / 이 대화에서 /
   항상 허용, 거부)이 올 때까지 그 발언만 기다리고, 답이 없으면 거부합니다
   (`app/orchestration/tool_gate.py`).
@@ -37,7 +37,7 @@ from typing import Any, Callable, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
-# 도구 예산이 바닥났을 때 사람의 답을 기다리는 시간(초).
+# 도구 예산 소진 시 사용자 응답을 대기하는 타임아웃(초).
 #
 # 무한정 기다리면 아무도 화면을 보고 있지 않은 토론이 그 자리에서 영영 멈춥니다.
 # 시간이 지나면 "확장 없음" 으로 보고, 에이전트에게 지금까지 얻은 것으로 즉시
@@ -61,7 +61,7 @@ def asks_human(control: Optional["TurnControl"]) -> bool:
 
 
 class TurnControl:
-    """한 턴에 대한 정지 요청과 개입 메모를 담아 두는 우편함."""
+    """단일 턴의 정지 요청 및 개입 메모를 관리하는 제어 큐."""
 
     def __init__(self, *, attended: bool = True) -> None:
         # 사용자가 UI에서 이 턴을 대화형으로 모니터링하며 응답할 수 있는지 여부 (attended). API 및 MCP를 통한 헤드리스 실행은 기본 False입니다 (`app/api.py`).
@@ -73,8 +73,8 @@ class TurnControl:
         self._skill_designations: Dict[str, List[str]] = {}
         # 개입 메모에서 언급한 파일 (작업 공간 기준 경로). 메모와 같은 때에 꺼내 갑니다.
         self._attachments: List[str] = []
-        # 사람의 답을 기다리는 쪽지들 (id -> 쪽지). 도구 상한과 컨텍스트 창이
-        # 같은 우편함을 씁니다 — 기다리는 방식도, 답을 받는 방식도 같습니다.
+        # 사용자 응답을 대기 중인 결정 요청 목록 (id -> 요청 객체). 도구 상한과 컨텍스트 윈도우가
+        # 동일한 큐 구조를 공유합니다 — 대기 및 응답 수신 방식이 동일합니다.
         #
         # 보통은 한 장입니다. 예산을 다 쓴 에이전트는 답을 받기 전까지 다음
         # 호출로 넘어가지 않으니까요. 하지만 병렬 지시 전략에서는 여러 명이
@@ -92,10 +92,9 @@ class TurnControl:
     def request_stop(self) -> None:
         """다음 안전 지점에서 토론을 접고 합성으로 넘어가도록 표시합니다.
 
-        사람의 답을 기다리는 쪽지가 있었다면 (도구 상한이든 컨텍스트든) 그 자리에서
-        "늘리지 않음" 으로 답합니다. 멈추라고 한 사람에게 "더 쓸까요?" 를 계속 물어
-        놓는 것은 답이 이미 나온 질문을 붙잡고 있는 것입니다. 도구 승인도 같습니다 —
-        멈추라는 사람에게 "이 도구를 실행할까요?" 를 남겨 두지 않고 거부로 닫습니다.
+        사용자 응답 대기 중인 결정 요청이 존재하면 (도구 상한 또는 컨텍스트 윈도우)
+        즉시 "추가 확장 없음"으로 응답합니다. 정지를 요청한 사용자에게 불필요하게 추가 자원 승인을 묻지 않고,
+        대기 중인 도구 승인 요청 역시 즉시 거부(Denied) 처리하여 정리합니다.
         """
         self._stop_requested = True
         for request in self.pending_decisions:
@@ -151,16 +150,15 @@ class TurnControl:
 
     @property
     def pending_decision(self) -> Optional["DecisionRequest"]:
-        """답을 기다리는 쪽지 중 가장 최근 것. 화면은 이걸 보여줍니다."""
+        """대기 중인 결정 요청 중 가장 최신 요청을 반환합니다. UI에 기본 표시됩니다."""
         pending = self.pending_decisions
         return pending[-1] if pending else None
 
     @property
     def pending_decisions(self) -> List["DecisionRequest"]:
-        """답을 기다리는 한도 쪽지 전부 (들어온 순서). 도구 승인은 따로 셉니다.
+        """대기 중인 자원 한도 결정 요청 목록을 반환합니다 (도착 순). 도구 실행 승인 요청은 분리 관리합니다.
 
-        둘을 섞으면 id 없이 누른 "상한 확장" 이 가장 최근 쪽지 — 도구 승인일 수 있는 —
-        에 답하게 됩니다. 확장 버튼이 도구 실행을 허락하는 일은 없어야 합니다.
+        두 요청 유형을 혼합할 경우 요청 ID 없이 전달된 한도 확장이 도구 승인 요청에 잘못 라우팅되는 것을 방지합니다.
         """
         return [
             r for r in self._decisions.values()
@@ -170,7 +168,7 @@ class TurnControl:
 
     @property
     def pending_approvals(self) -> List["ToolApprovalRequest"]:
-        """답을 기다리는 도구 승인 쪽지 전부 (들어온 순서)."""
+        """대기 중인 도구 실행 승인 요청 목록을 반환합니다 (도착 순)."""
         return [
             r for r in self._decisions.values()
             if not r.resolved and isinstance(r, ToolApprovalRequest)
@@ -178,10 +176,9 @@ class TurnControl:
 
     @property
     def pending_plan_approval(self) -> Optional["PlanApprovalRequest"]:
-        """답을 기다리는 계획 승인 쪽지. 한 턴에 많아야 하나입니다.
+        """대기 중인 계획 승인 요청을 반환합니다 (턴당 최대 1건).
 
-        한도 쪽지·도구 승인과 따로 셉니다. 섞으면 "상한 확장" 버튼이나 도구 승인의 답이
-        계획을 승인하게 됩니다.
+        한도 결정 및 도구 승인 요청과 분리 관리하여 상한 확장이나 도구 승인 액션이 계획을 오승인하지 않도록 격리합니다.
         """
         for request in self._decisions.values():
             if not request.resolved and isinstance(request, PlanApprovalRequest):
@@ -189,7 +186,7 @@ class TurnControl:
         return None
 
     async def _ask(self, request: "DecisionRequest", timeout: float, on_open) -> "DecisionRequest":
-        """쪽지를 걸어 두고 답을 기다립니다. 종류가 무엇이든 흐름은 같습니다."""
+        """결정 요청을 등록하고 사용자 응답을 대기합니다. 요청 종류와 무관하게 동일한 파이프라인을 따릅니다."""
         if self._stop_requested or not request.answerable:
             request.resolve(0, "wrap_up")
             return request
@@ -206,12 +203,10 @@ class TurnControl:
         return request
 
     def resolve_decision(self, extra: int, request_id: Optional[str] = None) -> bool:
-        """대기 중인 쪽지에 답합니다. `extra` 가 0 이면 "지금 마무리하라" 입니다.
+        """대기 중인 한도 결정 요청에 응답합니다. `extra`가 0이면 즉시 마무리 지시입니다.
 
-        `request_id` 를 주면 그 쪽지에만 답합니다. 화면이 오래된 쪽지를 들고
-        있을 수 있고 (다음 발언자가 새 쪽지를 낸 뒤에 누른 버튼), 그 답이 엉뚱한
-        에이전트의 상한을 늘려서는 안 됩니다. 주지 않으면 가장 최근 쪽지에
-        답합니다.
+        `request_id` 지정 시 해당 요청에 한정하여 응답합니다. 화면의 지연된 상태로 인해
+        타 에이전트의 자원 상한이 잘못 증액되는 오류를 방지합니다. 미지정 시 최신 요청에 응답합니다.
         """
         if request_id is not None:
             request = self._decisions.get(request_id)
@@ -279,14 +274,13 @@ class TurnControl:
         timeout: float = TOOL_BUDGET_WAIT_SECONDS,
         on_open=None,
     ) -> "ToolBudgetRequest":
-        """도구 상한에 닿았음을 사람에게 알리고 답을 기다립니다.
+        """도구 호출 상한 도달을 사용자에게 알리고 결정을 대기합니다.
 
-        `on_open` 은 쪽지를 화면에 띄우는 콜백입니다 (엔진이 이벤트로 보냅니다).
-        기다림이 끝나면 요청은 어떤 형태로든 답이 채워진 채 돌아옵니다 —
-        확장(`extended`), 즉시 마무리(`wrap_up`), 또는 시간 초과(`timeout`).
+        `on_open`은 UI 알림을 표시하는 이벤트 콜백입니다 (엔진이 이벤트로 발행).
+        대기 종료 시 요청 객체에는 결정 유형이 기록되어 반환됩니다 —
+        확장(`extended`), 즉시 마무리(`wrap_up`), 또는 타임아웃(`timeout`).
 
-        이미 정지를 요청한 사람에게 "더 부를까요?" 를 묻지 않습니다. 그 답은
-        이미 나와 있습니다.
+        이미 세션 정지가 요청된 상태라면 추가 승인을 묻지 않고 즉시 마무리를 진행합니다.
         """
         request = DecisionRequest(
             request_id=uuid.uuid4().hex,
@@ -313,14 +307,14 @@ class TurnControl:
         on_open=None,
         validator: Optional[Callable[[List[str], str], Optional[str]]] = None,
     ) -> "ToolApprovalRequest":
-        """도구 호출을 실행해도 되는지 사람에게 묻고 답을 기다립니다.
+        """도구 실행 여부를 사용자에게 확인하고 승인을 대기합니다.
 
-        `payload` 는 화면이 그릴 내용입니다 (도구, 행위, 이유, 허용 범위 후보). 기다림이
-        끝나면 요청의 `decision` 이 채워져 있습니다 — `allow_once` · `allow_session` ·
-        `allow_always` · `deny` · `timeout`. 정지를 요청한 뒤에는 묻지 않고 거부합니다.
+        `payload`는 UI에 렌더링할 상세 정보입니다 (도구명, 액션, 사유, 허용 범위 후보). 대기 종료 시
+        요청 객체의 `decision`에 결정 결과가 기록됩니다 — `allow_once`, `allow_session`,
+        `allow_always`, `deny`, `timeout`. 정지 요청 상태에서는 확인 없이 즉시 거부 처리합니다.
 
-        `validator` 는 사람이 고친 범위와 결정을 받아, 쓸 수 없으면 그 이유를 돌려줍니다.
-        답을 받는 자리(`resolve_tool_approval`)에서 불려 화면이 곧바로 알릴 수 있습니다.
+        `validator`는 사용자가 수정한 허용 범위와 결정 유효성을 검증하며, 부적합 시 사유를 반환합니다.
+        응답 처리 시점(`resolve_tool_approval`)에 호출되어 UI에 즉시 피드백을 전달합니다.
         """
         request = ToolApprovalRequest(
             request_id=uuid.uuid4().hex,
@@ -341,12 +335,11 @@ class TurnControl:
         reason: str = "",
         approver: str = "",
     ) -> bool:
-        """도구 승인 쪽지에 답합니다. 이미 답이 났거나 없는 쪽지면 False.
+        """도구 실행 승인 요청에 응답합니다. 이미 처리되었거나 존재하지 않는 요청이면 False를 반환합니다.
 
-        "이 대화에서"·"항상" 의 범위가 지금 호출을 덮지 못하면 ValueError 로 알립니다.
-        그대로 받으면 방금 허락한 호출이 다음 판에 다시 물어지거나, 거부했다고 생각한
-        호출이 다음 판에 실행됩니다 (Antigravity 가 고친 범위를 승인 전에 검증하는 것과
-        같습니다).
+        "이 대화에서" 또는 "항상" 범위가 현재 호출을 포괄하지 못하면 ValueError를 발생시킵니다.
+        유효 범위를 포괄하지 못하면 방금 승인한 도구가 다음 호출 시 재확인되거나 의도치 않게
+        실행되는 오류를 방지하기 위한 검증입니다.
         """
         request = self._decisions.get(request_id)
         if not isinstance(request, ToolApprovalRequest) or request.resolved:
@@ -411,12 +404,11 @@ class TurnControl:
         timeout: float,
         on_open=None,
     ) -> "PlanApprovalRequest":
-        """계획을 사람에게 보이고 답을 기다립니다 (ADR-028).
+        """턴 실행 계획을 사용자에게 제시하고 승인을 대기합니다 (ADR-028).
 
-        `payload` 는 화면이 그릴 내용입니다 (어느 계획인지, 전문가별 태스크). 기다림이 끝나면
-        요청의 `decision` 이 채워져 있습니다 — `approve` · `revise` 는 사람의 답이고,
-        `timeout` 은 답이 없었던 것, `stopped` 는 사람이 정지를 누른 것입니다. 이미 정지를
-        요청한 턴에는 묻지 않습니다.
+        `payload`는 UI에 렌더링할 계획 세부 정보입니다 (대상 계획 ID, 전문가별 할당 태스크). 대기 완료 시
+        요청의 `decision` 필드에 결정 유형이 기록됩니다 (`approve`, `revise`, `timeout`, `stopped`).
+        이미 정지가 요청된 턴에서는 추가 확인을 생략합니다.
         """
         request = PlanApprovalRequest(
             request_id=uuid.uuid4().hex,
@@ -437,11 +429,11 @@ class TurnControl:
         task_comments: Optional[Dict[str, str]] = None,
         approver: str = "",
     ) -> bool:
-        """계획 승인 쪽지에 답합니다. 이미 답이 났거나 없는 쪽지면 False.
+        """계획 승인 요청에 응답합니다. 이미 처리되었거나 존재하지 않는 요청이면 False를 반환합니다.
 
-        쓸 수 없는 답이면 ValueError 로 알립니다 — 의견 없는 수정 요청은 오케스트레이터가
-        무엇을 고칠지 알 수 없고, 의견이 적힌 승인은 그 의견을 읽지 않고 버리게 됩니다.
-        화면은 그런 버튼을 보이지 않지만, 낡은 화면이나 다른 경로의 답도 같은 규칙을 지킵니다.
+        유효하지 않은 응답인 경우 ValueError를 발생시킵니다 — 피드백 없는 수정 요청은 오케스트레이터가
+        수정 사항을 인지할 수 없으며, 피드백이 포함된 승인은 피드백이 누락될 위험이 있습니다.
+        UI 버튼 비활성화 외에도 백엔드 검증을 통해 일관된 규칙을 보장합니다.
         """
         request = self._decisions.get(request_id)
         if not isinstance(request, PlanApprovalRequest) or request.resolved:
@@ -462,12 +454,12 @@ class TurnControl:
 
 
 class DecisionRequest:
-    """한도에 닿은 에이전트가 사람에게 내미는 쪽지.
+    """자원 한도에 도달한 에이전트의 사용자 결정 요청 모델.
 
-    답은 둘 중 하나입니다 — **상한을 늘려 주거나**, **지금까지 얻은 것으로
-    끝내라고 하거나**. 어느 쪽이든 진행 중인 발언은 살아남습니다. 예전에는
-    상한에 닿는 순간 `LLMUnavailableError` 가 올라와, 그때까지 흘러나온 글과
-    도구 관측이 통째로 실패 안내로 덮였습니다.
+    응답은 두 가지 유형입니다 — **한도 확장 승인** 또는 **현재까지의 결과로
+    마무리 지시**. 어느 쪽이든 진행 중인 발언은 안전하게 유지됩니다. 과거에는
+    한도 도달 즉시 예외가 발생하여 진행 중이던 스트리밍 발언과 도구 관측 결과가
+    모두 유실되는 문제가 있었습니다.
     """
 
     def __init__(
@@ -511,7 +503,7 @@ class DecisionRequest:
 
     @property
     def answerable(self) -> bool:
-        """사람에게 내밀 선택지가 있는가. 늘릴 여지가 없으면 묻지 않고 마무리합니다."""
+        """사용자에게 제공할 가용 확장 옵션이 존재하는지 확인합니다. 추가 확장 여지가 없으면 확인을 생략하고 종료합니다."""
         return self.max_extension > 0
 
     def resolve(self, extra: int, outcome: str) -> bool:
@@ -557,11 +549,10 @@ REMEMBERED_DECISIONS = ("allow_session", "allow_always", "deny_session", "deny_a
 
 
 class ToolApprovalRequest(DecisionRequest):
-    """도구 보안 판정이 "묻기" 인 호출 하나에 대한 쪽지.
+    """도구 보안 검증 판정이 '확인(ask)'인 단일 호출에 대한 실행 승인 요청 모델.
 
-    한도 쪽지(`DecisionRequest`)와 같은 우편함·같은 기다림을 쓰되, 답의 모양이 다릅니다 —
-    늘릴 양이 아니라 **허락할지와 그 범위**입니다. 답이 없으면 거부입니다. 사람이 자리에
-    없다고 위험한 호출을 실행하지는 않습니다.
+    한도 결정 요청(`DecisionRequest`)과 동일한 큐와 대기 메커니즘을 사용하되, 응답 형태가 다릅니다 —
+    증액 단위가 아닌 **실행 승인 여부 및 허용 범위**입니다. 응답이 없으면 보안상 거부(Denied) 처리됩니다.
     """
 
     def __init__(self, *, request_id: str, agent_key: str, agent_name: str,
@@ -575,7 +566,7 @@ class ToolApprovalRequest(DecisionRequest):
         self.scope: List[str] = []       # "이 대화에서"·"항상" 기억할 규칙
         self.reason: str = ""            # 거부 사유 (모델에게 전달)
         self.approver: str = ""          # local | remote
-        # 사람이 고친 범위를 검사하는 함수 (`ask_tool_approval`). 스냅샷에 싣지 않습니다.
+        # 사용자가 수정한 허용 범위를 검증하는 함수 (`ask_tool_approval`). 스냅샷에는 미포함.
         self.validator: Optional[Callable[[List[str], str], Optional[str]]] = None
 
     @property
@@ -600,7 +591,7 @@ class ToolApprovalRequest(DecisionRequest):
         return True
 
     def resolve(self, extra: int, outcome: str) -> bool:
-        """한도 쪽지의 답 모양으로 들어온 것 (정지·시간 초과). 늘 거부입니다."""
+        """타임아웃 또는 정지로 인한 기본 거부(Denied) 응답을 생성합니다."""
         if outcome == "timeout":
             return self.answer("timeout", reason="정해진 시간 안에 답이 없었습니다.")
         return self.answer("deny", reason="유저가 토론 정지를 요청했습니다.")
@@ -610,11 +601,11 @@ class ToolApprovalRequest(DecisionRequest):
 
 
 class PlanApprovalRequest(DecisionRequest):
-    """오케스트레이터의 계획에 대한 승인 쪽지 (ADR-028).
+    """오케스트레이터의 턴 실행 계획에 대한 사용자 승인 요청 모델 (ADR-028).
 
-    같은 우편함·같은 기다림을 쓰되, 답의 모양이 다릅니다 — **승인**(사람이 카드에서 고친
-    태스크와 함께)이거나 **수정 요청**(의견과 함께)입니다. 답이 없으면 승인이 아닙니다. 사람이
-    자리에 없다고 확인받지 않은 계획으로 토론을 시작하지는 않습니다.
+    동일한 큐와 대기 메커니즘을 사용하되, 응답 형태가 다릅니다 — **승인**(사용자가 수정한
+    태스크 구성 포함) 또는 **수정 요청**(피드백 코멘트 포함)입니다. 무응답 시 자동 승인되지 않으며
+    미확인 계획으로 토론이 임의 진행되는 것을 차단합니다.
     """
 
     def __init__(self, *, request_id: str, agent_key: str, agent_name: str,
@@ -625,7 +616,7 @@ class PlanApprovalRequest(DecisionRequest):
         )
         # approve | revise | timeout | stopped
         self.decision: str = "pending"
-        # 사람이 카드에서 돌려준 전문가별 태스크·완료 기준 (승인이든 수정 요청이든 함께 옵니다).
+        # 사용자가 카드 UI에서 수정한 전문가별 태스크 및 완료 기준 (승인/수정 요청 공통 수신).
         self.tasks: List[Dict[str, Any]] = []
         self.comment: str = ""                    # 계획 전체에 대한 의견
         self.task_comments: Dict[str, str] = {}   # 전문가 키 → 그 태스크에 대한 의견
@@ -657,7 +648,7 @@ class PlanApprovalRequest(DecisionRequest):
         return True
 
     def resolve(self, extra: int, outcome: str) -> bool:
-        """한도 쪽지의 답 모양으로 들어온 것 (정지·시간 초과). 어느 쪽도 승인이 아닙니다."""
+        """타임아웃 또는 정지로 인한 기본 미승인 응답을 생성합니다."""
         return self.answer("timeout" if outcome == "timeout" else "stopped")
 
     def describe(self) -> dict:
@@ -694,7 +685,7 @@ class UserQuestionRequest(DecisionRequest):
         return True
 
     def resolve(self, extra: int, outcome: str) -> bool:
-        """한도 쪽지의 답 모양으로 들어온 것 (정지·시간 초과). 답 없음입니다."""
+        """결정 요청의 기본 응답 생성 (정지/타임아웃). 무응답 처리됩니다."""
         return self.reply("", outcome="timeout" if outcome == "timeout" else "stopped")
 
     def describe(self) -> dict:
