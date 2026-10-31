@@ -193,6 +193,11 @@ def build_session_markdown(
         answered_by = fallback_sentence(msg.get("llm_meta"))
         if answered_by:
             out += ["", f"> ⚠️ **{FALLBACK_BADGE}** — {answered_by}"]
+        retried = (msg.get("llm_meta") or {}).get("retry") if isinstance(msg.get("llm_meta"), dict) else None
+        if isinstance(retried, dict):
+            # 유저가 이 발언만 다시 실행한 경우입니다 (ADR-036). 뒤의 발언은 이전 버전을 보고 쓰였습니다.
+            how = f" (지침: {retried['instruction']})" if retried.get("instruction") else ""
+            out += ["", f"> 🔁 **다시 실행한 발언** — 모델 `{retried.get('model')}`{how}"]
         out += ["", (msg.get("content") or "").strip(), ""]
 
         for call in msg.get("tool_calls") or []:

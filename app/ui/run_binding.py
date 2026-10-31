@@ -17,6 +17,13 @@ from app.orchestration.turn_run import TurnRun
 logger = logging.getLogger(__name__)
 
 
+def _current_task() -> Optional[asyncio.Task]:
+    try:
+        return asyncio.current_task()
+    except RuntimeError:
+        return None
+
+
 class RunBinding:
     """한 화면의 구독. `attach` 로 붙고, 다른 실행에 붙거나 `detach` 하면 앞의 구독을 끊습니다.
 
@@ -54,7 +61,9 @@ class RunBinding:
     def detach(self) -> None:
         if self.run is not None and self._queue is not None:
             self.run.unsubscribe(self._queue)
-        if self._task is not None and not self._task.done():
+        # 이벤트를 그리던 중에 화면을 다시 세우는 경우(발언 다시 실행이 끝났을 때) 그 태스크는 곧 스스로 끝납니다.
+        # 자기 자신을 취소하면 다시 세우는 일이 첫 await 에서 끊깁니다.
+        if self._task is not None and not self._task.done() and self._task is not _current_task():
             self._task.cancel()
         self.run = self._queue = self._task = None
 

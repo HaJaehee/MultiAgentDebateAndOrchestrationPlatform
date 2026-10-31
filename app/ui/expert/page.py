@@ -17,9 +17,10 @@ from sqlalchemy import desc, select
 from app.agents.media import attachment_notices
 from app.agents.personas import effective_personas, resync_agent_configs, session_roster_agents
 from app.agents.skills import scan_skills
-from app.config import resolve_workspace_dir
+from app.config import get_config, resolve_workspace_dir
 from app.database.models import ArtifactModel, MessageModel, SessionModel, TurnModel
 from app.database.session import get_session_factory
+from app.orchestration import speech_comments, speech_retry
 from app.orchestration.graph_run import GraphRunTracker, last_graph_turn, node_labels
 from app.orchestration.runner import get_debate_runner
 from app.orchestration.strategies import resolve_strategy_name
@@ -30,6 +31,7 @@ from app.session_ops import discard_turn
 from app.ui.components.artifact_viewer import ArtifactViewer, merge_artifacts
 from app.ui.components.chat_feed.feed import ChatFeed
 from app.ui.components.chat_feed.common import clip_reloaded_output
+from app.ui.components.chat_feed.speech_actions import SPEECH_COMMENT_JS
 from app.ui.components.quiet_splitter import SPLITTER_FREEZE_JS, QuietSplitter
 from app.ui.components.roster.control import AgentRosterControl
 from app.ui.components.sidebar import SessionSidebar, active_agent_count
@@ -81,6 +83,7 @@ class ExpertPage:
             f"<script>{MERMAID_IMAGE_JS}</script>"
             f"<script>{SPLITTER_FREEZE_JS}</script>"
             f"<script>{MENTION_JS}</script>"
+            f"<script>{SPEECH_COMMENT_JS}</script>"
             f"<script>{CLIENT_DIAGNOSTICS_JS}</script>"
         )
 
@@ -104,6 +107,11 @@ class ExpertPage:
             on_user_question=self.on_user_question,
             on_fork_turn=self.on_fork_turn,
             on_draft_skill=self.on_draft_skill,
+            on_retry_speech=self.on_retry_speech,
+            retry_options=self.retry_options,
+            on_restore_version=self.on_restore_version,
+            on_add_comment=self.on_add_comment,
+            on_delete_comment=self.on_delete_comment,
         )
         # 결론으로 스킬 초안을 만드는 창. 초안은 토론과 같은 호출기로 씁니다 (바꿔 끼운 호출기도 그대로).
         self.skill_draft = SkillDraftDialog(
@@ -492,6 +500,18 @@ class ExpertPage:
         """
         if not self.current_session_id:
             return
+        current = self.runner.get(self.current_session_id)
+        if current is not None and current.status == "running" and current.retry_target:
+            # 끝난 턴의 기록은 그대로입니다. 다시 그리고 알리기만 합니다.
+            self.binding.detach()
+            await self.runner.abort(self.current_session_id)
+            self.chat_feed.set_single_speech(False)
+            await self.load_session_state(self.current_session_id)
+            ui.notify(
+                "다시 실행을 취소했습니다. 기존 발언은 그대로이며, 이미 실행된 도구의 결과는 작업 공간에 남습니다.",
+                type="info", position="bottom-right", multi_line=True,
+            )
+            return
         produced = await self.runner.abort(self.current_session_id)
         if produced is None:
             self.chat_feed.set_busy(False, "진행 중인 토론이 없습니다", "Ready")
@@ -602,6 +622,109 @@ class ExpertPage:
             return True
         ui.notify("이미 답변이 완료되었거나 응답 대기 시간이 만료된 질문입니다.", type="info", position="bottom-right")
         return True
+
+    # ------------------------------------------------------------ 발언 하나 다시 실행·인라인 코멘트 (ADR-036)
+
+    def _busy_with_debate(self) -> bool:
+        if not self.current_session_id or self.runner.is_running(self.current_session_id):
+            ui.notify(
+                "토론이 진행 중입니다. 끝난 뒤에 다시 시도해 주십시오. 지금 전할 말은 입력창이나 코멘트로 보낼 수 있습니다.",
+                type="warning", position="bottom-right", multi_line=True,
+            )
+            return True
+        return False
+
+    async def retry_options(self, message_id: str) -> Optional[Dict[str, Any]]:
+        """다시 실행 창에 보일 것. 다시 실행할 수 없으면 사유를 알리고 None."""
+        if self._busy_with_debate():
+            return None
+        try:
+            async with self.session_factory() as db:
+                row, _turn = await speech_retry.load_target(db, self.current_session_id, message_id)
+                pending = await speech_comments.pending_for(
+                    db, self.current_session_id, row.sender_key, message_id=message_id,
+                )
+        except speech_retry.SpeechRetryError as exc:
+            ui.notify(str(exc), type="warning", position="bottom-right", multi_line=True)
+            return None
+        agents = self.roster_control.roster_agents()
+        own = next((a for a in agents if a.key == row.sender_key), None)
+        options = speech_retry.connection_choices(agents, get_config().llm)
+        if own is not None:
+            options.pop(speech_retry.connection_id(own), None)
+        return {
+            "agent_name": row.sender_name,
+            "position": speech_retry.position_of(row),
+            "model": own.model if own is not None else "",
+            "options": options,
+            "comments": len(pending),
+        }
+
+    def _watch_revision(self, run, message_id: str) -> None:
+        self.chat_feed.reveal_message(message_id)
+        self.chat_feed.set_single_speech(True)
+        self.chat_feed.set_busy(True, run.status_text, run.round_info)
+        self.roster_control.refresh_mcp_lock()
+        self.binding.attach(run)
+
+    async def on_retry_speech(self, message_id: str, connection: str, instruction: str) -> None:
+        if self._busy_with_debate():
+            return
+        self._watch_revision(
+            self.runner.retry_speech(
+                self.current_session_id, message_id, connection=connection, instruction=instruction,
+                workspace=self.roster_control.state.workspace_dir,
+            ),
+            message_id,
+        )
+
+    async def on_restore_version(self, message_id: str, version: int) -> None:
+        if self._busy_with_debate():
+            return
+        self._watch_revision(
+            self.runner.restore_speech(
+                self.current_session_id, message_id, version, workspace=self.roster_control.state.workspace_dir,
+            ),
+            message_id,
+        )
+
+    async def after_speech_revision(self, event: Dict[str, Any]) -> None:
+        """발언 고치기가 끝났습니다. 버전·코멘트·안내가 모두 기록에 있으므로 기록에서 다시 그리고 그 카드로 돌아갑니다."""
+        self.chat_feed.set_single_speech(False)
+        if not self.current_session_id:
+            return
+        await self.load_session_state(self.current_session_id)
+        self.chat_feed.reveal_message(event["retry_target"])
+        if event.get("status") == "failed":
+            error = event.get("error") or "알 수 없는 오류"
+            self.chat_feed.set_busy(False, f"발언을 고치지 못했습니다: {error}", "Ready")
+            ui.notify(f"발언을 고치지 못했습니다: {error}", type="negative", position="bottom-right", multi_line=True)
+        else:
+            self.chat_feed.set_busy(False, "대기 중", "Ready")
+        await self.sidebar.refresh_list()
+
+    async def on_add_comment(self, message_id: str, quote: str, comment: str) -> Optional[Dict[str, Any]]:
+        if not self.current_session_id:
+            return None
+        try:
+            async with self.session_factory() as db:
+                saved = await speech_comments.add_comment(db, self.current_session_id, message_id, quote, comment)
+        except speech_comments.SpeechCommentError as exc:
+            ui.notify(str(exc), type="warning", position="bottom-right", multi_line=True)
+            return None
+        ui.notify(
+            "코멘트를 저장했습니다. 이 발언을 쓴 에이전트의 다음 발언에 전달합니다.", type="info", position="bottom-right",
+        )
+        return saved
+
+    async def on_delete_comment(self, comment_id: str) -> bool:
+        if not self.current_session_id:
+            return False
+        async with self.session_factory() as db:
+            deleted = await speech_comments.delete_pending(db, self.current_session_id, comment_id)
+        if not deleted:
+            ui.notify("이미 전달된 코멘트입니다.", type="warning", position="bottom-right")
+        return deleted
 
     async def on_draft_skill(self, turn_id: str) -> None:
         await self.skill_draft.open(self.current_session_id, turn_id)
@@ -747,6 +870,13 @@ class ExpertPage:
             stmt_m = select(MessageModel).where(MessageModel.session_id == sid).order_by(MessageModel.created_at)
             res_m = await db.execute(stmt_m)
             messages_db = res_m.scalars().all()
+            # 다시 실행한 발언의 지난 버전과 인라인 코멘트 (ADR-036).
+            revisions = await speech_retry.revisions_with_tools(db, messages_db)
+            for entries in revisions.values():
+                for entry in entries:
+                    for call in entry["tool_calls"]:
+                        call["output"] = clip_reloaded_output(call["output"])
+            comments = await speech_comments.comments_by_message(db, sid)
 
             formatted_msgs: List[Dict[str, Any]] = []
             for m in messages_db:
@@ -769,6 +899,8 @@ class ExpertPage:
                     "graph_port": m.graph_port,
                     "turn_meta": m.turn_meta,
                     "llm_meta": m.llm_meta,
+                    "revisions": revisions.get(m.id),
+                    "comments": comments.get(m.id, []),
                     "tool_calls": [
                         {
                             "tool_name": tc.tool_name,
@@ -826,6 +958,9 @@ class ExpertPage:
             known = {m["id"] for m in formatted_msgs if m.get("id")}
             formatted_msgs.extend(m for m in snapshot["messages"] if m.get("id") not in known)
             streaming_ids = snapshot["streaming_ids"]
+            # 다시 실행 중인 발언은 기록에 옛 글이 있습니다. 조각이 그 뒤에 붙지 않게 지금까지 흐른 글로 바꿉니다.
+            streamed = {m["id"]: m for m in snapshot["messages"] if m.get("id") in streaming_ids}
+            formatted_msgs = [streamed.get(m.get("id"), m) for m in formatted_msgs]
             if snapshot["artifacts"]:
                 # 스냅샷은 이번 턴 것뿐입니다. 덮어쓰면 이전 턴 산출물이 화면에서 사라집니다.
                 formatted_arts = merge_artifacts(formatted_arts, snapshot["artifacts"])
@@ -853,6 +988,7 @@ class ExpertPage:
 
         self.roster_control.refresh_mcp_lock()
 
+        self.chat_feed.set_single_speech(running and bool(run.retry_target))
         if running:
             self.chat_feed.set_busy(run.busy, run.status_text, run.round_info)
             # 새로고침 뒤에도 "정지 중" 이라는 사실이 남아 있어야, 이미 접수된

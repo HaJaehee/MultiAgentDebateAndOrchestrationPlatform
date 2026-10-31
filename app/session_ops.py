@@ -37,6 +37,7 @@ from app.database.models import (
     MessageModel,
     SessionAgentModel,
     SessionModel,
+    SpeechCommentModel,
     SpeechDraftModel,
     ToolCallRecordModel,
     TurnModel,
@@ -189,6 +190,9 @@ async def discard_turn(
             ToolCallRecordModel.turn_id == turn_id,
             ToolCallRecordModel.session_id == session_id,
         ))
+        await db.execute(delete(SpeechCommentModel).where(SpeechCommentModel.message_id.in_(
+            select(MessageModel.id).where(MessageModel.turn_id == turn_id, MessageModel.session_id == session_id)
+        )))
         await db.execute(delete(MessageModel).where(
             MessageModel.turn_id == turn_id,
             MessageModel.session_id == session_id,
@@ -203,6 +207,7 @@ async def discard_turn(
         await db.execute(
             delete(ToolCallRecordModel).where(ToolCallRecordModel.message_id.in_(ids))
         )
+        await db.execute(delete(SpeechCommentModel).where(SpeechCommentModel.message_id.in_(ids)))
         await db.execute(
             delete(MessageModel).where(
                 MessageModel.id.in_(ids),

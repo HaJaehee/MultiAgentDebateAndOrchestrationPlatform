@@ -33,6 +33,8 @@ _ADDED_COLUMNS = {
         "turn_meta": "JSON",
         # 폴백 모델 응답 정보 및 발언별 토큰/호출 시간 메타데이터 (둘 다 없으면 NULL).
         "llm_meta": "JSON",
+        # 발언 하나만 다시 실행했을 때의 지난 버전들 (ADR-036). 다시 실행한 적 없으면 NULL.
+        "revisions": "JSON",
     },
     "sessions": {
         "personas_locked": "BOOLEAN NOT NULL DEFAULT 0",

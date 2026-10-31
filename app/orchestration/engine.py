@@ -9,7 +9,7 @@ import asyncio
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from sqlalchemy import delete, select, update
 
@@ -34,17 +34,18 @@ from app.database.models import (
 from app.database.session import get_session_factory
 from app.events import EventCallback, EventType
 from app.mcp.pool import get_runtime_pool
-from app.orchestration import turns
+from app.orchestration import speech_retry, turns
 from app.orchestration.context import EngineContext
 from app.orchestration.control import TurnControl
 from app.orchestration.conversation import ConversationMemory
 from app.orchestration.graph import GraphSpec, GraphTurnError, parse_graph
 from app.orchestration.phases.debate import DebatePhaseExecutor
 from app.orchestration.phases.planning import PlanningPhaseExecutor
+from app.orchestration.phases.retry import SpeechRevisionExecutor
 from app.orchestration.phases.synthesis import SynthesisPhaseExecutor
 from app.orchestration.recording import TurnRecorder
 from app.orchestration.speech import SpeechRunner
-from app.orchestration.state import DebateState
+from app.orchestration.state import DebateMessage, DebateState
 from app.orchestration.strategies import get_strategy, resolve_strategy_name
 from app.orchestration.turn_setup import TurnPreparer, new_state, restore_turn_state
 
@@ -68,6 +69,7 @@ class OrchestratorEngine:
         self.debate_phase = DebatePhaseExecutor(*services)
         self.synthesis_phase = SynthesisPhaseExecutor(*services)
         self.preparer = TurnPreparer(self.ctx, graph_for_turn=self.debate_phase.graph.graph_for_turn)
+        self.revisions = SpeechRevisionExecutor(*services, preparer=self.preparer)
 
     # 밖(MADOWarGame 구동기, 테스트)에서 쓰는 이름. 실제 값은 서비스들이 함께 보는 `ctx` 에 있습니다.
     @property
@@ -231,6 +233,85 @@ class OrchestratorEngine:
             else:
                 await self._close_checkpoint(workspace, turn_id, on_event, state)
                 return state
+            finally:
+                self.ctx.tool_gates.pop(session_id, None)
+                await pool.release(session_id, workspace)
+        finally:
+            LLM_HOLDER.reset(holder_token)
+
+    async def retry_speech(
+        self,
+        session_id: str,
+        message_id: str,
+        *,
+        connection: str = speech_retry.OWN_CONNECTION,
+        instruction: str = "",
+        on_event: Optional[EventCallback] = None,
+        control: Optional[TurnControl] = None,
+    ) -> DebateMessage:
+        """끝난 턴의 전문가 발언 하나만 다시 실행합니다 (ADR-036). 다른 발언과 합성은 다시 돌지 않습니다.
+
+        `connection` 은 이 대화에서 고른 연결의 이름표(`speech_retry.connection_choices`), `instruction` 은 유저가
+        이번 시도에만 더하는 지침입니다. 응답을 받지 못하면 지금 발언은 그대로 두고 실패한 시도만 버전으로 남습니다.
+        """
+        async def action(db, session_model, turn, row, workspace, usage) -> DebateMessage:
+            return await self.revisions.retry(
+                db, session_model, turn, row, workspace,
+                connection=connection, instruction=instruction,
+                control=control, on_event=on_event, usage=usage,
+            )
+
+        return await self._revising_speech(session_id, message_id, on_event, action)
+
+    async def restore_speech(
+        self,
+        session_id: str,
+        message_id: str,
+        version: int,
+        *,
+        on_event: Optional[EventCallback] = None,
+    ) -> None:
+        """발언을 지난 버전으로 되돌립니다 (ADR-036). LLM 은 결정 장부를 맞출 때만 부릅니다."""
+        async def action(db, session_model, turn, row, workspace, usage) -> None:
+            await self.revisions.restore(db, session_model, turn, row, workspace, version, on_event=on_event)
+
+        await self._revising_speech(session_id, message_id, on_event, action)
+
+    async def _revising_speech(
+        self,
+        session_id: str,
+        message_id: str,
+        on_event: Optional[EventCallback],
+        action: Callable[..., Awaitable[Any]],
+    ) -> Any:
+        """발언 하나를 고치는 실행의 수명 — 대상 확인, 그 턴의 작업 공간 런타임 대여와 반납, 체크포인트.
+
+        턴을 새로 열거나 턴의 상태를 바꾸지 않습니다. 이 일이 실패해도 그 턴은 끝난 턴 그대로입니다.
+        """
+        async with self.session_factory() as db:
+            _row, turn = await speech_retry.load_target(db, session_id, message_id)
+            workspace = resolve_workspace_dir((turn.config or {}).get("workspace_dir") or None)
+            turn_id = turn.id
+            latest = await db.scalar(
+                select(TurnModel.id).where(TurnModel.session_id == session_id)
+                .order_by(TurnModel.started_at.desc()).limit(1)
+            )
+
+        holder_token = LLM_HOLDER.set(session_id)
+        pool = get_runtime_pool()
+        try:
+            await pool.acquire(workspace, holder=session_id)
+            try:
+                with measuring() as usage:
+                    async with self.session_factory() as db:
+                        session_model = await db.get(SessionModel, session_id)
+                        row, turn = await speech_retry.load_target(db, session_id, message_id)
+                        result = await action(db, session_model, turn, row, workspace, usage)
+                # 마지막 턴이면 "이 턴이 바꾼 파일" 에 이번 도구 실행을 포함합니다. 지난 턴의 끝 지점을 옮기면 그 뒤
+                # 턴의 변경까지 그 턴의 것이 되므로 건드리지 않습니다.
+                if turn_id == latest:
+                    await self._close_checkpoint(workspace, turn_id, on_event)
+                return result
             finally:
                 self.ctx.tool_gates.pop(session_id, None)
                 await pool.release(session_id, workspace)

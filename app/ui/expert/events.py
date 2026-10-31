@@ -108,6 +108,27 @@ class ExpertEventView:
     async def _on_message_added(self, event: Event) -> None:
         self.page.chat_feed.append_message(event.get("message", {}))
 
+    @_handles(EventType.SPEECH_COMMENTS_DELIVERED)
+    async def _on_speech_comments_delivered(self, event: Event) -> None:
+        self.page.chat_feed.mark_comments_delivered(event.get("ids") or [], event.get("agent_name", ""))
+
+    @_handles(EventType.SPEECH_REVISED)
+    async def _on_speech_revised(self, event: Event) -> None:
+        who = event.get("agent_name", "")
+        if event.get("restored"):
+            ui.notify(f"{who} 의 발언을 지난 버전으로 되돌렸습니다.", type="positive", position="bottom-right")
+        elif event.get("ok"):
+            ui.notify(
+                f"{who} 의 발언을 새 버전으로 바꿨습니다. 뒤의 발언과 결론은 그대로이니, 필요하면 후속 요청으로 맞춰 주십시오.",
+                type="positive", position="bottom-right", multi_line=True,
+            )
+        else:
+            # 멀쩡한 발언은 그대로입니다. 실패한 시도는 카드의 버전 넘기기에 남습니다.
+            ui.notify(
+                f"{who} 의 다시 실행이 실패해 기존 발언을 그대로 두었습니다. 원인은 카드의 버전 넘기기에서 볼 수 있습니다.",
+                type="warning", position="bottom-right", multi_line=True,
+            )
+
     @_handles(EventType.MERMAID_REPAIR_STARTED)
     async def _on_mermaid_repair_started(self, event: Event) -> None:
         self.page.chat_feed.set_busy(
@@ -522,7 +543,9 @@ class ExpertEventView:
         # 확정되는 시점이 여기라, 잠금 해제도 여기서 알립니다.
         self.page.roster_control.refresh_mcp_lock()
         status = event.get("status")
-        if event.get("parked"):
+        if event.get("retry_target"):
+            await self.page.after_speech_revision(event)
+        elif event.get("parked"):
             # 계획 승인에 답이 없어 턴을 멈춰 둔 것입니다 (ADR-028). 오류가 아니므로
             # 오류로 알리지 않고, 이어 갈 수 있다는 안내 줄을 띄웁니다.
             self.page.chat_feed.set_busy(False, str(event.get("error") or ""), "Waiting")

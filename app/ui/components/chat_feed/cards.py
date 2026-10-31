@@ -8,6 +8,8 @@ from nicegui import ui
 from app.agents.base import style_for_agent
 from app.mcp.policy import OUTCOME_LABELS, describe_verdict, tool_outcome
 from app.orchestration.graph_run import NodeBadges
+from app.orchestration.speech_comments import commentable
+from app.orchestration.speech_retry import retryable
 from app.orchestration.state import FALLBACK_BADGE, fallback_sentence
 from app.orchestration.turns import in_main_record, sub_debate_label
 from app.ui.clipboard import copy_to_clipboard
@@ -16,9 +18,12 @@ from app.ui.components.chat_feed.common import (
     FEED_MARKDOWN_EXTRAS,
     OUTCOME_STYLES,
     SCROLL_TO_BOTTOM_PX,
+    SPEECH_ATTRIBUTE,
     _card_classes,
     card_time_text,
     is_clampable,
+    speech_versions,
+    version_caption,
 )
 from app.ui.math_markdown import MathMarkdown
 
@@ -32,7 +37,16 @@ class CardTimeline:
         on_open_turn_changes: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
         on_fork_turn: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
         on_draft_skill: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
+        on_retry_speech: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
+        on_restore_version: Optional[Callable[[str, int], Coroutine[None, None, None]]] = None,
+        on_delete_comment: Optional[Callable[[str], Coroutine[None, None, bool]]] = None,
     ):
+        # 이 발언만 다시 실행하는 창을 여는 콜백 (발언 ID, ADR-036). 미지정 시 카드에 버튼이 없습니다.
+        self.on_retry_speech = on_retry_speech
+        # 지난 버전으로 되돌리는 콜백 (발언 ID, 버전 번호).
+        self.on_restore_version = on_restore_version
+        # 아직 전달되지 않은 인라인 코멘트를 지우는 콜백 (코멘트 ID). 지웠으면 True.
+        self.on_delete_comment = on_delete_comment
         # 턴별 작업 공간 파일 변경 조회 및 되돌리기 콜백 (턴 ID). 미지정 시 결론 카드에
         # 파일 칩이 표시되지 않습니다 (`set_turn_actions`).
         self.on_open_turn_changes = on_open_turn_changes
@@ -72,6 +86,8 @@ class CardTimeline:
         self._scroll_settle_forced: bool = False
         self.collapse_all_button: Optional[ui.button] = None
         self.follow_button: Optional[ui.button] = None
+        # 그려 둔 코멘트 줄 (코멘트 id → {row, badge, delete}). 전달되면 그 줄만 고칩니다.
+        self._comment_rows: Dict[str, Dict[str, Any]] = {}
 
     @property
     def alive(self) -> bool:
@@ -144,6 +160,7 @@ class CardTimeline:
         self._node_badges.reset()
         self._active_streams.clear()
         self._cards_by_id.clear()
+        self._comment_rows.clear()
         # 카드가 사라지므로 펼침 기억도 함께 버립니다. 남겨 두면 다음 대화가
         # 있지도 않은 카드 때문에 자동 스크롤이 꺼진 채로 시작합니다.
         self._user_expanded.clear()
@@ -170,6 +187,8 @@ class CardTimeline:
         streaming: Set[str] = set(streaming_ids or ())
         self._node_badges.reset()
         self._active_streams.clear()
+        self._cards_by_id.clear()
+        self._comment_rows.clear()
         self._user_expanded.clear()
         self._scroll_detached = False
         self.refresh_follow_button()
@@ -200,10 +219,39 @@ class CardTimeline:
         if not msg_id or msg_id in self._active_streams:
             return
 
+        # 끝난 발언을 다시 실행하는 중입니다 (ADR-036). 새 카드를 만들지 않고 그 자리에 다시 씁니다.
+        existing = self._cards_by_id.get(msg_id)
+        if existing is not None and existing["card"].is_deleted is False:
+            self._restart_card(existing, msg)
+            self._active_streams[msg_id] = existing
+            return
+
         self._drop_placeholder()
         with self.message_container:
             self._active_streams[msg_id] = self._render_card(msg, streaming=True)
         self.scroll_to_bottom()
+
+    def _restart_card(self, info: Dict[str, Any], msg: Dict[str, Any]) -> None:
+        """이미 그려진 카드를 다시 스트리밍 상태로 돌립니다. 끝나면 화면이 기록에서 다시 그립니다."""
+        info["content"] = msg.get("content", "")
+        info["markdown"].set_content(info["content"])
+        info["started_at"] = msg.get("started_at")
+        info["msg_type"] = msg.get("msg_type", "agent")
+        info["card"].classes(
+            replace=f"w-full p-3.5 rounded-xl border {_card_classes(info['msg_type'], msg.get('sender_key', ''))} shadow-md"
+        )
+        info["failed_badge"].set_visibility(False)
+        self._set_fallback(info, None)
+        time_text, time_full = card_time_text(msg)
+        info["time_label"].set_text(time_text)
+        info["time_label"].set_visibility(bool(time_text))
+        info["time_tip"].set_text(time_full)
+        info["tool_container"].clear()
+        for key in ("retry_btn", "version_box", "version_banner"):
+            info[key].set_visibility(False)
+        info.pop("versions", None)
+        self._user_expanded.pop(info.get("id") or "", None)
+        self._apply_clamp(info, collapsed=False)
 
     def append_stream_chunk(self, msg_id: str, delta: str) -> None:
         """Appends a text chunk to an actively streaming message card."""
@@ -299,6 +347,11 @@ class CardTimeline:
                 failed_badge.set_visibility(msg_type == "error")
         # 확정본의 기록을 따릅니다. 기본 모델까지 실패한 발언은 배지를 거둡니다 (답한 모델이 없습니다).
         self._set_fallback(info, msg.get("llm_meta"))
+        # 쓰이는 동안에는 다시 실행할 것이 없었습니다. 끝난 발언에서 버튼이 나타납니다 (ADR-036).
+        retry_btn = info.get("retry_btn")
+        if retry_btn is not None and not retry_btn.is_deleted:
+            retry_btn.set_visibility(self._can_retry(msg))
+        info["commentable"] = commentable(msg)
 
         tool_calls = msg.get("tool_calls", [])
         if tool_calls and info.get("tool_container") is not None:
@@ -534,6 +587,23 @@ class CardTimeline:
                         # 그래프 토론의 라운드는 단계입니다 (상태 줄의 "N단계" 와 같은 수).
                         round_word = "Step" if msg.get("graph_node_id") else "Round"
                         ui.badge(f"{round_word} {round_num}", color="slate-700").props("dense text-[12px]")
+                    # 다시 실행한 발언의 버전 넘기기 (`_show_version`). 지난 버전이 있을 때만 보입니다.
+                    versions = speech_versions(msg)
+                    with ui.row().classes("items-center gap-0 no-wrap") as version_box:
+                        ui.button(
+                            icon="chevron_left", on_click=lambda: self._step_version(info, -1),
+                        ).props("flat dense round size=10px color=slate-4")
+                        version_label = ui.label("").classes("text-[12px] font-mono text-slate-300 px-0.5")
+                        ui.button(
+                            icon="chevron_right", on_click=lambda: self._step_version(info, 1),
+                        ).props("flat dense round size=10px color=slate-4")
+                    version_box.set_visibility(bool(versions))
+                    # 이 발언만 다시 실행합니다 (전문가 발언에만, ADR-036).
+                    retry_btn = ui.button(
+                        icon="replay", on_click=lambda: self._request_retry(info),
+                    ).props("flat dense round size=12px color=indigo-3")
+                    retry_btn.tooltip("이 발언만 다시 실행합니다 — 모델과 지침을 바꿀 수 있고, 다른 발언은 그대로 둡니다.")
+                    retry_btn.set_visibility(self._can_retry(msg) and not streaming)
                     ui.button(
                         icon="content_copy", on_click=lambda: self._copy_card(info)
                     ).props("flat dense round size=12px color=slate-4").tooltip(
@@ -548,6 +618,16 @@ class CardTimeline:
                     with expand_btn:
                         expand_tip = ui.tooltip("")
 
+            # 지난 버전을 보고 있을 때 어느 버전인지 적고 되돌릴 길을 둡니다.
+            with ui.row().classes(
+                "w-full items-center gap-2 px-2 py-1 mb-1 rounded bg-indigo-950/60 border border-indigo-800/70 no-wrap"
+            ) as version_banner:
+                version_text = ui.label("").classes("text-xs text-indigo-100 min-w-0 flex-grow")
+                restore_btn = ui.button(
+                    "이 버전으로 되돌리기", icon="restore", on_click=lambda: self._request_restore(info),
+                ).props("flat dense no-caps size=12px color=indigo-2").classes("flex-shrink-0")
+            version_banner.set_visibility(False)
+
             body = ui.column().classes(
                 "w-full prose prose-invert max-w-none text-sm text-slate-200"
             )
@@ -561,6 +641,13 @@ class CardTimeline:
                 with tool_container:
                     for tc in tool_calls:
                         self._render_tool_accordion(tc)
+
+            # 이 발언에 달린 인라인 코멘트 (ADR-036). 접힌 카드에서도 보입니다 — 전달을 기다리는 말이 있다는 표시입니다.
+            comment_box = ui.column().classes("w-full mt-1 gap-1")
+            for comment in msg.get("comments") or []:
+                with comment_box:
+                    self._render_comment(comment)
+            comment_box.set_visibility(bool(msg.get("comments")))
 
             # 펼친 긴 카드의 끝에도 복사·접기를 둡니다. 다 읽은 자리는 카드의 끝인데 버튼이
             # 머리에만 있어, 접거나 복사하려면 긴 글을 다시 거슬러 올라가야 했습니다.
@@ -596,15 +683,157 @@ class CardTimeline:
             "changes_tip": changes_tip,
             "fork_btn": fork_btn,
             "skill_btn": skill_btn,
+            "retry_btn": retry_btn,
+            "version_box": version_box,
+            "version_label": version_label,
+            "version_banner": version_banner,
+            "version_text": version_text,
+            "restore_btn": restore_btn,
+            "comment_box": comment_box,
             "started_at": msg.get("started_at"),
             "msg_type": msg_type,
+            "sender_key": sender_key,
+            "commentable": commentable(msg),
             "collapsed": False,
         })
+        # 문장을 드래그해 코멘트를 달 수 있는 카드 (`speech_actions.SPEECH_COMMENT_JS`).
+        if info["id"] and info["commentable"]:
+            card.props(f'{SPEECH_ATTRIBUTE}="{info["id"]}"')
+        if versions:
+            info["versions"] = versions
+            info["view_n"] = next(int(v["n"]) for v in versions if v.get("live"))
+            self._show_version_label(info)
         self._set_fallback(info, msg.get("llm_meta"))
         self._apply_clamp(info, collapsed=not streaming)
         if info["id"]:
             self._cards_by_id[info["id"]] = info
         return info
+
+    # ------------------------------------------------------------ 다시 실행과 버전 (ADR-036)
+
+    def _can_retry(self, msg: Dict[str, Any]) -> bool:
+        return self.on_retry_speech is not None and retryable(msg)
+
+    async def _request_retry(self, info: Dict[str, Any]) -> None:
+        if self.on_retry_speech is not None and info.get("id"):
+            await self.on_retry_speech(info["id"])
+
+    async def _request_restore(self, info: Dict[str, Any]) -> None:
+        if self.on_restore_version is not None and info.get("id") and info.get("view_n"):
+            await self.on_restore_version(info["id"], int(info["view_n"]))
+
+    def _step_version(self, info: Dict[str, Any], step: int) -> None:
+        """버전 넘기기. 기록은 바뀌지 않고 이 카드가 무엇을 보여 주는지만 바뀝니다."""
+        versions = info.get("versions") or []
+        numbers = [int(v["n"]) for v in versions]
+        if int(info.get("view_n") or 0) not in numbers:
+            return
+        at = numbers.index(int(info["view_n"])) + step
+        if 0 <= at < len(numbers):
+            self._show_version(info, versions[at])
+
+    def _show_version(self, info: Dict[str, Any], version: Dict[str, Any]) -> None:
+        info["view_n"] = int(version["n"])
+        info["content"] = version.get("content", "")
+        info["markdown"].set_content(info["content"])
+        msg_type = version.get("msg_type", "agent")
+        info["msg_type"] = msg_type
+        info["card"].classes(
+            replace=f"w-full p-3.5 rounded-xl border {_card_classes(msg_type, info.get('sender_key', ''))} shadow-md"
+        )
+        info["failed_badge"].set_visibility(msg_type == "error")
+        self._set_fallback(info, version.get("llm_meta"))
+        time_text, time_full = card_time_text(version)
+        info["time_label"].set_text(time_text)
+        info["time_label"].set_visibility(bool(time_text))
+        info["time_tip"].set_text(time_full)
+        info["tool_container"].clear()
+        with info["tool_container"]:
+            for tc in version.get("tool_calls") or []:
+                self._render_tool_accordion(tc)
+        self._show_version_label(info)
+        # 넘겨 본 글은 읽으려는 글입니다. 접혀 있으면 펼칩니다.
+        if info.get("collapsed"):
+            self._toggle_card(info)
+        else:
+            self._apply_clamp(info, collapsed=False)
+
+    @staticmethod
+    def _show_version_label(info: Dict[str, Any]) -> None:
+        versions = info.get("versions") or []
+        version = next((v for v in versions if int(v["n"]) == int(info.get("view_n") or 0)), None)
+        if version is None:
+            return
+        info["version_label"].set_text(f"{version['n']}/{len(versions)}")
+        banner = not version.get("live")
+        info["version_banner"].set_visibility(banner)
+        info["version_text"].set_text(version_caption(version, len(versions)))
+        info["restore_btn"].set_visibility(banner and version.get("msg_type") != "error")
+
+    # ------------------------------------------------------------ 인라인 코멘트 (ADR-036)
+
+    def can_comment(self, message_id: str) -> bool:
+        """지금 코멘트를 달 수 있는 카드인가. 쓰이는 중인 글에는 달지 않습니다."""
+        info = self._cards_by_id.get(message_id)
+        return bool(info and info.get("commentable")) and message_id not in self._active_streams
+
+    def add_comment(self, message_id: str, comment: Dict[str, Any]) -> None:
+        info = self._cards_by_id.get(message_id)
+        if not self.alive or info is None:
+            return
+        box = info.get("comment_box")
+        if box is None or box.is_deleted:
+            return
+        with box:
+            self._render_comment(comment)
+        box.set_visibility(True)
+
+    def mark_comments_delivered(self, comment_ids: Iterable[str], agent_name: str = "") -> None:
+        """코멘트가 에이전트의 발언에 실렸습니다. 그 줄의 표시만 바꿉니다."""
+        if not self.alive:
+            return
+        for comment_id in comment_ids:
+            row = self._comment_rows.get(comment_id)
+            if row is None or row["row"].is_deleted:
+                continue
+            row["badge"].set_text("전달됨")
+            row["badge"].props("color=teal-8")
+            row["badge"].tooltip(f"{agent_name} 의 발언에 전달했습니다." if agent_name else "에이전트의 발언에 전달했습니다.")
+            row["delete"].set_visibility(False)
+
+    def _render_comment(self, comment: Dict[str, Any]) -> None:
+        """코멘트 한 줄 — 집은 문장, 의견, 전달 상태."""
+        comment_id = comment.get("id", "")
+        delivered = comment.get("status") == "delivered"
+        with ui.row().classes(
+            "w-full items-start gap-2 px-2 py-1 rounded bg-amber-950/30 border-l-2 border-amber-600 no-wrap"
+        ) as row:
+            ui.icon("comment", size="xs").classes("text-amber-300 flex-shrink-0 mt-0.5")
+            with ui.column().classes("gap-0 min-w-0 flex-grow"):
+                if comment.get("quote"):
+                    ui.label(comment["quote"]).classes(
+                        "text-[12px] italic text-slate-400 truncate w-full"
+                    ).tooltip(comment["quote"])
+                ui.label(comment.get("comment", "")).classes("text-xs text-slate-200 whitespace-pre-wrap break-words")
+            badge = ui.badge("전달됨" if delivered else "전달 대기", color="teal-8" if delivered else "amber-9").props(
+                "dense text-[12px]"
+            ).classes("flex-shrink-0")
+            badge.tooltip(
+                "이 에이전트의 발언에 전달했습니다." if delivered
+                else "이 에이전트의 다음 발언에 전달됩니다. 이번 턴에 다시 말하지 않으면 다음 턴까지 기다립니다."
+            )
+            delete_btn = ui.button(
+                icon="close", on_click=lambda: self._delete_comment(comment_id),
+            ).props("flat dense round size=10px color=slate-4").classes("flex-shrink-0").tooltip("코멘트 지우기")
+            delete_btn.set_visibility(not delivered and self.on_delete_comment is not None)
+        self._comment_rows[comment_id] = {"row": row, "badge": badge, "delete": delete_btn}
+
+    async def _delete_comment(self, comment_id: str) -> None:
+        if self.on_delete_comment is None or not await self.on_delete_comment(comment_id):
+            return
+        row = self._comment_rows.pop(comment_id, None)
+        if row is not None and not row["row"].is_deleted:
+            row["row"].delete()
 
     def reveal_message(self, message_id: str) -> bool:
         """대상 발언 카드를 펼치고 화면 중앙으로 스크롤한 뒤 하이라이트 테두리를 표시합니다 (검색 결과 이동 시)."""

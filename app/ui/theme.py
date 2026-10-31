@@ -115,6 +115,24 @@ body {
 
 /* --- 입력창의 @언급 창 (mention_input.py) -----------------------------------
    입력창 바로 위에 뜹니다. 위치는 스크립트가 입력창 좌표로 정합니다(fixed). */
+.mado-comment-button {
+    position: fixed;
+    z-index: 6000;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #fef3c7;
+    background: #92400e;
+    border: 1px solid #d97706;
+    border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+    cursor: pointer;
+}
+.mado-comment-button[hidden] { display: none; }
+.mado-comment-button .material-icons { font-size: 14px; }
 .mado-mention-popup {
     position: fixed;
     z-index: 6000;

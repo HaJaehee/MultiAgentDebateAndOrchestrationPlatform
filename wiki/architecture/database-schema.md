@@ -287,6 +287,10 @@ unfinished speech. Details in [Interrupted Turns §5](../orchestration/turn-reco
 
 ---
 
+### 2.7.1. `speech_comments` Table and `messages.revisions` (ADR-036)
+
+`speech_comments` holds a user's inline comment: `message_id`, `agent_key`, `round_number`, `quote`, `comment`, `status` (`pending` | `delivered`), `delivered_message_id`, `delivered_at`. `messages.revisions` (JSON, nullable) holds a speech's versions that are not live: `n`, `content`, `msg_type`, `llm_meta`, `started_at`, `finished_at`, `tool_record_ids`.
+
 ### 2.8. `messages_fts` — search index (v1.5)
 
 An external-content FTS5 table over `messages.content` with the `trigram` tokenizer, kept in sync by

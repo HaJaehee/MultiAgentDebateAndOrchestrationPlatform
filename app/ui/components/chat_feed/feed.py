@@ -23,6 +23,12 @@ from app.ui.components.chat_feed.common import (
 )
 from app.ui.components.chat_feed.decisions import DecisionBar, UnfinishedTurnBar
 from app.ui.components.chat_feed.mentions import MentionUpload
+from app.ui.components.chat_feed.speech_actions import (
+    CommentHandler,
+    RetryHandler,
+    RetryOptionsProvider,
+    SpeechActions,
+)
 from app.ui.mention_input import MENTION_INPUT_CLASS, MENTION_QUERY_EVENT
 from app.workspace_files import strip_reference_block
 
@@ -50,6 +56,11 @@ class ChatFeed:
         on_user_question: Optional[Callable[[str, str], Coroutine[None, None, bool]]] = None,
         on_fork_turn: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
         on_draft_skill: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
+        on_retry_speech: Optional[RetryHandler] = None,
+        retry_options: Optional[RetryOptionsProvider] = None,
+        on_restore_version: Optional[Callable[[str, int], Coroutine[None, None, None]]] = None,
+        on_add_comment: Optional[CommentHandler] = None,
+        on_delete_comment: Optional[Callable[[str], Coroutine[None, None, bool]]] = None,
     ):
         self.on_send_message = on_send_message
         # 토론이 도는 중에 들어온 입력과 정지 버튼의 행선지. 주어지지 않으면
@@ -69,6 +80,9 @@ class ChatFeed:
         self.round_badge: Optional[ui.badge] = None
         self.is_busy: bool = False
         self._stop_pending: bool = False
+        # 끝난 발언 하나를 다시 실행하는 중인지 (ADR-036). 다음 발언자도 합성도 없으므로 정지와 개입 대신
+        # 취소만 둡니다.
+        self._single_speech: bool = False
 
         # 생성 중 표시. 초가 올라가는 것이 "멈추지 않았다" 는 가장 확실한 신호라,
         # 상태 문구가 바뀔 때마다(= 발언자나 단계가 바뀔 때마다) 다시 셉니다.
@@ -82,6 +96,19 @@ class ChatFeed:
 
         self.timeline = CardTimeline(
             on_open_turn_changes=on_open_turn_changes, on_fork_turn=on_fork_turn, on_draft_skill=on_draft_skill,
+            on_retry_speech=(
+                (lambda message_id: self.speech_actions.open_retry(message_id)) if on_retry_speech else None
+            ),
+            on_restore_version=on_restore_version,
+            on_delete_comment=on_delete_comment,
+        )
+        self.speech_actions = SpeechActions(
+            alive=lambda: self.alive,
+            can_comment=self.timeline.can_comment,
+            on_comment_saved=self.timeline.add_comment,
+            on_add_comment=on_add_comment,
+            retry_options=retry_options,
+            on_retry_speech=on_retry_speech,
         )
         self.decisions = DecisionBar(alive=lambda: self.alive, on_decision=on_decision or on_tool_budget)
         self.unfinished = UnfinishedTurnBar(
@@ -137,7 +164,7 @@ class ChatFeed:
                         )
                         self.stop_button.set_visibility(False)
                         self.abort_button = (
-                            ui.button("긴급 종료", icon="cancel", on_click=self._handle_abort)
+                            ui.button("긴급 종료", icon="cancel", on_click=self._handle_abort_click)
                             .props("flat dense no-caps color=red-5 size=12px")
                             .tooltip(
                                 "요청을 취소할 때 사용합니다. 진행 중인 발언을 즉시 중단하고 이번 "
@@ -210,6 +237,7 @@ class ChatFeed:
                     )
 
             self.unfinished.build_dialog()
+            self.speech_actions.build()
 
             # 3. Input Bar
             with ui.row().classes("w-full items-center gap-2 p-2 bg-slate-900 border border-slate-800 rounded-xl shadow-lg flex-shrink-0"):
@@ -251,7 +279,7 @@ class ChatFeed:
         self.timeline.release_scroll()
 
         if self.is_busy:
-            if self.on_interject is None:
+            if self.on_interject is None or self._single_speech:
                 return
             self.input_field.value = ""
             await self.on_interject(text)
@@ -271,6 +299,19 @@ class ChatFeed:
 
     async def _handle_enter(self, e) -> None:
         await self._handle_send()
+
+    async def _handle_abort_click(self) -> None:
+        """상태 줄의 긴급 종료. 다시 실행 중이면 지울 기록이 없으므로 묻지 않고 끊습니다."""
+        if self._single_speech and self.is_busy and self.on_abort is not None:
+            await self.on_abort()
+            return
+        self._handle_abort()
+
+    def set_single_speech(self, active: bool) -> None:
+        """발언 하나를 다시 실행하는 중인지 알립니다. 다음 `set_busy` 부터 버튼과 입력칸에 반영됩니다."""
+        self._single_speech = active
+        if self.abort_button is not None and not self.abort_button.is_deleted:
+            self.abort_button.set_text("다시 실행 취소" if active else "긴급 종료")
 
     def _handle_abort(self) -> None:
         """확인 창을 엽니다. 실제 삭제는 확인을 받은 뒤에."""
@@ -302,7 +343,7 @@ class ChatFeed:
         self.is_busy = busy
         # 개입 통로가 연결돼 있으면 토론 중에도 입력을 열어 둡니다. 그때 보낸 글은
         # 새 턴이 아니라 진행 중인 토론으로 들어갑니다.
-        can_interject = busy and self.on_interject is not None
+        can_interject = busy and self.on_interject is not None and not self._single_speech
         if self.send_button:
             self.send_button.disable() if (busy and not can_interject) else self.send_button.enable()
             self.send_button.props(
@@ -314,7 +355,7 @@ class ChatFeed:
                 f'placeholder="{INTERJECT_PLACEHOLDER if can_interject else IDLE_PLACEHOLDER}"'
             )
         if self.stop_button:
-            self.stop_button.set_visibility(busy and self.on_stop is not None)
+            self.stop_button.set_visibility(busy and self.on_stop is not None and not self._single_speech)
         if self.abort_button:
             self.abort_button.set_visibility(busy and self.on_abort is not None)
         if not busy:
@@ -444,6 +485,9 @@ class ChatFeed:
 
     def set_graph_labels(self, labels: Dict[str, str]) -> None:
         self.timeline.set_graph_labels(labels)
+
+    def mark_comments_delivered(self, comment_ids: Iterable[str], agent_name: str = "") -> None:
+        self.timeline.mark_comments_delivered(comment_ids, agent_name)
 
     # ------------------------------------------------------------ 승인 카드
 

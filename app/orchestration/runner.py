@@ -138,6 +138,42 @@ class DebateRunner:
 
         return self._launch(run, body)
 
+    def retry_speech(self, session_id: str, message_id: str, *, connection: str = "",
+                     instruction: str = "", workspace: Optional[str] = None) -> TurnRun:
+        """끝난 발언 하나만 백그라운드에서 다시 실행합니다 (ADR-036). 이미 돌고 있으면 그 실행을 돌려줍니다."""
+        existing = self._runs.get(session_id)
+        if existing is not None and existing.status == "running":
+            return existing
+        run = self._revision_run(session_id, message_id, workspace, "발언을 다시 실행하는 중...")
+
+        async def body(on_event) -> None:
+            await self.engine.retry_speech(
+                session_id, message_id, connection=connection, instruction=instruction,
+                on_event=on_event, control=run.control,
+            )
+
+        return self._launch(run, body)
+
+    def restore_speech(self, session_id: str, message_id: str, version: int,
+                       workspace: Optional[str] = None) -> TurnRun:
+        """발언을 지난 버전으로 되돌립니다 (ADR-036). 결정 장부를 맞추는 동안 다른 실행과 겹치지 않게 같은 길로 돕니다."""
+        existing = self._runs.get(session_id)
+        if existing is not None and existing.status == "running":
+            return existing
+        run = self._revision_run(session_id, message_id, workspace, "발언을 지난 버전으로 되돌리는 중...")
+
+        async def body(on_event) -> None:
+            await self.engine.restore_speech(session_id, message_id, version, on_event=on_event)
+
+        return self._launch(run, body)
+
+    def _revision_run(self, session_id: str, message_id: str, workspace: Optional[str], status_text: str) -> TurnRun:
+        run = TurnRun(session_id, "", workspace, retry_target=message_id, event_bus=self.event_bus)
+        run.status_text = status_text
+        run.round_info = "Revising"
+        self._runs[session_id] = run
+        return run
+
     def _launch(
         self,
         run: TurnRun,
@@ -171,6 +207,7 @@ class DebateRunner:
                     "status": run.status,
                     "error": run.error,
                     "parked": run.parked,
+                    **({"retry_target": run.retry_target} if run.retry_target else {}),
                 })
             except BaseException:  # noqa: BLE001
                 logger.warning(
@@ -249,6 +286,11 @@ class DebateRunner:
         run = self._runs.get(session_id)
         if run is None or run.status != "running":
             return None
+        if run.retry_target:
+            # 다시 실행은 끝난 턴의 기록을 건드리지 않습니다. 끊으면 지금 발언이 그대로 남을 뿐, 지울 것이 없습니다.
+            await self.cancel(session_id)
+            return {"prompt": "", "message_ids": [], "artifact_ids": [], "turn_id": None,
+                    "retry_target": run.retry_target}
 
         # 태스크를 죽이기 전에 목록을 뜹니다. 취소 뒤에도 스냅샷은 남지만,
         # 순서를 지켜야 "무엇이 있었는지" 를 놓치지 않습니다.

@@ -101,6 +101,10 @@ class SessionModel(Base):
     turns: Mapped[List["TurnModel"]] = relationship(
         "TurnModel", back_populates="session", cascade="all, delete-orphan", order_by="TurnModel.started_at", lazy="selectin"
     )
+    # 세션을 읽을 때 함께 싣지 않습니다 (lazy="select" — 지울 때만 불러옵니다).
+    speech_comments: Mapped[List["SpeechCommentModel"]] = relationship(
+        "SpeechCommentModel", back_populates="session", cascade="all, delete-orphan", lazy="select"
+    )
 
 
 # 턴의 상태 (`TurnModel.status`).
@@ -260,11 +264,45 @@ class MessageModel(Base):
     # * 해당 발언의 토큰 소모량 및 소요 시간: `"usage": {...}` (`app/agents/llm_usage.Usage` 구조).
     # 메타데이터가 없는 일반 메시지(사용자 입력, 시스템 안내, 이전 레거시 메시지 등)는 NULL입니다.
     llm_meta: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    # 이 발언의 지금 보이지 않는 버전들 (`app/orchestration/speech_retry.py`, ADR-036). 발언 하나만 다시 실행하면
+    # 이 행의 값이 새 버전으로 바뀌고 옛 값이 여기로 옮겨 갑니다. 다시 실행한 적 없는 발언은 NULL.
+    revisions: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
 
     session: Mapped["SessionModel"] = relationship("SessionModel", back_populates="messages")
     tool_calls: Mapped[List["ToolCallRecordModel"]] = relationship(
         "ToolCallRecordModel", back_populates="message", cascade="all, delete-orphan", lazy="selectin"
     )
+
+
+# 인라인 코멘트의 상태 (`SpeechCommentModel.status`).
+COMMENT_PENDING = "pending"      # 에이전트의 다음 발언을 기다리는 중
+COMMENT_DELIVERED = "delivered"  # 그 에이전트의 발언에 실렸습니다
+
+
+class SpeechCommentModel(Base):
+    """발언의 한 부분에 유저가 단 코멘트 (`app/orchestration/speech_comments.py`, ADR-036).
+
+    개입 메모(`TurnControl`)와 달리 메모리가 아니라 여기에 둡니다. 턴이 돌지 않을 때도 달 수 있고, 그 에이전트가
+    이번 턴에 다시 말하지 않으면 다음 턴까지 기다려야 하기 때문입니다.
+    """
+
+    __tablename__ = "speech_comments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
+    # 코멘트가 달린 발언과 그 발언자. 코멘트는 이 에이전트에게만 전달됩니다.
+    message_id: Mapped[str] = mapped_column(String(36), index=True)
+    agent_key: Mapped[str] = mapped_column(String(50))
+    round_number: Mapped[int] = mapped_column(Integer, default=0)
+    quote: Mapped[str] = mapped_column(Text, default="")
+    comment: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(20), default=COMMENT_PENDING, nullable=False)
+    # 코멘트를 받은 발언. 그 발언이 기록되는 커밋에서 함께 적습니다.
+    delivered_message_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    session: Mapped["SessionModel"] = relationship("SessionModel", back_populates="speech_comments")
 
 
 class ToolCallRecordModel(Base):

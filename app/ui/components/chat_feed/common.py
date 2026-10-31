@@ -4,6 +4,7 @@ import logging
 from typing import Any, Callable, Coroutine, Dict, List, Tuple
 
 from app.agents.llm_usage import Usage, format_tokens, usage_line
+from app.orchestration.speech_retry import live_number
 from app.timestamps import format_duration, speech_time_text, speech_timing, to_local
 
 
@@ -61,6 +62,9 @@ def clip_reloaded_output(text: str, limit: int = MAX_RELOADED_TOOL_OUTPUT) -> st
 # 큰따옴표는 쓰지 않습니다.
 IDLE_PLACEHOLDER = "멀티 에이전트에게 토론 및 설계를 요청할 목표나 질문을 입력하십시오... (Shift+Enter 줄바꿈)"
 INTERJECT_PLACEHOLDER = "토론 진행 중 — 지금 전송하시면 다음 발언 순서에 개입 메시지로 전달됩니다 (Shift+Enter 줄바꿈)"
+
+# 문장을 드래그해 코멘트를 달 수 있는 발언 카드에 붙이는 속성 (값은 발언 id, `speech_actions.SPEECH_COMMENT_JS`).
+SPEECH_ATTRIBUTE = "data-mado-speech"
 
 # 입력칸에서 무엇이 '보내기' 인가.
 #
@@ -314,6 +318,40 @@ def _card_clock_text(msg: Dict[str, Any]) -> Tuple[str, str]:
     # 두면 "2분 5초" 가 경과인지 남은 시간인지 읽는 사람이 짐작해야 합니다.
     label = f"{started.strftime(clock)} → {end} · 경과 {format_duration(t['seconds'])}"
     return label, speech_time_text(msg)
+
+
+def speech_versions(msg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """다시 실행한 발언의 버전 전부 (번호 순). 다시 실행한 적 없으면 빈 목록 — 카드에 넘기는 칸을 달지 않습니다.
+
+    지금 보이는 버전도 같은 모양으로 넣습니다. 번호는 지난 버전이 쓰지 않는 번호입니다 (`speech_retry.live_number`).
+    """
+    past = msg.get("revisions") or []
+    if not past:
+        return []
+    live = {
+        "n": live_number(past), "content": msg.get("content", ""), "msg_type": msg.get("msg_type", "agent"),
+        "llm_meta": msg.get("llm_meta"), "started_at": msg.get("started_at"), "finished_at": msg.get("finished_at"),
+        "tool_calls": msg.get("tool_calls") or [], "live": True,
+    }
+    return sorted([*past, live], key=lambda version: int(version.get("n") or 0))
+
+
+def version_caption(version: Dict[str, Any], total: int) -> str:
+    """버전 하나를 설명하는 한 줄 — 몇 번째인지, 어떤 모델과 지침으로 받았는지."""
+    parts = [f"버전 {version.get('n')}/{total}"]
+    if version.get("msg_type") == "error":
+        parts.append("실패한 시도")
+    if version.get("live"):
+        parts.append("지금 버전")
+    meta = version.get("llm_meta")
+    retry = meta.get("retry") if isinstance(meta, dict) else None
+    if isinstance(retry, dict):
+        parts.append(f"모델 {retry.get('model')}")
+        if retry.get("instruction"):
+            parts.append(f"지침: {retry['instruction']}")
+    elif not version.get("live") or int(version.get("n") or 0) == 1:
+        parts.append("처음 발언")
+    return " · ".join(parts)
 
 
 def _card_classes(msg_type: str, sender_key: str) -> str:

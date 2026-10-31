@@ -382,12 +382,8 @@ def sub_debate_at(messages: Iterable[Any], boundary: int) -> Optional[SubDebateR
     return record
 
 
-def resume_notice(calls: Sequence[Mapping[str, Any]], output_chars: int = 300) -> str:
-    """끊긴 발언을 다시 하는 에이전트에게 붙이는 안내 — 이미 실행한 도구와 결과.
-
-    발언의 글은 남지 않았지만 도구는 실행됐습니다. 모르고 같은 파일 쓰기를 되풀이하지 않도록,
-    실행된 것을 관찰 결과로 건넵니다 (ADR-014: 도구의 결과는 관찰입니다).
-    """
+def tool_call_lines(calls: Sequence[Mapping[str, Any]], output_chars: int = 300) -> str:
+    """이미 실행된 도구와 결과를 프롬프트에 적는 줄들."""
     lines = []
     for call in calls:
         try:
@@ -398,10 +394,19 @@ def resume_notice(calls: Sequence[Mapping[str, Any]], output_chars: int = 300) -
         if len(output) > output_chars:
             output = output[:output_chars] + "…"
         lines.append(f"- {call.get('tool_name')}({args[:200]}) → {call.get('status') or 'success'}: {output}")
+    return "\n".join(lines)
+
+
+def resume_notice(calls: Sequence[Mapping[str, Any]], output_chars: int = 300) -> str:
+    """끊긴 발언을 다시 하는 에이전트에게 붙이는 안내 — 이미 실행한 도구와 결과.
+
+    발언의 글은 남지 않았지만 도구는 실행됐습니다. 모르고 같은 파일 쓰기를 되풀이하지 않도록,
+    실행된 것을 관찰 결과로 건넵니다 (ADR-014: 도구의 결과는 관찰입니다).
+    """
     return (
         "[재개 안내] 서버가 다시 시작되어 당신의 직전 발언이 끝나지 못했고, 그 글은 남아 있지 "
         "않습니다. 끊기기 전에 당신이 이미 실행한 도구와 결과입니다:\n"
-        + "\n".join(lines)
+        + tool_call_lines(calls, output_chars)
         + "\n같은 작업(특히 파일 쓰기)을 모르고 되풀이하지 말고, 필요하면 결과를 먼저 확인한 뒤 "
         "발언을 처음부터 다시 작성하세요."
     )

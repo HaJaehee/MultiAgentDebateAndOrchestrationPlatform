@@ -31,6 +31,8 @@ class EventType(StrEnum):
     MESSAGE_STREAM_START = "message_stream_start"
     MESSAGE_STREAM_CHUNK = "message_stream_chunk"
     MESSAGE_ADDED = "message_added"
+    SPEECH_REVISED = "speech_revised"  # 발언 하나를 다시 실행했거나 지난 버전으로 되돌렸습니다 (ADR-036)
+    SPEECH_COMMENTS_DELIVERED = "speech_comments_delivered"  # 인라인 코멘트가 그 에이전트의 발언에 실렸습니다 (ADR-036)
     LLM_FALLBACK = "llm_fallback"
     TOOL_EXECUTED = "tool_executed"
     PEER_CONSULTATION_STARTED = "peer_consultation_started"

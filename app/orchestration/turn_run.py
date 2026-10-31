@@ -56,6 +56,7 @@ class TurnRun:
         *,
         turn_id: Optional[str] = None,
         resume_mode: Optional[str] = None,
+        retry_target: Optional[str] = None,
         event_bus: Optional[BaseEventBus] = None,
     ):
         self.session_id = session_id
@@ -70,6 +71,9 @@ class TurnRun:
         self.turn_id: Optional[str] = turn_id
         # 끊긴 턴을 다시 세운 실행이면 "finish" · "continue" (ADR-024).
         self.resume_mode: Optional[str] = resume_mode
+        # 끝난 발언 하나를 다시 실행하거나 되돌리는 실행이면 그 발언 id (ADR-036). 다음 발언자도 합성도 없으므로
+        # 정지·개입을 받지 않고, 긴급 종료는 기록을 지우지 않습니다.
+        self.retry_target: Optional[str] = retry_target
         self.busy: bool = True
         self.status_text: str = "토론 준비 중..."
         self.round_info: str = "Debating"
@@ -151,7 +155,7 @@ class TurnRun:
         발언이 중간에 잘리지 않고, 최종 합성과 아티팩트도 그대로 나옵니다.
         이미 요청했거나 끝난 토론이면 아무것도 하지 않고 False 를 돌려줍니다.
         """
-        if self.status != "running" or self.control.stop_requested:
+        if self.status != "running" or self.control.stop_requested or self.retry_target:
             return False
         self.control.request_stop()
         self._emit({"type": EventType.STOP_REQUESTED})
@@ -169,7 +173,7 @@ class TurnRun:
         만들어져 나갔으므로, 엔진이 다음 발언자로 넘어가는 지점에서 꺼내 갑니다.
         `skill_designations` (전문가 키 → 스킬) 와 `attachments` (언급한 파일) 도 그때 함께 반영됩니다.
         """
-        if self.status != "running":
+        if self.status != "running" or self.retry_target:
             return False
         if not self.control.add_note(text, skill_designations, attachments):
             return False
@@ -645,6 +649,7 @@ class TurnRun:
             "turn_id": self.turn_id,
             "status": self.status,
             "error": self.error,
+            "retry_target": self.retry_target,
             "busy": self.busy,
             "status_text": self.status_text,
             "round_info": self.round_info,

@@ -23,10 +23,11 @@ from app.agents.skills import with_designated_skills
 from app.config import TOOL_ITERATION_CEILING
 from app.database.models import MessageModel, SpeechDraftModel, ToolCallRecordModel, utc_now
 from app.events import EventCallback, EventType
-from app.orchestration import turns
+from app.orchestration import speech_comments, turns
 from app.orchestration.context import EngineContext
 from app.orchestration.control import TurnControl, asks_human
 from app.orchestration.recording import TurnRecorder
+from app.orchestration.speech_retry import PROMPT_TAIL, SpeechRevision
 from app.orchestration.state import DebateMessage, DebateState
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,7 @@ class _Speech:
         graph_port: Optional[str],
         on_event: Optional[EventCallback],
         draft: Optional[Dict[str, Any]],
+        revision: Optional[SpeechRevision] = None,
     ) -> None:
         self.recorder = recorder
         self.db, self.db_lock, self.state, self.agent = db, db_lock, state, agent
@@ -125,7 +127,12 @@ class _Speech:
         self.graph_node_id, self.graph_port = graph_node_id, graph_port
         self.on_event = on_event
         self.draft_state: Optional[Dict[str, Any]] = draft["state"] if draft else None
-        self.id = draft["id"] if draft else str(uuid.uuid4())
+        # 끝난 발언을 다시 실행하는 중이면 그 발언의 자리입니다 (ADR-036). 새 행을 넣지 않고 그 행을 고칩니다.
+        self.revision = revision
+        self.id = revision.message_id if revision else (draft["id"] if draft else str(uuid.uuid4()))
+        self.turn_meta: Dict[str, Any] = revision.turn_meta if revision else turns.meta(kind)
+        # 이 발언에 실린 인라인 코멘트. 발언이 기록되는 커밋에서 전달됨으로 적습니다.
+        self.comment_ids: List[str] = []
         # 벽시계 시작 시각. `created_at` 과 따로 둡니다 — 그쪽은 발언이 끝난 뒤에
         # 들어가는 정렬 키라서, 병렬 라운드에서는 실제 시각이 아닙니다.
         self.started_at = (draft.get("started_at") if draft else None) or utc_now()
@@ -169,11 +176,17 @@ class _Speech:
                 "started_at": self.started_at,
                 "graph_node_id": self.graph_node_id,
                 "graph_port": self.graph_port,
-                "turn_meta": turns.meta(self.kind),
+                "turn_meta": self.turn_meta,
             },
         }
 
     # ------------------------------------------------------------ 도구 루프에 넘기는 콜백
+
+    def remember_prompt(self, prompt_messages: List[Dict[str, Any]]) -> None:
+        """이번 차례의 지시를 기록에 남깁니다. 이 발언만 다시 실행할 때 같은 지시로 답하게 합니다 (ADR-036)."""
+        last = prompt_messages[-1].get("content") if prompt_messages else None
+        if self.kind == turns.KIND_SPEECH and self.revision is None and isinstance(last, str):
+            self.turn_meta = turns.meta(self.kind, **{PROMPT_TAIL: last})
 
     async def on_tool_call(self, call_log: Dict[str, Any]) -> None:
         self.executed_tools.append(call_log)
@@ -270,42 +283,66 @@ class _Speech:
         turn_started_at: Optional[datetime],
         llm_meta: Optional[Dict[str, Any]],
     ) -> List[Any]:
-        """발언 행과, 즉시 기록하지 못한 도구 행. 기록을 다시 시도할 때마다 새로 만듭니다."""
-        rows: List[Any] = [MessageModel(
-            id=self.id,
-            session_id=self.state.session_id,
-            sender_key=self.agent.key,
-            sender_name=self.agent.name,
-            sender_role=self.agent.role,
-            content=content,
-            round_number=self.round_number,
-            msg_type=final_type,
-            started_at=self.started_at,
-            finished_at=finished_at,
-            turn_started_at=turn_started_at,
-            graph_node_id=self.graph_node_id,
-            graph_port=self.graph_port,
-            turn_id=self.state.turn_id,
-            turn_meta=turns.meta(self.kind),
-            llm_meta=llm_meta,
-            **({"created_at": created_at} if created_at is not None else {}),
-        )]
+        """발언 행과, 즉시 기록하지 못한 도구 행. 기록을 다시 시도할 때마다 새로 만듭니다.
+
+        다시 실행하는 발언은 행을 새로 넣지 않습니다 (`after_rows`). 실패한 시도는 지금 발언을 바꾸지 않으므로
+        그때의 도구 행은 발언에 잇지 않습니다.
+        """
+        rows: List[Any] = []
+        if self.revision is None:
+            rows.append(MessageModel(
+                id=self.id,
+                session_id=self.state.session_id,
+                sender_key=self.agent.key,
+                sender_name=self.agent.name,
+                sender_role=self.agent.role,
+                content=content,
+                round_number=self.round_number,
+                msg_type=final_type,
+                started_at=self.started_at,
+                finished_at=finished_at,
+                turn_started_at=turn_started_at,
+                graph_node_id=self.graph_node_id,
+                graph_port=self.graph_port,
+                turn_id=self.state.turn_id,
+                turn_meta=self.turn_meta,
+                llm_meta=llm_meta,
+                **({"created_at": created_at} if created_at is not None else {}),
+            ))
+        tool_message_id = None if (self.revision is not None and final_type == "error") else self.id
         for call_log in self.executed_tools:
             if id(call_log) not in self.recorded_tools:
-                rows.append(self.recorder.tool_row(self.state, self.agent, call_log, message_id=self.id))
+                rows.append(self.recorder.tool_row(self.state, self.agent, call_log, message_id=tool_message_id))
         return rows
 
-    def link_tools(self) -> Callable[[], Coroutine[Any, Any, None]]:
-        """발언 행과 같은 커밋에서 할 일: 먼저 기록해 둔 도구를 이 발언에 잇고, 초안을 지웁니다."""
+    def after_rows(
+        self,
+        *,
+        content: str,
+        final_type: str,
+        finished_at: datetime,
+        llm_meta: Optional[Dict[str, Any]],
+    ) -> Callable[[], Coroutine[Any, Any, None]]:
+        """발언 행과 같은 커밋에서 할 일: 먼저 기록해 둔 도구를 이 발언에 잇고, 실린 코멘트를 전달됨으로 적고, 초안을 지웁니다.
+
+        응답을 받지 못한 발언에 실렸던 코멘트는 전달된 것이 아닙니다. 다음 발언을 기다립니다.
+        """
         linked = self.prior_record_ids + list(self.recorded_tools.values())
+        delivered = self.comment_ids if final_type != "error" else []
 
         async def run() -> None:
-            if linked:
+            if self.revision is not None:
+                await self.revision.apply(
+                    self.db, content=content, msg_type=final_type, started_at=self.started_at,
+                    finished_at=finished_at, llm_meta=llm_meta, tool_ids=linked,
+                )
+            elif linked:
                 await self.db.execute(
                     update(ToolCallRecordModel)
                     .where(ToolCallRecordModel.id.in_(linked))
                     .values(message_id=self.id)
                 )
+            await speech_comments.mark_delivered(self.db, delivered, self.id)
             # 발언이 기록되면 초안은 할 일을 마쳤습니다. 같은 커밋에서 지웁니다.
             if self.draft_saved:
                 await self.db.execute(delete(SpeechDraftModel).where(SpeechDraftModel.id == self.id))
@@ -496,6 +533,7 @@ class SpeechRunner:
         graph_node_id: Optional[str] = None,
         graph_port: Optional[str] = None,
         kind: str = turns.KIND_SPEECH,
+        revision: Optional[SpeechRevision] = None,
     ) -> DebateMessage:
         """한 에이전트의 발언을 스트리밍하고, DB 에 기록하고, 상태에 반영합니다.
 
@@ -510,6 +548,9 @@ class SpeechRunner:
         동시 사용을 허용하지 않습니다 — 두 발언이 같은 순간에 커밋하면
         `IllegalStateChangeError` 로 토론이 통째로 죽습니다. 락은 LLM 호출이 아니라
         기록 구간에만 걸리므로 병렬성은 그대로입니다.
+
+        `revision` 을 주면 끝난 발언 하나를 다시 실행하는 것입니다 (ADR-036). 새 행을 넣지 않고 그 발언의 값을
+        바꾸며, 실패로 끝나면 지금 발언은 그대로 둡니다 (`SpeechRevision.apply`).
 
         `created_at` 을 주면 그 시각으로 기록합니다. 병렬 라운드에서는 발언이 끝나는
         순서가 제각각이라, 커밋 시각을 그대로 쓰면 새로고침한 화면의 발언 순서가
@@ -540,8 +581,17 @@ class SpeechRunner:
         speech = _Speech(
             self.recorder, db=db, db_lock=db_lock, state=state, agent=agent, kind=kind,
             round_number=round_number, msg_type=msg_type, graph_node_id=graph_node_id,
-            graph_port=graph_port, on_event=on_event, draft=draft,
+            graph_port=graph_port, on_event=on_event, draft=draft, revision=revision,
         )
+        speech.remember_prompt(prompt_messages)
+        # 유저가 이 에이전트의 발언에 달아 둔 코멘트 (ADR-036). 초안에서 이어 가는 발언은 프롬프트를 새로 만들지 않습니다.
+        comments = (
+            revision.comments if revision is not None
+            else [] if draft is not None
+            else await self._pending_comments(db, db_lock, state, agent)
+        )
+        speech.comment_ids = [c["id"] for c in comments]
+        prompt_messages = speech_comments.with_comments(prompt_messages, comments)
         if on_event:
             await on_event(speech.start_event())
 
@@ -557,10 +607,17 @@ class SpeechRunner:
         # 그 자체로 쓸모 있는 기록입니다 (엔드포인트가 몇 초 만에 끊었는지, 한도까지
         # 버텼는지). 기록 락을 기다린 시간이 섞이지 않도록 락 **밖에서** 잽니다.
         finished_at = utc_now()
-        await self._record_speech(
+        recorded = await self._record_speech(
             speech, content=content, final_type=final_type, finished_at=finished_at,
             created_at=created_at, turn_started_at=turn_started_at, llm_meta=llm_meta,
         )
+        if recorded and speech.comment_ids and final_type != "error" and on_event:
+            await on_event({
+                "type": EventType.SPEECH_COMMENTS_DELIVERED,
+                "ids": list(speech.comment_ids),
+                "message_id": speech.id,
+                "agent_name": agent.name,
+            })
         if speech.trimmed and on_event:
             await on_event({
                 "type": EventType.CONTEXT_TRIMMED,
@@ -574,6 +631,24 @@ class SpeechRunner:
             speech, content=content, final_type=final_type, tool_logs=tool_logs,
             finished_at=finished_at, turn_started_at=turn_started_at, llm_meta=llm_meta,
         )
+
+    @staticmethod
+    async def _pending_comments(
+        db, db_lock: Optional[asyncio.Lock], state: DebateState, agent: Agent,
+    ) -> List[Dict[str, Any]]:
+        """이 에이전트에게 전달할 코멘트. 못 읽어도 발언은 계속되고, 코멘트는 다음 발언을 기다립니다."""
+        async with (db_lock or nullcontext()):
+            try:
+                return await speech_comments.pending_for(db, state.session_id, agent.key)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - 코멘트 때문에 발언을 멈추지 않습니다
+                logger.warning(f"Could not read the inline comments for {agent.name}: {type(exc).__name__}: {exc}")
+                try:
+                    await db.rollback()
+                except Exception:  # noqa: BLE001
+                    logger.debug("Rollback after a failed comment read also failed", exc_info=True)
+                return []
 
     def _asking(self, state: DebateState, control: Optional[TurnControl], on_event: Optional[EventCallback]):
         """해당 발언에 `ask__ask_user` 도구를 제공할지 결정합니다. 세션 설정에서 활성화되어 있고 대화형 모드(attended)일 때만 주입합니다 (`app/agents/ask_user.py`)."""
@@ -634,7 +709,8 @@ class SpeechRunner:
                     on_context_trim=speech.on_context_trim,
                     mcp=self.ctx.mcp_for(state), tool_gate=self.ctx.gate_for(state),
                     ledger=state.decision_ledger,
-                    checkpoint=speech.checkpoint if state.turn_id else None,
+                    # 다시 실행하는 발언은 턴을 이어 가는 자리가 없으므로 초안을 남기지 않습니다.
+                    checkpoint=speech.checkpoint if state.turn_id and speech.revision is None else None,
                     resume_state=speech.draft_state,
                     preload_skills=designated,
                     attachments=attachments_for(agent, state.attachments, state.workspace_dir),
@@ -696,15 +772,17 @@ class SpeechRunner:
         created_at: Optional[datetime],
         turn_started_at: Optional[datetime],
         llm_meta: Optional[Dict[str, Any]],
-    ) -> None:
-        """발언 행을 기록하고, 같은 커밋에서 먼저 기록해 둔 도구를 잇고 초안을 지웁니다."""
+    ) -> bool:
+        """발언 행을 기록하고, 같은 커밋에서 먼저 기록해 둔 도구를 잇고 초안을 지웁니다. 기록했으면 True."""
         agent = speech.agent
-        link_tools = speech.link_tools()
+        after_rows = speech.after_rows(
+            content=content, final_type=final_type, finished_at=finished_at, llm_meta=llm_meta,
+        )
         # 최종 합성이면 파일 이름과 알림에서 그렇다고 밝힙니다. 사람이 먼저 찾는 것이
         # 그 보고서입니다. `turn_started_at` 은 합성 발언에만 주어집니다.
         is_synthesis = turn_started_at is not None
         async with (speech.db_lock or nullcontext()):
-            await self.recorder.persist(
+            return await self.recorder.persist(
                 speech.db,
                 lambda: speech.message_rows(
                     content=content, final_type=final_type, finished_at=finished_at,
@@ -717,7 +795,7 @@ class SpeechRunner:
                 fallback_title=f"{agent.name} ({agent.role}) — Round {speech.round_number}",
                 fallback_body=content,
                 on_event=speech.on_event,
-                before_commit=link_tools,
+                before_commit=after_rows,
             )
 
     @staticmethod
@@ -749,7 +827,7 @@ class SpeechRunner:
             turn_started_at=turn_started_at,
             graph_node_id=speech.graph_node_id,
             graph_port=speech.graph_port,
-            turn_meta=turns.meta(speech.kind),
+            turn_meta=speech.turn_meta,
             llm_meta=llm_meta,
         )
         speech.state.messages.append(message)

@@ -13,6 +13,7 @@ from app.database.models import (
     ArtifactModel,
     MessageModel,
     SessionModel,
+    SpeechCommentModel,
     SpeechDraftModel,
     ToolCallRecordModel,
     TurnModel,
@@ -796,6 +797,7 @@ class SessionSidebar:
 
                 async with self.session_factory() as db:
                     await db.execute(delete(ToolCallRecordModel).where(ToolCallRecordModel.session_id == session_id))
+                    await db.execute(delete(SpeechCommentModel).where(SpeechCommentModel.session_id == session_id))
                     await db.execute(delete(MessageModel).where(MessageModel.session_id == session_id))
                     await db.execute(delete(ArtifactModel).where(ArtifactModel.session_id == session_id))
                     await db.execute(delete(SpeechDraftModel).where(SpeechDraftModel.session_id == session_id))

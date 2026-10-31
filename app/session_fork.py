@@ -38,6 +38,7 @@ from app.database.models import (
     MessageModel,
     SessionAgentModel,
     SessionModel,
+    SpeechCommentModel,
     ToolCallRecordModel,
     TurnModel,
     utc_now,
@@ -142,6 +143,14 @@ async def fork_session(db, source_session_id: str, turn_id: str) -> ForkResult:
     ids: Dict[str, str] = {source_session_id: new_id}
     ids.update({t.id: str(uuid.uuid4()) for t in kept_turns})
     ids.update({m.id: str(uuid.uuid4()) for m in kept_messages})
+    tool_rows = [
+        row for row in (await db.execute(
+            select(ToolCallRecordModel).where(ToolCallRecordModel.session_id == source_session_id)
+        )).scalars().all()
+        if row.message_id in kept_message_ids or row.turn_id in kept_turn_ids
+    ]
+    # 다시 실행한 발언의 지난 버전(`revisions`)이 도구 기록을 id 로 가리킵니다.
+    ids.update({row.id: str(uuid.uuid4()) for row in tool_rows})
 
     # 작업 공간: 해당 턴 완료 시점의 스냅샷으로 독립된 디렉터리를 생성합니다.
     source_ws = resolve_workspace_dir(source.workspace_dir or None)
@@ -192,19 +201,27 @@ async def fork_session(db, source_session_id: str, turn_id: str) -> ForkResult:
         fields = _columns(m)
         fields.update(
             id=ids[m.id], session_id=new_id, turn_id=ids.get(m.turn_id) if m.turn_id else None,
-            turn_meta=_remap(m.turn_meta, ids),
+            turn_meta=_remap(m.turn_meta, ids), revisions=_remap(m.revisions, ids),
         )
         db.add(MessageModel(**fields))
 
-    tool_rows = (await db.execute(
-        select(ToolCallRecordModel).where(ToolCallRecordModel.session_id == source_session_id)
-    )).scalars().all()
-    for row in tool_rows:
-        if row.message_id not in kept_message_ids and row.turn_id not in kept_turn_ids:
+    # 인라인 코멘트도 그 발언과 함께 갑니다. 아직 전달되지 않은 것은 새 대화의 다음 발언에 전달됩니다.
+    for row in (await db.execute(
+        select(SpeechCommentModel).where(SpeechCommentModel.session_id == source_session_id)
+    )).scalars().all():
+        if row.message_id not in kept_message_ids:
             continue
         fields = _columns(row)
         fields.update(
-            id=str(uuid.uuid4()), session_id=new_id,
+            id=str(uuid.uuid4()), session_id=new_id, message_id=ids[row.message_id],
+            delivered_message_id=ids.get(row.delivered_message_id or ""),
+        )
+        db.add(SpeechCommentModel(**fields))
+
+    for row in tool_rows:
+        fields = _columns(row)
+        fields.update(
+            id=ids[row.id], session_id=new_id,
             message_id=ids.get(row.message_id) if row.message_id else None,
             turn_id=ids.get(row.turn_id) if row.turn_id else None,
         )
