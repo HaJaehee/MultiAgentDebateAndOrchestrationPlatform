@@ -368,11 +368,11 @@ def protected_files() -> List[Path]:
     if config_path is not None:
         files.append(config_path)
     try:
-        from sqlalchemy.engine import make_url
+        from app.database.session import sqlite_file_path
 
-        database = make_url(get_config().app.db_url).database
-        if database and database != ":memory:":
-            db_path = Path(database)
+        # 서버 DB(PostgreSQL)는 지킬 파일이 없습니다. 주소의 `database` 는 파일이 아니라 DB 이름입니다.
+        db_path = sqlite_file_path(get_config().app.db_url)
+        if db_path is not None:
             if not db_path.is_absolute():
                 db_path = Path.cwd() / db_path
             files.extend(db_path.with_name(db_path.name + suffix) for suffix in ("", "-wal", "-shm", "-journal"))

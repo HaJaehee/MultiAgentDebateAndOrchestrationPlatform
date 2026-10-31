@@ -12,6 +12,7 @@ import pytest
 
 from app.database.models import MessageModel, SessionModel
 from app.database.session import get_session_factory, init_db
+from app.timestamps import as_utc
 from app.ui.components.sidebar import (
     event_changes_session_list,
     first_user_message_times,
@@ -49,7 +50,7 @@ async def test_time_is_the_first_user_message_not_the_row_creation():
     async with get_session_factory(DB_URL)() as db:
         times = await first_user_message_times(db)
 
-    assert times[sid] == datetime(2026, 3, 5, 14, 30)
+    assert as_utc(times[sid]) == as_utc(datetime(2026, 3, 5, 14, 30))
 
 
 @pytest.mark.asyncio
@@ -64,7 +65,7 @@ async def test_later_interjections_do_not_move_the_start():
     async with get_session_factory(DB_URL)() as db:
         times = await first_user_message_times(db)
 
-    assert times[sid] == datetime(2026, 3, 5, 14, 30)
+    assert as_utc(times[sid]) == as_utc(datetime(2026, 3, 5, 14, 30))
 
 
 @pytest.mark.asyncio
@@ -86,8 +87,8 @@ async def test_each_session_gets_its_own_start():
     async with get_session_factory(DB_URL)() as db:
         times = await first_user_message_times(db)
 
-    assert times[first] == datetime(2026, 3, 1, 9, 0)
-    assert times[second] == datetime(2026, 3, 2, 18, 45)
+    assert as_utc(times[first]) == as_utc(datetime(2026, 3, 1, 9, 0))
+    assert as_utc(times[second]) == as_utc(datetime(2026, 3, 2, 18, 45))
 
 
 # --------------------------------------------------------------- 시간대

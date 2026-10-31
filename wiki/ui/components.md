@@ -81,10 +81,11 @@ The web application workspace is organized into four primary UI components in [a
   **» continue in a fresh session** · 🗑 delete. A forked conversation (v1.5) also has a **compare**
   button that opens it next to its original (§1.7, new tab).
 - **Search** (v1.5): a box above the list searches titles and speeches
-  ([app/database/search.py](file:///d:/MultiAgentDebateOrchestration/app/database/search.py)). Terms of
-  three characters or more use the SQLite FTS5 `trigram` index over `messages` (kept in sync by
-  triggers); shorter terms — common in Korean ("캐시", "보안") — use `LIKE`. All terms must appear in one
-  speech; failure notes are skipped; quotes and `%`/`_` are taken literally. While a query is typed the
+  ([app/database/search.py](file:///d:/MultiAgentDebateOrchestration/app/database/search.py)). On SQLite,
+  terms of three characters or more use the FTS5 `trigram` index over `messages` (kept in sync by
+  triggers); shorter terms — common in Korean ("캐시", "보안") — use `LIKE`. On PostgreSQL every term is
+  `ILIKE`, found through a `pg_trgm` GIN index or by walking recent speeches, and a scan that takes over
+  3 seconds falls back to word starts with a note above the results. All terms must appear in one speech; failure notes are skipped; quotes and `%`/`_` are taken literally. While a query is typed the
   list shows one row per conversation (newest match first) with the matching passage and the number of
   matching speeches; title-only matches say so. Clicking a match opens the conversation, expands that
   card, scrolls it to the centre and rings it briefly (`ChatFeed.reveal_message`), and stops auto-follow.

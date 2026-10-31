@@ -47,7 +47,7 @@
 
 ```text
 1. get_config()          conf.json 파싱 → 환경변수 치환 → Pydantic 검증
-2. init_db(db_url)       SQLite 테이블 생성 (없으면)
+2. init_db(db_url)       테이블·컬럼·검색 색인 준비 (없으면 생성)
 3. mcp_mgr.initialize()  MCP 서버 프로세스 기동 + 도구 목록 수집
 4. get_agent_pool()      설정에서 에이전트 등록
    ── yield ── (서비스 중)
@@ -111,7 +111,7 @@ OrchestratorEngine.run_turn()               ← app/orchestration/engine.py
 
 | 구분 | 시스템 배포 설정 | 대화 세션 상태 |
 | :--- | :--- | :--- |
-| **단일 정본 (Source of Truth)** | `conf.json` 로컬 파일 | SQLite 로컬 데이터베이스 |
+| **단일 정본 (Source of Truth)** | `conf.json` 로컬 파일 | 데이터베이스 (기본 SQLite, 선택 PostgreSQL) |
 | **적용 범위** | 프로세스 전역 (모든 세션이 기본 공유) | 특정 대화 세션 1개 |
 | **관리 대상 데이터 예시** | 에이전트 마스터 풀, 모델명, 도구 권한, MCP 서버 목록 | 세션별 페르소나 초안, 작업 공간 디렉터리, 발언 이력, 최종 산출물 |
 | **변경 시 영향도** | 향후 새롭게 시작될 신규 세션에만 적용 | 해당 대화 세션에만 국소적으로 적용 |

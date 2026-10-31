@@ -595,6 +595,7 @@ class SpeechRunner:
         if on_event:
             await on_event(speech.start_event())
 
+        await self._release_connection(db, db_lock)
         with llm_usage.measuring(speech.usage), self._asking(state, control, on_event):
             content, tool_logs, final_type = await self._receive_speech(
                 speech, prompt_messages, custom_instructions, designated, control, post_process,
@@ -666,6 +667,25 @@ class SpeechRunner:
                 except Exception:  # noqa: BLE001
                     logger.debug("Rollback after a failed comment read also failed", exc_info=True)
                 return []
+
+    @staticmethod
+    async def _release_connection(db, db_lock: Optional[asyncio.Lock]) -> None:
+        """곧 LLM 응답을 기다리므로 지금까지 읽은 트랜잭션을 닫아 연결을 풀로 돌려줍니다 (ADR-041).
+
+        응답은 몇 분씩 걸립니다. 그동안 연결을 쥐고 있으면 동시에 도는 턴이 풀 크기에 닿았을 때 다른 요청까지 멈추고, PostgreSQL 에는
+        `idle in transaction` 이 쌓여 VACUUM 을 막습니다. 세션은 커밋해도 객체를 만료시키지 않습니다 (`expire_on_commit=False`).
+        """
+        async with (db_lock or nullcontext()):
+            try:
+                await db.commit()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - 연결을 돌려주지 못했다고 발언을 멈추지 않습니다
+                logger.warning(f"Could not close the read transaction before an LLM call: {type(exc).__name__}: {exc}")
+                try:
+                    await db.rollback()
+                except Exception:  # noqa: BLE001
+                    logger.debug("Rollback after a failed commit also failed", exc_info=True)
 
     def _asking(self, state: DebateState, control: Optional[TurnControl], on_event: Optional[EventCallback]):
         """해당 발언에 `ask__ask_user` 도구를 제공할지 결정합니다. 세션 설정에서 활성화되어 있고 대화형 모드(attended)일 때만 주입합니다 (`app/agents/ask_user.py`)."""

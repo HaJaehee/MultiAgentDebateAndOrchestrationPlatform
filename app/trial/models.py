@@ -6,7 +6,8 @@
 
 SQLite 의 외래 키 강제는 켜져 있지 않습니다(`app/database/session.py`). 그래서 주인 화면에서
 대화를 지우면 `trial_sessions` 행이 남을 수 있습니다. 체험 쪽은 늘 `sessions` 와 **이어서**
-읽으므로(내부 조인) 그런 행은 보이지 않습니다.
+읽으므로(내부 조인) 그런 행은 보이지 않습니다. PostgreSQL 은 외래 키를 강제하므로 `ON DELETE CASCADE`
+가 함께 지웁니다 (이 절이 없으면 주인 화면의 삭제가 실패합니다).
 """
 
 from datetime import datetime
@@ -43,7 +44,7 @@ class TrialSessionModel(Base):
 
     __tablename__ = "trial_sessions"
 
-    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id"), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("trial_users.id"), index=True)
     # `t:<공식 템플릿 id>` 또는 `c:<사본 id>`.
     template_ref: Mapped[str] = mapped_column(String(80), default="")
@@ -74,7 +75,7 @@ class TrialFeedbackModel(Base):
     __table_args__ = (UniqueConstraint("session_id", "user_id", name="uq_trial_feedback"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id"), index=True)
+    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("trial_users.id"), index=True)
     template_ref: Mapped[str] = mapped_column(String(80), default="")
     # 1 = 좋아요, -1 = 아쉬워요, 0 = 의견만.

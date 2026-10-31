@@ -34,6 +34,7 @@ from app.easy.sessions import (
 )
 from app.orchestration.engine import OrchestratorEngine
 from app.trial.gate import guest_path_allowed
+from app.trial.models import TrialUserModel
 from sqlalchemy import select
 from tests.fake_llm import FakeLLMCaller
 
@@ -80,6 +81,9 @@ async def test_a_guest_session_is_read_only_with_guest_tools_in_its_own_folder(t
     factory = await _db()
     pool = _pool()
     async with factory() as db:
+        if await db.get(TrialUserModel, "guest-a") is None:
+            db.add(TrialUserModel(id="guest-a", name="guest-a", name_key="guest-a"))
+            await db.flush()
         db.add(EasyAgentModel(user_id="guest-a", name="코드 실행가", role="실행",
                               system_prompt="실행합니다.", allowed_mcp_servers=["filesystem", "sandbox"]))
         await db.commit()

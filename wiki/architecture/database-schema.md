@@ -325,14 +325,22 @@ An external-content FTS5 table over `messages.content` with the `trigram` tokeni
 ([app/database/search.py](file:///d:/MultiAgentDebateOrchestration/app/database/search.py)). Created by
 `init_db` for SQLite; if FTS5 or trigram is missing, search falls back to `LIKE` only.
 
+On PostgreSQL there is no such table. `PostgresBackend` creates three indexes on `messages` instead:
+`ix_messages_content_trgm` (GIN `gin_trgm_ops`, finds rare words through `ILIKE`), `ix_messages_created_at`
+(walks recent speeches until the row cap, for common and short words) and `ix_messages_content_words`
+(GIN `to_tsvector('simple', left(content, 100000))`, the word-start fallback). Search tries them in that
+order under time limits. See [ADR-041](../../lectures/05-adr/ADR-041-postgresql-compatibility.md).
+
 ## 3. Session Initialization & Connection Management
 
 The database connection engine is configured in [app/database/session.py](file:///d:/MultiAgentDebateOrchestration/app/database/session.py):
 
 ```python
-engine = create_async_engine(db_url, echo=False, future=True)
+engine = create_async_engine(db_url, echo=False, future=True, **engine_options(db_url))
 if engine.dialect.name == "sqlite":
     configure_sqlite(engine, db_url)     # busy_timeout + WAL, per connection
+elif engine.dialect.name == "postgresql":
+    configure_postgresql(engine)         # strip NUL characters from parameters
 session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 ```
 
@@ -398,9 +406,10 @@ This guarantees that all required tables and constraints are created automatical
 ### Columns added later
 
 `create_all` creates missing *tables*; it never adds a column to a table that already exists. So
-before it runs, `_add_missing_columns()` walks the `_ADDED_COLUMNS` map, compares it against
-`PRAGMA table_info`, and issues `ALTER TABLE ... ADD COLUMN` for whatever is absent — idempotent, and
-skipped entirely for a table `create_all` just created.
+before it runs, `_add_missing_columns()` walks the `_ADDED_COLUMNS` map, compares it against the
+SQLAlchemy inspector, and issues `ALTER TABLE ... ADD COLUMN` for whatever is absent — idempotent, and
+skipped entirely for a table `create_all` just created. The map's values are SQLite syntax; on other
+databases `_column_ddl_for()` takes the type from the model and keeps only `NOT NULL DEFAULT ...`.
 
 ```python
 _ADDED_COLUMNS = {
@@ -419,6 +428,7 @@ _ADDED_COLUMNS = {
 ```
 
 This is why an existing `multiagent.db` can be carried across upgrades without a migration tool.
+It does not move a SQLite database to PostgreSQL: a new `db_url` starts empty.
 Note the deliberate asymmetry: `config_snapshot` is nullable because `NULL` carries meaning
 ("locked before this column existed"), while the appearance columns default to `''` because "not
 chosen" and "no row yet" want the same behaviour.
@@ -439,3 +449,21 @@ comments or unbalanced quotes) before the statement runs.
 code anywhere in `app/` passes an f-string, `+`, `%` or `.format()` string to `text()` / `execute()`
 outside this function and the connection `PRAGMA busy_timeout`; the trial login cases are in
 `tests/test_trial_auth.py`.
+
+### Running on PostgreSQL (ADR-041)
+
+Set `db_url` to `postgresql+asyncpg://…`. SQLite never checked foreign keys, string lengths or NUL characters,
+so the app had grown to rely on that. On PostgreSQL:
+
+| What | How it is kept the same |
+| :--- | :--- |
+| String lengths | `String(n)` compiles to `TEXT` (`@compiles` in `models.py`). Nothing was ever length-checked. |
+| Foreign keys | Every key to `sessions.id` has `ON DELETE CASCADE`, so deleting a conversation is not blocked by the trial or easy tables. |
+| NUL characters | A `before_cursor_execute` hook strips them from parameters (`configure_postgresql`). JSON values are already escaped. |
+| Search | Same rule, different index: see §2.8. |
+| Starting together | `prepare_schema` takes `pg_advisory_xact_lock`, so processes do not race on `CREATE`. |
+| Live turns of another process | `no_other_instance` / `instance_presence` keep a restart from marking them interrupted. |
+
+A debate also commits before waiting on an LLM (`SpeechRunner._release_connection`), so a slow answer holds no
+connection. Running several processes on one database is still not supported: the turn runner, live updates,
+approval cards, `llm_concurrency` and MCP runtimes all live in process memory.

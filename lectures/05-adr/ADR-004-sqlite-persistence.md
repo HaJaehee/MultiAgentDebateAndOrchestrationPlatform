@@ -4,7 +4,7 @@
 
 ## 상태 (Status)
 
-채택됨 · 2026-08-26 (초기 설계) · 관련: [ADR-011](ADR-011-session-config-snapshot.md), [ADR-017](ADR-017-never-lose-a-write.md)
+채택됨 · 2026-08-26 (초기 설계) · 관련: [ADR-011](ADR-011-session-config-snapshot.md), [ADR-017](ADR-017-never-lose-a-write.md), [ADR-041](ADR-041-postgresql-compatibility.md)
 
 ## 맥락 (Context)
 

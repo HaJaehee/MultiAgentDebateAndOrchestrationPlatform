@@ -29,7 +29,7 @@ from app.agents.llm import LLMCaller
 from app.agents.llm_loop import CONTEXT_WIDENED_INSTRUCTION
 from app.agents.pool import AgentPool
 from app.config import AgentConfig
-from app.database.models import Base, MessageModel, SpeechDraftModel, ToolCallRecordModel
+from app.database.models import Base, MessageModel, SessionModel, SpeechDraftModel, ToolCallRecordModel, TurnModel
 from app.events import EventType
 from app.orchestration.engine import OrchestratorEngine
 from app.orchestration.state import DebateState
@@ -201,6 +201,10 @@ async def _speak(call_agent, *, fail=(), **speak_kw):
         events.append(event)
 
     state = DebateState(session_id="s-1", user_prompt="고쳐 주세요", turn_id="turn-1")
+    async with factory() as session:
+        session.add(SessionModel(id="s-1"))
+        session.add(TurnModel(id="turn-1", session_id="s-1"))
+        await session.commit()
     async with factory() as session:
         message = await eng.speech.speak(
             db=_FlakyDB(session, fail), state=state,

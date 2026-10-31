@@ -2,8 +2,20 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, JSON, UniqueConstraint
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from app.config import DEFAULT_SUB_DEBATE_ROUNDS
+
+
+@compiles(String, "postgresql")
+def _postgres_strings_have_no_limit(element, compiler, **kw) -> str:
+    """PostgreSQL 에서는 `String(n)` 도 TEXT 입니다 (ADR-041).
+
+    SQLite 는 길이를 검사하지 않아 이 앱의 어떤 값도 길이를 지켜 본 적이 없습니다 (conf.json 의 역할 설명, MCP 도구 이름,
+    산출물 제목은 모두 사람이나 모델이 정합니다). PostgreSQL 이 `VARCHAR(n)` 을 검사하면 긴 역할 설명 하나로 그 에이전트의
+    발언 기록이 전부 실패합니다. 두 타입은 성능 차이가 없습니다.
+    """
+    return "TEXT"
 
 
 def utc_now() -> datetime:
@@ -97,7 +109,7 @@ class SessionModel(Base):
         "SessionAgentModel", back_populates="session", cascade="all, delete-orphan", order_by="SessionAgentModel.agent_key", lazy="selectin"
     )
     # 턴 기록 (ADR-024). 세션을 ORM 으로 지울 때(`db.delete(session)`, 체험 서버) 함께 지워지도록
-    # 관계를 둡니다. SQLite 가 외래키를 검사하지 않아, 관계가 없으면 턴 행만 남습니다.
+    # 관계를 둡니다. SQLite 가 외래키를 검사하지 않아, 관계가 없으면 턴 행만 남습니다 (PostgreSQL 은 ON DELETE CASCADE 가 지웁니다).
     turns: Mapped[List["TurnModel"]] = relationship(
         "TurnModel", back_populates="session", cascade="all, delete-orphan", order_by="TurnModel.started_at", lazy="selectin"
     )

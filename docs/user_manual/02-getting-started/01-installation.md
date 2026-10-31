@@ -112,7 +112,7 @@ python -m app.main
 ```text
 Loaded configuration for host=127.0.0.1:8000, db=sqlite+aiosqlite:///./multiagent.db
 Web UI: http://127.0.0.1:8000
-SQLite database tables initialized.
+Database tables initialized.
 MCP session established for 'filesystem'
 Discovered 14 tools from MCP server 'filesystem'
 ...

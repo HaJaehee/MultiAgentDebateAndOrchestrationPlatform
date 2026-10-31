@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, List, Optional, Tuple
 
-from sqlalchemy import func, select
+from sqlalchemy import Text, cast, func, select
 
 from app.database.models import SessionModel, ToolCallRecordModel
 from app.mcp.policy import describe_verdict
@@ -82,7 +82,8 @@ async def blocked_tool_calls(
         call.id, call.session_id, SessionModel.title.label("session_title"), call.message_id, call.agent_key,
         call.tool_name, call.arguments, call.decision, call.risk, call.rule, call.output, call.created_at,
         func.dense_rank().over(
-            partition_by=(call.agent_key, call.tool_name, call.arguments, call.created_at),
+            # PostgreSQL 의 json 타입에는 같음 비교가 없어 글자로 견줍니다. 복사본은 같은 직렬화기로 적혀 글자까지 같습니다.
+            partition_by=(call.agent_key, call.tool_name, cast(call.arguments, Text), call.created_at),
             order_by=(SessionModel.created_at, SessionModel.id),
         ).label("session_rank"),
     ).join(SessionModel, SessionModel.id == call.session_id).where(

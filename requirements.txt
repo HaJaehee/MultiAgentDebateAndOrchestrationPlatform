@@ -8,6 +8,8 @@ pydantic>=2.8.0
 pydantic-settings>=2.4.0
 sqlalchemy>=2.0.30
 aiosqlite>=0.20.0
+# app.db_url 이 postgresql+asyncpg:// 일 때만 불러옵니다. 폐쇄망 휠 묶음에 함께 들어갑니다.
+asyncpg>=0.30.0
 litellm>=1.40.0
 # 발언·결론의 LaTeX 수식을 MathML 로 그립니다 (app/ui/math_markdown.py). 순수 파이썬이라
 # 폐쇄망 휠 묶음에 그대로 들어갑니다. 없어도 화면은 뜨고, 그때는 기호만 유니코드로 바꿉니다.

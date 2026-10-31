@@ -268,13 +268,17 @@ class PlanningPhaseExecutor(PhaseExecutor):
             )
 
     async def turn_config(self, db: Any, state: DebateState) -> Optional[Dict[str, Any]]:
-        """턴 기록에 보존된 구성 정보의 현재 값을 조회합니다. 읽기에 실패하면 None을 반환합니다."""
+        """턴 기록에 보존된 구성 정보의 현재 값을 조회합니다. 읽기에 실패하면 None을 반환합니다.
+
+        이 뒤에는 LLM 응답이나 사람의 승인을 기다립니다. 읽은 트랜잭션을 닫아 그동안 연결을 쥐지 않습니다 (ADR-041).
+        """
         if not state.turn_id:
             return None
         try:
             row = (await db.execute(
                 select(TurnModel.config).where(TurnModel.id == state.turn_id)
             )).first()
+            await db.commit()
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001

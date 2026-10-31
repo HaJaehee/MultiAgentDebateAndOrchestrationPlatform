@@ -2,7 +2,7 @@
 
 > 상위: [핵심 기술 개관](README.md) · 이전: [토론 전략](06-debate-strategies.md) · 다음: [도구 보안](08-tool-security.md)
 >
-> 관련 소스: `app/database/models.py` (262줄) · `session.py` · `app/orchestration/turns.py`
+> 관련 소스: `app/database/models.py` (396줄) · `session.py` · `app/orchestration/turns.py`
 
 ---
 
@@ -202,17 +202,82 @@ get_session_factory() -> async_sessionmaker
 await init_db(db_url)                          # 테이블 자동 생성 (미존재 시)
 ```
 
-`db_url` 설정값을 통해 데이터베이스 엔진을 유연하게 교체할 수 있습니다. 기본 SQLite(`sqlite+aiosqlite`) 환경뿐만 아니라 프로덕션 환경의 고성능 PostgreSQL(`postgresql+asyncpg`)로 전환할 때에도 설정 문자열만 변경하면 동일하게 동작합니다:
-
-```json
-"db_url": "postgresql+asyncpg://user:pass@host/dbname"
-```
+`db_url` 설정값으로 데이터베이스를 고릅니다. 기본은 SQLite(`sqlite+aiosqlite`)이고, 여러 사람이 쓰는 서버에서는 PostgreSQL(`postgresql+asyncpg`)을 쓸 수 있습니다 ([PostgreSQL로 운영하기](#postgresql-로-운영하기)).
 
 모든 시간 데이터는 데이터베이스 내부에서 **철저히 UTC 기준으로 저장**되며(`utc_now()`), 사용자 브라우저 화면에 렌더링되거나 내보내기 문서를 생성할 때 비로소 로컬 시간대로 변환됩니다(`export.to_local()`). 저장 계층과 표시 계층의 타임존 처리를 명확히 분리함으로써 시각 왜곡을 원천 방지합니다.
 
 ### 무중단 스키마 마이그레이션 (`_ADDED_COLUMNS`)
 
-SQLAlchemy의 `create_all()` 메서드는 기존에 이미 존재하는 테이블에 신규 컬럼을 자동으로 추가하지 못합니다. 따라서 MADO는 서버 기동 시점에 `_ADDED_COLUMNS` 딕셔너리에 정의된 신규 컬럼들을 `PRAGMA table_info`로 직접 확인하고, 누락된 컬럼이 있다면 `ALTER TABLE ... ADD COLUMN` DDL을 멱등(Idempotent)하게 자동 실행합니다. 사용자는 데이터베이스를 수동으로 수정하거나 초기화할 필요 없이 최신 애플리케이션 버전으로 즉시 업그레이드할 수 있습니다 (`session_agents.card_color`, `icon_path` 등 신규 필드도 이 메커니즘을 통해 무중단으로 반영되었습니다).
+SQLAlchemy의 `create_all()` 메서드는 기존에 이미 존재하는 테이블에 신규 컬럼을 자동으로 추가하지 못합니다. 따라서 MADO는 서버 기동 시점에 `_ADDED_COLUMNS` 딕셔너리에 정의된 신규 컬럼들을 SQLAlchemy 인스펙터로 확인하고, 누락된 컬럼이 있다면 `ALTER TABLE ... ADD COLUMN` DDL을 멱등(Idempotent)하게 자동 실행합니다. 딕셔너리의 값은 SQLite 문법이며, 다른 DB에서는 타입을 모델에서 읽어 옮깁니다(`_column_ddl_for`). 사용자는 데이터베이스를 수동으로 수정하거나 초기화할 필요 없이 최신 애플리케이션 버전으로 즉시 업그레이드할 수 있습니다 (`session_agents.card_color`, `icon_path` 등 신규 필드도 이 메커니즘을 통해 무중단으로 반영되었습니다).
+
+---
+
+## PostgreSQL 로 운영하기
+
+[ADR-041](../../../lectures/05-adr/ADR-041-postgresql-compatibility.md) 이 배경과 측정값을 담고 있습니다. 전체 시험을 Windows 의 PostgreSQL 16.9 에서 돌려 확인했습니다. 다른 버전과 운영체제는 아직 돌려 보지 않았습니다.
+
+### 준비물
+
+```sql
+CREATE DATABASE mado ENCODING 'UTF8' LOCALE 'ko_KR.UTF-8' TEMPLATE template0;
+```
+
+```bash
+APP_DB_URL=postgresql+asyncpg://mado:비밀번호@db.internal/mado
+```
+
+| 항목 | 요구 사항 | 어기면 |
+| :--- | :--- | :--- |
+| 인코딩 | `UTF8` | 표현할 수 없는 글자가 든 기록이 실패합니다. 기동 로그에 오류로 남깁니다 |
+| `LC_CTYPE` | UTF-8 로캘 (`C`·`POSIX` 가 아닌 것. Windows 서버는 `Korean_Korea.utf8`) | 한국어가 trigram 색인에 들어가지 않습니다. 결과는 맞지만 훑어서 찾습니다. 기동 로그에 경고로 남깁니다 |
+| 권한 | DB 소유자 또는 `CREATE` 권한 (`pg_trgm` 설치에 필요) | 색인 없이 훑어서 찾습니다. DBA 가 `CREATE EXTENSION pg_trgm` 을 대신 실행해도 됩니다 |
+
+표와 색인은 첫 기동 때 스스로 만듭니다. **기존 SQLite 기록은 옮겨 주지 않습니다.** `db_url` 을 바꾸면 빈 DB 에서 시작합니다.
+
+폐쇄망 번들에는 `asyncpg` 휠이 들어 있습니다. PostgreSQL 서버 자체는 번들에 들어 있지 않습니다. PgBouncer 를 쓴다면 `session` 모드로 두거나, `transaction` 모드에서는 주소에 `?prepared_statement_cache_size=0` 을 붙이십시오 (이 모드에서는 아래의 프로세스 잠금이 유지되지 않습니다).
+
+### SQLite 와 다르게 동작하는 것
+
+| 항목 | SQLite | PostgreSQL |
+| :--- | :--- | :--- |
+| 대화 검색 | FTS5 `trigram` + `LIKE` | `ILIKE` + `pg_trgm` GIN. 찾는 규칙과 결과는 같습니다 |
+| 오래 걸리는 검색 | 끝까지 훑습니다 | 최근 발언부터 3초 훑어도 끝나지 않으면 `tsvector` GIN 으로 **낱말 첫머리가 맞는 발언만** 찾고, 사이드바에 그렇게 알립니다. 드문 2글자 낱말이 이 경우입니다 |
+| 외래 키 | 검사하지 않음 | 검사합니다. 대화를 지우면 체험·쉬운 화면의 행도 `ON DELETE CASCADE` 로 함께 지워집니다 |
+| 문자열 길이 | 검사하지 않음 | 똑같이 제한하지 않습니다 (`String(n)` 을 `TEXT` 로 만듭니다) |
+| NUL 문자 | 그대로 저장 | 저장할 수 없어 기록할 때 지웁니다 (JSON 안의 값은 이스케이프되어 그대로 남습니다) |
+| 시각 | 시간대를 버리고 돌려줌 (`as_utc` 가 UTC 로 다시 붙임) | 시간대와 함께 돌려줌 |
+
+### 디스크
+
+검색 색인 셋이 `messages` 표에 붙습니다. 발언 30만 건(표 293MB)에서 재 보면 trigram 143MB, 낱말 52MB, 시각 6.6MB였습니다. 어휘가 적은 시험 자료의 값이라 실제 대화에서는 trigram 색인이 더 클 수 있습니다.
+
+### 연결 풀
+
+프로세스 하나의 연결은 최대 `db_pool_size + db_max_overflow`(기본 20) 개입니다. 토론은 **LLM 응답과 사람의 답을 기다리는 동안 연결을 쥐지 않으므로**, 진행 중인 턴 수가 아니라 실제로 기록하는 순간의 수만큼만 씁니다. 죽은 연결은 쓰기 전에 걸러 내고(`pool_pre_ping`), 30분마다 새로 맺습니다.
+
+### 수평 확장의 현재 범위
+
+**프로세스 여러 개로 나누어 운영하는 것은 아직 지원하지 않습니다.** DB 쪽은 준비되어 있습니다.
+
+- 여러 프로세스가 함께 떠도 스키마 작업이 부딪히지 않습니다 (advisory lock).
+- 다른 프로세스가 살아 있으면 그쪽에서 도는 턴을 끊김으로 적지 않습니다. 대신 기동 로그에 경고를 남깁니다.
+- 검색 색인과 시각 처리는 프로세스 상태에 기대지 않습니다.
+
+남은 것은 프로세스 메모리에 있는 상태입니다: 도는 턴의 실행기와 실시간 화면 갱신(`DebateRunner`), 승인 카드 대기, 전역 LLM 동시 요청 상한(`llm_concurrency`), MCP 런타임, 대화 하나를 두 프로세스가 동시에 돌리는 것을 막는 장치, `conf.json` 과 작업 공간 파일의 공유. 이것들을 옮기기 전에는 로드밸런서 뒤에 여러 프로세스를 두지 마십시오.
+
+### PostgreSQL 로 시험 돌리기
+
+```bash
+MADO_TEST_POSTGRES_URL=postgresql+asyncpg://user@host/mado_test pytest tests/test_postgres.py tests/test_session_search.py
+```
+
+시험이 스키마를 지우므로 DB 이름에 `test` 가 들어 있어야 합니다. 값이 없으면 실제 서버가 필요한 시험은 건너뜁니다.
+
+전체 시험을 PostgreSQL 로 돌리려면 플러그인을 더합니다. 메모리 SQLite 를 쓰는 시험을 모두 그 서버로 돌립니다.
+
+```bash
+MADO_TEST_POSTGRES_URL=postgresql+asyncpg://user@host/mado_test pytest -p tests.pg_redirect tests
+```
 
 ---
 

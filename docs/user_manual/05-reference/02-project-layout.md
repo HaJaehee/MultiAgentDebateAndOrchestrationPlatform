@@ -160,9 +160,9 @@ app/
 │   └── worker.py                    168   태스크 워커 풀
 │
 ├── database/
-│   ├── search.py                    176   대화 세션 및 발언 검색 (FTS5 trigram + LIKE) (v1.5)
-│   ├── models.py                    384   SQLAlchemy ORM
-│   └── session.py                   264   비동기 엔진·세션 팩토리, init_db, 컬럼 이관
+│   ├── search.py                    331   대화 세션 및 발언 검색, DB 별 색인 (FTS5 / pg_trgm + tsvector) (v1.5, ADR-041)
+│   ├── models.py                    396   SQLAlchemy ORM
+│   └── session.py                   406   비동기 엔진·세션 팩토리, init_db, 컬럼 이관, PostgreSQL 설정
 │
 ├── easy/                              비엔지니어 화면 /trial/easy (ADR-029)
 ├── trial/                             체험 서버 /trial

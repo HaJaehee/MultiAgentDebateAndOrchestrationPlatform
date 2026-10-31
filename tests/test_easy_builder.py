@@ -36,6 +36,7 @@ from app.agents.draft import (
 )
 from app.easy.catalog import MAX_GUEST_AGENTS
 from app.easy.sessions import save_guest_agent
+from app.trial.models import TrialUserModel
 from app.agents.pool import AgentPool
 from tests.fake_llm import FakeLLMCaller
 
@@ -187,6 +188,12 @@ def test_an_owner_save_is_refused_while_any_debate_runs(live_conf: Path):
 # ------------------------------------------------------------------ 5. 방문자 저장
 
 
+async def _visitor(db, user_id: str) -> None:
+    if await db.get(TrialUserModel, user_id) is None:
+        db.add(TrialUserModel(id=user_id, name=user_id, name_key=user_id))
+        await db.flush()
+
+
 @pytest.mark.asyncio
 async def test_a_guest_save_stays_in_the_database_and_keeps_only_guest_tools(live_conf: Path):
     await init_db(DB_URL)
@@ -194,6 +201,7 @@ async def test_a_guest_save_stays_in_the_database_and_keeps_only_guest_tools(liv
     before = live_conf.read_bytes()
     draft = DRAFT.model_copy(update={"allowed_mcp_servers": ["filesystem", "sandbox"]})
     async with factory() as db:
+        await _visitor(db, "guest-1")
         row = await save_guest_agent(db, "guest-1", draft)
     assert row.allowed_mcp_servers == ["filesystem"]
     assert live_conf.read_bytes() == before, "체험 방문자 저장 시 conf.json 파일을 수정하지 않아야 합니다"
@@ -205,6 +213,7 @@ async def test_a_guest_can_keep_only_so_many_agents():
     await init_db(DB_URL)
     factory = get_session_factory(DB_URL)
     async with factory() as db:
+        await _visitor(db, "guest-cap")
         for _ in range(MAX_GUEST_AGENTS):
             await save_guest_agent(db, "guest-cap", DRAFT)
         with pytest.raises(SaveRefused, match=str(MAX_GUEST_AGENTS)):

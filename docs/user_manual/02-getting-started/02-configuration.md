@@ -67,7 +67,9 @@
 | :--- | :--- | :--- | :--- |
 | `host` | str | `127.0.0.1` | Uvicorn 바인딩 호스트 주소입니다. |
 | `port` | int | `8000` | HTTP 서비스 포트입니다 (문자열로 입력해도 정수로 자동 변환됩니다). |
-| `db_url` | str | `sqlite+aiosqlite:///./multiagent.db` | 비동기 SQLAlchemy 연결 URI입니다. |
+| `db_url` | str | `sqlite+aiosqlite:///./multiagent.db` | 비동기 SQLAlchemy 연결 URI입니다. PostgreSQL은 `postgresql+asyncpg://사용자:비밀번호@호스트/DB`이며 [준비물](../03-core/07-persistence.md#postgresql-로-운영하기)을 확인하십시오. 비밀번호는 `.env`의 `APP_DB_URL`에 두고, 로그에는 가려서 적습니다. |
+| `db_pool_size` | int | `10` | PostgreSQL 연결 풀 크기입니다. SQLite에는 쓰이지 않습니다. |
+| `db_max_overflow` | int | `10` | 풀 크기를 넘어 잠시 더 맺을 수 있는 연결 수입니다. |
 | `debug` | bool | `true` | 코드 변경 감지 자동 재시작 및 상세 DB 쿼리 로깅 활성화 여부입니다. |
 
 ### 원격 접속 토큰 (다른 PC 에서 접근 시)

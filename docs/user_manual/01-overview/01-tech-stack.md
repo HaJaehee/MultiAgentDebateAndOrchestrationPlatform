@@ -15,7 +15,7 @@
 | UI | NiceGUI | 2.0+ | 파이썬 코드만으로 반응형 SPA 구현 (Vue/Quasar 렌더링), WebSocket 실시간 양방향 갱신 |
 | LLM 추상화 | LiteLLM | 1.40+ | 100여 개 이상의 다양한 모델 공급자를 OpenAI 호환 단일 인터페이스로 추상화 |
 | 도구 프로토콜 | MCP Python SDK | 1.29+, <2 | 외부 도구 서버 프로세스를 stdio 방식으로 안전하게 기동 및 호출 |
-| 영속화 | SQLAlchemy 2.0 + aiosqlite | 2.0.30+ / 0.20+ | 비동기 ORM 지원, 로컬 단일 파일 기반 SQLite 데이터베이스 관리 |
+| 영속화 | SQLAlchemy 2.0 + aiosqlite (기본) / asyncpg (선택) | 2.0.30+ / 0.20+ / 0.30+ | 비동기 ORM 지원. 기본은 로컬 단일 파일 SQLite이고, `db_url`을 바꾸면 PostgreSQL로 동작 |
 | 설정·검증 | Pydantic v2 + 표준 `json` | 2.8+ | 선언적 스키마 검증, 환경변수 동적 치환, 주석 보존 원자적 설정 쓰기 |
 | 테스트 | pytest + pytest-asyncio | 8.0+ | 단위 및 통합 자동화 테스트 스위트(Suite) 제공 |
 
@@ -65,7 +65,9 @@ MCP SDK 버전을 `mcp>=1.29.0,<2`로 고정한 데에는 명확한 기술적 �
 
 ### SQLite + SQLAlchemy 2.0 — 파일 하나로 완결되는 영속화
 
-다자간 토론 기록은 특정 대화 세션당 기록을 수행하는 주체가 단일 태스크뿐이므로 동시성 쓰기 경합이 매우 적으며, 시스템 이전 시 단일 SQLite DB 파일 하나만 복사하면 백업 및 복구가 끝납니다. `aiosqlite` 드라이버를 결합하여 완전한 비동기 I/O를 수행하므로 데이터베이스 작업 대기 중에도 메인 이벤트 루프가 차단되지 않습니다. 데이터베이스 접속 주소(`db_url`)가 설정 파일로 분리되어 있으므로, 향후 엔터프라이즈 환경에서 PostgreSQL과 같은 외부 DBMS로 이전할 때 드라이버 연결 문자열만 교체하여 손쉽게 대응할 수 있습니다.
+다자간 토론 기록은 특정 대화 세션당 기록을 수행하는 주체가 단일 태스크뿐이므로 동시성 쓰기 경합이 매우 적으며, 시스템 이전 시 단일 SQLite DB 파일 하나만 복사하면 백업 및 복구가 끝납니다. `aiosqlite` 드라이버를 결합하여 완전한 비동기 I/O를 수행하므로 데이터베이스 작업 대기 중에도 메인 이벤트 루프가 차단되지 않습니다.
+
+여러 사람이 쓰는 서버에서는 `db_url`을 `postgresql+asyncpg://`로 바꾸면 PostgreSQL로 동작합니다(16.9에서 확인). 검색 색인은 SQLite의 FTS5 대신 `pg_trgm`과 `tsvector` GIN 색인을 쓰고, 찾는 규칙과 결과는 같습니다. 기동하면 표와 색인을 스스로 만듭니다. 다만 기존 SQLite 기록은 옮겨 주지 않고, 프로세스를 여러 개 띄우는 수평 확장은 아직 지원하지 않습니다. 준비물과 현재 범위는 [데이터베이스와 세션 스냅샷](../03-core/07-persistence.md#postgresql-로-운영하기)에 있습니다.
 
 ### Pydantic v2 + 표준 `json` — 선언적 설정 읽기와 프로그램적 쓰기
 
@@ -87,6 +89,7 @@ pydantic>=2.8.0
 pydantic-settings>=2.4.0
 sqlalchemy>=2.0.30
 aiosqlite>=0.20.0
+asyncpg>=0.30.0              # db_url 이 postgresql+asyncpg:// 일 때만 불러옵니다
 litellm>=1.40.0
 mcp>=1.29.0,<2
 

@@ -20,7 +20,7 @@ class EasySessionModel(Base):
 
     __tablename__ = "easy_sessions"
 
-    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id"), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True)
     # 방문자 ID (`trial_users.id`). 비어 있으면 소유자(로컬 접속 또는 인증 토큰 사용자)가 생성한 세션입니다.
     user_id: Mapped[str] = mapped_column(String(36), default="", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

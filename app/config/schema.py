@@ -27,6 +27,10 @@ class AppConfig(BaseModel):
         description="Async SQLAlchemy database URL",
     )
     debug: bool = Field(default=True, description="Debug mode")
+    # 서버 DB(PostgreSQL)의 연결 풀. 프로세스 하나의 연결은 최대 `db_pool_size + db_max_overflow` 개입니다.
+    # 프로세스를 늘릴 때는 그 곱이 DB 의 `max_connections` 를 넘지 않게 맞춥니다. SQLite 에는 쓰이지 않습니다.
+    db_pool_size: int = Field(default=10, ge=1, description="Database connection pool size")
+    db_max_overflow: int = Field(default=10, ge=0, description="Extra connections allowed above the pool size")
     # 서버 전체에서 LLM 에 동시에 보내는 요청의 상한. 0 이면 제한하지 않습니다.
     #
     # `parallel_limit` 은 대화 하나 안의 상한이라, 대화가 여럿이면 곱으로 늘어납니다.

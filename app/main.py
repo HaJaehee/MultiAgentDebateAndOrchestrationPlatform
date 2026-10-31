@@ -23,7 +23,7 @@ from app.agents.pool import get_agent_pool
 from app import mcp_server
 from app.api import router as api_router
 from app.config import DEFAULT_CONFIG_PATH, get_config
-from app.database.session import get_session_factory, init_db
+from app.database.session import get_session_factory, init_db, instance_presence, no_other_instance, safe_db_url
 from app.diagnostics import start_loop_watchdog, stop_loop_watchdog
 from app.easy import setup_easy
 from app.mcp.pool import get_runtime_pool
@@ -92,21 +92,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # 1. Load configuration
     cfg = get_config()
-    logger.info(f"Loaded configuration for host={cfg.app.host}:{cfg.app.port}, db={cfg.app.db_url}")
+    logger.info(f"Loaded configuration for host={cfg.app.host}:{cfg.app.port}, db={safe_db_url(cfg.app.db_url)}")
     logger.info(f"Web UI: http://{cfg.app.host}:{cfg.app.port}")
 
     # 2. Initialize Database Tables
     await init_db(cfg.app.db_url)
-    logger.info("SQLite database tables initialized.")
+    logger.info("Database tables initialized.")
 
-    # 2-b. 서버가 턴 도중에 내려갔다면 그 턴을 "끊김" 으로 적습니다 (ADR-024). 프로세스가
-    # 하나뿐이라 지금 "도는 중" 인 턴은 없습니다. 자동으로 다시 돌리지 않습니다 — 그 대화를
-    # 연 사람이 이어 가기·결론 내기·버리기를 고릅니다.
+    # 2-b. 서버가 턴 도중에 내려갔다면 그 턴을 "끊김" 으로 적습니다 (ADR-024). 이 DB 를 쓰는
+    # 프로세스가 이것뿐이면 지금 "도는 중" 인 턴은 없습니다. 자동으로 다시 돌리지 않습니다 — 그
+    # 대화를 연 사람이 이어 가기·결론 내기·버리기를 고릅니다.
     try:
         async with get_session_factory(cfg.app.db_url)() as db:
-            await mark_interrupted_turns(db)
+            if await no_other_instance(db):
+                await mark_interrupted_turns(db)
+            else:
+                logger.warning(
+                    "Another MADO process is using this database; leaving its running debate turns alone. "
+                    "Running several processes on one database is not supported yet (see ADR-041)."
+                )
     except Exception as exc:  # noqa: BLE001 - 적지 못해도 앱은 떠야 합니다
         logger.error("Could not check for interrupted debate turns: %s: %s", type(exc).__name__, exc)
+    exits = contextlib.AsyncExitStack()
+    await exits.enter_async_context(instance_presence())
 
     # 3. MCP 런타임 준비
     #
@@ -137,7 +145,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(f"Agent Pool ready with {len(agent_pool.list_all())} agents.")
 
     # 5. MADO MCP 서버 활성화 (`/mcp`, `app/mcp_server.py`). SSE 기반 스트리밍 HTTP 세션 관리자가 함께 구동됩니다.
-    exits = contextlib.AsyncExitStack()
     await exits.enter_async_context(mcp_server.running())
 
     yield

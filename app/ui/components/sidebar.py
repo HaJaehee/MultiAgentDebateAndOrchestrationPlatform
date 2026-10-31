@@ -578,6 +578,10 @@ class SessionSidebar:
             ui.label(
                 f"'{query}' 검색 결과: {len(hits)}건" if hits else f"'{query}'에 대한 검색 결과가 없습니다."
             ).classes("text-[12px] text-slate-400 px-1")
+            if hits.partial:
+                ui.label("기록이 많아 전부 훑지 못하고, 낱말 첫머리가 맞는 발언만 찾았습니다. 세 글자 이상으로 찾으면 더 정확합니다.").classes(
+                    "text-[11px] text-amber-300 px-1"
+                )
             for hit in hits:
                 self._render_hit(hit, waiting.get(hit.session_id, ()))
 
