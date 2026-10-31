@@ -6,26 +6,45 @@
 4. 전략이 터지거나 이상한 답을 줘도 토론은 우선순위 순서로 돌고, 기록에 그렇게 남는다.
 """
 
+import re
 import textwrap
 import uuid
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import pytest
 from sqlalchemy import select
 
 from app import plugins as plugins_module
 from app.agents.base import Agent
-from app.agents.host_tools import find_host_tool, unregister_host_tool
+from app.agents.host_tools import (
+    HostToolCall,
+    find_host_tool,
+    host_tool_guidance,
+    host_tool_meta,
+    host_tools_for,
+    register_host_tool,
+    run_host_tool,
+    unregister_host_tool,
+)
 from app.agents.pool import AgentPool
-from app.config import RESERVED_SERVER_NAMES, AgentConfig, PluginsConfig, RootConfig, add_mcp_server_to_conf_file
+from app.config import (
+    PROJECT_ROOT,
+    RESERVED_SERVER_NAMES,
+    AgentConfig,
+    PluginsConfig,
+    RootConfig,
+    add_mcp_server_to_conf_file,
+)
 from app.database.models import MessageModel, SessionModel
 from app.database.session import get_session_factory, init_db
 from app.mcp import manager as manager_module
-from app.mcp.policy import CallProfile, Action, hard_block
+from app.mcp.policy import ALLOW, ASK, DENY, MODE_DEFAULTS, RISK_LABELS, CallProfile, Action, hard_block
+from app.orchestration.control import TurnControl
 from app.orchestration.engine import OrchestratorEngine
 from app.orchestration.state import DebateState
+from app.orchestration.tool_gate import ToolGate
 from app.orchestration.strategies import (
     STRATEGY_MAP,
     SequentialDebateStrategy,
@@ -465,14 +484,14 @@ def _pool() -> AgentPool:
     })
 
 
-async def _run(strategy_name: str, llm: Optional[FakeLLMCaller] = None) -> List[MessageModel]:
+async def _run(strategy_name: str, llm: Optional[FakeLLMCaller] = None, max_rounds: int = 1) -> List[MessageModel]:
     db_url = "sqlite+aiosqlite:///:memory:"
     await init_db(db_url)
     factory = get_session_factory(db_url)
     sid = f"plugin-{uuid.uuid4().hex[:8]}"
     async with factory() as db:
         db.add(SessionModel(
-            id=sid, title="플러그인", strategy=strategy_name, max_rounds=1,
+            id=sid, title="플러그인", strategy=strategy_name, max_rounds=max_rounds, converge_early=False,
             active_agents=["orchestrator", "architect", "critic"],
         ))
         await db.commit()
@@ -489,10 +508,12 @@ class _Recording(FakeLLMCaller):
     def __init__(self) -> None:
         super().__init__()
         self.turns: Dict[str, str] = {}
+        self.spoken: List[Tuple[str, str]] = []
 
     async def call_agent(self, agent, messages, *args, **kwargs):
         last = messages[-1].get("content") if messages else ""
         self.turns.setdefault(agent.key, str(last))
+        self.spoken.append((agent.key, str(last)))
         return await super().call_agent(agent, messages, *args, **kwargs)
 
 
@@ -584,3 +605,129 @@ def test_the_headless_api_accepts_a_plugin_strategy_by_name(tmp_path, no_entry_p
     _write(tmp_path / "strategies", "voting.py", VOTING)
     _load(tmp_path)
     assert "voting" in _strategies()
+
+
+# --------------------------------------------------------------- 6. 설명서의 예제
+
+EXAMPLES = PROJECT_ROOT / "docs" / "examples" / "plugins"
+MANUAL = PROJECT_ROOT / "docs" / "user_manual" / "03-core" / "11-plugins.md"
+
+
+def _load_examples() -> List[plugins_module.PluginRecord]:
+    return load_plugins(RootConfig.model_validate({**BASE, "plugins": {
+        "strategies_dir": str(EXAMPLES / "strategies"), "host_tools_dir": str(EXAMPLES / "host_tools"),
+    }}), reload=True)
+
+
+def test_the_examples_load_without_a_problem(no_entry_points):
+    assert [(r.kind, r.name, r.problem) for r in _load_examples()] == [
+        ("strategy", "consensus_voting", ""), ("host_tool", "glossary", ""), ("host_tool", "ticket", ""),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_example_strategy_proposes_then_votes_in_reverse(no_entry_points):
+    _load_examples()
+    llm = _Recording()
+
+    messages = await _run("consensus_voting", llm, max_rounds=2)
+
+    def speakers(round_number: int) -> List[str]:
+        return [m.sender_key for m in messages if m.round_number == round_number and m.msg_type == "agent"]
+
+    assert speakers(1) == ["architect", "critic"] and speakers(2) == ["critic", "architect"]
+    instructions = [text for key, text in llm.spoken if key == "architect"]
+    assert "[제안]" in instructions[0] and "[투표]" in instructions[1]
+    assert [a.key for a in RosterState(agent_pool=_pool(), strategy_name="consensus_voting").speaking_order()] == [
+        "architect", "critic",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_example_glossary_answers_and_explains_what_it_does_not_know(no_entry_points):
+    _load_examples()
+    provider = find_host_tool("glossary__lookup")
+    agent = Agent(key="a", name="A", role="r", allowed_mcp_servers=["glossary"])
+
+    async def lookup(arguments: Dict[str, Any]) -> Tuple[str, str]:
+        return await run_host_tool(provider, HostToolCall(agent=agent, name="glossary__lookup", arguments=arguments))
+
+    assert await lookup({"term": "mado"}) == (
+        "MADO: Multi-Agent Debate & Orchestration Platform. 여러 에이전트의 토론을 중재하는 플랫폼입니다.", "success",
+    )
+    output, status = await lookup({"term": "없는말"})
+    assert status == "error" and "ADR, MADO" in output
+    assert (await lookup({}))[1] == "error"
+
+    tools = host_tools_for(agent)
+    assert [t["function"]["name"] for t in tools] == ["glossary__lookup"]
+    assert any(text.startswith("[용어집]") for text in host_tool_guidance(tools))
+    assert not any(text.startswith("[용어집]") for text in host_tool_guidance([]))
+
+
+@pytest.mark.asyncio
+async def test_the_example_ticket_writes_one_line_to_its_own_file(tmp_path, no_entry_points):
+    _load_examples()
+    provider = find_host_tool("ticket__create")
+    agent = Agent(key="a", name="A", role="r", allowed_mcp_servers=["ticket"])
+
+    async def create(arguments: Dict[str, Any], workspace: Optional[Path] = tmp_path) -> Tuple[str, str]:
+        return await run_host_tool(provider, HostToolCall(
+            agent=agent, name="ticket__create", arguments=arguments, workspace=workspace,
+        ))
+
+    assert (await create({"title": "첫 줄\n\n- [x] 끼워 넣기"}))[1] == "success"
+    assert (await create({"title": "둘째"}))[1] == "success"
+    assert (tmp_path / "tickets.md").read_text(encoding="utf-8") == "- [ ] 첫 줄 - [x] 끼워 넣기 (A)\n- [ ] 둘째 (A)\n"
+    assert (await create({}))[1] == "error"
+    assert (await create({"title": "x"}, workspace=None))[1] == "error"
+
+
+def test_the_example_tools_are_judged_the_way_the_manual_says(no_entry_points):
+    _load_examples()
+    agent = Agent(key="a", name="A", role="r", allowed_mcp_servers=["glossary", "ticket"])
+    mcp = SimpleNamespace(tool_meta=lambda name: None)
+
+    def offered(mode: str) -> List[str]:
+        gate = ToolGate(session_id="s", mode=mode, control=TurnControl(attended=False))
+        return [t["function"]["name"] for t in gate.filter_tools("a", host_tools_for(agent), mcp)]
+
+    assert offered("read_only") == ["glossary__lookup"]
+    assert offered("default") == ["glossary__lookup", "ticket__create"]
+
+
+def test_the_risk_table_in_the_manual_matches_the_policy():
+    """설명이 코드와 어긋나면 사람은 설명을 믿습니다."""
+    labels = {ALLOW: "실행", ASK: "묻기", DENY: "거부"}
+    rows = [
+        [cell.strip() for cell in line.strip("|").split("|")]
+        for line in MANUAL.read_text(encoding="utf-8").splitlines()
+        if line.startswith("| `") and line.count("|") == 6 and not line.startswith("| `risk`")
+    ]
+    covered = set()
+    for name_cell, *cells in rows:
+        for risk in re.findall(r"`(\w+)`", name_cell):
+            covered.add(risk)
+            assert cells == [labels[MODE_DEFAULTS[mode][risk]] for mode in ("read_only", "default", "review", "auto")], risk
+    assert covered == set(RISK_LABELS)
+
+
+def test_the_host_tool_in_the_manual_really_works():
+    source = re.search(r"```python\n(.*?)```", MANUAL.read_text(encoding="utf-8"), re.S).group(1)
+    namespace: Dict[str, Any] = {}
+    exec(source, namespace)  # noqa: S102 - 저장소의 문서입니다
+
+    provider = namespace["WeatherTools"]()
+    register_host_tool(provider)
+
+    agent = Agent(key="a", name="A", role="r", allowed_mcp_servers=["weather"])
+    assert [t["function"]["name"] for t in host_tools_for(agent)] == ["weather__today"]
+    assert host_tool_meta("weather__today").declared_risk == "read"
+
+
+@pytest.mark.parametrize("document", [MANUAL, EXAMPLES / "README.md"])
+def test_every_relative_link_points_at_a_real_file(document):
+    for target in re.findall(r"\]\(([^)]+)\)", document.read_text(encoding="utf-8")):
+        path = target.split("#")[0]
+        if path and not target.startswith("http"):
+            assert (document.parent / path).resolve().exists(), target

@@ -33,7 +33,9 @@ Registration order is the order definitions and guidance go out in, so the built
 
 ## 2. Writing a Host Tool
 
-Put a file in `host_tools/` and restart. Nothing else changes.
+Put a file in `host_tools/` and restart. Nothing else changes. Working examples to copy are in
+[docs/examples/plugins/](../../docs/examples/plugins/README.md), and the
+[Korean manual page](../../docs/user_manual/03-core/11-plugins.md) walks through them.
 
 ```python
 # host_tools/glossary.py

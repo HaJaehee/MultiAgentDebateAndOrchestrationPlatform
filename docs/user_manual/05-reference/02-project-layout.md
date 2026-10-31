@@ -14,6 +14,7 @@ MultiAgentDebateOrchestration/
 ├── docs/
 │   ├── user_manual/          이 문서 모음 (마크다운)
 │   ├── user_manual_html/     렌더링 산출물 (생성물)
+│   ├── examples/plugins/     복사해서 쓰는 전략·호스트 도구 예제 (앱이 읽지 않음)
 │   └── render_user_manual.py 렌더러
 ├── mcp_servers/              자체 내장 MCP 서버 디렉터리
 │   ├── memory_scoped/        세션별 격리 지식 그래프 (공식 memory 포크)
@@ -209,8 +210,8 @@ app/
 | 하고 싶은 것 | 파일 |
 | :--- | :--- |
 | 설정 항목 추가 | `config/schema.py` (Pydantic 모델) · 화면에서 고치려면 `config/editors.py` |
-| 새 토론 전략 | 앱 코드를 고치지 않습니다. 루트의 `strategies/` 폴더나 `mado.strategies` entry point (`plugins.py`) · 기반 클래스는 `orchestration/strategies.py` |
-| 새 호스트 도구 | 앱 코드를 고치지 않습니다. 루트의 `host_tools/` 폴더나 `mado.host_tools` entry point (`plugins.py`) · 기반 클래스와 레지스트리는 `agents/host_tools.py` |
+| 새 토론 전략 | 앱 코드를 고치지 않습니다. 루트의 `strategies/` 폴더나 `mado.strategies` entry point ([플러그인](../03-core/11-plugins.md)) · 예제는 `docs/examples/plugins/`, 기반 클래스는 `orchestration/strategies.py` |
+| 새 호스트 도구 | 앱 코드를 고치지 않습니다. 루트의 `host_tools/` 폴더나 `mado.host_tools` entry point ([플러그인](../03-core/11-plugins.md)) · 예제는 `docs/examples/plugins/`, 기반 클래스와 레지스트리는 `agents/host_tools.py` |
 | 토론 흐름 변경 | `orchestration/phases/` (계획·토론·합성) · 턴 수명은 `orchestration/engine.py` |
 | 발언 한 번의 처리 | `orchestration/speech.py` |
 | 새 대화의 첫 제목 | `orchestration/session_title.py` · 적는 자리는 `orchestration/speech.py` 의 `_title_new_session` · 되돌리기는 `session_ops.py` 의 `discard_turn` |

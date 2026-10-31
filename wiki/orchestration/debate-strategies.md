@@ -298,6 +298,7 @@ flowchart LR
 
 Strategies are plugins: no app code changes, and the source update package leaves them alone
 ([ADR-042](../../lectures/05-adr/ADR-042-plugins.md), [Host Tools and Plugins §4](../agents/host-tools.md#4-loading-plugins)).
+A working example to copy is [consensus_voting.py](../../docs/examples/plugins/strategies/consensus_voting.py).
 
 1. Put a subclass of `BaseDebateStrategy` in a file under `strategies/` (`plugins.strategies_dir`) and restart.
    A package can register it through the `mado.strategies` entry point group instead.

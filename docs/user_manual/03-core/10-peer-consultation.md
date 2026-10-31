@@ -1,6 +1,6 @@
 # 동료 자문 (peers)
 
-> 상위: [핵심 기술 개관](README.md) · 이전: [스킬](09-skills.md)
+> 상위: [핵심 기술 개관](README.md) · 이전: [스킬](09-skills.md) · 다음: [플러그인](11-plugins.md)
 >
 > 관련 소스: `app/agents/consultation.py` · `app/config/schema.py` (`PeerConsultationConfig`) ·
 > `app/ui/components/roster/agent_dialogs.py` (도구 할당 창의 '에이전트 선택')

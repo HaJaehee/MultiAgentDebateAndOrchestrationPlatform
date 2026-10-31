@@ -169,7 +169,7 @@ Only what a running installation needs in order to be updated.
 | `app/`, `mcp_servers/` | `python_runtime/`, `node_runtime/`, `wheels/`, `mcp_sandbox/` |
 | `mcp_node/memory-scoped.mjs` (the forked server's runnable copy) | `workspace/`, `multiagent.db`, `conf.json` |
 | `conf.example.json`, `.env.example`, `requirements.txt` | `tests/`, `CLAUDE.md` |
-| `docs/user_manual/` and `docs/user_manual_html/` (rendered at packaging time) | the working tree's own `docs/user_manual_html/` |
+| `docs/user_manual/` and `docs/user_manual_html/` (rendered at packaging time), `docs/examples/` (plugin examples, also in the offline bundle) | the working tree's own `docs/user_manual_html/`, the user's `strategies/` and `host_tools/` |
 | `setup_mcp.py`, `open_browser.py`, `README.md` | the packaging scripts themselves |
 | `wiki/` (this wiki, Markdown — the repository cannot be opened on a closed network; v1.5) | |
 

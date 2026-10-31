@@ -55,3 +55,22 @@ def test_wheels_never_arrive_by_accident():
     assert "wheels" in package_source.FORBIDDEN_NAMES
     assert "wheels" not in package_source.SOURCE_DIRS
     assert not any(dest.startswith("wheels/") for _src, dest in package_source.PACKAGE_FILES)
+
+
+def test_the_offline_bundle_carries_the_plugin_manual_and_its_examples(tmp_path, monkeypatch):
+    """전체 번들은 `docs/` 를 통째로 담지 않고 고른 것만 옮깁니다. 설명서가 가리키는 예제가 빠지면 링크가 끊깁니다."""
+    import package_offline
+
+    monkeypatch.setattr(package_offline, "STAGING_DIR", tmp_path)
+    package_offline.stage_docs()
+
+    page = tmp_path / "docs" / "user_manual_html" / "03-core" / "11-plugins.html"
+    assert (page.parent / "../../examples/plugins/host_tools/glossary.py").resolve().is_file()
+    assert 'href="../../examples/plugins/host_tools/glossary.py"' in page.read_text(encoding="utf-8")
+    assert list(tmp_path.rglob("__pycache__")) == []
+
+    # 설정 문서의 해당 절로 바로 갑니다. 원본의 앵커는 GitHub 방식이라 렌더러가 맞춰 줍니다.
+    anchor = "plugins-토론-전략과-호스트-도구-플러그인"
+    assert f'02-configuration.html#{anchor}"' in page.read_text(encoding="utf-8")
+    config = tmp_path / "docs" / "user_manual_html" / "02-getting-started" / "02-configuration.html"
+    assert f'id="{anchor}"' in config.read_text(encoding="utf-8")

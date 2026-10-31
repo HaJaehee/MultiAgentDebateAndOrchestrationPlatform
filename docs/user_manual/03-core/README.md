@@ -6,7 +6,7 @@
 
 ---
 
-## 열 개의 축
+## 열한 개의 축
 
 | 문서 | 주요 내용 | 주요 파일 |
 | :--- | :--- | :--- |
@@ -20,6 +20,7 @@
 | [도구 보안](08-tool-security.md) | 행위 단위 허용·묻기·거부, 승인 카드, 고정 보호 | `app/mcp/policy.py`, `app/orchestration/tool_gate.py` |
 | [스킬](09-skills.md) | 필요 시 동적으로 참조하는 작업 지침 및 스크립트, 에이전트별 할당, 실시간 활성화/비활성화 | `app/agents/skills.py` |
 | [동료 자문 (peers)](10-peer-consultation.md) | 발언 중 다른 전문가에게 묻는 내장 도구, 물을 상대·도구 상한 고르기, 대화별 고정 | `app/agents/consultation.py` |
+| [플러그인](11-plugins.md) | 코드 수정 없이 토론 전략과 호스트 도구 더하기, 예제, 도구 보안 판정과 폴더 보호 | `app/plugins.py`, `app/agents/host_tools.py` |
 
 ---
 

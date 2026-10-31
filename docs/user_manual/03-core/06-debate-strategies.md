@@ -237,7 +237,7 @@ class MyStrategy(BaseDebateStrategy):
         return "[사용자 정의 전략 지침] ..."
 ```
 
-`pip install` 로 배포할 때는 패키지의 `mado.strategies` entry point 로 같은 클래스를 가리킵니다. 폴더 위치와 끄는 법은 [conf.json 설정](../02-getting-started/02-configuration.md)의 `plugins` 를 참고하십시오. 소스 업데이트 패키지는 이 폴더를 건드리지 않습니다.
+복사해서 쓸 수 있는 예제는 [`consensus_voting.py`](../../examples/plugins/strategies/consensus_voting.py), 넣는 법과 배포·문제 해결은 [플러그인](11-plugins.md) 문서에 있습니다. 소스 업데이트 패키지는 이 폴더를 건드리지 않습니다.
 
 > **플러그인은 앱과 같은 권한으로 도는 코드입니다.** 이 폴더에 파일을 넣는 일은 패키지를 설치하는 일과 같은 무게입니다. 에이전트의 도구로는 이 폴더를 읽거나 쓸 수 없습니다. 기본 작업 공간 안의 폴더를 지정하면 읽지 않습니다.
 

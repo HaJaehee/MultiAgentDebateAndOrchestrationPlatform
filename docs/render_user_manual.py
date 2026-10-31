@@ -86,7 +86,8 @@ def rewrite_link(href: str) -> str:
             target.relative_to(src_root.resolve())
         except ValueError:
             return href      # 매뉴얼 외부 문서 — 원본 경로를 그대로 가리킵니다
-    return path[: -len(".md")] + ".html" + sep + anchor
+    # 원본의 앵커는 GitHub 방식이라 `a — b` 제목이 `a--b` 입니다. 여기 `slugify` 는 하이픈을 하나로 줄입니다.
+    return path[: -len(".md")] + ".html" + sep + re.sub(r"-{2,}", "-", anchor)
 
 
 def render_inline(text: str) -> str:

@@ -19,6 +19,7 @@ MCP 서버 설치본까지 들고 있어 수백 MB 입니다. 그 런타임은 �
         ├── wheels/                   --with-wheels 로 지정했을 때만 (아래 참고)
         ├── docs/
         │   ├── user_manual/          사용 설명서 마크다운 원본
+        │   ├── examples/plugins/     복사해서 쓰는 전략·호스트 도구 예제
         │   ├── user_manual_html/     그것을 패키징 시점에 렌더링한 HTML (바로 열람)
         │   └── render_user_manual.py 렌더러 (대상에서 다시 돌릴 수 있게)
         ├── wiki/                     영문 기술 위키 (설계 배경·세부 사양, 마크다운)
@@ -149,6 +150,8 @@ REQUIRED_PACKAGE_PATHS: list[str] = [
     "skills/mermaid-diagrams/SKILL.md",
     "skills/csv-profile/scripts/profile_csv.py",
     "wiki/README.md",
+    "docs/examples/plugins/strategies/consensus_voting.py",
+    "docs/examples/plugins/host_tools/glossary.py",
 ]
 
 # 디렉터리를 복사할 때 건너뛸 것들. 소스 트리 안에 런타임 부스러기가 섞이는 것을 막습니다.

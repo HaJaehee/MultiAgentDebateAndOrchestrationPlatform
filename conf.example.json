@@ -529,6 +529,7 @@
     "플러그인은 앱과 같은 권한으로 도는 코드입니다. 서버를 시작할 때 한 번만 읽으므로 고치면 다시 시작하세요.",
     "폴더는 에이전트의 도구로 건드릴 수 없고, 기본 작업 공간 안의 폴더는 읽지 않습니다. 설치 폴더 밖을 가리킨다면 작업 공간으로 쓰지 않는 곳을 고르세요.",
     "읽지 못한 플러그인은 앱을 막지 않습니다. 로그, GET /api/plugins, 로스터의 전략 칸 옆 아이콘에서 이유를 봅니다.",
+    "복사해서 쓸 수 있는 예제는 docs/examples/plugins/, 설명은 docs/user_manual/03-core/11-plugins.md 에 있습니다.",
     "",
     "strategies_dir: 토론 전략 폴더 (BaseDebateStrategy). 비우면 폴더를 읽지 않습니다.",
     "host_tools_dir: 호스트 도구 폴더 (HostToolProvider). 켜는 법은 에이전트의 allowed_mcp_servers 에 접두사를 넣는 것입니다. 호출은 도구 보안 판정을 받습니다.",

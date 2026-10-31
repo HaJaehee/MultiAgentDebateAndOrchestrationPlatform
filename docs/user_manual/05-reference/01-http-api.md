@@ -156,7 +156,7 @@ MCP 서버별 연결 상태. `"enabled": false` 로 꺼 둔 서버도 함께 보
 ```
 
 `name` 은 등록된 전략 이름이나 호스트 도구 접두사입니다. `problem` 이 있으면 등록되지 않았습니다.
-→ [conf.json 설정](../02-getting-started/02-configuration.md#plugins--토론-전략과-호스트-도구-플러그인)
+→ [플러그인](../03-core/11-plugins.md#문제-해결)
 
 ---
 
