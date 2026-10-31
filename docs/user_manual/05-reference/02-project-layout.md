@@ -102,6 +102,7 @@ app/
 │   ├── llm_budget.py                271   도구 상한·응답 한도 안내
 │   ├── llm_tools.py                 271   도구 이름 찾기, 파일 쓰기·고치기 지침
 │   ├── tool_loading.py              299   도구 스키마 지연 로딩: 나누기·목록·불러오기·기억 (ADR-039)
+│   ├── tool_compaction.py           130   오래된 큰 파일 읽기 결과를 스텁으로 줄이기 (ADR-040)
 │   ├── llm_fingerprint.py           101   거절 시 요청 지문
 │   ├── llm_usage.py                 169   토큰 및 LLM 실행 시간 계측 (v1.5)
 │   ├── llm_types.py                  51   LLMUnavailableError, 콜백 형식

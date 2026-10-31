@@ -767,6 +767,54 @@ tool cards keep showing `tools__load_tools` for the same tool, add it to `core_t
 the catalog can answer without tools it would otherwise have used; turn off `tool_loading.enabled` for those. Tests:
 `tests/test_tool_loading.py`.
 
+### 5.5. Compacting stale file reads (ADR-040)
+
+[app/agents/tool_compaction.py](file:///d:/MultiAgentDebateOrchestration/app/agents/tool_compaction.py). §5.3 keeps the
+loop inside the window by dropping whole blocks, which also loses what the model wrote around those calls. A file read
+can usually be repeated, so it goes first. `_fit_loop_context()` calls `compact_loop_messages()` before it asks the
+person or trims anything; if compacting makes the request fit, neither happens.
+
+| Situation | What is compacted |
+| :--- | :--- |
+| Under `min_usage` of the budget (default 0.5) | Nothing. The request is identical, so the prefix cache holds. |
+| Over `min_usage` | Every read at least `stale_rounds` old (default 3) and at least `min_chars` long (default 8,000), all at once |
+| Over budget | The same, but only the latest round stays |
+
+**What counts.** `read_text_file`, `read_file` and `read_multiple_files`, found by name tail. Command output, web search
+and `git_diff` stay, because repeating them can give another result or cost something. Tool call arguments stay too, so
+a call still has the shape it ran with (§2.2).
+
+**Age.** The number of tool rounds after the read, counted from the messages, so the latest round is 0. No state is
+kept, so a resumed speech counts the same. `SPEECH_STATE_VERSION` did not change.
+
+**The stub** names the tool, repeats the arguments, gives the line and character counts, keeps the first 12 lines and
+the last 3 (160 characters each), and tells the model to read again rather than invent what is gone. A stub longer than
+the original is not used, and a stub is never compacted again. No outline extraction or LLM summary: the first needs
+per-language rules with an unmeasured gain, and the second adds a call and can be wrong without the model knowing.
+
+**What stays.** `tool_logs` keeps the original, so tool cards and the DB do not change. A speech draft stores the
+stubs, so a resumed speech sees what the model saw.
+
+Measured against the real filesystem server, reading the 10 largest files in `app/` (36 to 68 KB) one per round, with a
+scripted LLM and the `openai/gpt-4o` tokenizer:
+
+| Window | Compaction | Input tokens, all requests | Largest request | Blocks dropped |
+| :--- | :--- | ---: | ---: | ---: |
+| 128,000 | off | 715,638 | 114,471 | 1 |
+| 128,000 | on | 416,907 | 59,853 | 0 |
+| 64,000 | off | 470,499 | 58,506 | 5 |
+| 64,000 | on | 353,685 | 45,288 | 0 |
+| 32,000 | off | 209,498 | 24,853 | 8 |
+| 32,000 | on | 190,279 | 25,707 | 0 |
+
+The 128k run changed its prefix on 3 of 11 requests. The 32k total falls less because the run without compaction was
+already dropping blocks.
+
+**What it costs.** A model that needs a compacted file again spends a round on it, counted against the tool limit, and
+how often real models do this has not been measured; the call order above is scripted. If tool cards show the same file
+read repeatedly, raise `stale_rounds` or `min_usage`. Each compaction breaks the prefix cache once from that message on,
+and over budget that can be every round. Tests: `tests/test_tool_compaction.py`.
+
 ---
 
 ## 6. Usage Metering (v1.5)

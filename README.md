@@ -162,6 +162,7 @@ MultiAgentDebateOrchestration/
 │   │   ├── personas.py       # 세션별 페르소나 해석·저장·고정
 │   │   ├── skills.py         # 스킬 디렉터리 스캔 및 에이전트별 스킬 도구 (skills__load_skill 등)
 │   │   ├── tool_loading.py   # 도구 스키마 지연 로딩: 자주 쓰는 것만 싣고 나머지는 한 줄 목록 (ADR-039)
+│   │   ├── tool_compaction.py # 도구 루프의 오래된 큰 파일 읽기 결과를 스텁으로 줄이기 (ADR-040)
 │   │   ├── llm.py            # LiteLLM 호출기 (곁가지는 llm_request · llm_recovery · llm_tool_calls · llm_context · llm_budget · llm_tools · reasoning)
 │   │   ├── llm_loop.py       # 도구 루프 (ToolLoop 상태와 단계별 함수)
 │   │   ├── llm_gate.py       # 서버 전역 LLM 동시 요청 상한 제어 및 대기열 관리 (app.llm_concurrency)
@@ -224,6 +225,7 @@ MultiAgentDebateOrchestration/
     ├── test_workspace_mentions.py # @멘션 (경로 전달·경로 안전·코드 블록 제외) & 업로드
     ├── test_skill_mentions.py     # @전문가 @스킬 지정 (짝짓기·이번 턴 한정·발언 첫머리 불러오기·재개)
     ├── test_tool_loading.py       # 도구 스키마 지연 로딩 (나누기·불러오기·대화 안 기억·재개)
+    ├── test_tool_compaction.py    # 오래된 큰 파일 읽기 결과 압축 (대상·스텁·사용률 조건·캐시 접두사·재개)
     ├── test_diagnostics.py        # 루프 정체 스택 기록·브라우저 보고 (Connection lost 원인 진단)
     ├── test_math_markdown.py      # 수식 렌더링 (MathML 변환·가격/코드 제외·맨몸 명령·대체 표시·이스케이프)
     ├── test_remote_mcp.py       # 원격(HTTP) MCP 서버 (설정 규칙·전송 방식·토큰 보관)
@@ -724,6 +726,26 @@ MCP 도구의 정의는 요청마다 입력 토큰으로 나갑니다. 자주 �
 - 목록을 잘 쓰지 못하는 모델을 쓴다면 `enabled` 를 `false` 로 두십시오.
 
 자세한 내용은 [ADR-039](lectures/05-adr/ADR-039-lazy-tool-schemas.md)와 [LLM Integration §5.4](wiki/agents/llm-integration.md)를 참조하십시오.
+
+### 큰 파일 읽기 결과 압축 `tool_output_compaction`
+
+도구 결과는 발언이 끝날 때까지 요청마다 다시 나갑니다. 컨텍스트 사용률이 `min_usage` 를 넘으면 오래된 큰 파일 읽기 결과를 앞뒤 몇 줄과 다시 읽는 법만 남긴 스텁으로 바꿉니다. 실제 filesystem 서버로 큰 파일 10개를 읽는 발언을 128k 창에서 재면 요청 합계 입력이 715,638토큰에서 416,907토큰으로 줄고, 버리는 덩어리가 1개에서 0개가 됩니다.
+
+```json
+"tool_output_compaction": {
+  "enabled": true,
+  "stale_rounds": 3,
+  "min_chars": 8000,
+  "min_usage": 0.5
+}
+```
+
+- 줄이는 것은 `read_text_file`, `read_file`, `read_multiple_files` 의 결과뿐입니다. 도구 카드와 DB 의 기록은 원문 그대로입니다.
+- `stale_rounds` 판 이상 지난 `min_chars` 자 이상의 결과를 한 번에 줄입니다. 예산을 넘겼으면 가장 최근 판만 남기고 줄입니다.
+- 앞쪽 메시지를 고치면 프롬프트 캐시가 깨지므로 창에 여유가 있을 때는 줄이지 않습니다. 나이만 보려면 `min_usage` 를 `0` 으로 두십시오.
+- 줄어든 파일이 다시 필요하면 모델이 한 판을 더 씁니다. 같은 파일을 자꾸 다시 읽으면 `stale_rounds` 나 `min_usage` 를 올리십시오.
+
+자세한 내용은 [ADR-040](lectures/05-adr/ADR-040-compact-stale-file-reads.md)과 [LLM Integration §5.5](wiki/agents/llm-integration.md)를 참조하십시오.
 
 ### MCP 도구 구성 `mcp_servers`
 

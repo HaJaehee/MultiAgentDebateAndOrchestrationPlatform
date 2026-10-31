@@ -622,6 +622,23 @@ class ToolLoadingConfig(BaseModel):
         description="Send every schema unless the catalog saves at least this many tokens per request",
     )
 
+class ToolOutputCompactionConfig(BaseModel):
+    """도구 루프의 오래된 큰 파일 읽기 결과를 줄이는 설정(`tool_output_compaction`, `app/agents/tool_compaction.py`, ADR-040)입니다.
+
+    모델이 읽는 메시지만 줄고 도구 카드와 DB 의 기록은 원문 그대로입니다. 진행 중인 대화에도 다음 판부터 적용합니다.
+    """
+
+    enabled: bool = Field(default=True, description="Replace stale large file reads in the tool loop with a short stub")
+    stale_rounds: int = Field(
+        default=3, ge=1,
+        description="Tool rounds that must follow a file read before it may be compacted",
+    )
+    min_chars: int = Field(default=8000, ge=1000, description="File reads shorter than this are kept as they are")
+    min_usage: float = Field(
+        default=0.5, ge=0.0, le=1.0,
+        description="Compact only when the speech uses this share of its context budget, so the prompt cache survives until then",
+    )
+
 # 스킬 도구의 접두사입니다 (`skills__load_skill`). MCP 도구와 동일한 `서버__도구` 형태이므로,
 # 동일한 이름의 MCP 서버가 등록되면 도구 이름 충돌이 발생합니다.
 SKILL_TOOL_PREFIX = "skills"
@@ -659,6 +676,7 @@ class RootConfig(BaseModel):
     trial: TrialConfig = Field(default_factory=TrialConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     tool_loading: ToolLoadingConfig = Field(default_factory=ToolLoadingConfig)
+    tool_output_compaction: ToolOutputCompactionConfig = Field(default_factory=ToolOutputCompactionConfig)
 
     # 치환 **전** 의 "mcp_servers" 원문. 작업 공간을 런타임마다 다르게 풀 때
     # 이걸 그 작업 공간으로 다시 풉니다. 이미 치환된 경로 문자열을 찾아 바꾸는

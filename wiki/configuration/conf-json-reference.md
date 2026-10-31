@@ -24,7 +24,8 @@ The configuration file is loaded, validated, and normalized by [app/config/](fil
   },
   "tool_security": { },
   "skills": { },
-  "tool_loading": { }
+  "tool_loading": { },
+  "tool_output_compaction": { }
 }
 ```
 
@@ -41,6 +42,7 @@ The configuration file is loaded, validated, and normalized by [app/config/](fil
 | `tool_security` | Allow / ask / deny for MCP tool calls |
 | `skills` | Where skill folders live and which are turned off |
 | `tool_loading` | Which MCP tool definitions go out with every request, and which wait in a one-line catalog |
+| `tool_output_compaction` | When stale large file reads in the tool loop are replaced with a short stub |
 
 ### 1.1. Comments
 
@@ -263,6 +265,20 @@ their next speech. Full design: [LLM Integration §5.4](../agents/llm-integratio
 | `min_saving_tokens` | `int` | `1000` | Send every definition unless the catalog saves at least this much per request. |
 
 `mcp_servers.tools` is rejected: `tools__` is the prefix of the built-in catalog tool.
+
+### 2.9. `tool_output_compaction` Object
+
+Tool results go out again with every request until the speech ends. Once a speech has used enough of its context
+budget, stale large file reads become a stub with a few lines and how to read the file again. Only what the model reads
+changes; tool cards and the DB keep the original. Applies to running speeches from their next request. Full design:
+[LLM Integration §5.5](../agents/llm-integration.md#55-compacting-stale-file-reads-adr-040).
+
+| Key | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `enabled` | `bool` | `true` | `false` keeps every result as it is. |
+| `stale_rounds` | `int` | `3` | Tool rounds that must follow a read before it may be compacted (at least 1). Over budget, this is ignored and only the latest round stays. |
+| `min_chars` | `int` | `8000` | Shorter results stay (at least 1000). |
+| `min_usage` | `float` | `0.5` | Share of the context budget in use before anything is compacted (0 to 1). Editing earlier messages breaks the prompt cache, so nothing changes while there is room. `0` goes by age alone. |
 
 ---
 

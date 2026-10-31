@@ -25,6 +25,7 @@ pytest -k "snapshot"
 | `test_anythingllm_kb.py` | AnythingLLM 문서 검색(`kb`): Mock AnythingLLM 서버 기반 검색 결과 및 근거 출처 포맷팅, 실패 시 오류 처리, 작업 공간 허용 목록(allowlist), stdio 연결 및 읽기 권한 판정, 실제 도구 루프 연동 검증 (v1.5.1) |
 | `test_llm_offload.py` | 스트림 조립(`stream_chunk_builder`)을 스레드에서: 조립 중에도 다른 코루틴이 도는지, 답·사용량 불변, 조립 중 취소 (v1.5.1) |
 | `test_tool_loading.py` | 도구 스키마 지연 로딩: 나누는 기준, 지침 글 불변, 불러오기·곧바로 호출, 대화 안 기억, 도구 보안, 재개 (ADR-039) |
+| `test_tool_compaction.py` | 오래된 큰 파일 읽기 결과 압축: 줄이는 대상, 스텁 내용, 사용률 조건, 캐시 접두사 불변, 도구 기록 원문, 재개 (ADR-040) |
 | `test_markdown_offload.py` | 긴 마크다운을 일꾼 스레드에서: 그리는 중에도 다른 코루틴이 도는지, 최신 내용만 그리는지, 요소 삭제·실패 처리, 제곱 시간이 들던 세 곳, 서버 시작 시 Pygments 플러그인 미리 불러오기, StarUML 변환 (v1.5.1) |
 | `test_llm_settings.py` | `llm` 전역 설정 상속, 요청 파라미터 매핑, 단계적 사고 모드 동작 |
 | `test_orchestrator.py` | 에이전트 발언 우선순위 정렬 및 전략별 발언 순서 배치 |

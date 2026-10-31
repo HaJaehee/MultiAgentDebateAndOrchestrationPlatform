@@ -51,6 +51,7 @@ from app.agents.media import (
     store_tool_media,
 )
 from app.agents.skills import is_skill_tool
+from app.agents.tool_compaction import compact_loop_messages
 from app.agents.tool_loading import (
     CALLED_BEFORE_LOADING_NOTE,
     ToolShelf,
@@ -304,7 +305,8 @@ class ToolLoopMixin:
         컨텍스트 창도 같은 두 겹으로 지킵니다. 매 판 직전에 `fit_tool_loop_context`
         로 창 안에 맞추고(짝 단위로 덜어냅니다 — 고아 `tool` 메시지는 400 입니다),
         사용률이 띠를 넘으면 `context_pressure_notice` 로 알립니다. 기록을 실제로
-        버려야 하는 첫 순간에는 `context_arbiter` 로 사람에게 묻습니다.
+        버려야 하는 첫 순간에는 `context_arbiter` 로 사람에게 묻습니다. 그 앞에서 오래된 큰 파일 읽기
+        결과를 먼저 줄입니다 (`compact_loop_messages`). 다시 읽을 수 있는 것부터 덜어야 덜 잃습니다.
 
         한 판은 이 순서입니다: 창에 맞추기(`_fit_loop_context`) → 한도 안내(`_announce_loop_limits`) →
         LLM 한 판 → 도구 호출이 없으면 답으로 마무리(`_settle_answer`), 있으면 도구 실행
@@ -411,6 +413,7 @@ class ToolLoopMixin:
         사람이 "여기서 접으라" 고 답하면 도구 없이 마무리한 결과를 돌려줍니다. 그 밖에는 None.
         """
         agent = loop.agent
+        self._compact_loop_outputs(loop)
         over = loop.over_budget()
 
         if over and context_arbiter is not None and not loop.context_asked:
@@ -442,6 +445,18 @@ class ToolLoopMixin:
         if over:
             self._trim_loop_context(loop)
         return None
+
+    @staticmethod
+    def _compact_loop_outputs(loop: ToolLoop) -> None:
+        """오래된 큰 파일 읽기 결과를 줄입니다. 묻기와 자르기 앞에 두어, 줄여서 맞으면 아무것도 잃지 않습니다."""
+        loop.messages, compacted = compact_loop_messages(
+            loop.agent.model, loop.messages, context_budget(loop.agent, loop.window, loop.tools),
+        )
+        if compacted:
+            logger.info(
+                f"{loop.agent.name} compacted {compacted} stale file read(s): "
+                f"context now ≈{estimate_tokens(loop.agent.model, loop.messages):,} tok"
+            )
 
     @staticmethod
     def _trim_loop_context(loop: ToolLoop) -> None:
