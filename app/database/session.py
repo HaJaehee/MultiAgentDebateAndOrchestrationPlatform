@@ -8,6 +8,7 @@ from typing import AsyncGenerator, Optional
 from sqlalchemy import event, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from app.config import DEFAULT_SUB_DEBATE_ROUNDS
 from app.database.models import Base
 from app.database.search import ensure_search_index
 
@@ -46,8 +47,9 @@ _ADDED_COLUMNS = {
         "token_budget": "INTEGER NOT NULL DEFAULT 0",
         # 에이전트의 사용자 질문 허용 여부 (v1.5, 이전 대화는 비활성화).
         "ask_user": "BOOLEAN NOT NULL DEFAULT 0",
-        # 서브 토론 허용 여부 (ADR-034).
+        # 서브 토론 허용 여부와 한 번의 최대 라운드 수 (ADR-034).
         "sub_debates": "BOOLEAN NOT NULL DEFAULT 0",
+        "sub_debate_rounds": f"INTEGER NOT NULL DEFAULT {DEFAULT_SUB_DEBATE_ROUNDS}",
         # 세션 분기(fork) 생성 시 원본 세션 및 턴 출처 정보 (v1.5).
         "forked_from": "JSON",
         # 대화 기억 (v0.8.3). 비어 있으면 장부·요약이 아직 없는 대화입니다.

@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from app.agents.base import Agent
 from app.agents.pool import AgentPool
-from app.config import ORCHESTRATOR_KEY
+from app.config import DEFAULT_SUB_DEBATE_ROUNDS, ORCHESTRATOR_KEY, clamp_sub_debate_rounds
 from app.orchestration.roster_service import agent_admin_lock_reason
 from app.orchestration.state import DebateState
 from app.orchestration.strategies import (
@@ -100,6 +100,8 @@ class RosterState:
     ask_user: bool = True
     # 미해결 쟁점을 전문가 두 명이 따로 다루는 서브 토론을 허용하는지 (ADR-034). 호출이 늘어나므로 켜야 돕니다.
     sub_debates: bool = False
+    # 서브 토론 한 번의 최대 라운드 수. 본 토론의 `max_rounds` 와 별개입니다.
+    sub_debate_rounds: int = DEFAULT_SUB_DEBATE_ROUNDS
     # 병렬 지시 전략에서 한 라운드에 동시에 띄울 에이전트 수의 상한.
     # 다른 전략에서는 쓰이지 않으므로 그 전략일 때만 화면에 나옵니다.
     parallel_limit: int = 3
@@ -300,6 +302,7 @@ class RosterState:
         session_agents: Optional[List[Agent]],
         tool_mode: str,
         sub_debates: bool = False,
+        sub_debate_rounds: int = DEFAULT_SUB_DEBATE_ROUNDS,
     ) -> None:
         self.agent_pool = agent_pool
         # 잠금 여부와 스냅샷이 선택 규칙과 카드 목록을 함께 정하므로 먼저 반영합니다.
@@ -316,6 +319,7 @@ class RosterState:
         self.token_budget = max(0, int(token_budget or 0))
         self.ask_user = bool(ask_user)
         self.sub_debates = bool(sub_debates)
+        self.sub_debate_rounds = clamp_sub_debate_rounds(sub_debate_rounds)
         self.tool_mode = tool_mode or ""
         self.custom_instructions = instructions
         self.workspace_dir = workspace_dir or ""

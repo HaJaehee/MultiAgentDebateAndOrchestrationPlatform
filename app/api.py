@@ -19,7 +19,7 @@ from app.about import APP_VERSION_LABEL, AUTHOR, AUTHOR_EMAIL
 from app.agents.personas import effective_personas
 from app.agents.pool import get_agent_pool
 from app.agents.skills import scan_skills, skills_root
-from app.config import PROJECT_ROOT, get_config, resolve_agent_icon
+from app.config import DEFAULT_SUB_DEBATE_ROUNDS, PROJECT_ROOT, get_config, resolve_agent_icon
 from app.database.models import SessionModel
 from app.database.session import get_session_factory
 from app.diagnostics import MAX_CLIENT_REPORT_BYTES, loop_health, parse_client_body, record_client_report
@@ -208,6 +208,7 @@ class NewSessionBody(BaseModel):
     converge_early: bool = True
     token_budget: int = 0
     sub_debates: bool = False
+    sub_debate_rounds: int = DEFAULT_SUB_DEBATE_ROUNDS
 
 
 class TurnBody(BaseModel):

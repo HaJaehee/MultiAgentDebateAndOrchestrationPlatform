@@ -207,6 +207,7 @@ class ExpertPage:
                 curr.token_budget = self.roster_control.state.token_budget
                 curr.ask_user = self.roster_control.state.ask_user
                 curr.sub_debates = self.roster_control.state.sub_debates
+                curr.sub_debate_rounds = self.roster_control.state.sub_debate_rounds
                 curr.tool_mode = self.roster_control.state.tool_mode
                 curr.custom_instructions = self.roster_control.state.custom_instructions
                 curr.workspace_dir = self.roster_control.state.workspace_dir
@@ -660,6 +661,7 @@ class ExpertPage:
                 # 모두 꺼져 있어(체험 화면을 위한 기본값) 물려받으면 새 대화도 영영 꺼진 채가 됩니다.
                 ask_user=True,
                 sub_debates=self.roster_control.state.sub_debates,
+                sub_debate_rounds=self.roster_control.state.sub_debate_rounds,
                 tool_mode=self.roster_control.state.tool_mode,
                 active_agents=self.roster_control.get_active_agent_keys(),
                 known_agents=self.roster_control.known_agent_keys(),
@@ -701,6 +703,7 @@ class ExpertPage:
                     token_budget=s_obj.token_budget or 0,
                     ask_user=bool(s_obj.ask_user),
                     sub_debates=bool(s_obj.sub_debates),
+                    sub_debate_rounds=s_obj.sub_debate_rounds,
                     tool_mode=s_obj.tool_mode or "",
                     tool_grants=list(s_obj.tool_grants or []),
                     tool_denials=list(s_obj.tool_denials or []),

@@ -13,8 +13,9 @@ specialists as participants. A graph picked on the conversation is the base it a
 caps stay within 최대 라운드, and a drawing has at most 12 nodes and 40 worst-case calls. A wrong answer is corrected
 once with what was wrong; after that it falls back to the base graph or the card order and says so in the feed.
 Separately, the new **쟁점은 따로 토론** switch (`sessions.sub_debates`, off by default, any strategy): when the ledger
-has an open issue at a round or graph-step boundary, the orchestrator may put two specialists on it for three speeches
-and write a conclusion. Only the conclusion joins the debate; the exchange stays in the feed and the saved document.
+has an open issue at a round or graph-step boundary, the orchestrator may put two specialists on it and write a
+conclusion. The box right of the switch sets its maximum rounds (`sessions.sub_debate_rounds`, 1–5, default 2), separate
+from the main 최대 라운드. Only the conclusion joins the debate; the exchange stays in the feed and the saved document.
 At most two per turn, and the turn resumes inside one without asking again. With the switch off, the other five
 strategies send exactly the same prompts as before (compared side by side against the previous code).
 → [Debate Strategies §2.6, §2-b](orchestration/debate-strategies.md) · `tests/test_adaptive_graph.py` · `tests/test_sub_debate.py`

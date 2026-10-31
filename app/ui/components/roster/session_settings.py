@@ -6,6 +6,7 @@ from typing import Callable, Coroutine, Dict, List, Optional
 
 from nicegui import ui
 
+from app.config import MAX_SUB_DEBATE_ROUNDS, clamp_sub_debate_rounds
 from app.mcp.policy import MODE_LABELS, MODES
 from app.orchestration.roster_service import RosterService
 from app.orchestration.strategies import STRATEGY_MAP
@@ -121,6 +122,8 @@ class SessionSettingsComponent:
         self.converge_switch: Optional[ui.switch] = None
         self.ask_switch: Optional[ui.switch] = None
         self.sub_debate_switch: Optional[ui.switch] = None
+        self.sub_debate_rounds_row: Optional[ui.row] = None
+        self.sub_debate_rounds_input: Optional[ui.number] = None
         self.budget_input: Optional[ui.number] = None
         self.tool_mode_select: Optional[ui.select] = None
         self.strategy_select: Optional[ui.select] = None
@@ -170,15 +173,31 @@ class SessionSettingsComponent:
                     "채팅 피드에 질문 카드가 표시되며, 5분 이내에 답변이 없으면 자체 가정을 명시하고 계속 진행합니다. "
                     "답변 내용은 후속 발언자들에게도 공유됩니다."
                 )
-                self.sub_debate_switch = ui.switch(
-                    "쟁점은 따로 토론", value=self.state.sub_debates, on_change=self.on_sub_debates_change,
-                ).props("dense dark color=teal-4").classes("text-xs text-slate-300")
-                self.sub_debate_switch.tooltip(
-                    "라운드(그래프는 단계)가 끝날 때 결정 장부에 미해결 쟁점이 있으면, 오케스트레이터가 필요하다고 "
-                    "판단한 경우에 관련 전문가 두 명만 따로 세 번 주고받게 하고 그 결론을 본 토론에 합류시킵니다 "
-                    "(턴당 최대 2회). 판단에 호출 1번, 열리면 발언 3번과 결론·장부 갱신 2번이 더 듭니다. "
-                    "마지막 라운드 뒤에는 열리지 않습니다."
-                )
+                # 줄이 바뀌어도 라운드 칸이 토글 오른쪽에서 떨어지지 않게 한 줄로 묶습니다.
+                with ui.row().classes("items-center gap-2 flex-nowrap"):
+                    self.sub_debate_switch = ui.switch(
+                        "쟁점은 따로 토론", value=self.state.sub_debates, on_change=self.on_sub_debates_change,
+                    ).props("dense dark color=teal-4").classes("text-xs text-slate-300")
+                    self.sub_debate_switch.tooltip(
+                        "라운드(그래프는 단계)가 끝날 때 결정 장부에 미해결 쟁점이 있으면, 오케스트레이터가 필요하다고 "
+                        "판단한 경우에 관련 전문가 두 명만 따로 주고받게 하고 그 결론을 본 토론에 합류시킵니다 "
+                        "(턴당 최대 2회). 판단에 호출 1번, 열리면 라운드마다 발언 2번과 결론·장부 갱신 2번이 더 듭니다. "
+                        "마지막 라운드 뒤에는 열리지 않습니다."
+                    )
+                    self.sub_debate_rounds_row = ui.row().classes("items-center gap-1 flex-nowrap")
+                    with self.sub_debate_rounds_row:
+                        ui.label("최대").classes("text-xs text-slate-300")
+                        self.sub_debate_rounds_input = ui.number(
+                            value=self.state.sub_debate_rounds, min=1, max=MAX_SUB_DEBATE_ROUNDS, step=1, format="%.0f",
+                            on_change=self.on_sub_debate_rounds_change,
+                        ).props("outlined dense dark").classes("w-16 text-xs")
+                        self.sub_debate_rounds_input.tooltip(
+                            "서브 토론 한 번의 최대 라운드 수입니다. 왼쪽의 '최대 라운드'(본 토론)와 별개로 정하며, 서브 토론이 "
+                            "본 토론의 라운드를 쓰지 않습니다. 한 라운드에 두 전문가가 한 번씩 말합니다. 응답을 받지 못하거나 "
+                            "토큰 예산을 다 쓰면 그 전에 끝나고, 그때까지의 발언으로 결론을 씁니다."
+                        )
+                        ui.label("라운드").classes("text-xs text-slate-300")
+                self.sync_sub_debate_rounds()
 
             # 턴 토큰 예산 — 해당 턴의 최대 소모 토큰(입력+출력) 한도. 도달 시 다음 라운드 경계에서 결론 합성으로 이동합니다.
             with ui.row().classes("items-center gap-2 min-w-[180px]"):
@@ -278,6 +297,9 @@ class SessionSettingsComponent:
             self.ask_switch.value = state.ask_user
         if self.sub_debate_switch:
             self.sub_debate_switch.value = state.sub_debates
+        if self.sub_debate_rounds_input:
+            self.sub_debate_rounds_input.value = state.sub_debate_rounds
+        self.sync_sub_debate_rounds()
         if self.tool_mode_select:
             # conf.json 의 기본 모드가 바뀌었을 수 있으니 목록도 새로 그립니다.
             self.tool_mode_select.set_options(self.tool_mode_options(), value=state.tool_mode)
@@ -338,6 +360,24 @@ class SessionSettingsComponent:
 
     def on_sub_debates_change(self, e) -> None:
         self.state.sub_debates = bool(e.value)
+        self.sync_sub_debate_rounds()
+        self.changes.config_changed_later()
+
+    def sync_sub_debate_rounds(self) -> None:
+        """라운드 칸은 토글이 켜져 있을 때만 읽힙니다. 꺼져 있으면 자리는 지키되 흐리게 잠급니다."""
+        if self.sub_debate_rounds_input is None or self.sub_debate_rounds_row is None:
+            return
+        self.sub_debate_rounds_input.set_enabled(self.state.sub_debates)
+        if self.state.sub_debates:
+            self.sub_debate_rounds_row.classes(remove="opacity-50")
+        else:
+            self.sub_debate_rounds_row.classes(add="opacity-50")
+
+    def on_sub_debate_rounds_change(self, e) -> None:
+        # 빈 칸으로 지우는 중이면 (`None`) 마지막 값을 지킵니다.
+        if e.value is None:
+            return
+        self.state.sub_debate_rounds = clamp_sub_debate_rounds(e.value)
         self.changes.config_changed_later()
 
     def on_token_budget_change(self, e) -> None:

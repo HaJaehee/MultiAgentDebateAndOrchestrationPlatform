@@ -9,7 +9,7 @@ from typing import Any, Awaitable, Callable, Coroutine, Dict, List, Optional
 from app.agents.base import Agent
 from app.agents.llm_context import context_budget
 from app.agents.personas import frozen_agents, prepare_agents_for_turn
-from app.config import SKILL_NAME_PATTERN
+from app.config import DEFAULT_SUB_DEBATE_ROUNDS, SKILL_NAME_PATTERN, clamp_sub_debate_rounds
 from app.database.models import SessionModel
 from app.events import EventCallback
 from app.orchestration import plan_gate, turns
@@ -47,9 +47,10 @@ class TurnSetup:
     token_budget: int = 0
     # 전문가 에이전트의 사용자 질문 허용 여부 (`ask__ask_user`, v1.5).
     ask_user: bool = False
-    # 쟁점을 전문가 두 명이 따로 다루는 서브 토론을 허용하는지, 오케스트레이터가 그리는 그래프의 기준이 될
-    # 그래프 파일 id (ADR-034).
+    # 쟁점을 전문가 두 명이 따로 다루는 서브 토론을 허용하는지와 한 번의 최대 라운드 수, 오케스트레이터가 그리는
+    # 그래프의 기준이 될 그래프 파일 id (ADR-034).
     sub_debates: bool = False
+    sub_debate_rounds: int = DEFAULT_SUB_DEBATE_ROUNDS
     base_graph_id: str = ""
 
     def config(self, workspace: Path) -> Dict[str, Any]:
@@ -66,6 +67,7 @@ class TurnSetup:
             "token_budget": self.token_budget,
             "ask_user": self.ask_user,
             "sub_debates": self.sub_debates,
+            "sub_debate_rounds": self.sub_debate_rounds,
             "graph_id": self.base_graph_id,
         }
 
@@ -194,6 +196,7 @@ class TurnPreparer:
             token_budget = max(0, int(session_model.token_budget or 0))
             ask_user = bool(session_model.ask_user)
             sub_debates = bool(session_model.sub_debates)
+            sub_debate_rounds = clamp_sub_debate_rounds(session_model.sub_debate_rounds)
             base_graph_id = (session_model.graph_id or "").strip()
         else:
             strategy_name = resolve_strategy_name(config.get("strategy"))
@@ -206,6 +209,7 @@ class TurnPreparer:
             token_budget = max(0, int(config.get("token_budget") or 0))
             ask_user = bool(config.get("ask_user", False))
             sub_debates = bool(config.get("sub_debates", False))
+            sub_debate_rounds = clamp_sub_debate_rounds(config.get("sub_debate_rounds"))
             base_graph_id = str(config.get("graph_id") or "")
 
         # 도구 보안: 이 대화의 모드와 "이 대화에서 허용·거부" 목록으로 문지기를 세웁니다.
@@ -271,5 +275,6 @@ class TurnPreparer:
             token_budget=token_budget,
             ask_user=ask_user,
             sub_debates=sub_debates,
+            sub_debate_rounds=sub_debate_rounds,
             base_graph_id=base_graph_id,
         )

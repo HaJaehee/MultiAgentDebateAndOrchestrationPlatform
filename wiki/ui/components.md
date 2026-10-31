@@ -146,9 +146,10 @@ The web application workspace is organized into four primary UI components in [a
 - **에이전트 질문 받기** (v1.5): specialists may ask the person a question mid-speech
   ([Ask the User](../agents/ask-user.md)). New conversations start with it on.
 - **쟁점은 따로 토론** (v1.5.1, default off): two specialists may settle an open issue on the side between rounds or graph
-  steps ([Debate Strategies §2-b](../orchestration/debate-strategies.md)). In the feed those speeches are indented and
-  badged 서브 토론, without a round number because they sit between rounds; the opening note and the conclusion stay at
-  full width with their own badges.
+  steps ([Debate Strategies §2-b](../orchestration/debate-strategies.md)). The box right of the switch sets the maximum
+  rounds of one sub-debate, separate from 최대 라운드; it stays in place, dimmed and locked, while the switch is off. In the
+  feed those speeches are indented and badged 서브 토론, without a round number because they sit between rounds; the opening
+  note and the conclusion stay at full width with their own badges.
 - **토큰 예산** (v1.5, empty = none): the turn concludes at the next round boundary once its input+output
   tokens reach this number.
 - **동시 실행 (Parallel Limit)**: How many agents run at once inside one round, stored as

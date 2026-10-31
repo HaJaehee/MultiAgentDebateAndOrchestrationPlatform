@@ -61,6 +61,8 @@ async def test_create_start_and_read_the_result(runner, plan_approval):
         assert bad.status_code == 400 and "그래프" in bad.json()["error"]
         assert (await c.post("/api/sessions", json={"agents": ["nobody"]})).status_code == 400
         assert (await c.post("/api/sessions", json={"max_rounds": 0})).status_code == 400
+        assert (await c.post("/api/sessions", json={"sub_debate_rounds": 0})).status_code == 400
+        assert (await c.post("/api/sessions", json={"sub_debate_rounds": 6})).status_code == 400
 
         created = await c.post("/api/sessions", json={"title": "API 설계", "agents": ["architect", "critic"]})
         assert created.status_code == 201

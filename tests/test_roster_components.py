@@ -14,7 +14,7 @@ from nicegui import ui
 from app import graph_store
 from app.agents.pool import AgentPool
 from app.agents.skills import Skill
-from app.config import AgentConfig
+from app.config import DEFAULT_SUB_DEBATE_ROUNDS, MAX_SUB_DEBATE_ROUNDS, AgentConfig
 from app.orchestration.graph import graph_from_card_order
 from app.orchestration.graph_run import GraphRunTracker
 from app.orchestration.roster_service import Notice, ReloadResult
@@ -513,6 +513,43 @@ def test_the_sub_debate_switch_is_off_until_turned_on_and_follows_the_session(st
     state.sub_debates = False
     settings.sync_from_state()
     assert settings.sub_debate_switch.value is False
+
+
+def test_the_sub_debate_rounds_sit_right_of_the_switch_and_only_listen_while_it_is_on(state, monkeypatch):
+    monkeypatch.setattr(ui, "timer", lambda *a, **k: None)
+    settings, _ = _settings(state)
+    box = settings.sub_debate_rounds_input
+
+    siblings = [e for e in settings.sub_debate_switch.parent_slot.children if not isinstance(e, ui.tooltip)]
+    assert siblings == [settings.sub_debate_switch, settings.sub_debate_rounds_row], "토글 바로 오른쪽, 같은 줄입니다"
+    assert box.value == DEFAULT_SUB_DEBATE_ROUNDS
+    assert box.enabled is False and "opacity-50" in settings.sub_debate_rounds_row.classes
+
+    settings.sub_debate_switch.set_value(True)
+    assert box.enabled is True and "opacity-50" not in settings.sub_debate_rounds_row.classes
+
+    box.set_value(None)
+    assert state.sub_debate_rounds == DEFAULT_SUB_DEBATE_ROUNDS, "지우는 중에는 마지막 값을 지킵니다"
+    box.set_value(99)
+    assert state.sub_debate_rounds == MAX_SUB_DEBATE_ROUNDS
+
+    state.sub_debates, state.sub_debate_rounds = False, 3
+    settings.sync_from_state()
+    assert box.value == 3 and box.enabled is False
+
+
+def test_the_sub_debate_rounds_are_kept_apart_from_the_main_rounds(state, monkeypatch):
+    monkeypatch.setattr(ui, "timer", lambda *a, **k: None)
+    settings, _ = _settings(state)
+    settings.sub_debate_switch.set_value(True)
+
+    settings.rounds_slider.set_value(5)
+    settings.sub_debate_rounds_input.set_value(1)
+    assert (state.max_rounds, state.sub_debate_rounds) == (5, 1)
+    settings.rounds_slider.set_value(2)
+    assert (state.max_rounds, state.sub_debate_rounds) == (2, 1)
+    settings.sub_debate_rounds_input.set_value(4)
+    assert (state.max_rounds, state.sub_debate_rounds) == (2, 4)
 
 
 def test_the_adaptive_strategy_shows_the_parallel_limit_too(state, monkeypatch):

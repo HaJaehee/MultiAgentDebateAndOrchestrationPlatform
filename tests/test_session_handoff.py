@@ -50,7 +50,7 @@ async def _seed_session(workspace: str = "") -> str:
     async with factory() as db:
         db.add(SessionModel(
             id=sid, title="이커머스 아키텍처 토론",
-            strategy="adversarial_debate", max_rounds=4, parallel_limit=2,
+            strategy="adversarial_debate", max_rounds=4, parallel_limit=2, sub_debate_rounds=3,
             active_agents=["orchestrator", "architect", "critic"],
             known_agents=["orchestrator", "architect", "coder", "critic"],
             custom_instructions="Pydantic v2 기준으로 작성",
@@ -103,6 +103,7 @@ async def test_settings_and_agents_are_inherited():
     assert new.strategy == "adversarial_debate"
     assert new.max_rounds == 4
     assert new.parallel_limit == 2
+    assert new.sub_debate_rounds == 3
     assert new.active_agents == ["orchestrator", "architect", "critic"]
     assert new.known_agents == ["orchestrator", "architect", "coder", "critic"]
     assert new.custom_instructions == "Pydantic v2 기준으로 작성"

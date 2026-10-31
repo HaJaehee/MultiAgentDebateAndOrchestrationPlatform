@@ -38,7 +38,7 @@ from app.agents.llm import LLMCaller
 from app.agents.llm_usage import Usage, format_tokens
 from app.agents.personas import freeze_personas
 from app.agents.pool import get_agent_pool
-from app.config import DEFAULT_CONFIG_PATH, PROJECT_ROOT, get_config
+from app.config import DEFAULT_CONFIG_PATH, DEFAULT_SUB_DEBATE_ROUNDS, PROJECT_ROOT, get_config
 from app.database.models import SessionAgentModel, SessionModel, ToolCallRecordModel, TurnModel
 from app.database.session import get_engine, get_session_factory, init_db
 from app.headless import HeadlessError, create_session, turn_result
@@ -66,6 +66,7 @@ class Variant:
     converge_early: bool = True
     token_budget: int = 0
     sub_debates: bool = False
+    sub_debate_rounds: int = DEFAULT_SUB_DEBATE_ROUNDS
     custom_instructions: str = ""
 
 
@@ -180,7 +181,8 @@ async def run_variant(scenario: Scenario, variant: Variant, run_dir: Path, engin
         title=f"{TITLE_PREFIX} {scenario.name} · {variant.label}", strategy=variant.strategy,
         max_rounds=variant.max_rounds, agents=variant.agents, workspace_dir=str(workspace),
         converge_early=variant.converge_early, token_budget=variant.token_budget,
-        sub_debates=variant.sub_debates, custom_instructions=variant.custom_instructions,
+        sub_debates=variant.sub_debates, sub_debate_rounds=variant.sub_debate_rounds,
+        custom_instructions=variant.custom_instructions,
     )
     sid = created["session_id"]
     await _freeze_models(sid, variant.models)

@@ -30,6 +30,8 @@ from app.config.schema import (
     DEBATE_STANCES,
     DEFAULT_DEBATE_PRIORITY,
     DEFAULT_PEER_TOOL_ITERATIONS,
+    DEFAULT_SUB_DEBATE_ROUNDS,
+    MAX_SUB_DEBATE_ROUNDS,
     ORCHESTRATOR_KEY,
     PEERS_TOOL_PREFIX,
     ASK_TOOL_PREFIX,
@@ -44,6 +46,7 @@ from app.config.schema import (
     RootConfig,
     SequentialThinkingConfig,
     TrialConfig,
+    clamp_sub_debate_rounds,
 )
 from app.config.loader import (
     active_config_path,
@@ -81,8 +84,11 @@ __all__ = [
     "DEFAULT_CONFIG_PATH",
     "DEFAULT_DEBATE_PRIORITY",
     "DEFAULT_PEER_TOOL_ITERATIONS",
+    "DEFAULT_SUB_DEBATE_ROUNDS",
     "ICON_EXTENSIONS",
     "MAX_ICON_BYTES",
+    "MAX_SUB_DEBATE_ROUNDS",
+    "clamp_sub_debate_rounds",
     "ORCHESTRATOR_KEY",
     "PEERS_TOOL_PREFIX",
     "ASK_TOOL_PREFIX",

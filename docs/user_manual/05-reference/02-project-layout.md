@@ -56,30 +56,30 @@ SQLite WAL 모드가 정상 동작하지 않아(데이터 파일 손상 위험) 
 app/
 ├── about.py                          22   앱 이름·버전·저작자 (단일 출처)
 ├── main.py                          248   조립: FastAPI 서버, lifespan(시작·종료 순서), 화면·라우터·접근 제어, CLI
-├── api.py                           280   HTTP 엔드포인트 /api/* · /agent-icon
+├── api.py                           281   HTTP 엔드포인트 /api/* · /agent-icon
 ├── routes.py                         22   화면 주소 (체험·쉬운 화면)
 ├── events.py                         90   토론 이벤트 이름표 EventType
 ├── tool_rules.py                    125   도구 보안 규칙 문법 (read(경로) · net(호스트) …)
 ├── timestamps.py                    176   발언·턴·보고서 시각 표기 (화면·문서·보고서 공용)
-├── session_ops.py                   491   세션 되돌리기·이어받기, 피드 기록 읽기
+├── session_ops.py                   492   세션 되돌리기·이어받기, 피드 기록 읽기
 ├── export.py                        234   대화 → 마크다운 문서
 ├── export_mermaid.py              1,618   Mermaid → StarUML·HTML 변환 (외부 의존 없음)
 ├── mermaid_lint.py                  491   다이어그램 문법 검사·복구
 ├── workspace_files.py               797   작업 공간 파일 목록·@언급·업로드·다운로드 (경로 안전장치)
 ├── diagnostics.py                   394   이벤트 루프 정체 스택·브라우저 끊김 보고
 ├── security.py                      782   원격 접속 토큰, 접근 제어 미들웨어
-├── headless.py                      251   헤드리스 토론 실행 코어 (REST·MCP 공용) (v1.5)
+├── headless.py                      255   헤드리스 토론 실행 코어 (REST·MCP 공용) (v1.5)
 ├── mcp_server.py                    180   내장 MCP 서버 엔드포인트 /mcp (v1.5)
 ├── workspace_checkpoint.py          323   작업 공간 턴 체크포인트·롤백·분기 내보내기 (v1.5)
 ├── session_fork.py                  275   대화 세션 분기(Fork), 비교 데이터 구성 및 결론 평가 (v1.5)
-├── bench.py                         337   전략 벤치마크 하네스 python -m app.bench (v1.5)
+├── bench.py                         339   전략 벤치마크 하네스 python -m app.bench (v1.5)
 ├── graph_store.py                   105   그래프 토론의 그래프 파일 data/graphs/
 │
 ├── config/
-│   ├── __init__.py                  131   공개 API (앱은 app.config 로 가져다 씀)
+│   ├── __init__.py                  137   공개 API (앱은 app.config 로 가져다 씀)
 │   ├── env.py                        96   .env 읽기, ${VAR} 치환
 │   ├── paths.py                     124   프로젝트 루트·데이터 폴더·작업 공간·아이콘 저장소
-│   ├── schema.py                    730   Pydantic 모델과 기본값
+│   ├── schema.py                    742   Pydantic 모델과 기본값
 │   ├── loader.py                    101   conf.json 읽기·쓰기, get_config 싱글턴
 │   └── editors.py                   680   화면에서 고친 값을 conf.json 에 되쓰기
 │
@@ -120,7 +120,7 @@ app/
 ├── orchestration/
 │   ├── engine.py                    592   조립과 턴 수명 (run_turn · resume_turn)
 │   ├── context.py                    51   EngineContext — 서비스가 함께 쓰는 것
-│   ├── turn_setup.py                275   턴 구성·참여자·도구 게이트
+│   ├── turn_setup.py                280   턴 구성·참여자·도구 게이트
 │   ├── recording.py                 633   TurnRecorder — 기록, 재시도, data/unsaved/
 │   ├── speech.py                    757   SpeechRunner — 발언 받기·기록·확정 (조각 묶음·초안은 _ChunkStream·_Speech)
 │   ├── conversation.py              566   ConversationMemory — 맥락·요약·장부
@@ -131,7 +131,7 @@ app/
 │   ├── phases/parallel.py           388   병렬 지시 라운드
 │   ├── phases/graph.py              721   그래프 토론
 │   ├── phases/graph_drafting.py     164   적응형 그래프 토론: 오케스트레이터가 그래프를 그림 (ADR-034)
-│   ├── phases/sub_debate.py         359   서브 토론: 쟁점을 두 전문가가 따로, 결론만 합류 (ADR-034)
+│   ├── phases/sub_debate.py         370   서브 토론: 쟁점을 두 전문가가 따로, 결론만 합류 (ADR-034)
 │   ├── phases/routing.py            118   지명·분배 응답 읽기
 │   ├── phases/synthesis.py          766   3단계: 합성, 다이어그램 수선, 산출물
 │   ├── artifacts.py                 289   코드 블록·Mermaid 정규화, 로스터 글
@@ -153,15 +153,15 @@ app/
 │
 ├── database/
 │   ├── search.py                    176   대화 세션 및 발언 검색 (FTS5 trigram + LIKE) (v1.5)
-│   ├── models.py                    343   SQLAlchemy ORM
-│   └── session.py                   260   비동기 엔진·세션 팩토리, init_db, 컬럼 이관
+│   ├── models.py                    346   SQLAlchemy ORM
+│   └── session.py                   262   비동기 엔진·세션 팩토리, init_db, 컬럼 이관
 │
 ├── easy/                              비엔지니어 화면 /trial/easy (ADR-029)
 ├── trial/                             체험 서버 /trial
 │
 └── ui/
     ├── run_binding.py                85   화면이 토론에 붙는 구독 (세 화면 공용)
-    ├── expert/page.py               846   전문가 화면 ExpertPage
+    ├── expert/page.py               849   전문가 화면 ExpertPage
     ├── expert/events.py             544   이벤트별 화면 반영
     ├── expert/chrome.py             104   머리 줄, 정보 창
     ├── shared/page.py               119   체험·쉬운 화면 공용 틀

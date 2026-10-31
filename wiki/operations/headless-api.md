@@ -12,7 +12,7 @@ question and read back the conclusion. Both are thin layers over one service,
 | Method & path | What it does |
 | :--- | :--- |
 | `GET /api/sessions?limit=50` | Recent conversations: id, title, strategy, agents, `running` |
-| `POST /api/sessions` | Create a conversation. Body: `title`, `strategy`, `max_rounds` (1–10), `agents` (keys; empty = every enabled agent), `custom_instructions`, `workspace_dir`, `converge_early`, `token_budget`, `sub_debates`. `201` |
+| `POST /api/sessions` | Create a conversation. Body: `title`, `strategy`, `max_rounds` (1–10), `agents` (keys; empty = every enabled agent), `custom_instructions`, `workspace_dir`, `converge_early`, `token_budget`, `sub_debates`, `sub_debate_rounds` (1–5). `201` |
 | `POST /api/sessions/{id}/turns` | Start a turn: `{"prompt": "...", "attended": false}`. `202`; `409` if one is running |
 | `POST /api/sessions/{id}/stop` | Ask the running turn to stop and conclude with what it has |
 | `GET /api/sessions/{id}/status` | Running: phase, status line, whether a person's answer is awaited. Idle: last turn's status |

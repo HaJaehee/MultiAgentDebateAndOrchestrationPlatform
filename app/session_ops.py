@@ -348,6 +348,7 @@ async def continue_session(
         token_budget=source.token_budget,
         ask_user=source.ask_user,
         sub_debates=source.sub_debates,
+        sub_debate_rounds=source.sub_debate_rounds,
         active_agents=list(source.active_agents or []),
         known_agents=list(source.known_agents or []),
         custom_instructions=source.custom_instructions or "",

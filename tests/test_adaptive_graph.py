@@ -222,9 +222,10 @@ def test_the_session_card_counts_the_checkboxes_not_a_graph_file():
 def test_the_benchmark_accepts_it_because_it_needs_no_graph_file(tmp_path):
     path = tmp_path / "scenario.json"
     path.write_text(json.dumps({"prompt": "p", "variants": [
-        {"label": "a", "strategy": "adaptive_graph", "sub_debates": True},
+        {"label": "a", "strategy": "adaptive_graph", "sub_debates": True, "sub_debate_rounds": 3},
     ]}), encoding="utf-8")
-    assert load_scenario(path).variants[0].sub_debates is True
+    variant = load_scenario(path).variants[0]
+    assert variant.sub_debates is True and variant.sub_debate_rounds == 3
     path.write_text(json.dumps({"prompt": "p", "variants": [{"label": "a", "strategy": "graph_debate"}]}), encoding="utf-8")
     with pytest.raises(ValueError, match="지원되지 않는 전략"):
         load_scenario(path)

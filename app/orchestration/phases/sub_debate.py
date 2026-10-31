@@ -7,7 +7,8 @@
 * **언제** — 라운드(그래프는 단계) 경계에서, 결정 장부에 미해결 쟁점이 있을 때만 오케스트레이터에게 묻습니다.
   쟁점이 없으면 LLM 을 부르지 않습니다. 대화 설정으로 켜야 돌고(`sessions.sub_debates`), 한 턴에
   `MAX_SUB_DEBATES_PER_TURN` 번까지이며, 토큰 예산을 다 썼으면 열지 않습니다.
-* **어떻게** — 두 사람이 번갈아 `SUB_DEBATE_SPEECHES` 번 말하고 오케스트레이터가 결론을 씁니다. 도구는 쓸 수
+* **어떻게** — 두 사람이 번갈아 말하고 오케스트레이터가 결론을 씁니다. 라운드 수는 대화 설정이고
+  (`sessions.sub_debate_rounds`), 도는 중에 예산을 다 쓰면 다음 라운드 전에 끊고 결론으로 갑니다. 도구는 쓸 수
   있지만 상한을 줄이고, 자문은 뺍니다 — 서브 토론 안에서 다시 가지를 치지 않습니다.
 * **합류** — 안의 발언은 화면과 저장 문서에만 남고(`turns.in_main_record`), 다른 발언자·장부·합성에는 결론만
   갑니다. 결론이 나오면 장부를 바로 갱신합니다 — 다음 발언자가 장부에서 이미 풀린 쟁점을 다시 읽지 않게.
@@ -40,8 +41,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# 두 사람이 번갈아 하는 발언 수. 입장 → 반박 → 답변이면 쟁점이 드러납니다. 더 길면 라운드와 다르지 않습니다.
-SUB_DEBATE_SPEECHES = 3
+# 서브 토론 한 라운드는 두 전문가가 한 번씩 말하는 것입니다. 라운드 수는 본 토론의 `max_rounds` 와 별개인 대화
+# 설정이고(`sessions.sub_debate_rounds`), 서브 토론이 몇 라운드를 돌든 본 토론의 라운드를 쓰지 않습니다.
+SPEECHES_PER_ROUND = 2
 MAX_SUB_DEBATES_PER_TURN = 2
 SUB_DEBATE_TOOL_ITERATIONS = DEFAULT_PEER_TOOL_ITERATIONS
 SUB_DEBATE_PROMPT_MARKER = "[서브 토론 판단]"
@@ -94,7 +96,7 @@ class SubDebateRunner(PhaseExecutor):
             len(candidates) < 2
             or turns.count_kind(turn_messages, turns.KIND_SUBDEBATE_OPEN) >= MAX_SUB_DEBATES_PER_TURN
             or not memory.open_issue_count(state.decision_ledger)
-            or (setup.token_budget and state.usage.total_tokens >= setup.token_budget)
+            or self.budget_spent(state, setup)
         ):
             return None
 
@@ -118,7 +120,8 @@ class SubDebateRunner(PhaseExecutor):
             msg_type="orchestrator",
             content=(
                 f"[서브 토론] **쟁점:** {issue}\n\n"
-                f"{pair[0].name} ↔ {pair[1].name} · {SUB_DEBATE_SPEECHES}번 주고받은 뒤 오케스트레이터가 결론을 씁니다."
+                f"{pair[0].name} ↔ {pair[1].name} · 최대 {setup.sub_debate_rounds}라운드 주고받은 뒤 "
+                f"오케스트레이터가 결론을 씁니다."
                 + (f"\n\n{reason}" if reason else "")
             ),
             kind=turns.KIND_SUBDEBATE_OPEN,
@@ -174,7 +177,7 @@ class SubDebateRunner(PhaseExecutor):
         on_event: Optional[EventCallback],
         redo: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> None:
-        """남은 발언을 돌리고 결론을 씁니다. 한 사람이 응답하지 못하면 거기까지로 결론을 냅니다."""
+        """남은 발언을 돌리고 결론을 씁니다. 한 사람이 응답하지 못하거나 예산을 다 쓰면 거기까지로 결론을 냅니다."""
         redo = redo if redo is not None else {}
         by_key = {a.key: a for a in setup.active_agents}
         pair = [by_key[key] for key in record.agents if key in by_key]
@@ -182,7 +185,11 @@ class SubDebateRunner(PhaseExecutor):
         failed = any(m.msg_type == "error" for m in exchange)
 
         if len(pair) == 2 and not failed:
-            for index in range(len(exchange), SUB_DEBATE_SPEECHES):
+            total = setup.sub_debate_rounds * SPEECHES_PER_ROUND
+            for index in range(len(exchange), total):
+                # 라운드 수를 늘릴 수 있으니 열 때 한 번 보는 것으로는 모자랍니다.
+                if index % SPEECHES_PER_ROUND == 0 and self.budget_spent(state, setup):
+                    break
                 await self.recorder.apply_interjections(
                     db=db, state=state, control=control, round_number=boundary, on_event=on_event,
                 )
@@ -197,7 +204,7 @@ class SubDebateRunner(PhaseExecutor):
                         "speaker": f"{speaker.name} (서브 토론)",
                         "round": boundary,
                     })
-                instruction = self.speech_instruction(speaker, other, record.issue, index)
+                instruction = self.speech_instruction(speaker, other, record.issue, index, total)
                 if speaker.key in redo:
                     instruction = f"{turns.resume_notice(redo.pop(speaker.key))}\n\n{instruction}"
                 message = await self.speech.speak(
@@ -221,6 +228,10 @@ class SubDebateRunner(PhaseExecutor):
         await self.conclude(db, state, setup, boundary, record.issue, exchange, control=control, on_event=on_event)
 
     @staticmethod
+    def budget_spent(state: DebateState, setup: "TurnSetup") -> bool:
+        return bool(setup.token_budget and state.usage.total_tokens >= setup.token_budget)
+
+    @staticmethod
     def narrowed(agent: Agent) -> Agent:
         """서브 토론에서 쓸 사본. 도구 상한을 줄이고 자문을 뺍니다 — 여기서 다시 가지를 치지 않습니다."""
         return agent.model_copy(update={
@@ -230,20 +241,20 @@ class SubDebateRunner(PhaseExecutor):
         })
 
     @staticmethod
-    def speech_instruction(speaker: Agent, other: Agent, issue: str, index: int) -> str:
+    def speech_instruction(speaker: Agent, other: Agent, issue: str, index: int, total: int) -> str:
         head = (
-            f"[서브 토론 {index + 1}/{SUB_DEBATE_SPEECHES}] 오케스트레이터가 이 쟁점을 따로 떼어 당신과 "
+            f"[서브 토론 {index + 1}/{total}] 오케스트레이터가 이 쟁점을 따로 떼어 당신과 "
             f"{other.name}({other.role}) 두 사람에게 맡겼습니다. 다른 전문가는 이 대화를 읽지 않고 "
             f"오케스트레이터의 결론만 읽습니다.\n쟁점: {issue}\n\n"
         )
         if index == 0:
             body = "쟁점에 대한 당신의 입장과 근거를 먼저 밝히세요."
-        elif index == SUB_DEBATE_SPEECHES - 1:
-            body = "상대의 반박에 답하고, 합의된 것과 남은 이견을 구분해 마무리하세요."
+        elif index == total - 1:
+            body = "직전 발언에 답하고, 합의된 것과 남은 이견을 구분해 마무리하세요."
         else:
             body = (
                 "직전 발언의 근거를 당신의 전문 영역에서 검증하세요. 동의하면 어디까지인지, 반대하면 막연한 "
-                "우려 대신 재현 가능한 반례나 근거를 대세요."
+                "우려 대신 재현 가능한 반례나 근거를 대세요. 이미 합의한 것은 되풀이하지 마세요."
             )
         return head + body + " 쟁점 밖의 일은 다루지 말고, 도구는 쟁점을 검증하는 데 꼭 필요할 때만 쓰세요."
 

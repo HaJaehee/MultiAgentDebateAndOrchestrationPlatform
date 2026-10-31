@@ -6,7 +6,8 @@
 2. **쟁점이 있을 때만 묻는다** — 장부에 미해결 쟁점이 없으면 LLM 을 부르지 않는다. 형식을 어긴 답으로 열지 않는다.
 3. **결론만 합류한다** — 안의 발언은 화면과 저장 문서에만 남고, 다른 발언자·장부·합성에는 결론만 간다. 그래프
    노드는 선이 무엇을 싣든 결론을 받는다.
-4. **짧고 유한하다** — 번갈아 세 번, 턴당 두 번, 예산을 다 썼으면 열지 않는다. 가지를 다시 치지 않는다.
+4. **유한하다** — 정해 둔 라운드까지, 턴당 두 번, 예산을 다 썼으면 열지 않고 더 돌지 않는다. 가지를 다시 치지 않는다.
+   라운드 수는 본 토론의 라운드 수와 따로 정하고, 서브 토론이 본 토론의 라운드를 쓰지 않는다.
 5. **실패와 재개** — 응답을 못 받으면 있는 만큼으로 닫고 지어내지 않는다. 끊기면 다시 묻지 않고 남은 발언부터 이어 간다.
 """
 
@@ -21,7 +22,13 @@ from sqlalchemy import select
 
 from app import graph_store
 from app.agents.pool import AgentPool
-from app.config import AgentConfig, PEERS_TOOL_PREFIX
+from app.config import (
+    DEFAULT_SUB_DEBATE_ROUNDS,
+    MAX_SUB_DEBATE_ROUNDS,
+    PEERS_TOOL_PREFIX,
+    AgentConfig,
+    clamp_sub_debate_rounds,
+)
 from app.database.models import MessageModel, SessionModel, TurnModel
 from app.database.session import get_session_factory, init_db
 from app.export import build_session_markdown
@@ -32,17 +39,18 @@ from app.orchestration.graph import parse_graph
 from app.orchestration.phases.routing import parse_sub_debate
 from app.orchestration.phases.sub_debate import (
     MAX_SUB_DEBATES_PER_TURN,
+    SPEECHES_PER_ROUND,
     SUB_DEBATE_CONCLUSION_MARKER,
     SUB_DEBATE_PROMPT_MARKER,
-    SUB_DEBATE_SPEECHES,
     SUB_DEBATE_TOOL_ITERATIONS,
     SubDebateRunner,
 )
 from tests.fake_llm import FakeLLMCaller
 
 DB_URL = "sqlite+aiosqlite:///:memory:"
-# 서브 토론 안의 발언 지시 ("[서브 토론 1/3]"). 판단·결론 호출과 구분합니다.
+# 서브 토론 안의 발언 지시 ("[서브 토론 1/4]"). 판단·결론 호출과 구분합니다.
 SIDE_SPEECH = re.compile(r"\[서브 토론 \d")
+DEFAULT_SPEECHES = DEFAULT_SUB_DEBATE_ROUNDS * SPEECHES_PER_ROUND
 
 OPEN_LEDGER = """## 요구사항·제약
 - 없음
@@ -287,9 +295,9 @@ async def test_two_specialists_take_turns_and_the_orchestrator_concludes():
         (turns.KIND_SUBDEBATE_SPEECH, "architect"),
         (turns.KIND_SUBDEBATE_SPEECH, "critic"),
         (turns.KIND_SUBDEBATE_SPEECH, "architect"),
+        (turns.KIND_SUBDEBATE_SPEECH, "critic"),
         (turns.KIND_SUBDEBATE_CONCLUSION, "orchestrator"),
-    ]
-    assert len([m for m in side if m.turn_meta["kind"] == turns.KIND_SUBDEBATE_SPEECH]) == SUB_DEBATE_SPEECHES
+    ], "기본은 2라운드입니다"
     assert {m.round_number for m in side} == {1}, "라운드 1 경계에서 열렸습니다"
     assert side[0].turn_meta["issue"] == "토큰 저장 위치"
     assert side[-1].content.startswith("[서브 토론 결론 · 토큰 저장 위치]"), "결론만 읽어도 무슨 쟁점인지 압니다"
@@ -303,7 +311,7 @@ async def test_the_participants_see_the_issue_the_exchange_and_not_the_whole_tra
     await _run(llm, sid)
 
     speech_prompts = llm.side_prompts()
-    assert len(speech_prompts) == SUB_DEBATE_SPEECHES
+    assert len(speech_prompts) == DEFAULT_SPEECHES
     assert "쟁점: 토큰 저장 위치" in speech_prompts[0] and "Quality Critic" in speech_prompts[0]
     assert "System Architect 의 서브 토론 비밀 발언 1" in speech_prompts[1], "두 번째 사람은 첫 발언을 읽습니다"
     assert "[직전 논의]" in speech_prompts[0], "쟁점이 나온 논의는 함께 받습니다"
@@ -373,6 +381,91 @@ def test_inside_a_sub_debate_no_further_branches_and_fewer_tools():
     assert narrowed.allow_peer_consultation is False
     assert narrowed.max_tool_iterations == SUB_DEBATE_TOOL_ITERATIONS
     assert agent.allowed_mcp_servers == ["filesystem", PEERS_TOOL_PREFIX], "대화의 에이전트는 그대로입니다"
+
+
+# =============================================================== 3-b. 라운드 수
+
+
+def _side_speakers(rows) -> List[str]:
+    return [m.sender_key for m in rows if (m.turn_meta or {}).get("kind") == turns.KIND_SUBDEBATE_SPEECH]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rounds", [1, 3])
+async def test_the_setting_decides_how_many_rounds_they_exchange(rounds):
+    sid = await _session(sub_debate_rounds=rounds)
+    llm = IssueLLM()
+    await _run(llm, sid)
+    rows = await _rows(sid)
+    assert _side_speakers(rows) == ["architect", "critic"] * rounds, "한 라운드에 두 사람이 한 번씩 말합니다"
+    assert _kinds(rows).count(turns.KIND_SUBDEBATE_CONCLUSION) == 1
+    opening = next(m for m in rows if (m.turn_meta or {}).get("kind") == turns.KIND_SUBDEBATE_OPEN)
+    assert f"최대 {rounds}라운드" in opening.content
+    assert f"[서브 토론 {rounds * 2}/{rounds * 2}]" in llm.side_prompts()[-1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_rounds, side_rounds, opened", [(2, 4, 1), (3, 1, 2)])
+async def test_side_rounds_are_set_and_counted_apart_from_the_main_rounds(max_rounds, side_rounds, opened):
+    """어느 쪽을 늘리거나 줄여도 다른 쪽의 수는 그대로입니다."""
+    sid = await _session(max_rounds=max_rounds, sub_debate_rounds=side_rounds)
+    llm = IssueLLM()
+    state = await _run(llm, sid)
+    rows = await _rows(sid)
+
+    assert len(_side_speakers(rows)) == opened * side_rounds * SPEECHES_PER_ROUND
+    main = [m for m in rows if (m.turn_meta or {}).get("kind") == turns.KIND_SPEECH]
+    assert sorted({m.round_number for m in main}) == list(range(1, max_rounds + 1)), "본 토론 라운드를 쓰지 않습니다"
+    assert len(main) == max_rounds * 3, "전문가 셋이 라운드마다 한 번씩"
+    assert state.current_round == max_rounds and state.max_rounds == max_rounds
+    assert any(f"Round {max_rounds} of {max_rounds}" in m[-1]["content"] for _k, m in llm.sent)
+
+
+@pytest.mark.asyncio
+async def test_a_budget_spent_inside_it_stops_before_the_next_round_and_still_concludes():
+    sid = await _session(token_budget=10 ** 6, sub_debate_rounds=4)
+    usage = {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+    llm = IssueLLM(usage=usage)
+
+    def spend(count: int) -> None:
+        if count == 2:
+            llm.usage = {"prompt_tokens": 10 ** 7, "completion_tokens": 1, "total_tokens": 10 ** 7 + 1}
+
+    llm.on_side = spend
+    state = await _run(llm, sid)
+    rows = await _rows(sid)
+    assert _side_speakers(rows) == ["architect", "critic"], "라운드 하나를 마치고 멈춥니다"
+    assert llm.prompts_with(SUB_DEBATE_CONCLUSION_MARKER), "그때까지의 발언으로 결론을 씁니다"
+    assert state.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_sub_debate_keeps_the_rounds_its_turn_started_with():
+    sid = await _session(sub_debate_rounds=2)
+    turn_id = await _crash_inside(sid, 2)
+    async with get_session_factory(DB_URL)() as db:
+        (await db.get(SessionModel, sid)).sub_debate_rounds = MAX_SUB_DEBATE_ROUNDS
+        await db.commit()
+
+    await OrchestratorEngine(agent_pool=_pool(), llm_caller=IssueLLM()).resume_turn(sid, turn_id, "continue")
+    assert len(_side_speakers(await _rows(sid))) == 2 * SPEECHES_PER_ROUND, "끊긴 턴은 고정해 둔 구성으로 마칩니다"
+
+
+def test_the_opener_and_the_closer_get_their_own_instruction_at_any_length():
+    architect, critic = _pool().get("architect"), _pool().get("critic")
+    first = SubDebateRunner.speech_instruction(architect, critic, "쟁점", 0, 2)
+    assert "[서브 토론 1/2]" in first and "입장과 근거를 먼저" in first
+    assert "마무리" in SubDebateRunner.speech_instruction(critic, architect, "쟁점", 1, 2), "1라운드면 둘째가 마지막입니다"
+    middle = SubDebateRunner.speech_instruction(critic, architect, "쟁점", 1, 6)
+    assert "[서브 토론 2/6]" in middle and "마무리" not in middle and "되풀이하지" in middle
+    assert "마무리" in SubDebateRunner.speech_instruction(critic, architect, "쟁점", 5, 6)
+
+
+@pytest.mark.parametrize("value, expected", [
+    (None, DEFAULT_SUB_DEBATE_ROUNDS), (0, 1), (-3, 1), (1, 1), (3, 3), (99, MAX_SUB_DEBATE_ROUNDS),
+])
+def test_the_rounds_stay_in_range(value, expected):
+    assert clamp_sub_debate_rounds(value) == expected
 
 
 # =============================================================== 4. 그래프
@@ -505,7 +598,7 @@ async def test_an_interrupted_sub_debate_continues_without_asking_again():
     rows = await _rows(sid)
     assert _kinds(rows).count(turns.KIND_SUBDEBATE_OPEN) == 1, "같은 경계에 두 번 열지 않습니다"
     speeches = [m.sender_key for m in rows if (m.turn_meta or {}).get("kind") == turns.KIND_SUBDEBATE_SPEECH]
-    assert speeches == ["architect", "critic", "architect"], "남은 차례부터, 같은 순서로 이어 갑니다"
+    assert speeches == ["architect", "critic", "architect", "critic"], "남은 차례부터, 같은 순서로 이어 갑니다"
     assert _kinds(rows).count(turns.KIND_SUBDEBATE_CONCLUSION) == 1
     round_one = [m for m in rows if m.round_number == 1 and (m.turn_meta or {}).get("kind") == turns.KIND_SPEECH]
     assert len(round_one) == 3, "끝난 라운드의 발언은 다시 하지 않습니다"

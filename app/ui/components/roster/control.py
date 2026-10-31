@@ -11,6 +11,7 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional
 from nicegui import ui
 
 from app.agents.base import Agent
+from app.config import DEFAULT_SUB_DEBATE_ROUNDS
 from app.orchestration.roster_service import RosterService
 from app.ui.components.roster.agent_admin import AgentAdminComponent
 from app.ui.components.roster.agent_cards import AgentCardsComponent
@@ -324,11 +325,12 @@ class AgentRosterControl:
         tool_grants: Optional[List[str]] = None,
         tool_denials: Optional[List[str]] = None,
         sub_debates: bool = False,
+        sub_debate_rounds: int = DEFAULT_SUB_DEBATE_ROUNDS,
     ) -> None:
         self.state.apply_session(
             self.service.agent_pool(), active_keys, strategy, max_rounds, instructions, parallel_limit,
             converge_early, token_budget, ask_user, session_id, workspace_dir, personas_locked, personas,
-            known_keys, session_agents, tool_mode, sub_debates,
+            known_keys, session_agents, tool_mode, sub_debates, sub_debate_rounds,
         )
         self.tool_rules.set_rules(tool_grants, tool_denials)
 

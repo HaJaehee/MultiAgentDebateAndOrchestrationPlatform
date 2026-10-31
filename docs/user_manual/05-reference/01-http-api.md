@@ -219,7 +219,7 @@ MCP 서버별 연결 상태. `"enabled": false` 로 꺼 둔 서버도 함께 보
 | 엔드포인트 | 설명 |
 | :--- | :--- |
 | `GET /api/sessions?limit=50` | 최근 대화 세션 목록 조회 (세션 ID, 제목, 토론 전략, 참여 에이전트 목록, 진행 여부) |
-| `POST /api/sessions` | 새 대화 세션을 생성합니다. 요청 본문: `title`, `strategy`, `max_rounds`(1~10), `agents`(생략 시 활성화된 전체 에이전트), `custom_instructions`, `workspace_dir`, `converge_early`, `token_budget`, `sub_debates`. 상태 코드 `201` 반환 |
+| `POST /api/sessions` | 새 대화 세션을 생성합니다. 요청 본문: `title`, `strategy`, `max_rounds`(1~10), `agents`(생략 시 활성화된 전체 에이전트), `custom_instructions`, `workspace_dir`, `converge_early`, `token_budget`, `sub_debates`, `sub_debate_rounds`(1~5). 상태 코드 `201` 반환 |
 | `POST /api/sessions/{id}/turns` | 토론 턴 시작 요청: `{"prompt": "...", "attended": false}`. 접수 시 `202`, 이미 진행 중인 경우 `409` |
 | `POST /api/sessions/{id}/stop` | 현재까지의 발언 내용을 바탕으로 최종 결론을 도출하도록 토론 중단(Stop) 요청 |
 | `GET /api/sessions/{id}/status` | 세션 실행 상태 조회: 진행 중인 경우 현재 페이즈, 상태 메시지, 사용자 응답 대기 여부를 반환하며, 유휴 상태인 경우 마지막 턴의 상태 반환 |

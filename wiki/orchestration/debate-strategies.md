@@ -263,7 +263,7 @@ flowchart LR
     Q -->|no| N["Next round / step"]
     Q -->|yes| A["Orchestrator decides<br/>(tool-less, JSON)"]
     A -->|no| N
-    A -->|"two agents, one issue"| S["A → B → A"]
+    A -->|"two agents, one issue"| S["(A → B) × sub_debate_rounds"]
     S --> C["Orchestrator's conclusion"]
     C --> L["Ledger updated"]
     L --> N
@@ -273,8 +273,13 @@ flowchart LR
   ledger has an open issue, so an issue-free turn costs what it did. Not after the last round: nothing would read it.
 - **Opening**: only a well-formed `{"open": true, "issue", "agents": [a, b], "reason"}` naming two different participating
   specialists opens one. Unlike nominations, agent keys are not scraped from prose; a guess would spend calls nobody chose.
-- **Limits**: three speeches, two per turn, one per boundary. Not opened once the token budget is spent or a stop is
-  pending. Inside, peer consultation is off and tool iterations are capped at 3, so it cannot branch again.
+- **Rounds**: `sessions.sub_debate_rounds` (1–5, default 2), set in the box right of the switch. A round is one speech from
+  each of the two. It is kept apart from `max_rounds`: neither value reads the other, and a sub-debate uses up no main
+  round. The turn's config freezes it, so a resumed turn finishes with the value it started with. All rounds run even if the
+  two agree; deciding that would cost a call per round or scraping a marker from the prose.
+- **Limits**: two per turn, one per boundary. Not opened once the token budget is spent or a stop is pending. If the budget
+  runs out inside, it stops before the next round and concludes from what was said. Inside, peer consultation is off and
+  tool iterations are capped at 3, so it cannot branch again.
 - **What speakers see**: the goal, pinned user record and plan, a digest of the preceding discussion, and this exchange.
 - **Joining back**: speeches of kind `subdebate_speech` are left out of every other speaker's context, including the two
   participants' next round, and out of the ledger, summaries and synthesis (`turns.in_main_record`). The feed and the saved

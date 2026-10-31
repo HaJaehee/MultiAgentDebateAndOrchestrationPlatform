@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, JSON, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from app.config import DEFAULT_SUB_DEBATE_ROUNDS
 
 
 def utc_now() -> datetime:
@@ -43,6 +44,8 @@ class SessionModel(Base):
     # 라운드·단계 경계에서 미해결 쟁점을 전문가 두 명이 따로 다루는 서브 토론을 허용하는지 (ADR-034). 사람이 고르지
     # 않은 LLM 호출이 늘어나는 기능이라 켜야 돕니다.
     sub_debates: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # 서브 토론 한 번의 최대 라운드 수. `max_rounds`(본 토론)와 별개입니다. 한 라운드는 두 전문가가 한 번씩 말하는 것입니다.
+    sub_debate_rounds: Mapped[int] = mapped_column(Integer, default=DEFAULT_SUB_DEBATE_ROUNDS, nullable=False)
     # 다른 대화의 특정 턴에서 분기(fork) 생성된 세션인 경우 해당 원본 정보 `{"session_id", "turn_id", "title"}` (v1.5). 없으면 NULL.
     forked_from: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     active_agents: Mapped[List[str]] = mapped_column(JSON, default=list)

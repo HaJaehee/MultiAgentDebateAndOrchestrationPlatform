@@ -408,6 +408,18 @@ class LLMConfig(BaseModel):
 # 동료 자문(peers)에서 자문받는 에이전트가 쓰는 도구 호출 상한의 기본값.
 DEFAULT_PEER_TOOL_ITERATIONS = 3
 
+# 서브 토론 한 번의 라운드 수 (ADR-034). 본 토론의 `max_rounds` 와 별개입니다. 한 라운드는 두 전문가가 한 번씩 말하는 것입니다.
+DEFAULT_SUB_DEBATE_ROUNDS = 2
+MAX_SUB_DEBATE_ROUNDS = 5
+
+
+def clamp_sub_debate_rounds(value: Any) -> int:
+    """서브 토론 라운드 수를 쓸 수 있는 범위로 옮깁니다. 값이 없으면 기본값입니다."""
+    if value is None:
+        return DEFAULT_SUB_DEBATE_ROUNDS
+    return max(1, min(MAX_SUB_DEBATE_ROUNDS, int(value)))
+
+
 class PeerConsultationConfig(BaseModel):
     """동료 자문(peers, app/agents/consultation.py) 설정. `allowed_mcp_servers` 에 "peers" 가 있을 때만 쓰입니다.
 
