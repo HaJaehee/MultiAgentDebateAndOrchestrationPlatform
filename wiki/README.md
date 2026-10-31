@@ -38,6 +38,7 @@ wiki/
 │   ├── workspace-checkpoints.md           # Turn snapshots of the workspace, revert, fork export (v1.5)
 │   ├── turn-recovery.md                   # Interrupted turns: turn records, detection, continue / finish / discard, tool-step drafts
 │   ├── plan-approval.md                   # Human approval between the plan and the debate: editable tasks, revision, parked turns
+│   ├── speech-revisions.md                # Retrying one finished speech with versions; inline comments to one agent (ADR-036)
 │   ├── context-memory.md                  # Pinned user record, decision ledger, summaries; convergence & early end (v1.5)
 │   └── artifact-generation.md             # Markdown reports, Mermaid diagrams & diagram self-repair
 ├── ui/

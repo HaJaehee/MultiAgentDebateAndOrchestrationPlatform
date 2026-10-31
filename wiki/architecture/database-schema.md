@@ -14,6 +14,7 @@ erDiagram
     sessions ||--o{ session_agents : "has (cascade)"
     sessions ||--o{ turns : "has"
     turns ||--o{ speech_drafts : "has (cascade)"
+    sessions ||--o{ speech_comments : "has (cascade)"
     messages ||--o{ tool_calls : "contains (set null)"
 
     sessions {
@@ -55,6 +56,7 @@ erDiagram
         datetime turn_started_at "Nullable: set only on the synthesis row that closed a turn"
         string turn_id "Nullable: the turn this record belongs to"
         json turn_meta "Nullable: role in the turn's flow (kind + nomination/assignment values)"
+        json revisions "Nullable: versions of this speech that are not live (ADR-036)"
     }
 
     turns {
@@ -71,6 +73,15 @@ erDiagram
         datetime started_at "UTC timestamp"
         datetime updated_at "UTC timestamp"
         datetime finished_at "Nullable"
+    }
+
+    speech_comments {
+        string id PK "UUID4"
+        string session_id FK "References sessions(id)"
+        string message_id "The speech the comment is on"
+        string agent_key "Who receives it"
+        text comment "The user's comment, with the selected quote"
+        string status "pending | delivered"
     }
 
     speech_drafts {
@@ -180,6 +191,8 @@ Stores the sequential transcript of messages exchanged during a debate.
 | `turn_id` | `VARCHAR(36)` | Yes | - | The turn this record belongs to (`turns.id`). NULL for rows written before turns were recorded. |
 | `turn_meta` | `JSON` | Yes | - | The record's role in the turn's flow: `{"kind": ...}` with `opening`, `interjection`, `plan`, `speech`, `merge`, `gate`, `nomination` (+ `speakers`), `assignment` (+ `tasks`), `note`, `failure`, `interrupted`, `synthesis`. Interrupted turns are rebuilt from these values, not from the sentences in `content`. See [Interrupted Turns](../orchestration/turn-recovery.md). |
 
+`revisions` (`JSON`, nullable) holds a speech's versions that are not live, oldest number first: `n`, `content`, `msg_type`, `llm_meta`, `started_at`, `finished_at`, `tool_record_ids`. It is `NULL` until the speech is run again. The row itself always holds the live version, so readers need no filter. `KIND_SPEECH` rows also keep `turn_meta.prompt_tail`, the last prompt message, for that retry ([Retrying One Speech §2](../orchestration/speech-revisions.md#2-versions)).
+
 `started_at` equals `finished_at` for records that take no time (a person's message, a speaker-selection note). Both are `NULL` for rows written before v0.6.1.2: the migration deliberately adds them without a default, because backfilling would make every old speech appear to start and finish at the moment of migration. The chat feed and the Markdown export show such rows with the single `created_at` value and without calling it a start or an end ([`app/timestamps.py` `speech_timing`](file:///d:/MultiAgentDebateOrchestration/app/timestamps.py)).
 
 ### 2.3. `tool_calls` Table ([ToolCallRecordModel](file:///d:/MultiAgentDebateOrchestration/app/database/models.py#L63-L78))
@@ -287,9 +300,23 @@ unfinished speech. Details in [Interrupted Turns §5](../orchestration/turn-reco
 
 ---
 
-### 2.7.1. `speech_comments` Table and `messages.revisions` (ADR-036)
+### 2.7.1. `speech_comments` Table ([SpeechCommentModel](file:///d:/MultiAgentDebateOrchestration/app/database/models.py))
+A user's comment on part of a speech, waiting for that agent's next speech. Marked delivered in the commit that records that speech ([Retrying One Speech §6](../orchestration/speech-revisions.md#6-inline-comments)).
 
-`speech_comments` holds a user's inline comment: `message_id`, `agent_key`, `round_number`, `quote`, `comment`, `status` (`pending` | `delivered`), `delivered_message_id`, `delivered_at`. `messages.revisions` (JSON, nullable) holds a speech's versions that are not live: `n`, `content`, `msg_type`, `llm_meta`, `started_at`, `finished_at`, `tool_record_ids`.
+| Column | Type | Nullable | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `VARCHAR(36)` | No | `uuid4()` | Primary key. |
+| `session_id` | `VARCHAR(36)` | No | - | Owner; cascades on ORM delete of the session. |
+| `message_id` | `VARCHAR(36)` | No | - | The speech the comment is on. Removed with it when a turn is discarded. |
+| `agent_key` | `VARCHAR(50)` | No | - | That speech's speaker, the only recipient. |
+| `round_number` | `INTEGER` | No | `0` | That speech's round, for the prompt's wording. |
+| `quote` | `TEXT` | No | `''` | The selected rendered text (up to 1,000 characters). |
+| `comment` | `TEXT` | No | `''` | The user's comment (up to 4,000 characters). |
+| `status` | `VARCHAR(20)` | No | `pending` | `pending` or `delivered`. |
+| `delivered_message_id` / `delivered_at` | | Yes | - | The speech that carried it, and when. |
+| `created_at` | `DATETIME` | No | `utc_now` | Delivery and display order. |
+
+---
 
 ### 2.8. `messages_fts` — search index (v1.5)
 
@@ -377,7 +404,7 @@ skipped entirely for a table `create_all` just created.
 
 ```python
 _ADDED_COLUMNS = {
-    "messages": {..., "turn_id": "VARCHAR(36)", "turn_meta": "JSON"},
+    "messages": {..., "turn_id": "VARCHAR(36)", "turn_meta": "JSON", "revisions": "JSON"},
     "tool_calls": {..., "turn_id": "VARCHAR(36)"},
     "turns": {"stopped_early": "BOOLEAN NOT NULL DEFAULT 0", "usage": "JSON", "checkpoint": "JSON",
               "memory": "JSON", "rating": "JSON"},

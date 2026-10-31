@@ -15,6 +15,7 @@ sessions ─────┬──▶ messages ──────▶ tool_calls
               ├──▶ artifacts
               ├──▶ tool_calls
               ├──▶ turns                   (발언·도구 기록이 turn_id 로 가리킴)
+              ├──▶ speech_comments         (인라인 코멘트, message_id 로 발언을 가리킴)
               └──▶ session_agents          (session_id + agent_key 복합 유니크 제약)
 ```
 
@@ -58,6 +59,7 @@ sessions ─────┬──▶ messages ──────▶ tool_calls
 | `created_at` | **대화 기록 정렬 기준 타임스탬프** (실제 발언 시각이 아님, 하단 설명 참고) |
 | `turn_id` | 이 기록이 속한 턴 (`turns.id`). 기능 도입 이전의 기록은 NULL |
 | `turn_meta` | 해당 기록이 턴의 흐름에서 맡은 역할 (JSON). `kind`는 `opening` · `interjection` · `plan` · `speech` · `merge` · `gate` · `nomination` · `assignment` · `note` · `failure` · `interrupted` · `synthesis` 중 하나이며, 지명(`speakers`)과 병렬 분배(`tasks`)는 결과를 값으로 함께 기록합니다 |
+| `revisions` | 지금 보이지 않는 이 발언의 버전들 (JSON, [ADR-036](../../../lectures/05-adr/ADR-036-retry-one-speech-and-inline-comments.md)). 다시 실행한 적 없으면 NULL이며, 행에는 늘 지금 버전이 들어 있습니다 |
 
 메시지 테이블에는 에이전트의 내부 키(`sender_key`)뿐만 아니라 당시의 표시 이름(`sender_name`)과 역할명(`sender_role`)을 함께 영구 기록합니다. 훗날 관리자가 에이전트를 삭제하거나 이름을 변경하더라도 과거 토론 기록 속의 발언자 정보는 원형 그대로 보존되어야 하기 때문입니다.
 
@@ -113,6 +115,17 @@ sessions ─────┬──▶ messages ──────▶ tool_calls
 | `state` | 도구 루프의 내부 상태(버전 정보 포함) 및 이미 기록된 도구 호출 ID 목록 |
 
 발언이 정상적으로 커밋되면 동일한 트랜잭션 내에서 초안 행이 삭제되므로, 테이블에 남아 있는 레코드는 완료되지 못한 발언을 의미합니다. 최종 결론 생성, 요청 취소, 신규 요청 전송, 턴 강제 종료 시에도 함께 정리됩니다.
+
+### `speech_comments` 테이블
+
+발언의 한 부분에 유저가 단 코멘트입니다 ([ADR-036](../../../lectures/05-adr/ADR-036-retry-one-speech-and-inline-comments.md)). 턴이 돌지 않을 때도 달 수 있고 다음 턴까지 기다릴 수 있어야 하므로 메모리가 아니라 여기에 저장합니다.
+
+| 컬럼명 | 설명 |
+| :--- | :--- |
+| `message_id` · `agent_key` · `round_number` | 코멘트가 달린 발언과 그 발언자. 코멘트는 이 에이전트에게만 전달됩니다 |
+| `quote` · `comment` | 드래그해 고른 글과 유저의 의견 |
+| `status` | `pending`(다음 발언 대기) 또는 `delivered`(전달됨) |
+| `delivered_message_id` · `delivered_at` | 코멘트를 실어 간 발언과 그 시각. 그 발언이 기록되는 커밋에서 함께 적습니다 |
 
 ### `artifacts` 테이블
 

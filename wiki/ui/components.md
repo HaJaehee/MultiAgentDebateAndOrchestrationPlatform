@@ -829,6 +829,15 @@ so each one flips from `확인 중` as its answer arrives; the timer stops when 
   timed out → the card is removed on `user_question_resolved`; restored from the snapshot
   (`user_questions`) after a refresh; cleared when the turn ends.
 
+### 1.3.10. Retrying one speech and inline comments (ADR-036)
+
+The rules live in [Retrying One Speech and Inline Comments](../orchestration/speech-revisions.md). The feed has these only when the screen passes the callbacks; the expert page does, the trial and beginner pages do not.
+
+- **Retry button** (`replay`, `CardTimeline._can_retry`): on finished specialist speeches, including failed ones. A streamed card starts without it, and `_finalize_streaming_message` shows it when the speech ends. It opens `SpeechActions`' dialog: model, an optional instruction, the count of comments that go along, and what will and will not re-run.
+- **While it runs**: `start_streaming_message` rewrites the existing card (`_restart_card`) instead of adding one. `ChatFeed.set_single_speech(True)` hides `정지`, locks the input and relabels `긴급 종료` as `다시 실행 취소`, which skips the confirmation because nothing is deleted. When the run ends, the page rebuilds from the database and returns to the card (`reveal_message`).
+- **Versions** (`speech_versions`, `version_caption`): `‹ 2/3 ›` in the card header appears once a past version exists. Stepping changes only what this card shows: body, time line, tool records and failure styling. A banner names the version shown and offers `이 버전으로 되돌리기`, except for a failed attempt.
+- **Inline comments**: cards that can take one carry `data-mado-speech`. The selection script in `speech_actions.py` floats a `코멘트` button over the selected text and sends the id and quote through the global `mado_speech_comment` event. `CardTimeline.can_comment` refuses streaming cards and failure notices. Comments are lines under the card, visible even when the card is collapsed, with `전달 대기` (deletable) or `전달됨`.
+
 ### 1.4. Artifact Viewer ([app/ui/components/artifact_viewer.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/artifact_viewer.py))
 - **Tabs accumulate across turns.** `add_artifacts()` appends a finished turn's artifacts (skipping ids
   already shown) and opens that turn's report; `render_artifacts()` is only for rebuilding from a full

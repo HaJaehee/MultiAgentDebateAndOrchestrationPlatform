@@ -117,6 +117,8 @@ string and goes out as JSON unchanged). Senders and receivers never spell an eve
 | `message_stream_start` | `msg_id`, `sender_key`, `sender_name`, `sender_role` | Creates an in-flight streaming message card in the chat feed. |
 | `message_stream_chunk` | `message_id`, `delta` | Appends streaming token chunks to the active markdown message card. |
 | `message_added` | `message` dictionary | Finalizes or appends color-coded message bubble to feed. |
+| `speech_revised` | `message_id`, `agent_name`, `ok`, `restored` | A single-speech run has a result: a new version, a failed attempt or a restored version. Toast ([Retrying One Speech](speech-revisions.md)). |
+| `speech_comments_delivered` | `ids`, `message_id`, `agent_name` | Inline comments went out with this speech; their lines on the cards change to `전달됨` ([Retrying One Speech §6](speech-revisions.md#6-inline-comments)). |
 | `tool_executed` | `agent_key`, `agent_name`, `tool_call` | Appends collapsible accordion item showing input & output. |
 | `mermaid_repair_started` | `agent_name`, `broken`, `total`, `attempt`, `max_attempts` | Progress banner: a diagram failed the syntax check and is being redrawn. |
 | `mermaid_repair_finished` | `agent_name`, `resolved`, `attempts`, `remaining` | Positive toast when fixed; warning toast naming how many diagrams still fail. |
@@ -128,7 +130,7 @@ string and goes out as JSON unchanged). Senders and receivers never spell an eve
 | `user_question_requested` / `user_question_resolved` | the question card (`id`, `agent_name`, `question`, `options`, `opened_at`, `wait_seconds`); `outcome`, `answer` | v1.5. Question card in the feed ([Ask the User](../agents/ask-user.md)). |
 | `turn_completed` | `status`, `failed_agents`, `error_message`, `usage`, `converged_round`, `budget_stopped`, `consensus`, `synthesis_id` | Re-enables user input and marks personas locked; names any agent that never answered; status line ends with the turn's usage; conclusion card gets its buttons. |
 | `workspace_checkpointed` | `turn_id`, `changed`, `message_id` | v1.5, after `turn_completed`. File chip on the conclusion card ([Workspace Checkpoints](workspace-checkpoints.md)). |
-| `run_finished` | `status` (`completed` / `failed` / `cancelled`), `error` | Emitted by `DebateRunner`, not the engine. Detaches the page's subscription. |
+| `run_finished` | `status` (`completed` / `failed` / `cancelled`), `error`, `parked`; `retry_target` on a single-speech run only | Emitted by `DebateRunner`, not the engine. Detaches the page's subscription. With `retry_target`, the page rebuilds from the database and returns to that card. |
 
 ---
 

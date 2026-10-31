@@ -336,12 +336,24 @@ finally:
 
 ---
 
+## 끝난 발언 하나만 다시 실행 (ADR-036)
+
+`OrchestratorEngine.retry_speech`는 끝난 턴의 전문가 발언 하나만 다시 받습니다. `run_turn`과 달리 턴을 새로 열거나 턴 상태를 바꾸지 않습니다.
+
+1. `SpeechRevisionExecutor`가 그 턴의 구성(`TurnModel.config`), 그 턴이 시작될 때의 기억, 그 발언 앞까지의 기록으로 발언 직전 상태를 다시 세웁니다.
+2. `SpeechRunner.speak(revision=...)`가 스트리밍과 도구 호출을 평소처럼 처리하되, 새 행을 넣는 대신 그 발언의 행을 고칩니다. 옛 버전은 `messages.revisions`로 옮깁니다.
+3. 응답을 받지 못하면 지금 발언은 그대로 두고 실패한 시도만 버전으로 남깁니다.
+4. 성공하면 대화 끝에 안내를 남기고, 비어 있지 않은 결정 장부를 새 버전에 맞게 고칩니다. 뒤의 발언과 합성은 다시 돌지 않습니다.
+
+실행은 `DebateRunner`의 일반 실행(`TurnRun`)이라 도구 승인과 새로고침이 그대로 동작합니다. 다만 `retry_target`이 있는 실행은 정지와 개입을 받지 않고, 긴급 종료해도 기록을 지우지 않습니다. 인라인 코멘트는 `SpeechRunner.speak`가 발언 시작 때 읽어 그 에이전트의 프롬프트에만 붙입니다.
+
 ## 관련 문서
 
 - [토론 한 턴의 생애주기](../04-workflows/01-debate-turn.md) — 턴 실행 단계별 상세 흐름
 - [토론 전략](06-debate-strategies.md) — 발언자와 순서를 결정하는 전략 규칙
 - [LLM 통합](03-llm-integration.md) — 개별 에이전트의 LLM 호출 파이프라인
 - [데이터베이스와 세션 스냅샷](07-persistence.md) — 대화 기록 및 산출물 영속화 구조
+- 위키 [Retrying One Speech and Inline Comments](../../../wiki/orchestration/speech-revisions.md) — 발언 다시 실행과 인라인 코멘트의 규칙
 - 위키 [Conversation Memory](../../../wiki/orchestration/context-memory.md) — 대화 기억 아키텍처 기술 세부
 
 ---

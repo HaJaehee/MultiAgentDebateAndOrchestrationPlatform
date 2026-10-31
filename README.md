@@ -74,6 +74,9 @@ Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v1.5.1
 12. **AnythingLLM 문서 검색 (`kb`, v1.5.1)**:
    - AnythingLLM 작업 공간(Workspace)에 적재된 문서에서 질의와 유사한 텍스트 청크를 검색하여 **원문과 근거 출처(문서 제목·URL/경로·유사도 점수)**를 반환하는 내장 MCP 서버(`mcp_servers/anythingllm_kb/`)를 제공합니다. AnythingLLM은 벡터 검색만 수행하며, 최종 응답은 토론 에이전트가 자체 모델 맥락에서 직접 합성합니다.
    - 읽기 전용(readOnly) 힌트가 선언되어 있어 검색 시마다 사용자 승인 팝업이 발생하지 않으며, 연결 실패·인증 오류·미등록 작업 공간 접근 시 환각 없이 명확한 도구 실행 오류를 반환합니다. 기본값은 비활성화 상태입니다 (활성화 방법은 아래 [MCP 도구 구성](#mcp-도구-구성-mcp_servers) 참조).
+13. **발언 하나 다시 실행과 인라인 코멘트 (v1.5.1)**:
+   - 끝난 턴의 전문가 카드에서 **모델이나 지침을 바꿔 그 발언만 다시 받을** 수 있습니다. 그 차례 직전까지의 기록으로 답하며, 지난 버전은 카드에서 넘겨 보고 되돌릴 수 있습니다. 실패한 시도는 지금 발언을 바꾸지 않습니다. 뒤의 발언과 결론은 다시 돌지 않고, 그 사실을 대화 끝에 안내하며 결정 장부를 새 버전에 맞게 고칩니다.
+   - 에이전트 발언의 문장을 드래그해 **코멘트**를 달면 그 에이전트의 다음 발언에만 전달됩니다. 다른 참여자의 맥락에는 들어가지 않습니다 ([상세 규칙](wiki/orchestration/speech-revisions.md)).
 
 ---
 
@@ -164,6 +167,8 @@ MultiAgentDebateOrchestration/
 │   ├── orchestration/        # 멀티 에이전트 토론
 │   │   ├── engine.py         # 조립과 턴 수명 (run_turn · resume_turn)
 │   │   ├── speech.py         # 발언 한 번 (스트리밍 · 확정 기록 · 한도 쪽지)
+│   │   ├── speech_retry.py   # 끝난 발언 하나 다시 실행 (버전 · 되돌리기, ADR-036)
+│   │   ├── speech_comments.py # 인라인 코멘트 (그 에이전트의 다음 발언에만 전달, ADR-036)
 │   │   ├── recording.py      # 기록 (재시도 · data/unsaved/ 보존)
 │   │   ├── conversation.py   # 발언 맥락 · 요약 · 결정 장부
 │   │   ├── phases/           # 계획 · 토론(병렬·그래프) · 합성 단계 실행기

@@ -386,6 +386,7 @@ if state.failed_agent_keys:
 - [오케스트레이션 엔진](../03-core/05-orchestration-engine.md) — 엔진 상태 머신 및 제어 객체 구현 세부
 - [토론 전략](../03-core/06-debate-strategies.md) — 에이전트 발언 순서 및 지침 제어 규칙
 - [LLM 통합](../03-core/03-llm-integration.md) — 도구 루프 및 컨텍스트 창 관리 메커니즘
+- 위키 [Retrying One Speech and Inline Comments](../../../wiki/orchestration/speech-revisions.md) — 발언 다시 실행과 인라인 코멘트의 세부 규칙
 - [산출물 생성과 내보내기](04-artifact-and-export.md) — 합성 완료 후 산출물 렌더링 및 내보내기
 
 ---

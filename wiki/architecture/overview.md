@@ -136,6 +136,7 @@ flowchart TD
   1. **Planning** (`planning.py`): the orchestrator analyzes the goal; the plan can be approved or revised by a person.
   2. **Specialist Debate** (`debate.py`, with `parallel.py` for parallel dispatch, `graph.py` for graph debates, `routing.py` for reading the orchestrator's speaker and task choices): order comes from each agent's `debate_priority`; the adversarial strategy pairs them by `debate_stance`.
   3. **Consensus & Synthesis** (`synthesis.py`): the orchestrator synthesizes the transcript into final artifacts.
+  - Outside a turn's phases, `retry.py` rebuilds the moment before one finished speech and takes a new version of it ([speech_retry.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/speech_retry.py), [Retrying One Speech](../orchestration/speech-revisions.md)).
 - [turn_run.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/turn_run.py) keeps the canonical snapshot of a running turn (one reducer per event); [runner.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/runner.py) starts and ends turns in the background. Event names are listed once in [app/events.py](file:///d:/MultiAgentDebateOrchestration/app/events.py).
 
 ### 4.7. User Interface Subsystem ([app/ui/](file:///d:/MultiAgentDebateOrchestration/app/ui/))
@@ -160,6 +161,7 @@ flowchart TD
 | `app/headless.py`, `app/mcp_server.py` | Debates without a page: REST and MCP ([Headless API](../operations/headless-api.md)) |
 | `app/session_fork.py` | Forking a conversation at a turn, compare data, ratings ([Session Handoff §7](../orchestration/session-handoff.md)) |
 | `app/orchestration/skill_draft.py` | Skill drafts from a turn ([Skills §10](../agents/skills.md)) |
+| `app/orchestration/speech_comments.py` | Inline comments delivered to one agent's next speech, v1.5.1 ([Retrying One Speech §6](../orchestration/speech-revisions.md#6-inline-comments)) |
 | `app/bench.py` | Strategy comparison harness ([Bench](../operations/bench.md)) |
 | `app/ui/compare_page.py`, `app/ui/components/turn_changes.py`, `app/ui/components/skill_draft_dialog.py` | Compare page and the conclusion card's dialogs |
 
