@@ -17,7 +17,7 @@ from app.orchestration.control import TurnControl
 from app.orchestration.phases.base import PhaseExecutor
 from app.orchestration.phases.routing import parse_assignments
 from app.orchestration.state import DebateMessage, DebateState
-from app.orchestration.strategies import BaseDebateStrategy
+from app.orchestration.strategies import BaseDebateStrategy, instruction_for_turn, speakers_for_round
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class ParallelRoundRunner(PhaseExecutor):
             by_key = {a.key: a for a in active_agents}
             assignments = [(by_key[key], task) for key, task in resume.tasks if key in by_key]
         else:
-            candidates = strategy.get_speakers_for_round(active_agents, round_num, state)
+            candidates, problem = speakers_for_round(strategy, active_agents, round_num, state)
             if not candidates:
                 return False
 
@@ -62,6 +62,17 @@ class ParallelRoundRunner(PhaseExecutor):
             )
             if control is not None and control.stop_requested:
                 return True
+
+            if problem:
+                await self.recorder.record_note(
+                    db=db,
+                    state=state,
+                    on_event=on_event,
+                    agent=orchestrator,
+                    round_number=round_num,
+                    msg_type="error",
+                    content=f"[발언자 지명 실패] {problem}\n우선순위 순서로 진행합니다: {', '.join(a.name for a in candidates)}",
+                )
 
             assignments = await self.dispatch_parallel_tasks(
                 db=db,
@@ -324,8 +335,8 @@ class ParallelRoundRunner(PhaseExecutor):
         if task:
             head = f"[병렬 지시] 오케스트레이터가 이번 라운드에 당신에게 맡긴 태스크입니다:\n{task}"
         else:
-            head = strategy.turn_instruction(
-                agent, [agent], 0, DebateState(session_id="", user_prompt="")
+            head = instruction_for_turn(
+                strategy, agent, [agent], 0, DebateState(session_id="", user_prompt="")
             )
 
         return (

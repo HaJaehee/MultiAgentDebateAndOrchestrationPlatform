@@ -10,6 +10,7 @@ from app.config import MAX_SUB_DEBATE_ROUNDS, clamp_sub_debate_rounds
 from app.mcp.policy import MODE_LABELS, MODES
 from app.orchestration.roster_service import RosterService
 from app.orchestration.strategies import STRATEGY_MAP
+from app.plugins import plugin_problems
 from app.ui.components.roster.changes import RosterChanges
 from app.ui.components.roster.state import RosterState
 
@@ -146,6 +147,14 @@ class SessionSettingsComponent:
                     value=self.state.strategy_name,
                     on_change=self.on_strategy_change,
                 ).props("outlined dense dark options-dense").classes("w-80 text-xs")
+                # 파일을 넣었는데 목록에 없으면 여기서 이유를 봅니다. 앱은 깨진 플러그인 없이 떠 있습니다.
+                problems = plugin_problems()
+                if problems:
+                    with ui.icon("extension_off", size="xs").classes("text-amber-400 cursor-help"):
+                        ui.tooltip("\n".join(
+                            ["읽지 못한 플러그인이 있습니다."]
+                            + [f"· {p.source}: {p.problem}" for p in problems]
+                        )).classes("whitespace-pre-line text-[11px]")
 
             # Max Rounds Slider
             with ui.row().classes("items-center gap-2 min-w-[180px]"):

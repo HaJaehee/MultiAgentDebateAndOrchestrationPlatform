@@ -29,6 +29,7 @@ from app.easy import setup_easy
 from app.mcp.pool import get_runtime_pool
 from app.orchestration.runner import get_debate_runner
 from app.orchestration.turns import mark_interrupted_turns
+from app.plugins import load_plugins
 from app.security import AccessMiddleware, get_access_control
 from app.trial import setup_trial
 from app.ui.expert.page import create_ui
@@ -94,6 +95,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     cfg = get_config()
     logger.info(f"Loaded configuration for host={cfg.app.host}:{cfg.app.port}, db={safe_db_url(cfg.app.db_url)}")
     logger.info(f"Web UI: http://{cfg.app.host}:{cfg.app.port}")
+    # 전략과 호스트 도구 플러그인. 깨진 플러그인은 기록만 남기고 앱은 뜹니다 (ADR-042).
+    await asyncio.to_thread(load_plugins)
 
     # 2. Initialize Database Tables
     await init_db(cfg.app.db_url)

@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from app.agents.base import Agent
 from app.agents.consultation import PEERS_TOOL_TOOLTIP
+from app.agents.host_tools import host_tool_switches
 from app.config import ORCHESTRATOR_KEY, PEERS_TOOL_PREFIX
 
 
@@ -108,8 +109,9 @@ def peers_chip_tooltip(agents: List[Agent]) -> str:
 
 
 def unknown_tool_servers(allowed: List[str], configured: Dict[str, Any]) -> List[str]:
-    """도구 할당 창에서 "설정에 없음" 으로 보일 이름. 내장 도구(peers)는 늘 있는 항목이라 빠집니다."""
-    return [name for name in allowed if name not in configured and name != PEERS_TOOL_PREFIX]
+    """도구 할당 창에서 "설정에 없음" 으로 보일 이름. 호스트 도구(peers, 플러그인)는 늘 있는 항목이라 빠집니다."""
+    switches = host_tool_switches()
+    return [name for name in allowed if name not in configured and name not in switches]
 
 
 def peer_candidates(agents: List[Agent], asker_key: str) -> List[Agent]:

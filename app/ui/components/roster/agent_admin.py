@@ -9,6 +9,7 @@ from nicegui import ui
 
 from app.agents.catalog import server_options, skill_options
 from app.agents.draft import AgentDraft, agent_key_for
+from app.agents.host_tools import assignable_plugin_tools
 from app.config import BARE_KEY_PATTERN, DEBATE_STANCES, agent_defaults_from_llm, prune_agent_overrides
 from app.orchestration.roster_service import RosterService
 from app.ui.components.agent_appearance import AgentAppearanceEditor
@@ -16,7 +17,7 @@ from app.ui.components.roster.builder_dialog import FormBuilderChat
 from app.ui.components.roster.changes import RosterChanges, show_notice
 from app.ui.components.roster.common import INT_AGENT_FIELDS, STANCE_LABELS
 from app.ui.components.roster.state import RosterState
-from app.ui.components.roster.widgets import peers_choice, skill_state_badge
+from app.ui.components.roster.widgets import peers_choice, plugin_tool_choice, skill_state_badge
 
 logger = logging.getLogger(__name__)
 
@@ -451,6 +452,8 @@ class AgentAdminComponent:
                             if not server_cfg.enabled:
                                 ui.badge("꺼짐", color="grey-8").props("dense text-[11px]")
                     peers_choice(boxes, checked=False, compact=True)
+                    for provider in assignable_plugin_tools():
+                        plugin_tool_choice(boxes, provider, checked=False, compact=True)
 
                 ui.label("사용할 스킬").classes(
                     "text-[11px] font-semibold text-slate-400 mt-1"

@@ -361,12 +361,17 @@ def protected_files() -> List[Path]:
     """도구가 어떤 경로로도 닿으면 안 되는 MADO 자신의 파일 (`policy.hard_block`).
 
     대부분은 설치 폴더 보호에 이미 들어 있습니다. 여기 따로 적는 것은 설정·DB 를
-    설치 폴더 **밖**에 둔 경우까지 막기 위해서입니다.
+    설치 폴더 **밖**에 둔 경우까지 막기 위해서입니다. 플러그인 폴더는 다음 시작 때 앱 권한으로
+    실행되므로, 작업 공간 안쪽을 가리키더라도 도구로 건드릴 수 없어야 합니다.
     """
     files: List[Path] = [PROJECT_ROOT / ".env", Path.cwd() / ".env"]
     config_path = active_config_path()
     if config_path is not None:
         files.append(config_path)
+    try:
+        files.extend(get_config().plugins.folders.values())
+    except Exception:  # noqa: BLE001 - 설정을 못 읽어도 설치 폴더 보호는 남습니다
+        pass
     try:
         from app.database.session import sqlite_file_path
 

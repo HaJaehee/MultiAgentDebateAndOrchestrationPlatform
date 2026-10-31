@@ -27,6 +27,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
+from app.agents.host_tools import host_tool_meta
 from app.config import (
     active_config_path,
     add_tool_security_rules_to_conf_file,
@@ -98,6 +99,14 @@ def _safe_rules(texts: List[str]) -> List[Rule]:
         except ValueError:
             logger.warning(f"Ignoring an unreadable tool grant: {text!r}")
     return rules
+
+
+def _tool_meta(tool_name: str, mcp: Any) -> Any:
+    """판정에 쓸 도구 정보. MCP 매니저가 모르는 플러그인 호스트 도구는 레지스트리가 답합니다."""
+    meta = host_tool_meta(tool_name)
+    if meta is not None:
+        return meta
+    return mcp.tool_meta(tool_name) if hasattr(mcp, "tool_meta") else None
 
 
 def _preview(arguments: Any) -> str:
@@ -202,7 +211,7 @@ class ToolGate:
             kept = []
             for tool in tools:
                 name = str((tool.get("function") or {}).get("name") or "")
-                meta = mcp.tool_meta(name) if hasattr(mcp, "tool_meta") else None
+                meta = _tool_meta(name, mcp)
                 if meta is not None and tool_always_denied(meta, policy):
                     continue
                 kept.append(tool)
@@ -234,7 +243,7 @@ class ToolGate:
             )
 
     async def _check(self, agent: Any, tool_name: str, arguments: Dict[str, Any], mcp: Any) -> GateResult:
-        meta = mcp.tool_meta(tool_name) if hasattr(mcp, "tool_meta") else None
+        meta = _tool_meta(tool_name, mcp)
         if meta is None:
             # 모르는 도구는 실행되지 않습니다 — 매니저가 "Unknown tool" 로 답합니다.
             return GateResult(True)

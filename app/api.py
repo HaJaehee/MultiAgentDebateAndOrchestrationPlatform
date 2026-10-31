@@ -26,6 +26,7 @@ from app.diagnostics import MAX_CLIENT_REPORT_BYTES, loop_health, parse_client_b
 from app import headless
 from app.mcp.pool import get_runtime_pool
 from app.orchestration.strategies import DEFAULT_STRATEGY
+from app.plugins import plugin_records
 
 router = APIRouter()
 
@@ -192,6 +193,18 @@ async def list_skills():
                 "scripts": list(s.scripts),
             }
             for s in skills
+        ],
+    }
+
+
+@router.get("/api/plugins")
+async def list_plugins():
+    """이번 실행에서 읽은 전략·호스트 도구 플러그인의 결과입니다. 등록되지 못한 것은 `problem` 에 이유가 있습니다."""
+    return {
+        "folders": {kind: str(path) for kind, path in get_config().plugins.folders.items()},
+        "plugins": [
+            {"kind": r.kind, "source": r.source, "name": r.name or None, "problem": r.problem or None}
+            for r in plugin_records()
         ],
     }
 

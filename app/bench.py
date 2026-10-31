@@ -46,6 +46,7 @@ from app.mcp.pool import get_runtime_pool
 from app.orchestration import context_memory as memory
 from app.orchestration.engine import get_orchestrator_engine
 from app.orchestration.strategies import STRATEGY_MAP
+from app.plugins import load_plugins
 from app.routes import compare_url
 
 BENCH_DIR = PROJECT_ROOT / "data" / "bench"
@@ -321,6 +322,7 @@ async def _main(argv: List[str]) -> int:
     cfg = get_config(reload=True, config_path=args.config)
     get_engine(cfg.app.db_url)
     await init_db(cfg.app.db_url)
+    load_plugins()
     try:
         if args.command == "run":
             run_dir = await run(args.scenario, dry_run=args.dry_run, out_dir=Path(args.out))

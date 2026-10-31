@@ -524,6 +524,21 @@
     "min_chars: 이보다 짧은 결과는 그대로 둡니다 (1000 이상).",
     "min_usage: 컨텍스트 예산의 이만큼을 쓸 때부터 줄입니다. 앞쪽 메시지를 고치면 프롬프트 캐시가 깨지므로 여유가 있을 때는 줄이지 않습니다. 0 이면 나이만 봅니다."
   ],
+  "// plugins": [
+    "플러그인 — 앱 코드를 고치지 않고 토론 전략과 호스트 도구를 더합니다. 폴더에 파일을 넣거나, 패키지의 mado.strategies · mado.host_tools entry point 로 등록합니다.",
+    "플러그인은 앱과 같은 권한으로 도는 코드입니다. 서버를 시작할 때 한 번만 읽으므로 고치면 다시 시작하세요.",
+    "폴더는 에이전트의 도구로 건드릴 수 없고, 기본 작업 공간 안의 폴더는 읽지 않습니다. 설치 폴더 밖을 가리킨다면 작업 공간으로 쓰지 않는 곳을 고르세요.",
+    "읽지 못한 플러그인은 앱을 막지 않습니다. 로그, GET /api/plugins, 로스터의 전략 칸 옆 아이콘에서 이유를 봅니다.",
+    "",
+    "strategies_dir: 토론 전략 폴더 (BaseDebateStrategy). 비우면 폴더를 읽지 않습니다.",
+    "host_tools_dir: 호스트 도구 폴더 (HostToolProvider). 켜는 법은 에이전트의 allowed_mcp_servers 에 접두사를 넣는 것입니다. 호출은 도구 보안 판정을 받습니다.",
+    "disabled: import 하지 않을 플러그인. 파일·폴더 이름(.py 제외)이나 entry point 이름을 적습니다."
+  ],
+  "plugins": {
+    "strategies_dir": "strategies",
+    "host_tools_dir": "host_tools",
+    "disabled": []
+  },
   "tool_output_compaction": {
     "enabled": true,
     "stale_rounds": 3,

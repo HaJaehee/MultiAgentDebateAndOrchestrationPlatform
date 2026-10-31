@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, Optional
 from nicegui import ui
 
 from app.agents.consultation import PEERS_TOOL_BADGE, PEERS_TOOL_SUMMARY, PEERS_TOOL_TOOLTIP
+from app.agents.host_tools import HostToolProvider
 from app.agents.skills import Skill
 from app.config import ORCHESTRATOR_KEY, PEERS_TOOL_PREFIX
 
@@ -72,3 +73,32 @@ def peers_choice(
     if orchestrator and not checked:
         box.disable()
     return summary_label
+
+
+PLUGIN_TOOL_BADGE = "플러그인"
+
+
+def plugin_tool_tooltip(provider: HostToolProvider) -> str:
+    """호스트 도구 플러그인의 설명. 도구 보안 판정을 어떻게 받는지도 함께 말합니다."""
+    lines = [f"{provider.prefix}: {provider.summary or '호스트 도구 플러그인입니다.'}"]
+    lines.append(
+        f"규칙은 mcp({provider.prefix}/도구이름) 으로 겁니다." if provider.gated
+        else "이 플러그인은 도구 보안 판정을 받지 않습니다."
+    )
+    return "\n".join(lines)
+
+
+def plugin_tool_choice(
+    boxes: Dict[str, Any], provider: HostToolProvider, *, checked: bool, compact: bool = False,
+) -> None:
+    """도구 고르는 목록에 호스트 도구 플러그인 한 줄을 넣습니다 (`boxes[접두사]`)."""
+    text = "text-xs" if compact else "text-[13px]"
+    with ui.row().classes(("items-center gap-1" if compact else "w-full items-center gap-2") + " no-wrap"):
+        boxes[provider.prefix] = ui.checkbox(value=checked).props("dense dark color=indigo-4")
+        with ui.label(provider.prefix).classes(f"{text} font-semibold text-slate-200 cursor-help"):
+            ui.tooltip(plugin_tool_tooltip(provider)).classes("whitespace-pre-line text-[11px]")
+        ui.badge(PLUGIN_TOOL_BADGE, color="purple-8").props("dense").classes(
+            "text-[11px]" if compact else "text-[13px]"
+        )
+        if not compact and provider.summary:
+            ui.label(provider.summary).classes("text-[11px] text-slate-400 truncate")

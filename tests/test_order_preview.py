@@ -173,7 +173,9 @@ def test_a_broken_strategy_does_not_take_the_roster_down():
 
     STRATEGY_MAP["sequential_debate"], original = _Exploding(), STRATEGY_MAP["sequential_debate"]
     try:
-        assert roster.speaking_order() == []
+        # 엔진이 물러설 순서를 그대로 보여 줍니다 (`speakers_for_round`). 화면과 실제가 갈라지지 않습니다.
+        expected = original.get_speakers_for_round(roster.participants(), 1, None)
+        assert roster.speaking_order() == expected != []
     finally:
         STRATEGY_MAP["sequential_debate"] = original
 

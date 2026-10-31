@@ -56,6 +56,10 @@ Small modules at the root of `app/` that everything may use carry no dependencie
 `events.py` (event names), `routes.py` (page addresses), `timestamps.py` (time formatting),
 `tool_rules.py` (the tool security rule grammar).
 
+`plugins.py` goes the other way: it sits above `orchestration/` and `agents/` because it registers into both, and
+the engine side may not import it ([Host Tools and Plugins](../agents/host-tools.md)). Strategies and host tools only see
+what was registered.
+
 ## 2. Inside the Orchestration Package
 
 `engine.py` only assembles. The services (`recording`, `speech`, `conversation`, `turn_setup`, `context`)

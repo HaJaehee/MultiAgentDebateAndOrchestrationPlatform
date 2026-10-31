@@ -7,13 +7,14 @@ from typing import Any, Callable, Dict
 from nicegui import ui
 
 from app.agents.base import Agent
+from app.agents.host_tools import assignable_plugin_tools
 from app.agents.media import MAX_ATTACHMENT_BYTES, MODALITY_LABELS, extensions_of
 from app.config import DEFAULT_PEER_TOOL_ITERATIONS, INPUT_MODALITIES, PEERS_TOOL_PREFIX, TOOL_ITERATION_CEILING
 from app.orchestration.roster_service import RosterService
 from app.ui.components.roster.changes import RosterChanges
 from app.ui.components.roster.common import peer_candidates, peer_selection_summary, unknown_tool_servers
 from app.ui.components.roster.state import RosterState
-from app.ui.components.roster.widgets import peers_choice, skill_state_badge
+from app.ui.components.roster.widgets import peers_choice, plugin_tool_choice, skill_state_badge
 from app.workspace_files import format_size
 
 
@@ -102,6 +103,9 @@ class AgentDialogs:
                     on_select=lambda: self.open_peer_targets(agent, peer_state, refresh_peer_summary),
                     summary=peer_selection_summary(peer_state["targets"], peer_state["max"]),
                 )
+
+                for provider in assignable_plugin_tools():
+                    plugin_tool_choice(boxes, provider, checked=provider.prefix in allowed)
 
                 for name in orphans:
                     with ui.row().classes("w-full items-center gap-2 no-wrap"):

@@ -219,27 +219,37 @@ LEGACY_STRATEGY_ALIASES = {
 
 ## 신규 토론 전략 구현 가이드
 
+앱 코드를 고치지 않습니다. 프로젝트 루트의 `strategies/` 폴더에 파일을 넣고 서버를 다시 시작하면 전략 선택 상자에 나타납니다. 헤드리스 API와 내장 MCP 서버에서도 그 이름으로 쓸 수 있습니다.
+
 ```python
+# strategies/my_strategy.py
+from app.orchestration.strategies import BaseDebateStrategy, order_by_priority, specialists_of
+
+
 class MyStrategy(BaseDebateStrategy):
     name = "my_strategy"
     display_name = "사용자 정의 전략"
 
     def get_speakers_for_round(self, active_agents, round_num, state):
-        specialists = order_by_priority(specialists_of(active_agents))
-        return specialists
+        return order_by_priority(specialists_of(active_agents))
 
     def turn_instruction(self, agent, speakers, index, state):
         return "[사용자 정의 전략 지침] ..."
-
-STRATEGY_MAP["my_strategy"] = MyStrategy()
 ```
+
+`pip install` 로 배포할 때는 패키지의 `mado.strategies` entry point 로 같은 클래스를 가리킵니다. 폴더 위치와 끄는 법은 [conf.json 설정](../02-getting-started/02-configuration.md)의 `plugins` 를 참고하십시오. 소스 업데이트 패키지는 이 폴더를 건드리지 않습니다.
+
+> **플러그인은 앱과 같은 권한으로 도는 코드입니다.** 이 폴더에 파일을 넣는 일은 패키지를 설치하는 일과 같은 무게입니다. 에이전트의 도구로는 이 폴더를 읽거나 쓸 수 없습니다. 기본 작업 공간 안의 폴더를 지정하면 읽지 않습니다.
+
+전략 선택 상자에 나타나지 않으면 옆의 주황색 아이콘에 이유가 있습니다. 로그와 `GET /api/plugins` 에도 남습니다. 내장 전략의 이름과 예전 이름은 쓸 수 없습니다.
 
 전략 구현 시 준수해야 할 핵심 개발 규칙은 다음과 같습니다:
 
 - `specialists_of()` 헬퍼를 사용하여 발언 대상에서 오케스트레이터를 반드시 제외하십시오.
-- 발언자 목록으로 빈 리스트를 반환하지 마십시오 (아무도 발언하지 못해 라운드가 정지됩니다).
+- 발언자 목록으로 빈 리스트를 반환하지 마십시오. 전략이 예외를 내거나 아무도 부르지 않으면 그 라운드는 우선순위 순서로 진행되고, 타임라인에 `[발언자 지명 실패]` 와 이유가 남습니다.
 - 특정 에이전트 키를 코드 내에 하드코딩하지 마십시오. 항상 에이전트 객체의 `debate_priority` 및 `debate_stance` 속성을 읽어 판단해야 합니다.
 - LLM 모델 호출이 필요한 경우 전략 객체 내부에서 직접 호출하지 말고 전용 플래그를 활성화하십시오. 발언자 선별이 필요하면 `orchestrator_selects_speakers = True`, 라운드 병렬 디스패치가 필요하면 `orchestrator_dispatches_parallel = True`로 설정하며, 실제 호출 및 예외 폴백 처리는 엔진 계층이 전담합니다.
+- 전략 객체 하나를 모든 대화가 함께 씁니다. 토론별 상태를 속성에 저장하지 마십시오.
 
 ---
 

@@ -95,6 +95,11 @@ that read the operator's skill files inside the install folder, and who may use 
 the host copies it into the workspace (`.mado/skills/<name>/`) and the agent runs it with
 `run_python_file`, which is judged like any other code ([Skills §5](../agents/skills.md#5-scripts)).
 
+Host tool **plugins** do reach this pipeline, because the app does not know what outside code does. They are judged at
+tool level by the risk they declare, and a plugin that declares nothing counts as `unknown`. Rules use
+`mcp(prefix/name)`. Argument-level rules and hard protections do not see inside a plugin
+([Host Tools and Plugins §3](../agents/host-tools.md#3-tool-security)).
+
 `profile_call` turns a call into actions: `read(path)`, `write(path)`, `delete(path)`, `exec(code)`,
 `net(host)`, plus the tool itself (`mcp(server/tool)`).
 
@@ -196,8 +201,8 @@ Checked by `policy.hard_block` in the gate (so no card is raised) and again in
 
 1. **The install folder** except the session workspace carved out of it: `conf.json`, `.env`, the DB,
    app code, bundled servers. If the workspace *is* the install folder or a parent of it, nothing is
-   carved out. The active config file and the DB file (plus `-wal`/`-shm`/`-journal`) are also
-   protected wherever they live (`manager.protected_files`).
+   carved out. The active config file, the DB file (plus `-wal`/`-shm`/`-journal`) and the plugin folders are also
+   protected wherever they live (`manager.protected_files`). Plugins run with the app's privileges at the next start.
 2. **`.memory-graphs`** anywhere — only the memory server touches it.
 3. **Writes inside `.git`** — `hooks/` runs code on the next git command. Git tools act on the
    repository path, so they are unaffected.

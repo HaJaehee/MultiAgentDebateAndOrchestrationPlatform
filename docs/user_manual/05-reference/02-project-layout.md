@@ -59,6 +59,7 @@ app/
 ├── api.py                           281   HTTP 엔드포인트 /api/* · /agent-icon
 ├── routes.py                         22   화면 주소 (체험·쉬운 화면)
 ├── events.py                        108   토론 이벤트 이름표 EventType
+├── plugins.py                       224   토론 전략·호스트 도구 플러그인 읽기 (폴더, entry point, ADR-042)
 ├── tool_rules.py                    125   도구 보안 규칙 문법 (read(경로) · net(호스트) …)
 ├── timestamps.py                    176   발언·턴·보고서 시각 표기 (화면·문서·보고서 공용)
 ├── session_ops.py                   529   세션 되돌리기·이어받기, 피드 기록 읽기
@@ -88,6 +89,7 @@ app/
 │   ├── pool.py                       78   AgentPool 레지스트리
 │   ├── personas.py                  415   세션별 페르소나·외형, 구성 스냅샷
 │   ├── skills.py                    762   스킬 스캔·도구·지침·스크립트 복사
+│   ├── host_tools.py                362   호스트 도구 레지스트리와 HostToolProvider (ADR-042)
 │   ├── ask_user.py                  129   에이전트 사용자 질문 ask__ask_user (v1.5)
 │   ├── consultation.py              458   동료 자문 peers__consult_agent
 │   ├── draft.py                     306   에이전트 설계도: 도우미 프롬프트·읽기·거르기, 주인 저장
@@ -143,7 +145,7 @@ app/
 │   ├── phases/routing.py            118   지명·분배 응답 읽기
 │   ├── phases/synthesis.py          766   3단계: 합성, 다이어그램 수선, 산출물
 │   ├── artifacts.py                 289   코드 블록·Mermaid 정규화, 로스터 글
-│   ├── strategies.py                330   토론 전략
+│   ├── strategies.py                401   토론 전략, 전략 등록, 실패하면 우선순위 순서로 물러서기
 │   ├── graph.py                     541   그래프 모델·검증·스케줄러
 │   ├── graph_run.py                 304   그래프 실행 표시
 │   ├── graph_draft.py               265   그래프 작성 프롬프트·응답 읽기·허용 범위 (LLM 을 부르지 않음)
@@ -207,7 +209,8 @@ app/
 | 하고 싶은 것 | 파일 |
 | :--- | :--- |
 | 설정 항목 추가 | `config/schema.py` (Pydantic 모델) · 화면에서 고치려면 `config/editors.py` |
-| 새 토론 전략 | `orchestration/strategies.py` |
+| 새 토론 전략 | 앱 코드를 고치지 않습니다. 루트의 `strategies/` 폴더나 `mado.strategies` entry point (`plugins.py`) · 기반 클래스는 `orchestration/strategies.py` |
+| 새 호스트 도구 | 앱 코드를 고치지 않습니다. 루트의 `host_tools/` 폴더나 `mado.host_tools` entry point (`plugins.py`) · 기반 클래스와 레지스트리는 `agents/host_tools.py` |
 | 토론 흐름 변경 | `orchestration/phases/` (계획·토론·합성) · 턴 수명은 `orchestration/engine.py` |
 | 발언 한 번의 처리 | `orchestration/speech.py` |
 | 새 대화의 첫 제목 | `orchestration/session_title.py` · 적는 자리는 `orchestration/speech.py` 의 `_title_new_session` · 되돌리기는 `session_ops.py` 의 `discard_turn` |

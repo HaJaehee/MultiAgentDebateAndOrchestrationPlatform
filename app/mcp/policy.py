@@ -293,6 +293,8 @@ class ToolMeta:
     trusted: bool = True
     annotations: Optional[Mapping[str, Any]] = None
     remote_host: str = ""   # 원격(URL) 서버면 호스트, 로컬 프로세스면 빈 문자열
+    # 호스트 도구 플러그인이 스스로 밝힌 등급 (`app/agents/host_tools.py`). 비어 있으면 위 값들로 정합니다.
+    declared_risk: str = ""
 
 
 def _as_posix(path: str) -> str:
@@ -429,7 +431,7 @@ def profile_call(
             url = next(iter(_values(args.get(kind.url_arg))), "")
             actions.append(_net_action(url_host(url) or _bare_host(url), "arg"))
     else:
-        risk = risk_from_annotations(meta.annotations) if meta.trusted else UNKNOWN
+        risk = meta.declared_risk or (risk_from_annotations(meta.annotations) if meta.trusted else UNKNOWN)
 
     # 원격 서버를 부르는 것 자체가 인자를 그 호스트로 보내는 일입니다.
     if meta.remote_host and not is_loopback_host(meta.remote_host):
@@ -590,7 +592,7 @@ def hard_block(
                 f"파일로 직접 쓰지 않고 git 도구로만 바꿉니다."
             )
         if any(_within(action.absolute, p) for p in protected):
-            return f"`{action.target}` 은 MADO 의 설정·비밀·기록 파일이라 도구로 다룰 수 없습니다."
+            return f"`{action.target}` 은 MADO 의 설정·비밀·기록 파일이나 플러그인이라 도구로 다룰 수 없습니다."
         if root and _within(action.absolute, root):
             if workspace_carved and _within(action.absolute, ws):
                 continue
@@ -801,7 +803,7 @@ def tool_always_denied(meta: ToolMeta, policy: Policy) -> Optional[str]:
     mode = normalize_mode(policy.mode)
     kind = KNOWN_TOOLS.get(meta.tool) if meta.trusted else None
     risk = kind.risk if kind is not None else (
-        risk_from_annotations(meta.annotations) if meta.trusted else UNKNOWN
+        meta.declared_risk or (risk_from_annotations(meta.annotations) if meta.trusted else UNKNOWN)
     )
     if meta.remote_host and not is_loopback_host(meta.remote_host):
         risk = NET if _RISK_RANK[risk] < _RISK_RANK[NET] else risk

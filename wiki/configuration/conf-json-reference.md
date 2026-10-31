@@ -25,7 +25,8 @@ The configuration file is loaded, validated, and normalized by [app/config/](fil
   "tool_security": { },
   "skills": { },
   "tool_loading": { },
-  "tool_output_compaction": { }
+  "tool_output_compaction": { },
+  "plugins": { }
 }
 ```
 
@@ -43,6 +44,7 @@ The configuration file is loaded, validated, and normalized by [app/config/](fil
 | `skills` | Where skill folders live and which are turned off |
 | `tool_loading` | Which MCP tool definitions go out with every request, and which wait in a one-line catalog |
 | `tool_output_compaction` | When stale large file reads in the tool loop are replaced with a short stub |
+| `plugins` | Where debate strategy and host tool plugins live, and which are not imported |
 
 ### 1.1. Comments
 
@@ -146,7 +148,7 @@ Declares external MCP server processes launched and monitored by the backend.
 | `env` | `dict[str, str]`| `{}` | Process environment variables injected into the child process. |
 | `enabled` | `bool` | `true` | When `false`, the server is skipped during startup. |
 
-Reserved names — rejected as `mcp_servers` keys because built-in host tools use them as prefixes: `skills` (`skills__load_skill`), `peers` (`peers__consult_agent`), `ask` (`ask__ask_user`, v1.5).
+Reserved names — rejected as `mcp_servers` keys because host tools use them as prefixes: `skills` (`skills__load_skill`), `peers` (`peers__consult_agent`), `ask` (`ask__ask_user`, v1.5), `tools` (`tools__load_tools`), and the prefix of every loaded [host tool plugin](../agents/host-tools.md). If a plugin's prefix is already an MCP server at startup, the plugin is the one refused.
 
 > **Important**: Never use `npx` in air-gapped or offline production environments, as `npx` attempts to reach the npm registry if packages are not in the current working directory. Execute entrypoint scripts directly with `node` (e.g. `node ./mcp_node/node_modules/.../dist/index.js`).
 
@@ -279,6 +281,21 @@ changes; tool cards and the DB keep the original. Applies to running speeches fr
 | `stale_rounds` | `int` | `3` | Tool rounds that must follow a read before it may be compacted (at least 1). Over budget, this is ignored and only the latest round stays. |
 | `min_chars` | `int` | `8000` | Shorter results stay (at least 1000). |
 | `min_usage` | `float` | `0.5` | Share of the context budget in use before anything is compacted (0 to 1). Editing earlier messages breaks the prompt cache, so nothing changes while there is room. `0` goes by age alone. |
+
+### 2.10. `plugins` Object
+
+Debate strategies and host tools added without changing app code. Plugins are code that runs with the app's privileges,
+so they are read once at startup and a change needs a restart. Full design:
+[Host Tools and Plugins](../agents/host-tools.md).
+
+| Key | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `strategies_dir` | `str` | `"strategies"` | Folder scanned for `BaseDebateStrategy` subclasses. Relative paths resolve against the project root. Empty turns the scan off. |
+| `host_tools_dir` | `str` | `"host_tools"` | Folder scanned for `HostToolProvider` subclasses. Same rules. |
+| `disabled` | `list[str]` | `[]` | Plugins not to import: a file or folder name without `.py`, or an entry point name. |
+
+File tools cannot reach these folders, wherever they point. A folder inside the default workspace is refused. Installed
+packages can also add plugins through the `mado.strategies` and `mado.host_tools` entry point groups.
 
 ---
 

@@ -296,8 +296,16 @@ flowchart LR
 
 ## 3. Adding a Custom Debate Strategy
 
-1. Subclass `BaseDebateStrategy` in [app/orchestration/strategies.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/strategies.py):
+Strategies are plugins: no app code changes, and the source update package leaves them alone
+([ADR-042](../../lectures/05-adr/ADR-042-plugins.md), [Host Tools and Plugins §4](../agents/host-tools.md#4-loading-plugins)).
+
+1. Put a subclass of `BaseDebateStrategy` in a file under `strategies/` (`plugins.strategies_dir`) and restart.
+   A package can register it through the `mado.strategies` entry point group instead.
    ```python
+   # strategies/consensus_voting.py
+   from app.orchestration.strategies import BaseDebateStrategy, order_by_priority, specialists_of
+
+
    class ConsensusVotingStrategy(BaseDebateStrategy):
        name = "consensus_voting"
        display_name = "합의 투표 (Consensus Voting)"
@@ -311,12 +319,10 @@ flowchart LR
    ```
    Read `debate_priority` / `debate_stance` off the agent rather than matching on `agent.key` —
    agent keys are user-defined and a key you hardcode today may not exist tomorrow.
-2. Register it in `STRATEGY_MAP`:
-   ```python
-   STRATEGY_MAP["consensus_voting"] = ConsensusVotingStrategy()
-   ```
-   The strategy appears in the web UI dropdown immediately and becomes selectable for any
-   session.
+   One object serves every conversation, so keep per-debate state out of its attributes.
+2. The loader adds it to `STRATEGY_MAP`. It appears in the web UI dropdown, the headless API, the built-in MCP server
+   and `app.bench`. It cannot take a built-in or legacy name: stored conversations hold those. If it does not appear,
+   the reason is in the log, in `GET /api/plugins` and on an amber icon next to the strategy selector.
 3. If your strategy needs an LLM call to pick speakers, set
    `orchestrator_selects_speakers = True` instead of calling the model from the strategy —
    strategies stay pure, and the engine performs the call (and the fallback) in
@@ -324,5 +330,12 @@ flowchart LR
    `orchestrator_dispatches_parallel = True`; the engine then runs the whole round through
    `ParallelRoundRunner.run_parallel_round()` (dispatch, `asyncio.gather` under the session's
    `parallel_limit`, interim merge) instead of the one-speaker-at-a-time loop.
-4. If you retire a strategy key that sessions may already hold, add it to
-   `LEGACY_STRATEGY_ALIASES` so those conversations keep running.
+4. If a built-in strategy key is retired while sessions may hold it, add it to
+   `LEGACY_STRATEGY_ALIASES` so those conversations keep running. A removed plugin falls back to the default strategy,
+   logged once; the conversation keeps the name, so restoring the plugin restores its strategy.
+
+**When a strategy fails.** The engine asks through `speakers_for_round` and `instruction_for_turn`, not directly. If
+`get_speakers_for_round` raises or names nobody in this debate, the round runs in priority order and the timeline records
+`[발언자 지명 실패]` with the reason, so nobody believes the chosen strategy ran. Agents outside this debate are filtered
+out. A failing `turn_instruction` means no instruction for that turn, with a warning in the log. The roster's order
+preview calls the same function, so it shows the order the engine would really use.

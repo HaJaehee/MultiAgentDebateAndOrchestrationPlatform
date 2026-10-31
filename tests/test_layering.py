@@ -70,6 +70,8 @@ RULES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     # 전문가 화면은 쉬운 화면도 체험 화면도 모릅니다. 대화로 에이전트 만들기의 재료는 아래층에 있습니다
     # (`app.agents.draft`·`app.agents.catalog`·`app.ui.components.agent_builder_chat`).
     *((expert, ("app.trial", "app.easy")) for expert in EXPERT_UI),
+    # 플러그인 로더는 전략과 호스트 도구 위에 있습니다. 토론을 돌리는 쪽은 등록된 결과만 봅니다.
+    *((engine, ("app.plugins",)) for engine in ENGINE_SIDE),
 )
 
 # 토론을 돌리는 쪽은 NiceGUI 를 가져오지 않습니다. 로스터의 상태 객체도 화면 없이 돕니다.

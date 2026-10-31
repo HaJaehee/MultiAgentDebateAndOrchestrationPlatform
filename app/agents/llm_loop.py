@@ -11,9 +11,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from app.agents.base import Agent
-from app.agents.ask_user import is_ask_tool
 from app.agents.connection import REJECTED, classify
-from app.agents.consultation import is_consultation_tool
+from app.agents.host_tools import find_host_tool
 from app.agents.llm_budget import (
     BUDGET_EXTENDED_INSTRUCTION,
     completion_budget_report,
@@ -50,12 +49,10 @@ from app.agents.media import (
     replace_attachments,
     store_tool_media,
 )
-from app.agents.skills import is_skill_tool
 from app.agents.tool_compaction import compact_loop_messages
 from app.agents.tool_loading import (
     CALLED_BEFORE_LOADING_NOTE,
     ToolShelf,
-    is_load_tool,
     load_tools_answer,
     remember_loaded,
 )
@@ -658,28 +655,23 @@ class ToolLoopMixin:
             # 도구 보안: 허용·묻기·거부. 거부되면 실행하지 않고, 그 이유가 곧
             # 도구 결과가 됩니다 — 모델이 읽고 다른 길을 찾습니다.
             #
-            # 스킬 도구는 별도의 게이트 보안 검사를 거치지 않습니다. 호스트 프로세스가
-            # 스킬 디렉터리 내의 지침 파일만을 참조하며 작업 공간이나 외부 네트워크에 접근하지 않고,
-            # 사용 권한은 `allowed_skills` 및 활성화 설정을 통해 사전에 통제되기 때문입니다.
-            # (스킬 내부의 스크립트를 실제로 **실행**하는 단계는 샌드박스 도구를 통해 수행되므로,
-            # 해당 도구 호출 시 정상적으로 보안 판정을 받게 됩니다.)
+            # 내장 호스트 도구는 게이트를 거치지 않습니다. 스킬은 지침 파일만 읽고 권한은
+            # `allowed_skills` 와 활성화 설정이 미리 통제합니다. (스킬 안의 스크립트를 실제로
+            # **실행**하는 단계는 샌드박스 도구를 거치므로 그 호출이 판정을 받습니다.) 플러그인
+            # 호스트 도구는 기본으로 판정을 받습니다 (`HostToolProvider.gated`).
+            provider = find_host_tool(fn_name)
             gate = (
                 None
-                if (
-                    is_skill_tool(fn_name) or is_consultation_tool(fn_name) or is_ask_tool(fn_name)
-                    or is_load_tool(fn_name)
-                )
+                if provider is not None and not provider.gated
                 else await self._check_tool_gate(
                     loop.tool_gate, agent, fn_name, fn_args, loop.mcp or self.mcp_manager,
                 )
             )
             if gate is not None and not gate.allowed:
                 output, status = gate.output, gate.status or "denied"
-            elif is_load_tool(fn_name):
-                output, status = loop.answer_load_tools(fn_args)
             else:
                 output, status = await self._execute_tool_safely(
-                    agent, fn_name, fn_args, loop.session_id, loop.mcp, tools=loop.tools,
+                    agent, fn_name, fn_args, loop.session_id, loop.mcp, tools=loop.tools, loop=loop,
                 )
                 output = await self._take_tool_media(loop, fn_name, output)
                 output = loop.note_direct_call(fn_name, output, status)

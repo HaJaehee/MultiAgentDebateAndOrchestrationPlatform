@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Literal, Mapping, Optional
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.config.env import join_text_lines, resolve_env_vars
+from app.config.paths import PROJECT_ROOT
 from app.tool_rules import parse_rules
 
 
@@ -643,6 +644,37 @@ class ToolOutputCompactionConfig(BaseModel):
         description="Compact only when the speech uses this share of its context budget, so the prompt cache survives until then",
     )
 
+class PluginsConfig(BaseModel):
+    """외부 플러그인 설정(`plugins`, `app/plugins.py`, ADR-042)입니다.
+
+    플러그인은 앱과 같은 권한으로 도는 파이썬 코드입니다. 서버를 시작할 때 한 번만 읽으므로 스킬과 달리
+    고치면 다시 시작해야 합니다. 폴더는 도구로 건드릴 수 없습니다 (`app.mcp.manager.protected_files`).
+    """
+
+    strategies_dir: str = Field(
+        default="strategies",
+        description="Folder scanned for debate strategy plugins. Relative to the project root; empty turns the scan off",
+    )
+    host_tools_dir: str = Field(
+        default="host_tools",
+        description="Folder scanned for host tool plugins. Relative to the project root; empty turns the scan off",
+    )
+    disabled: List[str] = Field(
+        default_factory=list,
+        description="Plugins not to import: a file or folder name without .py, or an entry point name",
+    )
+
+    @property
+    def folders(self) -> Dict[str, Path]:
+        """켜져 있는 플러그인 폴더 (`strategy`·`host_tool` → 절대 경로)."""
+        found: Dict[str, Path] = {}
+        for kind, raw in (("strategy", self.strategies_dir), ("host_tool", self.host_tools_dir)):
+            text = (raw or "").strip()
+            if text:
+                path = Path(text).expanduser()
+                found[kind] = path if path.is_absolute() else PROJECT_ROOT / path
+        return found
+
 # 스킬 도구의 접두사입니다 (`skills__load_skill`). MCP 도구와 동일한 `서버__도구` 형태이므로,
 # 동일한 이름의 MCP 서버가 등록되면 도구 이름 충돌이 발생합니다.
 SKILL_TOOL_PREFIX = "skills"
@@ -663,6 +695,8 @@ TOOL_LOADING_PREFIX = "tools"
 # 필수 에이전트의 키. 토론을 이끌고 합성하는 오케스트레이터는 `agents` 에 이 키로 있어야 합니다.
 ORCHESTRATOR_KEY = "orchestrator"
 
+# MCP 서버 이름으로 쓸 수 없는 이름과 그 이유. 호스트 도구 플러그인의 접두사도 등록될 때 여기 더해집니다
+# (`app.agents.host_tools.register_host_tool`).
 RESERVED_SERVER_NAMES = {
     SKILL_TOOL_PREFIX: f"스킬 도구 이름({SKILL_TOOL_PREFIX}__load_skill)",
     PEERS_TOOL_PREFIX: f"동료 자문 도구 이름({PEERS_TOOL_PREFIX}__consult_agent)",
@@ -681,6 +715,7 @@ class RootConfig(BaseModel):
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     tool_loading: ToolLoadingConfig = Field(default_factory=ToolLoadingConfig)
     tool_output_compaction: ToolOutputCompactionConfig = Field(default_factory=ToolOutputCompactionConfig)
+    plugins: PluginsConfig = Field(default_factory=PluginsConfig)
 
     # 치환 **전** 의 "mcp_servers" 원문. 작업 공간을 런타임마다 다르게 풀 때
     # 이걸 그 작업 공간으로 다시 풉니다. 이미 치환된 경로 문자열을 찾아 바꾸는
@@ -772,27 +807,12 @@ class RootConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_reserved_server_names(self) -> "RootConfig":
-        if SKILL_TOOL_PREFIX in self.mcp_servers:
-            raise ValueError(
-                f"\"mcp_servers.{SKILL_TOOL_PREFIX}\" cannot be used: '{SKILL_TOOL_PREFIX}__' is "
-                f"the prefix of the built-in skill tools. Rename the MCP server."
-            )
-        if PEERS_TOOL_PREFIX in self.mcp_servers:
-            raise ValueError(
-                f"\"mcp_servers.{PEERS_TOOL_PREFIX}\" cannot be used: '{PEERS_TOOL_PREFIX}' is the "
-                f"built-in peer consultation tool ({PEERS_TOOL_PREFIX}__consult_agent), switched on by "
-                f"listing it in an agent's allowed_mcp_servers. Rename the MCP server."
-            )
-        if ASK_TOOL_PREFIX in self.mcp_servers:
-            raise ValueError(
-                f"\"mcp_servers.{ASK_TOOL_PREFIX}\" cannot be used: '{ASK_TOOL_PREFIX}__' is the prefix of the "
-                f"built-in ask-the-user tool ({ASK_TOOL_PREFIX}__ask_user). Rename the MCP server."
-            )
-        if TOOL_LOADING_PREFIX in self.mcp_servers:
-            raise ValueError(
-                f"\"mcp_servers.{TOOL_LOADING_PREFIX}\" cannot be used: '{TOOL_LOADING_PREFIX}__' is the prefix of the "
-                f"built-in tool catalog ({TOOL_LOADING_PREFIX}__load_tools). Rename the MCP server."
-            )
+        for name in self.mcp_servers:
+            if name in RESERVED_SERVER_NAMES:
+                raise ValueError(
+                    f"\"mcp_servers.{name}\" cannot be used: it is reserved as {RESERVED_SERVER_NAMES[name]}. "
+                    f"Rename the MCP server."
+                )
         return self
 
     @property

@@ -27,7 +27,12 @@ from app.orchestration.phases.parallel import ParallelRoundRunner
 from app.orchestration.phases.routing import parse_speaker_selection
 from app.orchestration.phases.sub_debate import SubDebateRunner
 from app.orchestration.state import DebateState
-from app.orchestration.strategies import BaseDebateStrategy, get_strategy
+from app.orchestration.strategies import (
+    BaseDebateStrategy,
+    get_strategy,
+    instruction_for_turn,
+    speakers_for_round,
+)
 
 if TYPE_CHECKING:
     from app.orchestration.turn_setup import TurnSetup
@@ -202,7 +207,7 @@ class DebatePhaseExecutor(PhaseExecutor):
                         "round": round_num,
                     })
 
-                instruction = strategy.turn_instruction(agent, speakers, speaker_index, state)
+                instruction = instruction_for_turn(strategy, agent, speakers, speaker_index, state)
                 if agent.key in redo:
                     instruction = f"{turns.resume_notice(redo.pop(agent.key))}\n\n{instruction}".strip()
                 await self.speech.speak(
@@ -315,9 +320,7 @@ class DebatePhaseExecutor(PhaseExecutor):
         on_event: Optional[EventCallback],
     ) -> List[Agent]:
         """이번 라운드의 발언 대상자와 발언 순서를 결정합니다."""
-        fallback = strategy.get_speakers_for_round(active_agents, round_num, state)
-        if not strategy.orchestrator_selects_speakers or len(fallback) <= 1:
-            return fallback
+        fallback, problem = speakers_for_round(strategy, active_agents, round_num, state)
 
         async def _fall_back(why: str) -> List[Agent]:
             await self.recorder.record_note(
@@ -334,6 +337,11 @@ class DebatePhaseExecutor(PhaseExecutor):
                 kind=turns.KIND_NOMINATION,
                 data={"speakers": [a.key for a in fallback], "fallback": True},
             )
+            return fallback
+
+        if problem:
+            return await _fall_back(problem)
+        if not strategy.orchestrator_selects_speakers or len(fallback) <= 1:
             return fallback
 
         try:

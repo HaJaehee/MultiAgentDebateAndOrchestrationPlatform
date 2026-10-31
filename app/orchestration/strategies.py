@@ -18,14 +18,21 @@
 전략은 같은 순서로 같은 사람들을 부르게 되었습니다. 이름과 달리 '자유 토론' 도 결국
 정해진 순서대로 도는 것이었습니다. 그래서 하나로 합치고, 하는 일 그대로 '순차 토론'
 이라 부릅니다. 예전 이름으로 저장된 대화는 `LEGACY_STRATEGY_ALIASES` 가 받습니다.
+
+새 전략은 이 파일을 고치지 않고 `strategies/` 폴더나 entry point 로 더합니다 (`app/plugins.py`, ADR-042).
+앱 밖에서 온 코드이므로 엔진은 전략을 직접 부르지 않고 `speakers_for_round` · `instruction_for_turn` 으로
+부릅니다. 전략이 터지거나 이상한 답을 줘도 토론은 우선순위 순서로 돕니다.
 """
 
+import logging
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Set, Tuple
 
 from app.agents.base import Agent
-from app.config import ORCHESTRATOR_KEY
+from app.config import BARE_KEY_PATTERN, ORCHESTRATOR_KEY
 from app.orchestration.state import DebateState
+
+logger = logging.getLogger(__name__)
 
 # 오케스트레이터는 라운드 밖에 섭니다. 계획(round 0)과 최종 합성이 그 자리입니다.
 
@@ -318,13 +325,77 @@ LEGACY_STRATEGY_ALIASES = {
 }
 
 
+# 기본값으로 물러선 이름. 화면이 자주 부르는 함수라 이름마다 한 번만 알립니다.
+_reported_unknown: Set[str] = set()
+
+
 def resolve_strategy_name(strategy_name: Optional[str]) -> str:
     """저장된 전략 이름을 지금 쓰는 이름으로 옮깁니다. 모르는 이름은 기본값."""
     name = (strategy_name or "").strip()
     if name in STRATEGY_MAP:
         return name
-    return LEGACY_STRATEGY_ALIASES.get(name, DEFAULT_STRATEGY)
+    if name in LEGACY_STRATEGY_ALIASES:
+        return LEGACY_STRATEGY_ALIASES[name]
+    if name and name not in _reported_unknown:
+        _reported_unknown.add(name)
+        logger.warning(f"Unknown debate strategy '{name}' (was its plugin removed?); using {DEFAULT_STRATEGY}.")
+    return DEFAULT_STRATEGY
 
 
 def get_strategy(strategy_name: Optional[str]) -> BaseDebateStrategy:
     return STRATEGY_MAP[resolve_strategy_name(strategy_name)]
+
+
+def register_strategy(strategy: BaseDebateStrategy) -> None:
+    """전략을 더합니다. 쓸 수 없으면 ValueError 이고, 그 글이 화면과 로그에 그대로 나갑니다.
+
+    내장 전략이나 옛 이름을 가로챌 수 없습니다. 저장된 대화가 그 이름을 들고 있으므로, 덮어쓰면 그 대화들이
+    모르는 사이에 다른 전략으로 돕니다.
+    """
+    if not isinstance(strategy, BaseDebateStrategy):
+        raise ValueError(f"BaseDebateStrategy 가 아닙니다: {type(strategy).__name__}")
+    name = strategy.name
+    if not isinstance(name, str) or not BARE_KEY_PATTERN.fullmatch(name):
+        raise ValueError(f"전략 이름 {name!r} 을 쓸 수 없습니다. 영문·숫자·`_`·`-` 만 씁니다.")
+    if not isinstance(strategy.display_name, str) or not strategy.display_name.strip():
+        raise ValueError(f"전략 '{name}' 에 화면에 보일 이름(display_name)이 없습니다.")
+    if name in STRATEGY_MAP or name in LEGACY_STRATEGY_ALIASES:
+        raise ValueError(f"전략 이름 '{name}' 은 이미 쓰입니다.")
+    STRATEGY_MAP[name] = strategy
+
+
+def speakers_for_round(
+    strategy: BaseDebateStrategy, active_agents: List[Agent], round_num: int, state: DebateState,
+) -> Tuple[List[Agent], str]:
+    """전략에게 이번 라운드의 발언자를 묻습니다: `(발언자, 문제)`. 정상이면 문제는 빈 문자열입니다.
+
+    전략이 터지거나, 아무도 부르지 않거나, 이 토론에 없는 에이전트만 부르면 우선순위 순서로 물러서고 그 이유를
+    돌려줍니다. 부르는 쪽이 기록에 남겨, 사람이 고른 전략대로 돌았다고 믿지 않게 합니다. 전략은 순수 함수여야
+    하지만(LLM 호출은 엔진 몫입니다) 플러그인이 지키는지는 앱이 알 수 없습니다.
+    """
+    if not active_agents:
+        return [], ""
+    default = order_by_priority(specialists_of(active_agents)) or active_agents
+    try:
+        answer = list(strategy.get_speakers_for_round(active_agents, round_num, state) or ())
+    except Exception as exc:  # noqa: BLE001 - 전략 하나가 토론을 끝내면 안 됩니다
+        logger.warning(f"Strategy '{strategy.name}' could not pick speakers: {type(exc).__name__}: {exc}")
+        return default, f"전략 '{strategy.name}' 이 발언자를 정하지 못했습니다 ({type(exc).__name__}: {exc})."
+    known = {agent.key for agent in active_agents}
+    speakers = [agent for agent in answer if getattr(agent, "key", None) in known]
+    if not speakers:
+        logger.warning(f"Strategy '{strategy.name}' named no active agent in round {round_num}.")
+        return default, f"전략 '{strategy.name}' 이 이번 토론의 에이전트를 한 명도 부르지 않았습니다."
+    return speakers, ""
+
+
+def instruction_for_turn(
+    strategy: BaseDebateStrategy, agent: Agent, speakers: List[Agent], index: int, state: DebateState,
+) -> str:
+    """이 발언 차례의 지침. 전략이 터지거나 글이 아닌 것을 주면 지침 없이 진행합니다."""
+    try:
+        text = strategy.turn_instruction(agent, speakers, index, state)
+    except Exception as exc:  # noqa: BLE001 - 지침 한 줄 때문에 발언을 막지 않습니다
+        logger.warning(f"Strategy '{strategy.name}' failed on turn_instruction: {type(exc).__name__}: {exc}")
+        return ""
+    return text if isinstance(text, str) else ""

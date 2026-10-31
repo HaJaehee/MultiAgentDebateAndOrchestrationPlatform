@@ -22,8 +22,7 @@ import litellm
 from app.agents import llm_fallback, llm_usage
 from app.agents.base import Agent
 from app.agents.connection import SERVER_ERROR, classify
-from app.agents.ask_user import ask_tools_for
-from app.agents.consultation import consultation_tools_for
+from app.agents.host_tools import host_tools_for
 from app.agents.llm_context import context_budget, fit_context_window, merge_consecutive_roles, place_ledger_last
 from app.agents.llm_fingerprint import request_fingerprint
 from app.agents.llm_gate import get_llm_gate
@@ -34,7 +33,6 @@ from app.agents.llm_tool_calls import ToolCallMixin
 from app.agents.llm_tools import memory_search_tool
 from app.agents.llm_types import BudgetArbiter, ContextArbiter, LLMUnavailableError, SpeechCheckpoint
 from app.agents.media import fit_attachments, materialize_attachments, with_attachments, without_attachments
-from app.agents.skills import skill_tools_for
 from app.agents.tool_loading import plan_shelf
 from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
@@ -295,15 +293,13 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         # 합니다 (서버를 껐거나 연결에 실패했으면 없는 도구를 가리키게 됩니다).
         mcp = mcp or self.mcp_manager
         tools = mcp.get_openai_tools_for_servers(self.resolve_tool_servers(agent))
+        # 호스트 도구는 발언마다 새로 구합니다 (스킬 폴더와 활성화 여부가 실시간이고, 플러그인은 판정을 받습니다).
+        # MCP 도구는 자주 쓰는 것만 정의를 싣고 나머지는 목록으로 보여 줍니다 (`app/agents/tool_loading.py`).
+        host_tools = host_tools_for(agent)
         if tool_gate is not None:
             tools = tool_gate.filter_tools(agent.key, tools, mcp)
-        # 스킬 도구는 발언이 진행될 때마다 스킬 디렉터리와 활성화 여부를 새로 조회하여 동적으로 생성합니다 (`app/agents/skills.py`).
-        # MCP 도구는 자주 쓰는 것만 정의를 싣고 나머지는 목록으로 보여 줍니다 (`app/agents/tool_loading.py`).
-        shelf = plan_shelf(
-            agent, tools,
-            skill_tools_for(agent) + consultation_tools_for(agent) + ask_tools_for(agent),
-            session_id=session_id,
-        )
+            host_tools = tool_gate.filter_tools(agent.key, host_tools, mcp)
+        shelf = plan_shelf(agent, tools, host_tools, session_id=session_id)
         tools = shelf.offered()
 
         if resume_state is not None:

@@ -99,7 +99,7 @@ def test_an_mcp_server_cannot_be_named_peers(conf: Path):
 
 
 def test_a_config_that_declares_a_peers_server_is_rejected():
-    with pytest.raises(ValueError, match="peer consultation"):
+    with pytest.raises(ValueError, match="동료 자문 도구"):
         RootConfig.model_validate({
             "agents": {"orchestrator": {"name": "O", "role": "R"}},
             "mcp_servers": {PEERS_TOOL_PREFIX: {"command": "node"}},

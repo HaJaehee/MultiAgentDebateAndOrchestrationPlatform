@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
@@ -20,10 +19,9 @@ from app.orchestration.strategies import (
     STRATEGY_MAP,
     order_by_priority,
     resolve_strategy_name,
+    speakers_for_round,
     specialists_of,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def is_selected(
@@ -248,9 +246,9 @@ class RosterState:
     def speaking_order(self) -> List[Agent]:
         """지금 설정으로 한 라운드를 돌면 나올 발언 순서.
 
-        엔진과 **같은 함수**를 부릅니다 (`strategy.get_speakers_for_round`).
-        여기서 순서를 다시 구현하면 화면과 실제가 언젠가 갈라지고, 그때
-        사람이 믿는 쪽은 화면입니다.
+        엔진과 **같은 함수**를 부릅니다 (`speakers_for_round`). 전략이 터지면 엔진이 물러설
+        우선순위 순서가 그대로 나옵니다. 여기서 순서를 다시 구현하면 화면과 실제가 언젠가
+        갈라지고, 그때 사람이 믿는 쪽은 화면입니다.
 
         오케스트레이터를 목록에 넣어 넘기는 것도 엔진과 같습니다 — 전략이
         `specialists_of()` 로 직접 빼냅니다.
@@ -265,11 +263,7 @@ class RosterState:
             max_rounds=self.max_rounds,
             current_round=1,
         )
-        try:
-            return strategy.get_speakers_for_round(self.participants(), 1, probe)
-        except Exception:  # noqa: BLE001 - 미리보기가 로스터를 깨뜨리면 안 됩니다
-            logger.warning("Could not compute the speaking-order preview", exc_info=True)
-            return []
+        return speakers_for_round(strategy, self.participants(), 1, probe)[0]
 
     # ------------------------------------------------------------ 도구 규칙
 

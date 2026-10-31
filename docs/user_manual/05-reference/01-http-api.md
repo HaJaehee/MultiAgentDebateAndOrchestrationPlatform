@@ -138,6 +138,28 @@ MCP 서버별 연결 상태. `"enabled": false` 로 꺼 둔 서버도 함께 보
 
 ---
 
+## `GET /api/plugins`
+
+서버를 시작할 때 읽은 토론 전략·호스트 도구 플러그인의 결과를 조회합니다. 플러그인을 넣었는데 목록에 없으면 여기서 이유를 확인합니다.
+
+```json
+{
+  "folders": {
+    "strategy": "D:\\MultiAgentDebateOrchestration\\strategies",
+    "host_tool": "D:\\MultiAgentDebateOrchestration\\host_tools"
+  },
+  "plugins": [
+    {"kind": "strategy", "source": "D:\\...\\strategies\\voting.py", "name": "consensus_voting", "problem": null},
+    {"kind": "host_tool", "source": "mado.host_tools:glossary", "name": null, "problem": "ImportError: ..."}
+  ]
+}
+```
+
+`name` 은 등록된 전략 이름이나 호스트 도구 접두사입니다. `problem` 이 있으면 등록되지 않았습니다.
+→ [conf.json 설정](../02-getting-started/02-configuration.md#plugins--토론-전략과-호스트-도구-플러그인)
+
+---
+
 ## `GET /api/skills`
 
 스킬 디렉터리의 현재 상태를 조회합니다. 비활성화된 스킬과 유효하지 않은 스킬도 원인과 함께 반환합니다. 호출할 때마다 디렉터리 상태를 최신으로 스캔합니다.

@@ -10,15 +10,8 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from app.agents.base import Agent
-from app.agents.ask_user import is_ask_tool, run_ask_tool
-from app.agents.consultation import is_consultation_tool, run_consultation_tool
-from app.agents.skills import (
-    DESIGNATED_SKILL_NOTE,
-    LOAD_SKILL_TOOL,
-    is_skill_tool,
-    offered_skills,
-    run_skill_tool,
-)
+from app.agents.host_tools import HostToolCall, find_host_tool, run_host_tool
+from app.agents.skills import DESIGNATED_SKILL_NOTE, LOAD_SKILL_TOOL, offered_skills
 from app.mcp.manager import MCPManager
 
 
@@ -138,32 +131,32 @@ class ToolCallMixin:
         session_id: Optional[str],
         mcp: Optional[MCPManager] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
+        loop: Optional[Any] = None,
     ) -> Tuple[str, str]:
-        """MCP 도구(또는 스킬 도구)를 호출하고, 실행 결과를 항상 (문자열, 상태) 튜플 형태로 반환합니다.
+        """MCP 도구(또는 호스트 도구)를 호출하고, 실행 결과를 항상 (문자열, 상태) 튜플 형태로 반환합니다.
 
         `MCPManager.execute_tool`에서 예외를 대부분 처리하지만, 매니저 객체가 교체되거나
         도구 명칭 조회 과정에서 예외가 발생할 가능성이 있습니다. 개별 도구 호출 실패가
         전체 발언의 중단으로 이어져서는 안 된다는 원칙을 본 단계에서 재차 보장합니다.
         단, 작업 취소 예외는 상위로 그대로 전달합니다.
 
-        스킬 도구는 외부 MCP 서버가 아닌 애플리케이션 프로세스 내부에서 직접 실행합니다 (`app/agents/skills.py`).
-        스크립트가 복사될 작업 공간은 해당 발언이 사용하는 런타임의 작업 공간이며, 실행 가능 여부는 해당 발언에
-        실제로 부여된 도구 목록(`tools`)을 기준으로 판정합니다.
+        호스트 도구는 외부 MCP 서버가 아닌 애플리케이션 프로세스 내부에서 직접 실행합니다 (`app/agents/host_tools.py`).
+        작업 공간은 해당 발언이 사용하는 런타임의 작업 공간이고, `tools` 는 해당 발언에 실제로 실린 도구 목록입니다.
         """
         runtime = mcp or self.mcp_manager
         try:
-            if is_skill_tool(fn_name):
-                output, status = await run_skill_tool(
-                    agent, fn_name, fn_args,
-                    workspace=getattr(runtime, "workspace", None), tools=tools,
-                )
-            elif is_consultation_tool(fn_name):
-                output, status = await run_consultation_tool(
-                    agent, fn_name, fn_args,
+            provider = find_host_tool(fn_name)
+            if provider is not None:
+                output, status = await run_host_tool(provider, HostToolCall(
+                    agent=agent,
+                    name=fn_name,
+                    arguments=fn_args,
+                    session_id=session_id,
+                    workspace=getattr(runtime, "workspace", None),
+                    tools=tools,
                     llm_caller=self,
-                )
-            elif is_ask_tool(fn_name):
-                output, status = await run_ask_tool(agent, fn_args)
+                    loop=loop,
+                ))
             else:
                 output, status = await runtime.execute_tool(
                     fn_name, fn_args, scope=session_id, actor=agent.key

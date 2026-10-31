@@ -24,6 +24,7 @@ wiki/
 │   ├── skills.md                          # Skill folders, allowed_skills, live on/off & the skill host tools
 │   ├── multimodal-input.md                # allowed_modalities: file content for chosen agents, tool images (ADR-035)
 │   ├── ask-user.md                        # ask__ask_user: a specialist asks the person mid-speech (v1.5)
+│   ├── host-tools.md                      # Host tool registry; strategy and host tool plugins, their security (ADR-042)
 │   └── llm-integration.md                 # LiteLLM multi-provider abstraction, tool loops & failure handling
 ├── mcp/
 │   ├── overview-and-protocol.md           # Stdio MCP host/client architecture & persistent sessions

@@ -8,11 +8,13 @@ from typing import Any, Callable, Dict, Optional
 from nicegui import ui
 
 from app.agents.consultation import PEERS_TOOL_BADGE
+from app.agents.host_tools import assignable_plugin_tools
 from app.config import PEERS_TOOL_PREFIX
 from app.orchestration.roster_service import RosterService
 from app.ui.components.roster.changes import RosterChanges
 from app.ui.components.roster.common import MCP_CHIP_CLASSES, peers_chip_tooltip
 from app.ui.components.roster.state import RosterState
+from app.ui.components.roster.widgets import PLUGIN_TOOL_BADGE, plugin_tool_tooltip
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +115,14 @@ class McpPanelComponent:
                 ui.label(PEERS_TOOL_PREFIX).classes("text-[11px] font-semibold text-slate-200")
                 ui.badge(PEERS_TOOL_BADGE, color="indigo-8").props("dense").classes("text-[13px]")
                 ui.tooltip(peers_chip_tooltip(self.state.roster_agents())).classes("whitespace-pre-line text-[11px]")
+
+            # 호스트 도구 플러그인도 띄울 프로세스가 없고, 켜는 곳은 에이전트 카드의 '도구' 입니다.
+            for provider in assignable_plugin_tools():
+                with ui.element("div").classes(f"{MCP_CHIP_CLASSES} pl-2 pr-2 border-purple-700/70"):
+                    ui.icon("extension", size="13px").classes("text-purple-300")
+                    ui.label(provider.prefix).classes("text-[11px] font-semibold text-slate-200")
+                    ui.badge(PLUGIN_TOOL_BADGE, color="purple-8").props("dense").classes("text-[13px]")
+                    ui.tooltip(plugin_tool_tooltip(provider)).classes("whitespace-pre-line text-[11px]")
 
             if not configured:
                 ui.label("conf.json 에 등록된 MCP 서버가 없습니다.").classes("text-[11px] text-slate-500")

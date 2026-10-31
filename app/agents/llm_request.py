@@ -7,13 +7,10 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from app.agents.base import Agent
-from app.agents.ask_user import ask_guidance
-from app.agents.consultation import PEERS_TOOL_PREFIX, consultation_guidance
+from app.agents.host_tools import host_tool_guidance, host_tool_switches
 from app.agents.llm_context import effective_max_tokens
 from app.agents.llm_tools import binary_file_guidance, file_editing_guidance, file_writing_guidance
 from app.agents.reasoning import strip_reasoning_trace
-from app.agents.skills import skill_guidance
-from app.agents.tool_loading import tool_loading_guidance
 
 
 logger = logging.getLogger(__name__)
@@ -61,21 +58,7 @@ class RequestBuilderMixin:
         if binary:
             parts.append(binary)
 
-        skills = skill_guidance(tools)
-        if skills:
-            parts.append(skills)
-
-        consultation = consultation_guidance(tools)
-        if consultation:
-            parts.append(consultation)
-
-        asking = ask_guidance(tools)
-        if asking:
-            parts.append(asking)
-
-        loading = tool_loading_guidance(tools)
-        if loading:
-            parts.append(loading)
+        parts.extend(host_tool_guidance(tools))
 
         if custom_instructions:
             parts.append(f"[Session Custom Instructions]:\n{custom_instructions}")
@@ -84,7 +67,8 @@ class RequestBuilderMixin:
 
     def resolve_tool_servers(self, agent: Agent) -> List[str]:
         """MCP servers this agent may use, including the sequential-thinking server when required."""
-        servers = [s for s in agent.allowed_mcp_servers if s != PEERS_TOOL_PREFIX]
+        switches = host_tool_switches()
+        servers = [s for s in agent.allowed_mcp_servers if s not in switches]
         st = agent.sequential_thinking
         if st.enabled and st.mode == "mcp" and st.mcp_server not in servers:
             servers.append(st.mcp_server)
