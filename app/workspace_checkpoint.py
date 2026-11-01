@@ -14,6 +14,8 @@ HEAD에 등록되지 않으며, `refs/mado/turns/<턴 id>/start` 및 `end`라는
 * 롤백(되돌리기) — 해당 턴에서 변경된 파일들만 턴 시작 전 상태로 복원합니다. 생성된 파일은 삭제하고, 수정·삭제된
   파일은 원상 복구합니다. 턴 완료 후 외부나 후속 턴에서 동일 파일이 추가로 수정된 경우, 변경 사항 유실을 방지하기 위해
   롤백을 안전하게 중단하고 충돌 파일 목록을 안내합니다.
+* 보존과 압축 (ADR-044) — 턴마다 스냅샷이 쌓이므로, 작업 공간이 쉴 때 오래된 턴의 이름을 지우고(`expired_turns`, `forget`)
+  `git gc --auto` 를 돌립니다(`collect_garbage`). 부르는 쪽은 `app/session_ops.maintain_workspace` 입니다.
 
 Git 미설치 환경이거나 작업 공간이 Git 저장소가 아닌 경우 조용히 무시(None)합니다.
 본 모듈의 모든 함수는 비동기 이벤트 루프 외부(`asyncio.to_thread`)에서 안전하게 실행되도록 설계된 동기 함수입니다.
@@ -27,11 +29,13 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from app.code_diff import TRUNCATION_MARK
+from app.mcp.client import positive_float_env
 from app.mcp.manager import find_git_executable
 from app.workspace_files import EXCLUDED_DIRS
 
@@ -53,6 +57,13 @@ MAX_DIFF_CHARS = 200_000
 
 # Git 단일 명령어 타임아웃 (초 단위)
 GIT_TIMEOUT = 120
+
+# `git gc --auto` 타임아웃 (초 단위). 기준에 닿으면 저장소 전체를 다시 묶으므로 일반 명령어보다 깁니다.
+GC_TIMEOUT = 900
+
+# 체크포인트 보존 기준 (작업 공간별). 최근 턴과 최근 기간을 함께 남기고, 둘 다 넘긴 턴만 지웁니다.
+KEEP_TURNS = int(positive_float_env("CHECKPOINT_KEEP_TURNS", 200))
+KEEP_DAYS = positive_float_env("CHECKPOINT_KEEP_DAYS", 30.0)
 
 _IDENTITY = {
     "GIT_AUTHOR_NAME": "MADO", "GIT_AUTHOR_EMAIL": "mado@localhost",
@@ -385,3 +396,70 @@ def forget(workspace: str | Path, turn_ids: Sequence[str]) -> None:
         # 그 사이 사라진 이름이 하나라도 있으면 통째로 실패합니다. 하나씩 지웁니다.
         for name in names:
             _git(git, root, "update-ref", "-d", name)
+
+
+def expired_turns(
+    workspace: str | Path, *, keep_turns: int = KEEP_TURNS, keep_days: float = KEEP_DAYS,
+) -> List[str]:
+    """보존 기준을 넘긴 턴의 id. 최근 `keep_turns` 턴과 `keep_days` 일 안의 턴은 빼고, 오래된 턴부터 돌려줍니다.
+
+    저장소의 이름만 읽습니다. 턴의 시각은 스냅샷 커밋의 시각 중 가장 늦은 것입니다.
+    """
+    found = _repo(workspace)
+    if found is None:
+        return []
+    git, root = found
+    proc = _git(git, root, "for-each-ref", "--format=%(committerdate:unix) %(refname)", REF_ROOT)
+    if proc.returncode != 0:
+        logger.warning(f"Could not list workspace checkpoints in {root}: {_error(proc)}")
+        return []
+    latest: Dict[str, int] = {}
+    for line in _text(proc).splitlines():
+        stamp, _, name = line.partition(" ")
+        turn_id = name[len(REF_ROOT) + 1:].split("/")[0]
+        if stamp.isdigit() and turn_id:
+            latest[turn_id] = max(latest.get(turn_id, 0), int(stamp))
+    cutoff = time.time() - keep_days * 86400
+    newest_first = sorted(latest, key=lambda turn_id: latest[turn_id], reverse=True)
+    return [turn_id for turn_id in reversed(newest_first[keep_turns:]) if latest[turn_id] < cutoff]
+
+
+# 돌고 있는 `git gc`. 서버가 끝날 때 끊을 수 있게 들고 있습니다 (`stop_collecting`).
+_collecting: Set[subprocess.Popen] = set()
+
+
+def collect_garbage(workspace: str | Path) -> None:
+    """`git gc --auto` 를 돌립니다. 쌓인 것이 기준(`gc.auto`, 기본 6,700개) 미만이면 바로 끝납니다.
+
+    이름을 잃은 스냅샷의 객체는 git 의 유예 기간(`gc.pruneExpire`, 기본 2주)이 지난 뒤에 지워집니다. 사용자의
+    gc 설정을 그대로 따르고, 스스로 백그라운드로 나가지 않게만 합니다. 나가면 끝을 기다릴 수 없고 실패가 로그에 남지 않습니다.
+    출력을 파이프로 받지 않는 이유: gc 를 끊어도 자식 프로세스(`git repack`)가 파이프를 쥐고 있어 기다림이 풀리지 않습니다.
+    """
+    found = _repo(workspace)
+    if found is None:
+        return
+    git, root = found
+    proc = subprocess.Popen(
+        [git, "-C", str(root), "-c", "gc.autoDetach=false", "gc", "--auto", "--quiet"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    _collecting.add(proc)
+    try:
+        code = proc.wait(timeout=GC_TIMEOUT)
+        if code != 0:
+            logger.warning(f"git gc --auto exited with {code} in {root}")
+    except subprocess.TimeoutExpired:
+        logger.warning(f"git gc --auto did not finish in {GC_TIMEOUT}s in {root}; stopping it")
+        proc.kill()
+        proc.wait()
+    finally:
+        _collecting.discard(proc)
+
+
+def stop_collecting() -> None:
+    """돌고 있는 `git gc` 를 끊습니다. 스레드에서 도는 gc 가 서버 종료를 붙잡지 않게 합니다.
+
+    끊어도 저장소는 망가지지 않습니다. git 은 새 묶음을 다 쓴 뒤에 이름을 바꿔 넣습니다.
+    """
+    for proc in list(_collecting):
+        proc.kill()

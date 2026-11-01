@@ -156,7 +156,7 @@ flowchart TD
 | :--- | :--- |
 | `app/agents/llm_usage.py` | Token and LLM-time meters per speech and turn ([LLM Integration §6](../agents/llm-integration.md)) |
 | `app/agents/ask_user.py` | `ask__ask_user` host tool ([Ask the User](../agents/ask-user.md)) |
-| `app/workspace_checkpoint.py` | Turn snapshots in the workspace repository, revert, export ([Workspace Checkpoints](../orchestration/workspace-checkpoints.md)) |
+| `app/workspace_checkpoint.py` | Turn snapshots in the workspace repository, revert, export, retention and `git gc --auto` ([Workspace Checkpoints](../orchestration/workspace-checkpoints.md)) |
 | `app/database/search.py` | Conversation search and per-database indexes (FTS5, `pg_trgm` + `tsvector`) |
 | `app/headless.py`, `app/mcp_server.py` | Debates without a page: REST and MCP ([Headless API](../operations/headless-api.md)) |
 | `app/session_fork.py` | Forking a conversation at a turn, compare data, ratings ([Session Handoff §7](../orchestration/session-handoff.md)) |

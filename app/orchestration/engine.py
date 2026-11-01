@@ -53,6 +53,17 @@ from app.orchestration.turn_setup import TurnPreparer, new_state, restore_turn_s
 logger = logging.getLogger(__name__)
 
 
+def _queue_notice(on_event: Optional[EventCallback]) -> Optional[Callable[[int], Awaitable[None]]]:
+    """줄의 순번이 바뀔 때마다 화면에 알리는 콜백 (`MCPRuntimePool.acquire` 의 `on_wait`)."""
+    if on_event is None:
+        return None
+
+    async def notice(ahead: int) -> None:
+        await on_event({"type": EventType.RUNTIME_QUEUED, "ahead": ahead})
+
+    return notice
+
+
 class OrchestratorEngine:
     """Multi-Agent Orchestration & Debate Execution Engine."""
 
@@ -165,7 +176,7 @@ class OrchestratorEngine:
         pool = get_runtime_pool()
         try:
             workspace = await self._session_workspace(session_id)
-            await pool.acquire(workspace, holder=session_id)
+            await self._borrow_runtime(workspace, session_id, on_event, control)
             try:
                 # 해당 턴의 모든 LLM 호출 사용량을 측정합니다 (`llm_usage`). 병렬 발언 비동기 태스크도 이 측정 컨텍스트를 상속받습니다.
                 with measuring() as usage:
@@ -219,7 +230,7 @@ class OrchestratorEngine:
         holder_token = LLM_HOLDER.set(session_id)
         pool = get_runtime_pool()
         try:
-            await pool.acquire(workspace, holder=session_id)
+            await self._borrow_runtime(workspace, session_id, on_event, control)
             try:
                 with measuring() as usage:
                     state = await self._resume_turn(
@@ -301,7 +312,7 @@ class OrchestratorEngine:
         holder_token = LLM_HOLDER.set(session_id)
         pool = get_runtime_pool()
         try:
-            await pool.acquire(workspace, holder=session_id)
+            await self._borrow_runtime(workspace, session_id, on_event)
             try:
                 with measuring() as usage:
                     async with self.session_factory() as db:
@@ -430,7 +441,7 @@ class OrchestratorEngine:
                         if plan_message is not None and plan_message.msg_type != "error"
                         else opening.id
                     ],
-                    mark_boundary=partial(self._mark_boundary, workspace, turn_id),
+                    mark_boundary=partial(self._round_boundary, workspace, session_id, turn_id, on_event),
                 )
             await self._mark_boundary(workspace, turn_id, workspace_checkpoint.DEBATE_END)
 
@@ -594,7 +605,7 @@ class OrchestratorEngine:
                             if state.plan_index is not None else opening.id
                         ],
                         resume=True, redo=redo,
-                        mark_boundary=partial(self._mark_boundary, workspace, turn_id),
+                        mark_boundary=partial(self._round_boundary, workspace, session_id, turn_id, on_event),
                     )
                 await self._mark_boundary(workspace, turn_id, workspace_checkpoint.DEBATE_END)
                 # 정지 등으로 다시 불리지 않은 발언의 초안은, 그 도구 기록을 "끊김" 안내로 돌립니다.
@@ -606,6 +617,28 @@ class OrchestratorEngine:
             )
             return state
 
+    # ------------------------------------------------------------ MCP 런타임 자리
+
+    @staticmethod
+    async def _borrow_runtime(
+        workspace: Path,
+        session_id: str,
+        on_event: Optional[EventCallback],
+        control: Optional[TurnControl] = None,
+    ) -> None:
+        """이 턴의 작업 공간 런타임을 빌립니다. 자리가 없으면 줄을 서고, 정지를 누르면 시작하지 않고 끝냅니다."""
+        await get_runtime_pool().acquire(
+            workspace, holder=session_id,
+            on_wait=_queue_notice(on_event),
+            should_abort=(lambda: control.stop_requested) if control is not None else None,
+        )
+
+    async def _round_boundary(
+        self, workspace: Path, session_id: str, turn_id: str, on_event: Optional[EventCallback], name: str,
+    ) -> None:
+        """라운드·단계가 시작할 때: 경계 스냅샷을 남기고, 오래 기다린 턴이 있으면 런타임 자리를 내줍니다 (ADR-044)."""
+        await self._mark_boundary(workspace, turn_id, name)
+        await get_runtime_pool().yield_slot(workspace, session_id, on_wait=_queue_notice(on_event))
 
     # ------------------------------------------------------------ 작업 공간 체크포인트
 

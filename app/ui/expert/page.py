@@ -30,7 +30,7 @@ from app.orchestration.turns import KIND_SYNTHESIS, kind_of, unfinished_turn
 from app.security import is_loopback
 from app.session_fork import ForkError, fork_session
 from app.code_versions import CodeVersion
-from app.session_ops import discard_turn, session_code_versions
+from app.session_ops import discard_turn, reviewable_changes, session_code_versions
 from app.ui.attention import ATTENTION_JS, WaitingTabTitle, WaitingWatcher
 from app.ui.components.artifact_viewer import ArtifactViewer, merge_artifacts
 from app.ui.components.chat_feed.feed import ChatFeed
@@ -371,8 +371,8 @@ class ExpertPage:
             # 페르소나 화면에 다녀와도 중단되지 않고, 돌아오면 다시 이어 붙습니다.
             # 작업 공간이 상이한 타 세션이 실행 중이더라도 차단하지 않습니다. 폴더마다
             # MCP 서버 묶음이 따로 뜨기 때문입니다 (`app/mcp/pool.py`). 자리가
-            # 모자라면 턴이 시작된 뒤 `RuntimeCapacityError` 로 끝나고, 그
-            # 사유는 아래 실패 경로를 통해 화면에 그대로 나옵니다.
+            # 모자라면 줄을 서고, 끝내 자리가 나지 않으면 `RuntimeCapacityError` 로
+            # 끝납니다. 그 사유는 아래 실패 경로를 통해 화면에 그대로 나옵니다.
             run = self.runner.start(
                 self.current_session_id, prompt, self.roster_control.state.workspace_dir,
                 skill_designations=mentions.skill_designations, attachments=mentions.attachment_paths,
@@ -971,7 +971,7 @@ class ExpertPage:
                 )).all()
             }
             turn_change_counts: List[Tuple[str, str, Optional[int]]] = [
-                (m.id, m.turn_id, (checkpoints[m.turn_id] or {}).get("changed"))
+                (m.id, m.turn_id, reviewable_changes(checkpoints[m.turn_id]))
                 for m in messages_db
                 if m.turn_id in checkpoints and kind_of(m) == KIND_SYNTHESIS
             ]

@@ -37,7 +37,7 @@ from app.easy.loop import (
 )
 from app.easy.pages.common import Viewer, agent_avatar, easy_header, easy_setup, resolve_viewer
 from app.easy.sessions import load_messages, owned_session
-from app.events import WAITING_EVENTS, EventType
+from app.events import WAITING_EVENTS, EventType, runtime_queue_label
 from app.mcp.policy import OUTCOME_LABELS, tool_outcome
 from app.orchestration.runner import get_debate_runner
 from app.orchestration.turns import unfinished_turn
@@ -475,6 +475,8 @@ class EasySessionScreen:
                 self.status_view.refresh()
             speaker = event.get("speaker", "")
             feed.set_busy(True, f"[{speaker}] 작업 수행 중..." if speaker else "진행 중...", "진행 중")
+        elif etype == EventType.RUNTIME_QUEUED:
+            feed.set_busy(True, runtime_queue_label(event.get("ahead", 0)), "대기 중")
         elif etype == EventType.MESSAGE_STREAM_START:
             feed.start_streaming_message(event.get("message", {}))
         elif etype == EventType.MESSAGE_STREAM_CHUNK:

@@ -92,6 +92,43 @@ async def forget_checkpoints(db, session_id: str, turn_ids: Optional[Sequence[st
             logger.warning(f"Could not forget workspace checkpoints in {workspace}: {exc}")
 
 
+def reviewable_changes(checkpoint: Optional[Dict[str, Any]]) -> Optional[int]:
+    """턴 변경 창을 열 수 있으면 바뀐 파일 수. 보존 기간이 지나 스냅샷이 없는 턴이면 None."""
+    checkpoint = checkpoint or {}
+    return checkpoint.get("changed") if checkpoint.get("end") else None
+
+
+async def expire_checkpoints(db, turn_ids: Sequence[str]) -> None:
+    """보존 기간이 지난 턴의 기록에서 스냅샷 값을 지웁니다. 바뀐 파일 수는 턴의 기록으로 남깁니다.
+
+    스냅샷이 없다는 사실을 기록이 먼저 알아야 화면이 되돌리기를 내놓지 않습니다.
+    """
+    rows = (await db.execute(select(TurnModel).where(TurnModel.id.in_(list(turn_ids))))).scalars().all()
+    for turn in rows:
+        if isinstance(turn.checkpoint, dict):
+            turn.checkpoint = {k: v for k, v in turn.checkpoint.items() if k not in ("start", "end")}
+    await db.commit()
+
+
+async def maintain_workspace(session_factory: Any, workspace: Path) -> None:
+    """쉬고 있는 작업 공간의 저장소를 정리합니다 (ADR-044, `MCPRuntimePool.idle_hook`).
+
+    기록을 먼저 고치고 이름을 나중에 지웁니다. 중간에 실패해도 이름이 남을 뿐이고, 다음 정리가 다시 찾아냅니다.
+    거꾸로 하면 스냅샷이 사라진 턴의 기록에 되돌리기가 남습니다.
+    """
+    expired = await asyncio.to_thread(workspace_checkpoint.expired_turns, workspace)
+    if expired:
+        async with session_factory() as db:
+            await expire_checkpoints(db, expired)
+        await asyncio.to_thread(workspace_checkpoint.forget, workspace, expired)
+        logger.info(f"Dropped the checkpoints of {len(expired)} old turn(s) in {workspace}")
+    try:
+        await asyncio.to_thread(workspace_checkpoint.collect_garbage, workspace)
+    except asyncio.CancelledError:
+        workspace_checkpoint.stop_collecting()
+        raise
+
+
 @dataclass
 class TurnChanges:
     """해당 턴 실행 중 작업 공간에서 변경된 파일 내역 (`app/workspace_checkpoint.py`)."""

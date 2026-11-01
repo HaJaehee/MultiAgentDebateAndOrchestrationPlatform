@@ -27,6 +27,7 @@ import logging
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from app.events import EventType
+from app.mcp.pool import RuntimeWaitAborted
 from app.orchestration.engine import OrchestratorEngine, get_orchestrator_engine
 from app.orchestration.event_bus import BaseEventBus, get_event_bus
 from app.orchestration.plan_gate import PlanApprovalExpired
@@ -48,9 +49,9 @@ CANCEL_TIMEOUT = 20.0
 # 폴더를 쓰느니 두 번째 토론을 거절했습니다.
 #
 # 지금은 작업 공간마다 서버 묶음이 따로 뜹니다(`app/mcp/pool.py`). 그래서 거절할
-# 이유가 없어졌습니다. 자리가 모자랄 때의 거절은 풀이 `RuntimeCapacityError` 로
-# 합니다 — 이유가 "동시에 두 폴더를 쓸 수 없어서" 가 아니라 "지금 그만큼 띄울
-# 예산이 없어서" 로 바뀌었습니다.
+# 이유가 없어졌습니다. 자리가 모자라면 풀에서 줄을 서고, 그래도 자리가 나지 않을 때의
+# 거절은 풀이 `RuntimeCapacityError` 로 합니다 — 이유가 "동시에 두 폴더를 쓸 수
+# 없어서" 가 아니라 "지금 그만큼 띄울 예산이 없어서" 로 바뀌었습니다.
 
 
 class DebateRunner:
@@ -243,6 +244,11 @@ class DebateRunner:
                 logger.info(f"Debate turn for session {session_id} is parked: {exc}")
                 run.status = "failed"
                 run.parked = True
+                run.error = str(exc)
+            except RuntimeWaitAborted as exc:
+                # 줄에서 기다리다 정지를 눌렀습니다. 아직 아무것도 시작하지 않았으므로 오류가 아닙니다.
+                logger.info(f"Debate turn for session {session_id} left the runtime queue: {exc}")
+                run.status = "cancelled"
                 run.error = str(exc)
             except BaseException as exc:  # noqa: BLE001
                 logger.error(

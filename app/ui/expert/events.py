@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Dict, Optional
 from nicegui import ui
 
 from app.agents.llm_usage import usage_line
-from app.events import TURN_END_EVENTS, Event, EventType
+from app.events import TURN_END_EVENTS, Event, EventType, runtime_queue_label
 from app.orchestration.graph_run import GraphRunTracker, node_labels
 from app.ui.components.sidebar import event_changes_session_list
 
@@ -71,6 +71,10 @@ class ExpertEventView:
         label = f"[{speaker}] 발언 및 분석 중..." if speaker else f"상태: {status}"
         round_info = f"Round {round_num}" if round_num else "Debating"
         self.page.chat_feed.set_busy(True, label, round_info)
+
+    @_handles(EventType.RUNTIME_QUEUED)
+    async def _on_runtime_queued(self, event: Event) -> None:
+        self.page.chat_feed.set_busy(True, runtime_queue_label(event.get("ahead", 0)), "Queue")
 
     @_handles(EventType.ROUND_STARTED)
     async def _on_round_started(self, event: Event) -> None:
@@ -162,6 +166,12 @@ class ExpertEventView:
 
     @_handles(EventType.STOP_REQUESTED)
     async def _on_stop_requested(self, event: Event) -> None:
+        # 런타임 자리를 기다리던 턴은 아직 합성할 것이 없습니다. 곧 취소로 끝납니다 (ADR-044).
+        run = self.page.runner.get(self.page.current_session_id)
+        if run is not None and not run.turn_id and run.round_info == "Queue":
+            self.page.chat_feed.set_busy(True, "정지 요청됨 — 대기를 취소합니다.", "Stopping")
+            self.page.chat_feed.set_stop_pending(True)
+            return
         # 정지를 누른 화면뿐 아니라 같은 세션을 보고 있는 모든 화면이
         # 같은 상태를 보아야 합니다.
         self.page.chat_feed.set_busy(
@@ -542,6 +552,10 @@ class ExpertEventView:
         # 확정되는 시점이 여기라, 잠금 해제도 여기서 알립니다.
         self.page.roster_control.refresh_mcp_lock()
         status = event.get("status")
+        # 턴이 열리기 전에 끝났으면(자리를 받지 못함) 요청이 어디에도 기록되지 않았습니다. 입력창으로 돌려줍니다.
+        run = self.page.runner.get(self.page.current_session_id)
+        if status in ("failed", "cancelled") and run is not None and not run.turn_id and run.user_prompt:
+            self.page.chat_feed.restore_input(run.user_prompt)
         if event.get("retry_target"):
             await self.page.after_speech_revision(event)
         elif event.get("parked"):

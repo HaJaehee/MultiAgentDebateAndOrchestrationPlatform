@@ -61,13 +61,14 @@ stateDiagram-v2
     InUse --> InUse: another session acquires the same folder
     InUse --> Idle: last holder releases
     Idle --> InUse: acquired again before the TTL expires
+    InUse --> Absent: sole holder yields at a round boundary (someone has waited long enough)
     Idle --> Absent: idle TTL elapsed, or evicted to make room
     InUse --> Absent: app shutdown
 ```
 
 - **`acquire(workspace, holder)`** — hands out the runtime for that folder, starting it if
-  necessary. `holder` is the session id. Reference counting is by set, so acquiring twice
-  from the same session counts once.
+  necessary, and queues if there is no slot. `holder` is the session id. Reference counting
+  is by set, so acquiring twice from the same session counts once.
 - **`release(holder)`** — drops the reference. The processes are **not** killed
   immediately; they stay warm for `MCP_RUNTIME_IDLE_TTL` so consecutive turns in the same
   folder do not pay the startup cost again (the sandbox spends seconds launching an
@@ -85,12 +86,43 @@ stateDiagram-v2
 budget**, not a limit on concurrent debates — any number of sessions can share a runtime.
 When a new folder needs a slot the pool first reaps expired idle runtimes, then evicts the
 longest-idle ones. A runtime that is still in use is never evicted; if nothing can be
-freed, `acquire` raises `RuntimeCapacityError` naming the workspaces and sessions holding
-the slots.
+freed, the turn waits in line ([ADR-044](../../lectures/05-adr/ADR-044-runtime-queue-and-checkpoint-retention.md)).
 
-This is the successor to `WorkspaceConflictError`, but the reason changed: it is no longer
-"two folders cannot be open at once", it is "there is no budget to start another group
-right now."
+- **The queue.** First come, first served, for up to `MCP_RUNTIME_WAIT` seconds; after that
+  `acquire` raises `RuntimeCapacityError` naming the workspaces and sessions holding the
+  slots. A folder that is already live needs no new slot, so it never queues. A queued turn
+  sends `runtime_queued` with its position. Pressing stop leaves the line
+  (`RuntimeWaitAborted`) and the run ends as cancelled. A turn that never got a slot has not
+  recorded anything, so the expert screen puts the request back in the input box. `GET /api/mcp`
+  lists the line under `waiting`.
+- **Yielding at a round boundary.** With only a queue, the next turn waits for a whole turn
+  to finish. So just before a round or graph step starts, a turn gives up its slot and rejoins
+  the back of the line (`yield_slot`, called from `OrchestratorEngine._round_boundary`) if the
+  head of the line has waited `MCP_RUNTIME_YIELD_AFTER` seconds, the turn has used the runtime
+  at least that long, and nobody else shares it. That is the one point where none of the turn's
+  speeches or tool calls are running. A yielded turn waits with no time limit, since failing a
+  started turn over a slot would waste the debate so far. It gets the same `MCPManager` object
+  back with new processes, because a turn's consultation scope holds on to that object.
+
+**A yielded turn loses its sandbox variables**, and so does any server that keeps state only
+in memory; files and knowledge graphs survive. This happens only under contention, and
+`MCP_RUNTIME_YIELD_AFTER=0` turns it off. A turn waiting on plan or tool approval still holds
+its slot, since that is not a round boundary.
+
+Borrowing only for each tool call was rejected: variables would vanish between two calls of
+one speech, a speech could stall on a slot at any tool call, and an empty manager makes
+`LLMCaller` fall back to the default runtime, which is the wrong folder.
+
+The queue succeeds `WorkspaceConflictError`, but the reason changed: it is no longer "two
+folders cannot be open at once", it is "there is no budget to start another group right now."
+
+### Idle maintenance
+
+When the last holder releases a runtime the pool starts a timer. If nobody acquires that folder
+for `MCP_RUNTIME_IDLE_TTL`, it calls `idle_hook(workspace)`; `app/main.py` installs
+`session_ops.maintain_workspace` there ([Workspace Checkpoints §4](../orchestration/workspace-checkpoints.md#4-retention-and-compaction-adr-044)).
+The timer does not stop the runtime: reaping still happens on the next acquire or release.
+Engines driven without `app/main.py` install no hook, so nothing changes for them.
 
 ---
 
@@ -161,7 +193,9 @@ so concurrent debates share them safely.
 | Variable | Default | Meaning |
 | :--- | :--- | :--- |
 | `MCP_MAX_RUNTIMES` | `4` | How many distinct workspaces may have live server groups |
-| `MCP_RUNTIME_IDLE_TTL` | `300` | Seconds an unused runtime stays warm before being stopped |
+| `MCP_RUNTIME_IDLE_TTL` | `300` | Seconds an unused runtime stays warm before being stopped; also how long a folder must rest before idle maintenance |
+| `MCP_RUNTIME_WAIT` | `900` | Seconds a turn waits for a slot before `RuntimeCapacityError`. `0` refuses at once |
+| `MCP_RUNTIME_YIELD_AFTER` | `60` | Seconds the head of the line must have waited, and a turn must have used its runtime, before it yields at a round boundary. `0` never yields |
 | `SANDBOX_MAX_NAMESPACES` | `16` | Total IPython kernel budget, divided across runtimes |
 
 Raising `MCP_MAX_RUNTIMES` is legitimate, but each additional runtime is a whole group of

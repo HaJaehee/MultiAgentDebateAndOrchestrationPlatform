@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
+from app import workspace_checkpoint
 from app.database.models import (
     TURN_INTERRUPTED,
     ArtifactModel,
@@ -27,6 +28,7 @@ from app.database.session import get_session_factory, init_db
 from app.orchestration import context_memory as memory
 from app.orchestration.engine import OrchestratorEngine
 from app.session_fork import FORK_TITLE_SUFFIX, ForkError, compare_view, fork_session, rate_turn
+from app.session_ops import expire_checkpoints
 from tests.fake_llm import FakeLLMCaller
 
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git 이 없습니다")
@@ -155,6 +157,23 @@ async def test_fork_at_the_latest_turn_uses_the_conversation_memory(repo):
         new = await db.get(SessionModel, result.session_id)
         source = await db.get(SessionModel, sid)
     assert new.decision_ledger == source.decision_ledger and "결정 2" in new.decision_ledger
+    assert (Path(result.workspace) / "app.py").read_text(encoding="utf-8") == "print(2)\n"
+
+
+@needs_git
+@pytest.mark.asyncio
+async def test_a_fork_of_an_expired_turn_says_it_copied_the_current_folder(repo):
+    """보존 기간이 지난 턴에서 갈라도 그 턴의 모습인 척하지 않습니다 (ADR-044). 화면이 `from_snapshot` 으로 알립니다."""
+    factory, sid, turns, _engine = await _two_turns(repo)
+    first = turns[0]
+    async with factory() as db:
+        await expire_checkpoints(db, [first.id])
+    workspace_checkpoint.forget(repo, [first.id])
+
+    async with factory() as db:
+        result = await fork_session(db, sid, first.id)
+
+    assert not result.from_snapshot
     assert (Path(result.workspace) / "app.py").read_text(encoding="utf-8") == "print(2)\n"
 
 

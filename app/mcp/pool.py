@@ -38,14 +38,33 @@ argv 로, sandbox 는 `SANDBOX_WORKSPACE` 를 env 로. 프로세스가 살아 �
 `acquire()` 로 참조를 잡고 `release()` 로 놓습니다. 참조가 0 이 되어도 바로 죽이지
 않고 `MCP_RUNTIME_IDLE_TTL` 동안 살려 둡니다 — 같은 폴더에서 턴을 연달아 돌릴 때
 기동 비용(샌드박스는 IPython 커널을 띄워 수 초)을 매번 치르지 않기 위해서입니다.
+
+그 시간이 다 지나도록 아무도 찾지 않은 작업 공간에는 `idle_hook` 을 부릅니다. 저장소를
+정리하기 좋은 때를 아는 것은 풀뿐이고, 무엇을 정리할지는 부르는 쪽이 정합니다 (ADR-044).
+
+## 자리가 모자랄 때 (ADR-044)
+
+쓰고 있는 런타임은 라운드 도중에 내리지 않습니다. 그러면 그 토론의 도구가 도중에 사라집니다.
+대신 두 가지를 합니다.
+
+* **줄 서기** — 바로 거절하지 않고 `MCP_RUNTIME_WAIT` 동안 먼저 온 순서대로 기다립니다.
+  이미 떠 있는 폴더는 자리를 새로 요구하지 않으므로 줄을 서지 않습니다.
+* **라운드 경계의 양보** — 턴 하나가 런타임을 끝까지 쥐고 있으면 다음 턴은 그 턴 전체를
+  기다려야 합니다. 그래서 줄의 맨 앞이 `MCP_RUNTIME_YIELD_AFTER` 를 넘게 기다렸으면, 라운드를
+  시작하려는 턴이 자리를 내주고 줄 맨 뒤에 다시 섭니다 (`yield_slot`). 서버는 다시 뜨므로
+  **샌드박스 커널의 변수는 사라집니다.** 파일과 지식 그래프는 남습니다.
+
+도구를 부를 때만 빌리는 방식은 쓰지 않습니다. 발언 도중에 커널이 사라지고, 도구가 뜰 때까지
+발언이 멈추며, 도구 목록을 프로세스 없이 들고 있어야 합니다.
 """
 
 import asyncio
 import logging
 import os
 import time
+from collections import deque
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Awaitable, Callable, Deque, Dict, List, Optional, Set
 
 from app.config import get_config, resolve_workspace_dir
 from app.mcp.client import positive_float_env
@@ -63,6 +82,15 @@ def _positive_int_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+def _seconds_env(name: str, default: float) -> float:
+    """환경 변수를 0 이상의 초로 읽습니다. 비었거나 이상하면 기본값."""
+    try:
+        value = float(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 0 else default
+
+
 # 동시에 띄워 둘 수 있는 런타임(=서로 다른 작업 공간)의 수.
 #
 # 런타임 하나가 conf.json 의 켜진 서버 수만큼 프로세스를 띄웁니다(기본 4개:
@@ -72,6 +100,19 @@ MAX_RUNTIMES = _positive_int_env("MCP_MAX_RUNTIMES", 4)
 
 # 아무도 안 쓰는 런타임을 살려 두는 시간(초).
 IDLE_TTL = positive_float_env("MCP_RUNTIME_IDLE_TTL", 300.0)
+
+# 자리가 날 때까지 기다리는 시간(초). 넘기면 거절합니다. 0 이면 기다리지 않습니다.
+#
+# 줄을 선 턴은 아직 아무것도 기록하지 않았고 언제든 멈출 수 있으므로 길게 잡습니다. 계획 승인을
+# 기다리는 턴(기본 10분)도 자리를 쥐고 있어, 그보다 짧으면 앞 턴의 답을 기다리다 거절됩니다.
+WAIT_TIMEOUT = _seconds_env("MCP_RUNTIME_WAIT", 900.0)
+
+# 줄의 맨 앞이 이만큼 기다렸고 자기도 이만큼 쓴 턴이 라운드 경계에서 자리를 내줍니다(초).
+# 0 이면 양보하지 않습니다 — 라운드를 넘어 샌드박스 변수를 이어 써야 하는 환경에서 끕니다.
+YIELD_AFTER = _seconds_env("MCP_RUNTIME_YIELD_AFTER", 60.0)
+
+# 줄에서 기다리는 동안 멈춰 달라는 요청을 확인하는 간격(초).
+ABORT_POLL_SECONDS = 1.0
 
 # 샌드박스 커널은 런타임마다 따로 뜹니다. conf.json 의 값을 그대로 N 벌 두면
 # 커널 수가 곱으로 붙으므로, 런타임 상한으로 나눠 예산을 유지합니다.
@@ -87,6 +128,21 @@ class RuntimeCapacityError(RuntimeError):
     """
 
 
+class RuntimeWaitAborted(RuntimeCapacityError):
+    """자리를 기다리다 멈춰 달라는 요청을 받았을 때. 아직 아무것도 시작하지 않았습니다."""
+
+
+class _Waiter:
+    """자리를 기다리는 턴 하나."""
+
+    def __init__(self, key: str, holder: str):
+        self.key = key
+        self.holder = holder
+        self.since = time.monotonic()
+        # 자리가 날 만한 일이 생기면 풀립니다. 풀려도 자리가 있다는 뜻은 아닙니다.
+        self.wake: Optional["asyncio.Future[None]"] = None
+
+
 class _Runtime:
     """풀이 들고 있는 런타임 하나 (매니저 + 그것을 붙잡고 있는 사람들)."""
 
@@ -95,6 +151,7 @@ class _Runtime:
         self.manager = manager
         self.holders: Set[str] = set()
         self.idle_since: Optional[float] = time.monotonic()
+        self.busy_since: float = time.monotonic()
 
     @property
     def in_use(self) -> bool:
@@ -107,10 +164,27 @@ class _Runtime:
 class MCPRuntimePool:
     """작업 공간 경로 -> 그 폴더를 보는 MCP 서버 묶음."""
 
-    def __init__(self, max_runtimes: int = MAX_RUNTIMES, idle_ttl: float = IDLE_TTL):
+    def __init__(
+        self,
+        max_runtimes: int = MAX_RUNTIMES,
+        idle_ttl: float = IDLE_TTL,
+        wait_timeout: float = WAIT_TIMEOUT,
+        yield_after: float = YIELD_AFTER,
+    ):
         self.max_runtimes = max(1, int(max_runtimes))
         self.idle_ttl = float(idle_ttl)
+        self.wait_timeout = float(wait_timeout)
+        self.yield_after = float(yield_after)
+        # 작업 공간이 TTL 동안 쉬었을 때 부릅니다. 설치하지 않으면 아무 일도 하지 않습니다.
+        self.idle_hook: Optional[Callable[[Path], Awaitable[None]]] = None
         self._runtimes: Dict[str, _Runtime] = {}
+        # 자리를 기다리는 순서. 자리를 새로 요구하는 쪽은 맨 앞이어야 띄울 수 있습니다.
+        self._waiters: Deque[_Waiter] = deque()
+        # 자리를 양보해 프로세스만 내린 매니저. 턴이 이 객체를 들고 있으므로(자문 범위 등)
+        # 다시 뜰 때 새로 만들지 않고 이것을 다시 씁니다.
+        self._parked: Dict[str, MCPManager] = {}
+        self._idle_watches: Dict[str, asyncio.TimerHandle] = {}
+        self._idle_tasks: Set["asyncio.Task[None]"] = set()
         # 획득·반납·회수가 서로를 밟지 않게 하는 하나의 락. 런타임을 띄우는 데
         # 수 초가 걸리므로 그 사이 다른 세션이 같은 폴더를 또 띄우지 않도록
         # 기동까지 락 안에서 합니다.
@@ -155,21 +229,49 @@ class MCPRuntimePool:
 
     # ------------------------------------------------------------------ 획득 / 반납
 
-    async def acquire(self, workspace: Optional[str | Path], holder: str) -> MCPManager:
+    async def acquire(
+        self,
+        workspace: Optional[str | Path],
+        holder: str,
+        *,
+        on_wait: Optional[Callable[[int], Awaitable[None]]] = None,
+        should_abort: Optional[Callable[[], bool]] = None,
+    ) -> MCPManager:
         """이 작업 공간의 런타임을 빌립니다. 없으면 띄웁니다.
 
         `holder` 는 보통 세션 id 입니다. 같은 holder 가 두 번 잡아도 참조는
         하나입니다 (집합이라서). 반드시 `release(holder)` 로 짝을 맞추세요.
+
+        자리가 없으면 `wait_timeout` 동안 줄을 서고, 그래도 없으면 `RuntimeCapacityError` 입니다.
+        `on_wait(앞에 선 수)` 는 순번이 바뀔 때마다 불립니다. `should_abort()` 가 참이 되면
+        `RuntimeWaitAborted` 로 줄에서 나옵니다.
+        """
+        return await self._acquire(self.key_for(workspace), holder, self.wait_timeout, on_wait, should_abort)
+
+    async def yield_slot(
+        self,
+        workspace: Optional[str | Path],
+        holder: str,
+        *,
+        on_wait: Optional[Callable[[int], Awaitable[None]]] = None,
+    ) -> bool:
+        """오래 기다린 턴이 있으면 자리를 내주고 줄 맨 뒤에서 다시 받습니다. 양보했으면 True.
+
+        라운드(그래프 단계)가 시작하기 직전에 부릅니다. 이 턴의 발언과 도구 호출이 하나도 돌고
+        있지 않은 자리는 거기뿐입니다. 돌아올 때까지 기다리며, 시간 제한을 두지 않습니다.
+        이미 시작한 턴을 자리 때문에 실패로 끝내면 그때까지의 토론이 헛일이 됩니다.
         """
         key = self.key_for(workspace)
         async with self._lock:
             runtime = self._runtimes.get(key)
-            if runtime is None:
-                await self._evict_for_room_locked(key)
-                runtime = await self._start_locked(key)
-            runtime.holders.add(holder)
-            runtime.idle_since = None
-            return runtime.manager
+            if runtime is None or not self._should_yield_locked(runtime, holder):
+                return False
+            logger.info(f"MCP runtime for '{key}' yields its slot to '{self._waiters[0].key}' at a round boundary.")
+            self._parked[key] = runtime.manager
+            await self._stop_locked(key)
+        self._wake_waiters()
+        await self._acquire(key, holder, None, on_wait)
+        return True
 
     async def release(self, holder: str, workspace: Optional[str | Path] = None) -> None:
         """빌린 런타임을 놓습니다. 프로세스를 바로 죽이지는 않습니다.
@@ -190,11 +292,131 @@ class MCPRuntimePool:
                     logger.info(
                         f"MCP runtime for '{key}' is idle; keeping it warm for {self.idle_ttl:.0f}s"
                     )
+                    self._watch_idle(key)
             await self._reap_expired_locked()
+        self._wake_waiters()
 
     # ------------------------------------------------------------------ 내부
 
-    async def _start_locked(self, key: str) -> _Runtime:
+    async def _acquire(
+        self,
+        key: str,
+        holder: str,
+        timeout: Optional[float],
+        on_wait: Optional[Callable[[int], Awaitable[None]]] = None,
+        should_abort: Optional[Callable[[], bool]] = None,
+    ) -> MCPManager:
+        """`timeout` 이 None 이면 자리가 날 때까지 기다립니다."""
+        waiter: Optional[_Waiter] = None
+        told: Optional[int] = None
+        try:
+            while True:
+                async with self._lock:
+                    runtime = self._runtimes.get(key)
+                    # 떠 있는 폴더는 자리를 새로 요구하지 않으므로 줄과 상관없이 함께 씁니다.
+                    if runtime is None and self._first_in_line(waiter) and await self._make_room_locked():
+                        runtime = await self._start_locked(key, self._parked.pop(key, None))
+                    if runtime is not None:
+                        return self._hand_out(key, runtime, holder)
+                    if timeout == 0:
+                        raise self._capacity_error(key, 0)
+                    if waiter is None:
+                        waiter = _Waiter(key, holder)
+                        self._waiters.append(waiter)
+                        logger.info(f"Waiting for an MCP runtime slot for '{key}' ({holder}).")
+                    waiter.wake = asyncio.get_running_loop().create_future()
+                    ahead = self._waiters.index(waiter)
+                if on_wait is not None and ahead != told:
+                    told = ahead
+                    await on_wait(ahead)
+                await self._wait_in_line(waiter, timeout, should_abort)
+        finally:
+            if waiter is not None:
+                self._waiters.remove(waiter)
+                self._wake_waiters()
+
+    def _first_in_line(self, waiter: Optional[_Waiter]) -> bool:
+        """자리를 새로 요구해도 되는가. 줄이 있으면 새치기하지 않습니다."""
+        return not self._waiters or self._waiters[0] is waiter
+
+    def _hand_out(self, key: str, runtime: _Runtime, holder: str) -> MCPManager:
+        if not runtime.in_use:
+            runtime.busy_since = time.monotonic()
+        runtime.holders.add(holder)
+        runtime.idle_since = None
+        self._cancel_idle_watch(key)
+        return runtime.manager
+
+    async def _wait_in_line(
+        self, waiter: _Waiter, timeout: Optional[float], should_abort: Optional[Callable[[], bool]],
+    ) -> None:
+        """자리가 날 만한 일이 생길 때까지 잡니다. 시간이 다 됐거나 멈춰 달라고 하면 예외입니다."""
+        while True:
+            if should_abort is not None and should_abort():
+                raise RuntimeWaitAborted("MCP 런타임 자리를 기다리던 중 정지 요청을 받아 토론을 시작하지 않았습니다.")
+            left = None if timeout is None else timeout - (time.monotonic() - waiter.since)
+            if left is not None and left <= 0:
+                raise self._capacity_error(waiter.key, timeout)
+            nap = left if should_abort is None else min(left or ABORT_POLL_SECONDS, ABORT_POLL_SECONDS)
+            done, _ = await asyncio.wait({waiter.wake}, timeout=nap)
+            if done:
+                return
+
+    def _wake_waiters(self) -> None:
+        """자리가 생겼을 수 있습니다. 줄 전부가 다시 확인합니다 (순서는 `_first_in_line` 이 지킵니다)."""
+        for waiter in self._waiters:
+            if waiter.wake is not None and not waiter.wake.done():
+                waiter.wake.set_result(None)
+
+    def _should_yield_locked(self, runtime: _Runtime, holder: str) -> bool:
+        # 함께 쓰는 턴이 있으면 내릴 수 없습니다. 그 턴은 지금 라운드 경계에 있지 않습니다.
+        if not self.yield_after or not self._waiters or runtime.holders != {holder}:
+            return False
+        # 빈자리가 있으면 맨 앞이 곧 가져갑니다. 또 내리면 서버만 헛되이 다시 띄웁니다.
+        if len(self._runtimes) < self.max_runtimes:
+            return False
+        now = time.monotonic()
+        return (
+            now - self._waiters[0].since >= self.yield_after
+            and now - runtime.busy_since >= self.yield_after
+        )
+
+    def _watch_idle(self, key: str) -> None:
+        """이 작업 공간이 TTL 동안 쉬면 `idle_hook` 을 부르도록 걸어 둡니다.
+
+        런타임을 내리는 시점과는 별개입니다. 런타임은 지금처럼 다음 획득·반납에서 회수되므로
+        토론이 끊긴 서버에서는 그 일이 오지 않지만, 저장소를 정리하기에는 그때가 가장 좋습니다.
+        """
+        self._cancel_idle_watch(key)
+        if self.idle_hook is not None:
+            self._idle_watches[key] = asyncio.get_running_loop().call_later(
+                self.idle_ttl, self._idle_elapsed, key,
+            )
+
+    def _cancel_idle_watch(self, key: str) -> None:
+        handle = self._idle_watches.pop(key, None)
+        if handle is not None:
+            handle.cancel()
+
+    def _idle_elapsed(self, key: str) -> None:
+        self._idle_watches.pop(key, None)
+        task = asyncio.ensure_future(self._run_idle_hook(key))
+        self._idle_tasks.add(task)
+        task.add_done_callback(self._idle_tasks.discard)
+
+    async def _run_idle_hook(self, key: str) -> None:
+        hook = self.idle_hook
+        if hook is None:
+            return
+        try:
+            await hook(Path(key))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - 정리는 부산물입니다. 다음 번에 다시 합니다
+            logger.warning(f"Idle maintenance failed for '{key}': {type(e).__name__}: {e}")
+
+    async def _start_locked(self, key: str, manager: Optional[MCPManager] = None) -> _Runtime:
+        """런타임을 띄웁니다. `manager` 를 주면 그 객체에 프로세스를 다시 붙입니다 (`yield_slot`)."""
         workspace = Path(key)
         env = self.runtime_env(workspace)
         try:
@@ -203,7 +425,10 @@ class MCPRuntimePool:
             logger.error(f"Could not resolve MCP servers for '{key}': {e}", exc_info=True)
             server_configs = {}
 
-        manager = MCPManager(server_configs, workspace=workspace)
+        if manager is None:
+            manager = MCPManager(server_configs, workspace=workspace)
+        else:
+            manager.server_configs = server_configs
         manager.set_runtime_env(env)
         runtime = _Runtime(workspace, manager)
         # 서버가 하나도 못 떠도 런타임은 등록합니다. 도구 없이 토론하는 것과
@@ -240,11 +465,9 @@ class MCPRuntimePool:
             if not runtime.in_use and runtime.idle_for() >= self.idle_ttl:
                 await self._stop_locked(key)
 
-    async def _evict_for_room_locked(self, wanted: str) -> None:
-        """새 런타임 자리를 만듭니다. 못 만들면 거절합니다."""
+    async def _make_room_locked(self) -> bool:
+        """새 런타임 자리를 만듭니다. 쓰고 있는 것은 내리지 않으므로 못 만들 수도 있습니다."""
         await self._reap_expired_locked()
-        if len(self._runtimes) < self.max_runtimes:
-            return
 
         # 오래 놀고 있던 것부터 내립니다.
         idle = sorted(
@@ -255,19 +478,20 @@ class MCPRuntimePool:
         while idle and len(self._runtimes) >= self.max_runtimes:
             await self._stop_locked(str(idle.pop(0).workspace))
 
-        if len(self._runtimes) < self.max_runtimes:
-            return
+        return len(self._runtimes) < self.max_runtimes
 
+    def _capacity_error(self, wanted: str, waited: float) -> RuntimeCapacityError:
         busy = [
             f"{r.workspace} ({', '.join(sorted(r.holders))})"
             for r in self._runtimes.values() if r.in_use
         ]
-        raise RuntimeCapacityError(
-            f"MCP 런타임 자리가 다 찼습니다 (상한 {self.max_runtimes}개). "
+        patience = f"{waited:.0f}초를 기다렸지만 자리가 나지 않았습니다. " if waited else ""
+        return RuntimeCapacityError(
+            f"MCP 런타임 자리가 다 찼습니다 (상한 {self.max_runtimes}개). {patience}"
             f"'{wanted}' 를 띄우려면 먼저 다음 중 하나가 끝나야 합니다: "
             f"{'; '.join(busy)}. "
-            f"상한은 MCP_MAX_RUNTIMES 환경변수로 올릴 수 있지만, 런타임 하나마다 "
-            f"MCP 서버 프로세스 묶음이 통째로 하나 더 뜬다는 점을 감안하세요."
+            f"기다리는 시간은 MCP_RUNTIME_WAIT, 상한은 MCP_MAX_RUNTIMES 환경변수로 올릴 수 있지만, "
+            f"런타임 하나마다 MCP 서버 프로세스 묶음이 통째로 하나 더 뜬다는 점을 감안하세요."
         )
 
     # ------------------------------------------------------------------ 조회 / 종료
@@ -329,6 +553,14 @@ class MCPRuntimePool:
     def live_workspaces(self) -> List[str]:
         return list(self._runtimes)
 
+    def waiting(self) -> List[Dict]:
+        """자리를 기다리는 순서 (UI/헬스체크용)."""
+        now = time.monotonic()
+        return [
+            {"workspace": w.key, "holder": w.holder, "waited_seconds": round(now - w.since, 1)}
+            for w in self._waiters
+        ]
+
     async def reload_all(self) -> Dict[str, Dict]:
         """conf.json 을 다시 읽어 **살아 있는 런타임 전부**를 다시 띄웁니다.
 
@@ -355,10 +587,18 @@ class MCPRuntimePool:
             return self.status()
 
     async def shutdown_all(self) -> None:
-        """서버 종료 시 모든 런타임을 정리합니다."""
+        """서버 종료 시 모든 런타임을 정리합니다. 돌고 있는 저장소 정리도 멈춥니다."""
+        for key in list(self._idle_watches):
+            self._cancel_idle_watch(key)
+        loop = asyncio.get_running_loop()
+        maintaining = [task for task in self._idle_tasks if task.get_loop() is loop]
+        for task in maintaining:
+            task.cancel()
+        await asyncio.gather(*maintaining, return_exceptions=True)
         async with self._lock:
             for key in list(self._runtimes):
                 await self._stop_locked(key)
+            self._parked.clear()
 
 
 _pool: Optional[MCPRuntimePool] = None

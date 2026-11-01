@@ -170,6 +170,7 @@ async def mcp_status():
     return {
         "servers": servers,
         "runtimes": pool.status(),
+        "waiting": pool.waiting(),
         "max_runtimes": pool.max_runtimes,
         "idle_ttl_seconds": pool.idle_ttl,
     }

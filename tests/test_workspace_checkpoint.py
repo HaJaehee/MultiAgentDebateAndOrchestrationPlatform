@@ -5,13 +5,16 @@
 3. 롤백 기능 검증: 신규 생성 파일 삭제, 수정/삭제 파일 복원 및 턴 완료 후 외부 추가 변경 감지 시 중단 검증.
 4. 엔진 연동 검증: 턴 시작/종료 체크포인트 자동 생성 및 이벤트 전달, 롤백 수행 시 시스템 메모 기록.
 5. 턴 폐기 시 관련 Git ref 정리 검증.
+6. 보존과 압축 검증: 기준을 모두 넘긴 턴만 지우고, 기록과 저장소를 함께 맞추며, `git gc --auto` 가 스냅샷을 보존한다.
 """
 
+import hashlib
 import shutil
 import subprocess
 import time
 import uuid
 from pathlib import Path
+from typing import Dict, List
 
 import pytest
 from sqlalchemy import select
@@ -20,7 +23,7 @@ from app import workspace_checkpoint as wc
 from app.database.models import MessageModel, SessionModel, TurnModel
 from app.database.session import get_session_factory, init_db
 from app.orchestration.engine import OrchestratorEngine
-from app.session_ops import discard_turn, revert_turn_files, turn_changes
+from app.session_ops import discard_turn, maintain_workspace, reviewable_changes, revert_turn_files, turn_changes
 from tests.fake_llm import FakeLLMCaller
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git 이 없습니다")
@@ -222,3 +225,154 @@ async def test_a_turn_is_checkpointed_and_can_be_reverted(repo):
         await discard_turn(db, sid, [], turn_id=turn.id)
         await db.commit()
     assert _git(repo, "for-each-ref", "refs/mado") == ""
+
+
+# ------------------------------------------------------------------ 보존과 압축 (ADR-044)
+
+
+def _turn_from(repo: Path, monkeypatch, turn_id: str, days_ago: float, *which: str) -> Dict[str, str]:
+    """`days_ago` 일 전에 찍은 것처럼 스냅샷을 남깁니다."""
+    monkeypatch.setenv("GIT_COMMITTER_DATE", f"{int(time.time() - days_ago * 86400)} +0000")
+    shas = {name: wc.snapshot(repo, wc.turn_ref(turn_id, name)) for name in which or (wc.START, wc.END)}
+    monkeypatch.delenv("GIT_COMMITTER_DATE")
+    return shas
+
+
+def test_only_turns_past_both_limits_expire(repo, monkeypatch):
+    _turn_from(repo, monkeypatch, "oldest", 90)
+    _turn_from(repo, monkeypatch, "old", 60)
+    _turn_from(repo, monkeypatch, "recent", 1)
+
+    assert wc.expired_turns(repo, keep_turns=1, keep_days=30) == ["oldest", "old"]
+    assert wc.expired_turns(repo, keep_turns=2, keep_days=30) == ["oldest"], "최근 턴 수 안이면 남깁니다"
+    assert wc.expired_turns(repo, keep_turns=1, keep_days=75) == ["oldest"], "최근 기간 안이면 남깁니다"
+    assert wc.expired_turns(repo, keep_turns=3, keep_days=30) == []
+
+
+def test_a_turn_is_as_old_as_its_latest_snapshot(repo, monkeypatch):
+    """오래전에 시작했어도 최근에 이어 간 턴은 최근 턴입니다."""
+    _turn_from(repo, monkeypatch, "resumed", 90, wc.START)
+    _turn_from(repo, monkeypatch, "resumed", 1, wc.END)
+    _turn_from(repo, monkeypatch, "newest", 0.5)
+
+    assert wc.expired_turns(repo, keep_turns=1, keep_days=30) == []
+
+
+def test_expiry_reads_nothing_outside_a_repository(tmp_path, workspace_checkpoints):
+    assert wc.expired_turns(tmp_path, keep_turns=0, keep_days=0.001) == []
+    wc.collect_garbage(tmp_path)
+
+
+def _blobs_in_objects_17(count: int) -> List[str]:
+    """`objects/17/` 에 들어갈 내용. `gc --auto` 는 이 폴더만 세어 전체 수를 짐작합니다."""
+    found: List[str] = []
+    number = 0
+    while len(found) < count:
+        content = f"blob-{number}"
+        number += 1
+        if hashlib.sha1(f"blob {len(content)}\0{content}".encode()).hexdigest().startswith("17"):
+            found.append(content)
+    return found
+
+
+def _count_objects(repo: Path) -> Dict[str, int]:
+    pairs = (line.split(": ") for line in _git(repo, "count-objects", "-v").splitlines())
+    return {name: int(value) for name, value in pairs if value.isdigit()}
+
+
+def test_collecting_garbage_packs_objects_and_keeps_snapshots(repo):
+    _git(repo, "config", "gc.auto", "1")
+    for index, content in enumerate(_blobs_in_objects_17(3)):
+        (repo / f"blob{index}.txt").write_text(content, encoding="utf-8")
+    sha = wc.snapshot(repo, wc.turn_ref("t", wc.START))
+    assert _count_objects(repo)["count"] > 0
+
+    wc.collect_garbage(repo)
+
+    assert _count_objects(repo)["count"] == 0 and _count_objects(repo)["in-pack"] > 0
+    assert wc.resolve(repo, wc.turn_ref("t", wc.START)) == sha
+    assert wc.changes(repo, sha, sha) == []
+
+
+def test_collecting_garbage_follows_the_users_gc_settings(repo):
+    _git(repo, "config", "gc.auto", "0")
+    for index, content in enumerate(_blobs_in_objects_17(3)):
+        (repo / f"blob{index}.txt").write_text(content, encoding="utf-8")
+    wc.snapshot(repo, wc.turn_ref("t", wc.START))
+    before = _count_objects(repo)["count"]
+
+    wc.collect_garbage(repo)
+
+    assert _count_objects(repo)["count"] == before
+
+
+def test_stopping_kills_running_collectors(monkeypatch):
+    killed = []
+
+    class Running:
+        def kill(self):
+            killed.append(self)
+
+    running = Running()
+    monkeypatch.setattr(wc, "_collecting", {running})
+
+    wc.stop_collecting()
+
+    assert killed == [running]
+
+
+@pytest.mark.asyncio
+async def test_maintenance_drops_old_checkpoints_from_the_repository_and_the_record(repo, monkeypatch):
+    db_url = "sqlite+aiosqlite:///:memory:"
+    await init_db(db_url)
+    factory = get_session_factory(db_url)
+    sid = f"keep-{uuid.uuid4().hex[:8]}"
+    old_id, recent_id = str(uuid.uuid4()), str(uuid.uuid4())
+    head = _git(repo, "rev-parse", "HEAD")
+    old = _turn_from(repo, monkeypatch, old_id, 90)
+    recent = _turn_from(repo, monkeypatch, recent_id, 1)
+    async with factory() as db:
+        db.add(SessionModel(
+            id=sid, title="보존", strategy="sequential_debate", max_rounds=1,
+            active_agents=["orchestrator"], workspace_dir=str(repo),
+        ))
+        for turn_id, shas in ((old_id, old), (recent_id, recent)):
+            db.add(TurnModel(
+                id=turn_id, session_id=sid, status="completed", phase="done", config={"workspace_dir": str(repo)},
+                checkpoint={"start": shas[wc.START], "end": shas[wc.END], "changed": 3},
+            ))
+        await db.commit()
+    expired = wc.expired_turns
+    monkeypatch.setattr(wc, "expired_turns", lambda workspace: expired(workspace, keep_turns=1, keep_days=30))
+
+    await maintain_workspace(factory, repo)
+
+    names = _git(repo, "for-each-ref", "--format=%(refname)", "refs/mado").splitlines()
+    assert names and all(name.startswith(f"refs/mado/turns/{recent_id}/") for name in names)
+    assert _git(repo, "rev-parse", "HEAD") == head
+    async with factory() as db:
+        kept = await db.get(TurnModel, recent_id)
+        gone = await db.get(TurnModel, old_id)
+        assert kept.checkpoint["end"] == recent[wc.END] and reviewable_changes(kept.checkpoint) == 3
+        # 바뀐 파일 수는 턴의 기록으로 남고, 스냅샷이 없으니 변경 칩과 되돌리기는 내놓지 않습니다.
+        assert gone.checkpoint == {"changed": 3} and reviewable_changes(gone.checkpoint) is None
+        assert await turn_changes(db, sid, old_id) is None
+        assert await turn_changes(db, sid, recent_id) is not None
+        reverted = await revert_turn_files(db, sid, old_id)
+    assert not reverted.ok and "체크포인트" in reverted.error
+
+
+@pytest.mark.asyncio
+async def test_a_failure_to_update_the_record_keeps_the_names(repo, monkeypatch):
+    """이름을 먼저 지우면 스냅샷이 사라진 턴의 기록에 되돌리기가 남습니다."""
+    _turn_from(repo, monkeypatch, "old", 90)
+    expired = wc.expired_turns
+    monkeypatch.setattr(wc, "expired_turns", lambda workspace: expired(workspace, keep_turns=0, keep_days=30))
+
+    def broken():
+        raise RuntimeError("DB 없음")
+
+    with pytest.raises(RuntimeError):
+        await maintain_workspace(broken, repo)
+
+    assert wc.resolve(repo, wc.turn_ref("old", wc.END))

@@ -111,8 +111,12 @@ Read at import time by [app/mcp/pool.py](file:///d:/MultiAgentDebateOrchestratio
 
 | Environment Variable | Default | Purpose |
 | :--- | :--- | :--- |
-| `MCP_MAX_RUNTIMES` | `4` | How many distinct workspaces may have live server groups at once. This is a memory budget, **not** a limit on concurrent debates — any number of sessions sharing a folder share one group. When the cap is reached the pool reaps idle groups first; if every group is in use, `acquire` raises `RuntimeCapacityError` naming what holds the slots rather than pointing a debate at the wrong folder. |
-| `MCP_RUNTIME_IDLE_TTL` | `300` | Seconds an unreferenced group stays alive before being stopped. Consecutive turns in the same folder then start instantly instead of paying the spawn cost again (the sandbox spends seconds launching an IPython kernel). |
+| `MCP_MAX_RUNTIMES` | `4` | How many distinct workspaces may have live server groups at once. This is a memory budget, **not** a limit on concurrent debates — any number of sessions sharing a folder share one group. When the cap is reached the pool reaps idle groups first; if every group is in use, the turn waits in line rather than pointing a debate at the wrong folder. |
+| `MCP_RUNTIME_WAIT` | `900` | Seconds a turn waits in line for a slot. After that `acquire` raises `RuntimeCapacityError` naming what holds the slots. `0` refuses at once. |
+| `MCP_RUNTIME_YIELD_AFTER` | `60` | A turn gives up its slot at a round boundary and rejoins the line when the head of the line has waited this long and the turn has used its runtime this long. Its servers restart, so **sandbox variables are lost**; files and knowledge graphs survive. `0` never yields. |
+| `CHECKPOINT_KEEP_TURNS` | `200` | Workspace checkpoints kept per folder: the newest this many turns. Only turns past both this and `CHECKPOINT_KEEP_DAYS` are removed, when the folder has rested for `MCP_RUNTIME_IDLE_TTL`. |
+| `CHECKPOINT_KEEP_DAYS` | `30` | Workspace checkpoints kept per folder: turns from the last this many days. |
+| `MCP_RUNTIME_IDLE_TTL` | `300` | Seconds an unreferenced group stays alive before being stopped. Consecutive turns in the same folder then start instantly instead of paying the spawn cost again (the sandbox spends seconds launching an IPython kernel). A folder that rests this long also gets its old checkpoints removed and `git gc --auto`. |
 
 ### 3.6. Tool-Call Safety Limits
 

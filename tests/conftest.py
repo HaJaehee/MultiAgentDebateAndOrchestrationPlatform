@@ -20,12 +20,12 @@ from app.mcp import pool as pool_module
 from app.mcp.manager import MCPManager
 
 
-async def _start_without_processes(self, key):
+async def _start_without_processes(self, key, manager=None):
     """서버 설정이 비어 있는 런타임을 등록합니다 (프로세스를 띄우지 않음)."""
     from pathlib import Path
 
     workspace = Path(key)
-    manager = MCPManager({}, workspace=workspace)
+    manager = manager or MCPManager({}, workspace=workspace)
     manager.set_runtime_env(self.runtime_env(workspace))
     runtime = pool_module._Runtime(workspace, manager)  # noqa: SLF001 - 테스트 대역
     self._runtimes[key] = runtime  # noqa: SLF001

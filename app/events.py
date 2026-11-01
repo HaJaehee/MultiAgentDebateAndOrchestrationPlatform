@@ -20,6 +20,7 @@ class EventType(StrEnum):
     # 턴의 시작과 끝
     TURN_OPENED = "turn_opened"
     STATUS_CHANGED = "status_changed"
+    RUNTIME_QUEUED = "runtime_queued"  # MCP 런타임 자리를 기다리는 중 (`ahead`: 앞에 선 수, ADR-044)
     ROUND_STARTED = "round_started"
     DEBATE_ENDED_EARLY = "debate_ended_early"  # 결정 장부 수렴 또는 토큰 예산 초과로 인한 토론 조기 종료 (v1.5)
     TURN_COMPLETED = "turn_completed"
@@ -88,6 +89,12 @@ DECISION_RESOLVED = {
 
 # 턴이 끝났다는 신호 둘. 화면은 둘 중 먼저 오는 것으로 입력을 다시 엽니다.
 TURN_END_EVENTS = frozenset({EventType.TURN_COMPLETED, EventType.RUN_FINISHED})
+
+
+def runtime_queue_label(ahead: int) -> str:
+    """`RUNTIME_QUEUED` 를 화면에 적는 말. 스냅샷과 실시간 화면이 같은 말을 씁니다."""
+    place = f"앞에 {ahead}개 대기" if ahead else "다음 차례"
+    return f"MCP 런타임 자리를 기다리는 중입니다 ({place}). 다른 대화가 끝나거나 라운드를 마치면 시작합니다."
 
 # 사용자 입력 및 승인 대기 상태의 변경을 유발하는 이벤트 목록 (`TurnRun.waiting_requests`).
 # 물음은 턴이 끝날 때도 함께 걷히므로 턴의 끝도 포함합니다.

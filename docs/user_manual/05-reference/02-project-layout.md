@@ -56,14 +56,14 @@ SQLite WAL 모드가 정상 동작하지 않아(데이터 파일 손상 위험) 
 ```text
 app/
 ├── about.py                          22   앱 이름·버전·저작자 (단일 출처)
-├── main.py                          248   조립: FastAPI 서버, lifespan(시작·종료 순서), 화면·라우터·접근 제어, CLI
-├── api.py                           281   HTTP 엔드포인트 /api/* · /agent-icon
+├── main.py                          265   조립: FastAPI 서버, lifespan(시작·종료 순서), 화면·라우터·접근 제어, CLI
+├── api.py                           296   HTTP 엔드포인트 /api/* · /agent-icon
 ├── routes.py                         22   화면 주소 (체험·쉬운 화면)
-├── events.py                        108   토론 이벤트 이름표 EventType
+├── events.py                        115   토론 이벤트 이름표 EventType
 ├── plugins.py                       224   토론 전략 및 호스트 도구 플러그인 로더 (디렉터리 및 엔트리포인트 지원, ADR-042)
 ├── tool_rules.py                    125   도구 보안 규칙 문법 (read(경로) · net(호스트) …)
 ├── timestamps.py                    176   발언·턴·보고서 시각 표기 (화면·문서·보고서 공용)
-├── session_ops.py                   529   세션 되돌리기·이어받기, 피드 기록 읽기
+├── session_ops.py                   593   세션 되돌리기·이어받기, 피드 기록 읽기, 쉬는 작업 공간 정리
 ├── export.py                        239   대화 → 마크다운 문서
 ├── export_mermaid.py              1,618   Mermaid → StarUML·HTML 변환 (외부 의존 없음)
 ├── mermaid_lint.py                  491   다이어그램 문법 검사·복구
@@ -72,7 +72,7 @@ app/
 ├── security.py                      782   원격 접속 토큰, 접근 제어 미들웨어
 ├── headless.py                      256   헤드리스 토론 실행 코어 (REST·MCP 공용) (v1.5)
 ├── mcp_server.py                    180   내장 MCP 서버 엔드포인트 /mcp (v1.5)
-├── workspace_checkpoint.py          387   작업 공간 턴 체크포인트·라운드 구간·롤백·분기 내보내기 (v1.5)
+├── workspace_checkpoint.py          465   작업 공간 턴 체크포인트·라운드 구간·롤백·분기 내보내기·보존과 압축 (v1.5)
 ├── code_diff.py                     234   두 코드의 차이 계산 (git diff 해석, 줄 안 강조) (v1.5.1)
 ├── code_versions.py                  96   대화에 나온 코드 버전, 비교 기준 후보 (v1.5.1)
 ├── session_fork.py                  291   대화 세션 분기(Fork), 비교 데이터 구성 및 결론 평가 (v1.5)
@@ -120,13 +120,13 @@ app/
 ├── mcp/
 │   ├── client.py                    746   stdio·HTTP 세션 하나, 도구 검색·실행
 │   ├── manager.py                   736   작업 공간 하나의 서버 묶음, 도구 색인
-│   ├── pool.py                      371   작업 공간별 런타임 풀
+│   ├── pool.py                      611   작업 공간별 런타임 풀 (대기열·라운드 경계 양보)
 │   ├── policy.py                    952   도구 보안 판정 허용·묻기·거부
 │   ├── guards.py                    102   바이너리 문서 쓰기 거부
 │   └── exec_scan.py                 343   실행 전 코드 검사
 │
 ├── orchestration/
-│   ├── engine.py                    678   조립과 턴 수명 (run_turn · resume_turn · retry_speech)
+│   ├── engine.py                    727   조립과 턴 수명 (run_turn · resume_turn · retry_speech)
 │   ├── context.py                    51   EngineContext — 서비스가 함께 쓰는 것
 │   ├── turn_setup.py                280   턴 구성·참여자·도구 게이트
 │   ├── recording.py                 673   TurnRecorder — 기록, 재시도, data/unsaved/
@@ -159,8 +159,8 @@ app/
 │   ├── control.py                   693   정지·개입·한도·승인 제어 채널
 │   ├── turns.py                     589   턴 기록, 끊긴 턴 (ADR-024)
 │   ├── state.py                     148   DebateState · DebateMessage · ArtifactItem
-│   ├── runner.py                    445   DebateRunner — 백그라운드 턴 시작·끝
-│   ├── turn_run.py                  719   TurnRun — 턴 스냅샷 (이벤트별 리듀서)
+│   ├── runner.py                    449   DebateRunner — 백그라운드 턴 시작·끝
+│   ├── turn_run.py                  725   TurnRun — 턴 스냅샷 (이벤트별 리듀서)
 │   ├── event_bus.py                 114   구독자 큐 이벤트 버스
 │   └── worker.py                    168   태스크 워커 풀
 │
@@ -175,8 +175,8 @@ app/
 └── ui/
     ├── run_binding.py                94   화면이 토론에 붙는 구독 (세 화면 공용)
     ├── attention.py                 307   승인 대기 알림: 탭 제목, 데스크톱 알림, 모든 대화 감시
-    ├── expert/page.py             1,047   전문가 화면 ExpertPage
-    ├── expert/events.py             568   이벤트별 화면 반영
+    ├── expert/page.py             1,056   전문가 화면 ExpertPage
+    ├── expert/events.py             581   이벤트별 화면 반영
     ├── expert/chrome.py             106   머리 줄, 정보 창
     ├── shared/page.py               119   체험·쉬운 화면 공용 틀
     ├── personas_page.py             347   /personas/{id}

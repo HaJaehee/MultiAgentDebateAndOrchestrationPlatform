@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import logging
 import threading
+from functools import partial
 from typing import Any, AsyncGenerator
 
 import uvicorn
@@ -31,6 +32,7 @@ from app.orchestration.runner import get_debate_runner
 from app.orchestration.turns import mark_interrupted_turns
 from app.plugins import load_plugins
 from app.security import AccessMiddleware, get_access_control
+from app.session_ops import maintain_workspace
 from app.trial import setup_trial
 from app.ui.expert.page import create_ui
 from app.ui.compare_page import create_compare_page
@@ -128,6 +130,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 화면조차 열리지 않는 것은 전혀 다른 이야기입니다 (설정을 고치려면 그
     # 화면이 필요합니다).
     pool = get_runtime_pool()
+    # 작업 공간이 쉬면 오래된 턴 체크포인트를 정리하고 저장소를 압축합니다 (ADR-044).
+    pool.idle_hook = partial(maintain_workspace, get_session_factory())
     try:
         await pool.warm_default()
         logger.info(

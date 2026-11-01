@@ -17,7 +17,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 from app.agents.llm_usage import usage_line
 from app.config import resolve_workspace_dir
-from app.events import DECISION_RESOLVED, WAITING_CHANNEL, WAITING_EVENTS, Event, EventType
+from app.events import DECISION_RESOLVED, WAITING_CHANNEL, WAITING_EVENTS, Event, EventType, runtime_queue_label
 from app.orchestration.control import TurnControl
 from app.orchestration.event_bus import BaseEventBus, get_event_bus
 from app.orchestration.graph_run import GraphRunTracker
@@ -323,6 +323,12 @@ class TurnRun:
         label = f"[{speaker}] 발언 및 분석 중..." if speaker else f"상태: {status}"
         self.status_text = self._pending_prefix(label)
         self.round_info = f"Round {round_num}" if round_num else "Debating"
+
+    @_reduces(EventType.RUNTIME_QUEUED)
+    def _on_runtime_queued(self, event: Event) -> None:
+        self.busy = True
+        self.status_text = self._pending_prefix(runtime_queue_label(event.get("ahead", 0)))
+        self.round_info = "Queue"
 
     @_reduces(EventType.ROUND_STARTED)
     def _on_round_started(self, event: Event) -> None:

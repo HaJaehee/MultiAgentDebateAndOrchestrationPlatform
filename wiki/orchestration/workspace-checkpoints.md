@@ -55,6 +55,7 @@ stays selected if the new segment has it. `이 턴 되돌리기` always applies 
   are back to their earlier state.
 
 Discarding a turn or deleting the conversation removes its refs (`forget`); git collects the objects later.
+Older turns lose their snapshots through retention (§4).
 
 ## 3. Forks
 
@@ -62,12 +63,36 @@ A fork exports the `end` snapshot of the chosen turn into a new folder (`export`
 `read-tree -u --reset`, index back to HEAD, origin removed). See
 [Session Handoff §7](session-handoff.md#7-forking-a-conversation-at-a-turn-v15).
 
-## 4. Tests
+## 4. Retention and compaction (ADR-044)
+
+Every turn adds refs and objects, so a folder with hundreds of turns keeps growing. When a workspace
+has had no holder for `MCP_RUNTIME_IDLE_TTL`, the runtime pool calls `session_ops.maintain_workspace`
+([Runtime Isolation](../mcp/runtime-isolation.md#idle-maintenance)):
+
+1. `expired_turns` finds turns outside **both** the newest `CHECKPOINT_KEEP_TURNS` (200) and the last
+   `CHECKPOINT_KEEP_DAYS` (30). A turn is as old as its latest snapshot, so a turn resumed yesterday is
+   recent. It reads repository refs only, per workspace.
+2. `expire_checkpoints` removes `start` and `end` from those rows and keeps `changed`. This comes first:
+   if a later step fails, the refs simply remain and the next run finds them again. The other order could
+   leave a revert offered on a snapshot that is gone.
+3. `forget` deletes the refs.
+4. `collect_garbage` runs `git gc --auto` with `gc.autoDetach=false`, up to 15 minutes. Your gc settings
+   apply, and server shutdown stops it.
+
+An expired turn shows no file chip, cannot be reverted, and has no round segments. A fork from it copies
+the current folder and says so (`from_snapshot=False`). The headless `files_changed` value stays.
+
+Disk space does not come back at once. `gc --auto` acts only past its limits (about 6,700 loose objects or
+50 packs), and unreferenced objects survive `gc.pruneExpire` (2 weeks by default). A repository with only a
+few large files may stay below the limits.
+
+## 5. Tests
 
 `tests/test_workspace_checkpoint.py` (real git in a temporary repository): HEAD/index untouched, excluded
 folders, changes and diffs, revert, refusal on later changes, export of a snapshot (including an empty
 one in a repository without commits), a same-size edit in the second the index was written, and an engine
-turn checkpointed and reverted. `tests/test_code_diff.py` covers boundaries: segments, a turn that stopped
+turn checkpointed and reverted, retention limits, `git gc --auto` keeping snapshots, and maintenance updating
+the row and the refs in the right order. `tests/test_code_diff.py` covers boundaries: segments, a turn that stopped
 mid-debate, a resumed turn, `forget`, a failed snapshot, and a real turn read round by round. Other tests run
 with checkpoints switched off (`conftest._no_workspace_checkpoints`), so the developer's own `workspace`
 repository collects no refs.

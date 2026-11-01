@@ -184,8 +184,10 @@ Runs in different workspaces are no longer refused. `DebateRunner` used to raise
 `WorkspaceConflictError` when a second session tried to start a debate in a different
 folder, because the MCP servers were shared process-wide and switching the workspace under
 a running debate would have pointed its tools at someone else's files. With one runtime per
-workspace there is nothing to clash over; the only remaining refusal is
-`RuntimeCapacityError` when the runtime budget is exhausted.
+workspace there is nothing to clash over. When the runtime budget is exhausted the turn
+waits in line, and running turns yield at round boundaries once someone has waited long
+enough. The only remaining refusal is `RuntimeCapacityError` when the wait runs out
+([Runtime Isolation §3](../mcp/runtime-isolation.md#capacity)).
 
 ---
 

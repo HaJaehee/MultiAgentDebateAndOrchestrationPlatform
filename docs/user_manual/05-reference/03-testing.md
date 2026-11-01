@@ -21,6 +21,7 @@ pytest -k "snapshot"
 | `test_agent_admin.py` | 에이전트 추가/비활성화/삭제 시 `conf.json` 원자적 편집과 UI 잠금 규칙 |
 | `test_mcp_admin.py` | MCP 서버 추가/삭제/on-off, 주석(`//`) 및 `${VAR}` 보존, 런타임 실서버 반영 |
 | `test_mcp.py` | MCP 클라이언트 stdio 연결 수립, 도구 스키마 검색 및 안전 실행 |
+| `test_mcp_runtime_pool.py` | 런타임 풀: 참조·유휴 TTL·회수, 대기열(순서, 시간 초과, 취소, 정지), 라운드 경계 양보(조건, 같은 매니저 복귀, 자리 하나로 두 토론 완주), 유휴 훅 |
 | `test_remote_mcp.py` | 원격(HTTP/SSE) MCP 서버: 설정 유효성, 전송 방식 자동 폴백, 인증 토큰 격리 |
 | `test_anythingllm_kb.py` | AnythingLLM 문서 검색(`kb`): Mock AnythingLLM 서버 기반 검색 결과 및 근거 출처 포맷팅, 실패 시 오류 처리, 작업 공간 허용 목록(allowlist), stdio 연결 및 읽기 권한 판정, 실제 도구 루프 연동 검증 (v1.5.1) |
 | `test_llm_offload.py` | 스트림 조립(`stream_chunk_builder`)을 워커 스레드로 분리: 조립 중에도 타 코루틴의 논블로킹 보장, 답·사용량 불변, 조립 중 취소 (v1.5.1) |
