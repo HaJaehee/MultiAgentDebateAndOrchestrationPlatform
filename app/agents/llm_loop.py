@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, 
 from app.agents import write_probe
 from app.agents.base import Agent
 from app.agents.connection import REJECTED, classify
+from app.agents.consultation import current_consultation_scope
 from app.agents.host_tools import find_host_tool
 from app.agents.llm_budget import (
     BUDGET_EXTENDED_INSTRUCTION,
@@ -58,13 +59,14 @@ from app.agents.tool_loading import (
     remember_loaded,
 )
 from app.mcp.manager import MCPManager
+from app.mcp.policy import UNTRUSTED_MEDIA_NOTE, wrap_untrusted
 from app.workspace_files import format_size
 
 logger = logging.getLogger(__name__)
 
 
 # 초안의 형식. 필드를 바꾸면 올립니다 — 모르는 형식의 초안은 이어 가지 않고 발언을 처음부터 합니다.
-SPEECH_STATE_VERSION = 3
+SPEECH_STATE_VERSION = 4
 
 
 # 도구 단위로 이어 가는 발언의 첫 판 앞에 붙는 안내.
@@ -198,6 +200,10 @@ class ToolLoop:
     open_writes: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     # 해당 발언이 마지막으로 작성한 파일의 SHA-256 해시 (절대 경로 → {path, sha256}). 세션 재개 시 사후 변경 여부를 판별합니다.
     known_files: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # 이 발언이 읽은 외부 내용의 출처 (`policy.outside_source`). 메시지에서 다시 구하지 않고 따로 듭니다 —
+    # 창에 맞추다 그 결과를 버려도 읽은 내용은 이미 발언의 판단과 글에 섞여 있습니다. 비어 있지 않으면 삭제·코드
+    # 실행·네트워크를 묻습니다 (`policy.evaluate`, ADR-047).
+    tainted_by: List[str] = field(default_factory=list)
 
     # --- 도구 목록에서 한 번 구해 두는 것
     memory_write: Optional[str] = field(init=False)
@@ -254,6 +260,7 @@ class ToolLoop:
         self.announced_bands = set(saved.get("announced_bands") or [])
         self.open_writes = {k: dict(v) for k, v in (saved.get("open_writes") or {}).items()}
         self.known_files = {k: dict(v) for k, v in (saved.get("known_files") or {}).items()}
+        self.tainted_by = list(saved.get("tainted_by") or [])
         if self.shelf is not None:
             # 기억은 프로세스 안에만 있어 재시작하면 비어 있습니다. 불러온 도구는 초안이 압니다.
             self._refresh_shelf(self.shelf.load(saved.get("loaded_tools") or []))
@@ -275,6 +282,7 @@ class ToolLoop:
             "loaded_tools": self.shelf.loaded_names() if self.shelf is not None else [],
             "open_writes": self.open_writes,
             "known_files": self.known_files,
+            "tainted_by": self.tainted_by,
         }
 
     def answer(self) -> Tuple[str, List[Dict[str, Any]]]:
@@ -330,12 +338,16 @@ class ToolLoopMixin:
         LLM 한 판 → 도구 호출이 없으면 답으로 마무리(`_settle_answer`), 있으면 도구 실행
         (`_run_tool_round`). 상한에 닿으면 확장을 묻고(`_extend_tool_budget`), 못 받으면 도구 없이 마무리합니다.
         """
+        # 자문받는 발언은 묻는 발언이 보낸 글로 시작합니다. 그 글이 외부 내용을 옮긴 것일 수 있으니 오염을 잇습니다.
+        # 끊지 않으면 오염된 발언이 도구를 가진 동료에게 "이 코드를 돌려 달라" 고 부탁하는 길이 열립니다.
+        consulting = current_consultation_scope()
         loop = ToolLoop(
             agent=agent, tools=tools, on_chunk=on_chunk, on_tool_call=on_tool_call,
             on_context_trim=on_context_trim, session_id=session_id, mcp=mcp, tool_gate=tool_gate,
             checkpoint=checkpoint, turn_anchor=turn_anchor, shelf=shelf,
             messages=list(messages), limit=max_tool_iterations or agent.max_tool_iterations,
             window=agent.max_context_window,
+            tainted_by=list(consulting.tainted_by) if consulting is not None else [],
         )
 
         # 끊긴 발언을 이어 가면 판 단위로 남긴 상태에서 시작합니다 (ADR-025). 끊긴 순간 실행 중이던
@@ -680,6 +692,7 @@ class ToolLoopMixin:
     ) -> None:
         """도구 하나: 보안 판정 → 실행 → 기록·알림 → 결과를 대화에 붙이고 남깁니다."""
         agent = loop.agent
+        outside = ""
         if not fn_name:
             # 도구 이름조차 못 읽었습니다. 모델에게 그대로 알리고
             # 다음 판으로 넘깁니다 (고아 tool_call 을 남기면 다음
@@ -704,15 +717,20 @@ class ToolLoopMixin:
                 if provider is not None and not provider.gated
                 else await self._check_tool_gate(
                     loop.tool_gate, agent, fn_name, fn_args, loop.mcp or self.mcp_manager,
+                    tainted_by=tuple(loop.tainted_by),
                 )
             )
             if gate is not None and not gate.allowed:
                 output, status = gate.output, gate.status or "denied"
             else:
                 await self._note_write_start(loop, fn_name, fn_args, call_id)
+                outside = self._outside_source(fn_name, fn_args, loop.mcp)
                 output, status = await self._execute_tool_safely(
                     agent, fn_name, fn_args, loop.session_id, loop.mcp, tools=loop.tools, loop=loop,
                 )
+                # 실패도 감쌉니다. 원격이 돌려준 오류문(robots.txt 전문 등)도 남이 쓴 글입니다. 다만 `denied` 는
+                # 매니저의 고정 보호에 걸려 실행되지 않은 호출이라 아무것도 읽지 않았습니다.
+                outside = "" if status == "denied" else outside or getattr(output, "outside", "")
                 await self._note_write_end(loop, call_id, status)
                 output = await self._take_tool_media(loop, fn_name, output)
                 output = loop.note_direct_call(fn_name, output, status)
@@ -725,14 +743,19 @@ class ToolLoopMixin:
             "status": status,
             "security": security,
         }
+        if outside:
+            call_log["outside"] = outside
+            if outside not in loop.tainted_by:
+                loop.tainted_by.append(outside)
         loop.tool_logs.append(call_log)
         await self._notify_tool_call(agent, loop.on_tool_call, call_log)
 
+        # 화면과 DB 는 원문을 봅니다 (`call_log`). 래퍼는 모델이 읽는 쪽에만 씌웁니다.
         loop.messages.append({
             "role": "tool",
             "tool_call_id": call_id,
             "name": fn_name or "unknown_tool",
-            "content": output,
+            "content": wrap_untrusted(output, outside) if outside else output,
         })
         # 도구 하나가 끝날 때마다 남깁니다. 끊기면 그 다음 도구부터 이어 갑니다.
         await self._save_loop_progress(loop)
@@ -813,7 +836,9 @@ class ToolLoopMixin:
         """
         if not loop.tool_media:
             return
-        blocks: List[Dict[str, Any]] = [{"type": "text", "text": TOOL_MEDIA_HEADER}]
+        # 첨부는 `user` 메시지로 들어갑니다. 글로 된 첨부는 래퍼로 감싸지 못하므로 머리말에서 일러 둡니다.
+        header = f"{TOOL_MEDIA_HEADER} {UNTRUSTED_MEDIA_NOTE}" if loop.tainted_by else TOOL_MEDIA_HEADER
+        blocks: List[Dict[str, Any]] = [{"type": "text", "text": header}]
         for block in loop.tool_media:
             if is_attachment(block):
                 blocks.append({"type": "text", "text": f"- {block['name']}"})

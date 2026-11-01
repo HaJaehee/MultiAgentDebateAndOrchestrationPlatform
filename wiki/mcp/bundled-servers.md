@@ -100,7 +100,10 @@ The platform comes pre-configured with a suite of official and open-source MCP s
   `read_only` and unattended turns — without an approval card. Without the annotations the grade would be
   `unknown`; with `openWorldHint` left out it would be `net` (the spec's default is `true`); both ask on
   every search. MADO's `net()` rules do not see the HTTP request — the server makes it, to the address the
-  owner wrote in `conf.json`, not to one the model chose.
+  owner wrote in `conf.json`, not to one the model chose. Documents are still text someone else wrote, so
+  `search` is on the default `tool_security.untrusted_sources`: its results reach the model wrapped, and that speech's
+  deletes, code and network calls ask from then on ([Tool Security §6-b](tool-security.md#6-b-outside-content-and-tainted-speeches)).
+  `list_workspaces` is not on the list.
 - **Failures are errors, never results**: no key, connection refused or timeout, a rejected key (401/403), an
   unknown workspace or empty query (AnythingLLM's 400 reason passed through), a non-JSON answer, a
   workspace outside the allow list. Each is raised, reaches the agent as an `isError` observation, and the

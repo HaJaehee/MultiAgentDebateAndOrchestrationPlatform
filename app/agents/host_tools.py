@@ -182,7 +182,10 @@ class _PeerTools(_BuiltinTools):
         return consultation_guidance(tools)
 
     async def run(self, call: HostToolCall) -> Tuple[str, str]:
-        return await run_consultation_tool(call.agent, call.name, call.arguments, llm_caller=call.llm_caller)
+        return await run_consultation_tool(
+            call.agent, call.name, call.arguments, llm_caller=call.llm_caller,
+            tainted_by=getattr(call.loop, "tainted_by", ()),
+        )
 
 
 class _AskTools(_BuiltinTools):

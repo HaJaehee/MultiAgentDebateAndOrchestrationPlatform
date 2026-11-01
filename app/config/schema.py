@@ -274,6 +274,10 @@ DEFAULT_TOOL_DENY_RULES = (
     "net(burpcollaborator.net)",
 )
 
+# 결과를 외부 내용으로 볼 로컬 도구. 네트워크 도구·원격 서버·등급을 모르는 도구는 적지 않아도 외부
+# 내용입니다 (`policy.outside_source`). 여기 적는 것은 등급이 `read` 로 나오지만 남이 쓴 글을 돌려주는 도구입니다.
+DEFAULT_UNTRUSTED_SOURCES = ("mcp(kb/search)",)
+
 # 사람의 답을 기다리는 시간(초)의 기본값. 도구 상한·컨텍스트 창과 같습니다.
 DEFAULT_APPROVAL_TIMEOUT = 180.0
 
@@ -334,6 +338,8 @@ class ToolSecurityConfig(BaseModel):
     # 도구 이름표·annotations 를 믿을 서버. 비워 두면(None) 로컬 프로세스 서버와 이 PC
     # 안의 원격 서버(127.0.0.1 등)를 믿고, 다른 호스트의 원격 서버는 믿지 않습니다.
     trusted_servers: Optional[List[str]] = Field(default=None)
+    # 결과를 외부 내용으로 볼 로컬 도구 (`mcp(서버/도구)` · `mcp(서버)`).
+    untrusted_sources: List[str] = Field(default_factory=lambda: list(DEFAULT_UNTRUSTED_SOURCES))
     # 에이전트별로 더 조이는 설정 (키 = 에이전트 키).
     agents: Dict[str, AgentToolSecurity] = Field(default_factory=dict)
 
@@ -341,6 +347,15 @@ class ToolSecurityConfig(BaseModel):
     @classmethod
     def _rules(cls, v: Any) -> List[str]:
         return validate_rule_list(v)
+
+    @field_validator("untrusted_sources", mode="before")
+    @classmethod
+    def _sources(cls, v: Any) -> List[str]:
+        rules = validate_rule_list(v)
+        wrong = [rule.text for rule in parse_rules(rules) if rule.kind != "mcp"]
+        if wrong:
+            raise ValueError(f"untrusted_sources 에는 `mcp(서버/도구)` 만 적습니다: {', '.join(wrong)}")
+        return rules
 
 class PlanApprovalConfig(BaseModel):
     """계획 승인 설정 (`plan_approval`, ADR-028).

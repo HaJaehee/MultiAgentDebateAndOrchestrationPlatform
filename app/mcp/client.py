@@ -123,13 +123,18 @@ class ToolOutput(str):
 
     도구 실행의 결과는 곳곳에서 `(문자열, 상태)` 로 약속되어 있고, 문자열로 쓰는 쪽은 첨부를 알 필요가
     없습니다. 받는 쪽(도구 루프)만 `media` 를 읽습니다 (`ToolLoopMixin._take_tool_media`).
+
+    `outside` 는 이 글에 외부 내용이 섞였을 때의 출처입니다. 호출만 봐서는 알 수 없는 경우(동료 자문)에
+    도구가 직접 밝힙니다 (`ToolLoopMixin._run_one_tool`).
     """
 
     media: Tuple[ToolMedia, ...]
+    outside: str
 
-    def __new__(cls, text: str, media: Iterable[ToolMedia] = ()) -> "ToolOutput":
+    def __new__(cls, text: str, media: Iterable[ToolMedia] = (), outside: str = "") -> "ToolOutput":
         instance = super().__new__(cls, text)
         instance.media = tuple(media)
+        instance.outside = outside
         return instance
 
 

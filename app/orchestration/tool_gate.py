@@ -13,6 +13,8 @@
   창에서 보고 지울 수 있습니다.
 * 같은 발언자가 이번 턴에 이미 거부된 호출을 똑같이 다시 하면 묻지 않고 거부합니다. 모델이
   거부를 읽고도 같은 호출을 되풀이하면 카드가 끝없이 쌓입니다.
+* 게이트는 턴마다 하나지만 외부 내용을 읽었는지는 **발언마다** 다릅니다. 그래서 도구 루프가 호출마다
+  `tainted_by` 로 건넵니다 (같은 라운드에 나란히 발언하는 전문가끼리 섞이지 않습니다).
 * 대화형 사용자가 부재한 경우(배치 실행/헤드리스) "확인" 판정은 안전하게 거부(Denied) 처리됩니다 — Claude Code의 `dontAsk` 원칙.
 
 게이트 자체에 예외가 발생하면 **안전하게 거부**(Fail Closed) 처리합니다. 보안 판정이 불가능한 상태에서
@@ -25,7 +27,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence
 
 from app.agents.host_tools import host_tool_meta
 from app.config import (
@@ -39,6 +41,7 @@ from app.mcp.policy import (
     DENY,
     MODE_LABELS,
     RISK_LABELS,
+    TAINT_RULE,
     CallProfile,
     Policy,
     Verdict,
@@ -222,10 +225,20 @@ class ToolGate:
 
     # -------------------------------------------------- 판정
 
-    async def check(self, agent: Any, tool_name: str, arguments: Dict[str, Any], mcp: Any) -> GateResult:
-        """단일 도구 호출을 판정합니다. 게이트 내부 예외 발생 시 안전하게 거절(Fail Closed)합니다."""
+    async def check(
+        self,
+        agent: Any,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        mcp: Any,
+        tainted_by: Sequence[str] = (),
+    ) -> GateResult:
+        """단일 도구 호출을 판정합니다. 게이트 내부 예외 발생 시 안전하게 거절(Fail Closed)합니다.
+
+        `tainted_by` 는 이 발언이 앞서 읽은 외부 내용의 출처입니다 (`ToolLoop.tainted_by`).
+        """
         try:
-            return await self._check(agent, tool_name, arguments, mcp)
+            return await self._check(agent, tool_name, arguments, mcp, tainted_by)
         except asyncio.CancelledError:
             raise
         except BaseException as exc:  # noqa: BLE001 - fail closed
@@ -242,7 +255,9 @@ class ToolGate:
                 _audit("deny", "", "gate-error"),
             )
 
-    async def _check(self, agent: Any, tool_name: str, arguments: Dict[str, Any], mcp: Any) -> GateResult:
+    async def _check(
+        self, agent: Any, tool_name: str, arguments: Dict[str, Any], mcp: Any, tainted_by: Sequence[str],
+    ) -> GateResult:
         meta = _tool_meta(tool_name, mcp)
         if meta is None:
             # 모르는 도구는 실행되지 않습니다 — 매니저가 "Unknown tool" 로 답합니다.
@@ -254,6 +269,7 @@ class ToolGate:
             return GateResult(False, text, status, _audit("hard", "", "고정 보호" if status == "denied" else "문서 형식"))
 
         profile = profile_call(meta, arguments, mcp.workspace)
+        profile.tainted_by = tuple(tainted_by)
         policy = self.policy_for(agent.key)
         verdict = evaluate(profile, policy)
 
@@ -384,6 +400,8 @@ class ToolGate:
         approver = request.approver or ""
         persisted: List[str] = []
         note = ""
+        # 무슨 근거로 물었는지 표식으로 남깁니다. 기억한 범위가 있으면 그쪽이 먼저입니다.
+        marker = TAINT_RULE if verdict.source == "taint" else ""
 
         if decision in ("allow_session", "allow_always", "deny_session", "deny_always") and scope:
             allow = decision.startswith("allow_")
@@ -427,7 +445,7 @@ class ToolGate:
 
         if request.allowed:
             return GateResult(True, audit=_audit(
-                "approved", verdict.risk, _registered_rule(decision, scope) or "once", approver,
+                "approved", verdict.risk, _registered_rule(decision, scope) or marker or "once", approver,
             ))
 
         if decision == "timeout":
@@ -449,7 +467,7 @@ class ToolGate:
                 tool_name, f"{reason}\n{verdict.explain()}",
                 _DENIED_BY_USER_NEXT_ACTION if (request.reason or decision != "deny") else "",
             )
-            audit = _audit("rejected", verdict.risk, _registered_rule(decision, scope), approver)
+            audit = _audit("rejected", verdict.risk, _registered_rule(decision, scope) or marker, approver)
         self._rejected[signature] = text
         return GateResult(False, text, "denied", audit)
 

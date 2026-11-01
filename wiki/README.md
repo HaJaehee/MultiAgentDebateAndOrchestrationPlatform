@@ -30,7 +30,7 @@ wiki/
 │   ├── overview-and-protocol.md           # Stdio MCP host/client architecture & persistent sessions
 │   ├── bundled-servers.md                 # Filesystem, Memory, Git, Sandbox, Sequential Thinking & AnythingLLM search (kb)
 │   ├── runtime-isolation.md               # Per-workspace runtime pool, concurrent sessions & process budget
-│   ├── tool-security.md                   # Allow / ask / deny per action, approval cards & hard protections
+│   ├── tool-security.md                   # Allow / ask / deny per action, approval cards, hard protections & outside content
 │   └── error-handling-resilience.md       # Tool failure handling, Stderr streaming tee & auto-reconnect
 ├── orchestration/
 │   ├── engine-lifecycle.md                # 3-phase execution: Planning, Debate Loop & Synthesis

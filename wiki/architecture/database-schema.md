@@ -210,7 +210,7 @@ Logs every MCP tool invocation executed by an agent during a turn.
 | `status` | `VARCHAR(20)` | No | `'success'` | `'success'`, `'error'`, or `'denied'` (tool security refused it; nothing ran). |
 | `decision` | `VARCHAR(20)` | No | `''` | Tool security verdict (v0.10.0): `allow`, `approved`, `deny`, `hard`, `rejected`, `timeout`. Empty = ran without a gate. |
 | `risk` | `VARCHAR(20)` | No | `''` | Risk class the verdict turned on (`write`, `net`, `exec_flagged`, …). |
-| `rule` | `TEXT` | No | `''` | Matched rule, granted scope, `mode:<mode>`, or a marker (`once`, `repeat`, `unattended`, `gate-error`). |
+| `rule` | `TEXT` | No | `''` | Matched rule, granted scope, `mode:<mode>`, or a marker (`once`, `repeat`, `unattended`, `gate-error`, `taint`). |
 | `approver` | `VARCHAR(20)` | No | `''` | `local` (server PC) or `remote` when a person answered the card. |
 | `turn_id` | `VARCHAR(36)` | Yes | - | The turn that ran the call. |
 | `created_at` | `DATETIME` | No | `utc_now` | UTC execution timestamp. |
@@ -295,7 +295,7 @@ unfinished speech. Details in [Interrupted Turns §5](../orchestration/turn-reco
 | `session_id` / `turn_id` | `VARCHAR(36)` | No | - | Owners. `turn_id` cascades on ORM delete of the turn. |
 | `agent_key` / `kind` / `round_number` / `graph_node_id` | | | | Which speech this draft belongs to (`turns.draft_key`). |
 | `started_at` | `DATETIME` | No | `utc_now` | When the speech first started; the resumed card counts from here. |
-| `state` | `JSON` | No | `{}` | Tool loop state (`SPEECH_STATE_VERSION`): messages as sent, text segments, calls used, limit, window, tool logs, file hashes of write calls (`open_writes`, `known_files`) — plus `tool_record_ids`. |
+| `state` | `JSON` | No | `{}` | Tool loop state (`SPEECH_STATE_VERSION`): messages as sent, text segments, calls used, limit, window, tool logs, file hashes of write calls (`open_writes`, `known_files`), outside content read (`tainted_by`) — plus `tool_record_ids`. |
 | `updated_at` | `DATETIME` | No | `utc_now` | Last save. |
 
 ---

@@ -303,7 +303,7 @@ async def test_a_denied_write_is_not_read_at_all(monkeypatch, tmp_path):
     monkeypatch.setattr(write_probe, "plan_write", lambda *a, **k: pytest.fail("거부된 호출의 경로를 읽었습니다"))
 
     class Gate:
-        async def check(self, agent, name, args, mcp):
+        async def check(self, agent, name, args, mcp, tainted_by=()):
             return SimpleNamespace(allowed=False, output="거부", status="denied", audit={})
 
         def filter_tools(self, key, tools, mcp):

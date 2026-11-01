@@ -307,7 +307,7 @@ class _Gate:
     def filter_tools(self, agent_key, tools, mcp):
         return [tool for tool in tools if tool["function"]["name"] not in self.always_deny]
 
-    async def check(self, agent, tool_name, arguments, mcp):
+    async def check(self, agent, tool_name, arguments, mcp, tainted_by=()):
         self.checked.append(tool_name)
         if tool_name in self.deny:
             return SimpleNamespace(allowed=False, output="거부", status="denied", audit={"effect": "deny"})

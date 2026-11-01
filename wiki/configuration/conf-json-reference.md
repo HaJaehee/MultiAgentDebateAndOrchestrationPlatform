@@ -222,6 +222,7 @@ protections and the approval card — is in [Tool Security](../mcp/tool-security
 | `ask` | `list[str]` | `[]` | Rules that always ask, even when an allow rule matches. |
 | `allow` | `list[str]` | `[]` | Rules that run without asking. The card's "항상 허용" appends here (server PC only). |
 | `trusted_servers` | `list[str] \| null` | `null` | Servers whose tool names and annotations are believed. `null` = local servers and remote servers on this PC. |
+| `untrusted_sources` | `list[str]` | `["mcp(kb/search)"]` | Local tools whose results count as outside content, `mcp(...)` rules only. Network tools, remote servers and tools of unknown risk count without being listed. Writing this key replaces the default, so keep `mcp(kb/search)` or name your own `kb` key. See [Tool Security §6-b](../mcp/tool-security.md#6-b-outside-content-and-tainted-speeches). |
 | `agents` | `dict[str, object]` | `{}` | Per-agent tightening: `mode`, `deny`, `ask` (no `allow`). The stricter mode wins. |
 
 Rule syntax: `read(glob)`, `write(glob)`, `delete(glob)`, `exec`, `exec(regex:…)`, `net(host)`,

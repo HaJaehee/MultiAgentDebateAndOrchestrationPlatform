@@ -10,9 +10,12 @@ import uuid
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from app.agents.base import Agent
-from app.agents.host_tools import HostToolCall, find_host_tool, run_host_tool
+from app.agents.host_tools import HostToolCall, find_host_tool, host_tool_meta, run_host_tool
 from app.agents.skills import DESIGNATED_SKILL_NOTE, LOAD_SKILL_TOOL, offered_skills
+from app.config import get_config
 from app.mcp.manager import MCPManager
+from app.mcp.policy import outside_source, profile_call
+from app.tool_rules import parse_rules
 
 
 logger = logging.getLogger(__name__)
@@ -117,11 +120,33 @@ class ToolCallMixin:
         fn_name: str,
         fn_args: Dict[str, Any],
         mcp: Any,
+        tainted_by: Sequence[str] = (),
     ) -> Optional[Any]:
         """도구 보안 판정. 문지기가 없으면 None (판정 없이 실행)."""
         if tool_gate is None:
             return None
-        return await tool_gate.check(agent, fn_name, fn_args, mcp)
+        return await tool_gate.check(agent, fn_name, fn_args, mcp, tainted_by=tainted_by)
+
+    def _outside_source(self, fn_name: str, fn_args: Dict[str, Any], mcp: Optional[MCPManager]) -> str:
+        """이 호출의 결과가 외부 내용이면 출처, 아니면 빈 문자열 (`policy.outside_source`).
+
+        문지기와 따로 묻습니다. 문지기 없이 도는 발언에도 래퍼는 씌워야 하고, 판정이 끝난 뒤 실행 직전의
+        호출을 봐야 합니다. 판단하지 못하면 외부 내용으로 봅니다 (게이트의 fail closed 와 같은 방향).
+        내장 호스트 도구와 모르는 도구는 메타가 없어 여기서 빈 문자열입니다.
+        """
+        runtime = mcp or self.mcp_manager
+        try:
+            meta = host_tool_meta(fn_name)
+            if meta is None:
+                tool_meta = getattr(runtime, "tool_meta", None)
+                meta = tool_meta(fn_name) if tool_meta is not None else None
+            if meta is None:
+                return ""
+            profile = profile_call(meta, fn_args, runtime.workspace)
+            return outside_source(profile, parse_rules(get_config().tool_security.untrusted_sources))
+        except Exception as exc:  # noqa: BLE001 - 분류 실패로 발언을 죽이지 않습니다
+            logger.warning(f"Could not tell whether {fn_name} reads outside content: {type(exc).__name__}: {exc}")
+            return fn_name
 
     async def _execute_tool_safely(
         self,

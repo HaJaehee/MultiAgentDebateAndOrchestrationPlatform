@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional,
 
 from app.config import DEFAULT_PEER_TOOL_ITERATIONS, PEERS_TOOL_PREFIX
 from app.events import EventType
-from app.mcp.client import clip_tool_output
+from app.mcp.client import ToolOutput, clip_tool_output
 
 if TYPE_CHECKING:
     from app.agents.base import Agent
@@ -91,6 +91,8 @@ class ConsultationScope:
     max_depth: int = DEFAULT_MAX_CONSULTATION_DEPTH
     force_enable: bool = False
     history: Tuple[str, ...] = field(default_factory=tuple)
+    # 이 자문을 부른 발언이 읽은 외부 내용의 출처. 자문받는 발언의 도구 루프가 이어받습니다.
+    tainted_by: Tuple[str, ...] = ()
 
 
 _CONSULTATION_SCOPE: contextvars.ContextVar[Optional[ConsultationScope]] = contextvars.ContextVar(
@@ -118,6 +120,7 @@ def consultation_scope(
     max_depth: int = DEFAULT_MAX_CONSULTATION_DEPTH,
     force_enable: bool = False,
     history: Sequence[str] = (),
+    tainted_by: Sequence[str] = (),
 ) -> Iterator[ConsultationScope]:
     """발언 또는 턴 동안 동료 전문가 자문 문맥을 활성화합니다. `pool` 이 비면 `peers` 를 씁니다."""
     scope = ConsultationScope(
@@ -133,6 +136,7 @@ def consultation_scope(
         max_depth=max_depth,
         force_enable=force_enable,
         history=tuple(history),
+        tainted_by=tuple(tainted_by),
     )
     token = _CONSULTATION_SCOPE.set(scope)
     try:
@@ -310,8 +314,13 @@ async def run_consultation_tool(
     arguments: Any,
     *,
     llm_caller: Optional[Any] = None,
+    tainted_by: Sequence[str] = (),
 ) -> Tuple[str, str]:
-    """`peers__consult_agent` 도구를 실행하고 `(응답 문자열, 상태)` 를 반환합니다."""
+    """`peers__consult_agent` 도구를 실행하고 `(응답 문자열, 상태)` 를 반환합니다.
+
+    오염은 양쪽으로 번집니다. 묻는 발언이 읽은 외부 내용(`tainted_by`)은 자문받는 발언이 이어받고, 자문받는
+    발언이 도구로 읽은 외부 내용은 응답에 실려 돌아옵니다(`ToolOutput.outside`). 자문은 한 발언 안의 일입니다.
+    """
     args = arguments if isinstance(arguments, dict) else {}
     target_key = str(args.get("agent_key") or args.get("agent") or "").strip()
     question = str(args.get("question") or args.get("query") or "").strip()
@@ -418,8 +427,9 @@ async def run_consultation_tool(
             max_depth=scope.max_depth,
             force_enable=scope.force_enable and next_depth < scope.max_depth,
             history=(*scope.history, agent.key),
+            tainted_by=tainted_by,
         ):
-            answer, _tool_logs = await caller.call_agent(
+            answer, tool_logs = await caller.call_agent(
                 consulted_agent,
                 prompt_messages,
                 scope.custom_instructions,
@@ -455,4 +465,6 @@ async def run_consultation_tool(
 
     body = (answer or "").strip() or "(응답 본문이 비어 있습니다.)"
     formatted = f"[{target.name} ({target.role}) 자문 응답]\n\n{body}"
-    return clip_tool_output(formatted), "success"
+    read = list(dict.fromkeys(str(log["outside"]) for log in tool_logs or () if log.get("outside")))
+    outside = f"{target.key} 자문: {', '.join(read)}" if read else ""
+    return ToolOutput(clip_tool_output(formatted), outside=outside), "success"

@@ -49,6 +49,7 @@ from app.database.models import (
 from app.agents.llm_loop import SPEECH_STATE_VERSION
 from app.agents.llm_usage import Usage
 from app.mcp.manager import compose_scope
+from app.mcp.policy import EARLIER_RESULTS_SOURCE, wrap_untrusted
 from app.orchestration.graph import Activation, GraphScheduler, GraphSpec
 from app.orchestration.graph_run import OUTPUT_PORTS
 from app.timestamps import _as_datetime
@@ -388,7 +389,10 @@ def sub_debate_at(messages: Iterable[Any], boundary: int) -> Optional[SubDebateR
 
 
 def tool_call_lines(calls: Sequence[Mapping[str, Any]], output_chars: int = 300) -> str:
-    """이미 실행된 도구와 결과를 프롬프트에 적는 줄들."""
+    """이미 실행된 도구와 결과를 프롬프트에 적는 줄들.
+
+    어느 결과가 외부 내용이었는지 기록에 남지 않으므로 전부 감쌉니다. 모델에게 도구 결과는 어차피 자료입니다.
+    """
     lines = []
     for call in calls:
         try:
@@ -399,7 +403,7 @@ def tool_call_lines(calls: Sequence[Mapping[str, Any]], output_chars: int = 300)
         if len(output) > output_chars:
             output = output[:output_chars] + "…"
         lines.append(f"- {call.get('tool_name')}({args[:200]}) → {call.get('status') or 'success'}: {output}")
-    return "\n".join(lines)
+    return wrap_untrusted("\n".join(lines), EARLIER_RESULTS_SOURCE)
 
 
 def resume_notice(calls: Sequence[Mapping[str, Any]], output_chars: int = 300) -> str:
