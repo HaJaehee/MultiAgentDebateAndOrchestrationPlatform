@@ -67,9 +67,9 @@ class ArtifactViewer:
         # 보고서 탭의 "작업 공간 파일" 버튼이 여는 다운로드 창. 토론이 만든 파일을 결론을
         # 읽는 그 자리에서 찾게 합니다. 없으면 버튼을 그리지 않습니다.
         self.on_open_workspace_files = on_open_workspace_files
-        # 코드 탭의 "변경점" 이 비교 기준으로 쓸 라운드별 코드. 없으면 코드 산출물끼리만 견줍니다.
+        # 코드 탭 "변경점" 비교 시 참조할 라운드별 코드 버전 로더. 미제공 시 산출물 목록 간 비교로 폴백합니다.
         self.load_code_versions = load_code_versions
-        # 통합·좌우 선택. 패널이 좁아 처음에는 통합으로 열고, 탭을 옮겨도 유지합니다.
+        # Unified/Split 뷰 모드. 패널 너비를 고려하여 기본값은 Unified로 설정되며 탭 전환 간 상태를 유지합니다.
         self.diff_mode = UNIFIED
         self.artifacts: List[Dict[str, Any]] = []
         self.container: Optional[ui.card] = None

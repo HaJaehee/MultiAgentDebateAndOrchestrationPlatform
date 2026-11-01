@@ -163,7 +163,7 @@ async def test_fork_at_the_latest_turn_uses_the_conversation_memory(repo):
 @needs_git
 @pytest.mark.asyncio
 async def test_a_fork_of_an_expired_turn_says_it_copied_the_current_folder(repo):
-    """보존 기간이 지난 턴에서 갈라도 그 턴의 모습인 척하지 않습니다 (ADR-044). 화면이 `from_snapshot` 으로 알립니다."""
+    """보존 만료된 턴에서 분기(Fork) 시 과거 스냅샷이 아닌 현재 작업 공간 복제본임을 `from_snapshot=False`로 명시한다 (ADR-044)."""
     factory, sid, turns, _engine = await _two_turns(repo)
     first = turns[0]
     async with factory() as db:

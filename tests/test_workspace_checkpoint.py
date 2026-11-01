@@ -5,7 +5,7 @@
 3. 롤백 기능 검증: 신규 생성 파일 삭제, 수정/삭제 파일 복원 및 턴 완료 후 외부 추가 변경 감지 시 중단 검증.
 4. 엔진 연동 검증: 턴 시작/종료 체크포인트 자동 생성 및 이벤트 전달, 롤백 수행 시 시스템 메모 기록.
 5. 턴 폐기 시 관련 Git ref 정리 검증.
-6. 보존과 압축 검증: 기준을 모두 넘긴 턴만 지우고, 기록과 저장소를 함께 맞추며, `git gc --auto` 가 스냅샷을 보존한다.
+6. 보존 정책 및 가비지 컬렉션 검증: 만료 턴 선별, DB 메타데이터 및 Git ref 원자적 정리, `git gc --auto` 스냅샷 무결성 검증.
 """
 
 import hashlib
@@ -96,7 +96,7 @@ def test_changes_diff_and_revert(repo):
 
 
 def test_a_same_size_edit_right_after_the_index_was_written_is_not_missed(repo):
-    """복사한 인덱스의 시각이 지금이 되면 git 의 재확인이 꺼져, 크기가 같은 수정을 변경 없음으로 봅니다."""
+    """인덱스 복사 시 mtime 보존(`copy2`): 인덱스 타임스탬프 갱신으로 인한 동일 크기 파일 변경 누락 방지 검증."""
     (repo / "same.txt").write_text("v = 0\n", encoding="utf-8")
     _git(repo, "add", "same.txt")
     start = wc.snapshot(repo, None)
@@ -227,11 +227,11 @@ async def test_a_turn_is_checkpointed_and_can_be_reverted(repo):
     assert _git(repo, "for-each-ref", "refs/mado") == ""
 
 
-# ------------------------------------------------------------------ 보존과 압축 (ADR-044)
+# ------------------------------------------------------------------ 보존 정책 및 가비지 컬렉션 (ADR-044)
 
 
 def _turn_from(repo: Path, monkeypatch, turn_id: str, days_ago: float, *which: str) -> Dict[str, str]:
-    """`days_ago` 일 전에 찍은 것처럼 스냅샷을 남깁니다."""
+    """지정된 일수(`days_ago`) 전의 커밋 타임스탬프로 스냅샷을 생성하는 헬퍼 함수."""
     monkeypatch.setenv("GIT_COMMITTER_DATE", f"{int(time.time() - days_ago * 86400)} +0000")
     shas = {name: wc.snapshot(repo, wc.turn_ref(turn_id, name)) for name in which or (wc.START, wc.END)}
     monkeypatch.delenv("GIT_COMMITTER_DATE")
@@ -250,7 +250,7 @@ def test_only_turns_past_both_limits_expire(repo, monkeypatch):
 
 
 def test_a_turn_is_as_old_as_its_latest_snapshot(repo, monkeypatch):
-    """오래전에 시작했어도 최근에 이어 간 턴은 최근 턴입니다."""
+    """시작 시점이 오래되었더라도 최근 재개(resume)된 턴은 최신 스냅샷 타임스탬프를 기준으로 보존된다."""
     _turn_from(repo, monkeypatch, "resumed", 90, wc.START)
     _turn_from(repo, monkeypatch, "resumed", 1, wc.END)
     _turn_from(repo, monkeypatch, "newest", 0.5)
@@ -264,7 +264,7 @@ def test_expiry_reads_nothing_outside_a_repository(tmp_path, workspace_checkpoin
 
 
 def _blobs_in_objects_17(count: int) -> List[str]:
-    """`objects/17/` 에 들어갈 내용. `gc --auto` 는 이 폴더만 세어 전체 수를 짐작합니다."""
+    """`objects/17/` 디렉터리에 배치될 객체 생성 헬퍼 (`git gc --auto`의 느슨한 객체 임계치 판정 트리거)."""
     found: List[str] = []
     number = 0
     while len(found) < count:
@@ -354,7 +354,7 @@ async def test_maintenance_drops_old_checkpoints_from_the_repository_and_the_rec
         kept = await db.get(TurnModel, recent_id)
         gone = await db.get(TurnModel, old_id)
         assert kept.checkpoint["end"] == recent[wc.END] and reviewable_changes(kept.checkpoint) == 3
-        # 바뀐 파일 수는 턴의 기록으로 남고, 스냅샷이 없으니 변경 칩과 되돌리기는 내놓지 않습니다.
+        # 변경 파일 수 통계는 턴 이력으로 보존되며, 스냅샷 해시가 제거되어 변경 내역 및 롤백 UI는 비활성화됩니다.
         assert gone.checkpoint == {"changed": 3} and reviewable_changes(gone.checkpoint) is None
         assert await turn_changes(db, sid, old_id) is None
         assert await turn_changes(db, sid, recent_id) is not None
@@ -364,7 +364,7 @@ async def test_maintenance_drops_old_checkpoints_from_the_repository_and_the_rec
 
 @pytest.mark.asyncio
 async def test_a_failure_to_update_the_record_keeps_the_names(repo, monkeypatch):
-    """이름을 먼저 지우면 스냅샷이 사라진 턴의 기록에 되돌리기가 남습니다."""
+    """DB 갱신 실패 시 Git ref 삭제를 중단하여 메타데이터와 실제 스냅샷 간의 일관성을 유지한다."""
     _turn_from(repo, monkeypatch, "old", 90)
     expired = wc.expired_turns
     monkeypatch.setattr(wc, "expired_turns", lambda workspace: expired(workspace, keep_turns=0, keep_days=30))

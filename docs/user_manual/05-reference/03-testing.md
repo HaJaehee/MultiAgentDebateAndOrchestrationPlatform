@@ -21,7 +21,7 @@ pytest -k "snapshot"
 | `test_agent_admin.py` | 에이전트 추가/비활성화/삭제 시 `conf.json` 원자적 편집과 UI 잠금 규칙 |
 | `test_mcp_admin.py` | MCP 서버 추가/삭제/on-off, 주석(`//`) 및 `${VAR}` 보존, 런타임 실서버 반영 |
 | `test_mcp.py` | MCP 클라이언트 stdio 연결 수립, 도구 스키마 검색 및 안전 실행 |
-| `test_mcp_runtime_pool.py` | 런타임 풀: 참조·유휴 TTL·회수, 대기열(순서, 시간 초과, 취소, 정지), 라운드 경계 양보(조건, 같은 매니저 복귀, 자리 하나로 두 토론 완주), 유휴 훅 |
+| `test_mcp_runtime_pool.py` | 런타임 풀: 참조 카운팅·유휴 TTL·회수, FIFO 대기열(순번 보장, 타임아웃, 취소, 사용자 중단), 라운드 경계 협업적 슬롯 양보(트리거 조건, 동일 매니저 인스턴스 복원, 단일 슬롯 환경 복수 토론 완주), 유휴 유지보수 훅 |
 | `test_remote_mcp.py` | 원격(HTTP/SSE) MCP 서버: 설정 유효성, 전송 방식 자동 폴백, 인증 토큰 격리 |
 | `test_anythingllm_kb.py` | AnythingLLM 문서 검색(`kb`): Mock AnythingLLM 서버 기반 검색 결과 및 근거 출처 포맷팅, 실패 시 오류 처리, 작업 공간 허용 목록(allowlist), stdio 연결 및 읽기 권한 판정, 실제 도구 루프 연동 검증 (v1.5.1) |
 | `test_llm_offload.py` | 스트림 조립(`stream_chunk_builder`)을 워커 스레드로 분리: 조립 중에도 타 코루틴의 논블로킹 보장, 답·사용량 불변, 조립 중 취소 (v1.5.1) |
@@ -29,7 +29,7 @@ pytest -k "snapshot"
 | `test_plugins.py` | 플러그인: 디렉터리 및 엔트리포인트 탐색/로드, 오류 플러그인 격리, 예약어 가로채기 차단, 디렉터리 보호, 전략 예외 발생 시 안전 폴백, 매뉴얼 예제 실행 검증 (ADR-042) |
 | `test_host_tools.py` | 호스트 도구 레지스트리: 내장 도구 순서 보존, 플러그인 활성화 및 도구 보안 정책 판정, 플러그인 예외 격리, 도구 루프 연동 (ADR-042) |
 | `test_tool_compaction.py` | 과거 대용량 파일 읽기 결과 압축: 압축 대상 선별, 요약 스텁 내용 검증, 컨텍스트 임계치 조건, 접두사 캐시 보존, 도구 로그 원문 보존 및 세션 재개 (ADR-040) |
-| `test_code_diff.py` | 코드 변경점 뷰어: git diff 해석(머리글을 닮은 줄, 잘린 출력, 줄바꿈 문자), 낱말 강조와 좌우 정렬, HTML 이스케이프, 비교 기준 후보, 라운드 경계 스냅샷과 실제 턴, 늦게 온 답 버리기 (ADR-043) |
+| `test_code_diff.py` | 코드 Diff 뷰어: git diff 파싱(유사 헤더 라인, 잘린 출력, 개행 문자 정규화), 인라인 단어 강조 및 Split 정렬, HTML 이스케이프 및 XSS 방어, 비교 기준 후보 추출, 라운드 경계 스냅샷 통합 및 레이스 컨디션 방어 (ADR-043) |
 | `test_markdown_offload.py` | 대용량 마크다운의 워커 스레드 오프로드: 백그라운드 렌더링 중 이벤트 루프 논블로킹 보장, 최신 요청 디바운스, 요소 제거/실패 처리, O(N^2) 알고리즘 개선, 기동 시 Pygments 렉서 웜업, StarUML 변환 (v1.5.1) |
 | `test_llm_settings.py` | `llm` 전역 설정 상속, 요청 파라미터 매핑, 단계적 사고 모드 동작 |
 | `test_orchestrator.py` | 에이전트 발언 우선순위 정렬 및 전략별 발언 순서 배치 |

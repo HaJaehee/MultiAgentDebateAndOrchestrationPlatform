@@ -14,8 +14,8 @@ HEAD에 등록되지 않으며, `refs/mado/turns/<턴 id>/start` 및 `end`라는
 * 롤백(되돌리기) — 해당 턴에서 변경된 파일들만 턴 시작 전 상태로 복원합니다. 생성된 파일은 삭제하고, 수정·삭제된
   파일은 원상 복구합니다. 턴 완료 후 외부나 후속 턴에서 동일 파일이 추가로 수정된 경우, 변경 사항 유실을 방지하기 위해
   롤백을 안전하게 중단하고 충돌 파일 목록을 안내합니다.
-* 보존과 압축 (ADR-044) — 턴마다 스냅샷이 쌓이므로, 작업 공간이 쉴 때 오래된 턴의 이름을 지우고(`expired_turns`, `forget`)
-  `git gc --auto` 를 돌립니다(`collect_garbage`). 부르는 쪽은 `app/session_ops.maintain_workspace` 입니다.
+* 보존 및 가비지 컬렉션 (ADR-044) — 누적된 스냅샷 관리를 위해 유휴 작업 공간에 대해 보존 정책 만료 턴의 Git ref를 삭제하고(`expired_turns`, `forget`)
+  `git gc --auto`를 실행합니다(`collect_garbage`). 호출 진입점은 `app/session_ops.maintain_workspace`입니다.
 
 Git 미설치 환경이거나 작업 공간이 Git 저장소가 아닌 경우 조용히 무시(None)합니다.
 본 모듈의 모든 함수는 비동기 이벤트 루프 외부(`asyncio.to_thread`)에서 안전하게 실행되도록 설계된 동기 함수입니다.
@@ -44,8 +44,8 @@ logger = logging.getLogger(__name__)
 REF_ROOT = "refs/mado/turns"
 START, END = "start", "end"
 
-# 턴 안의 경계 스냅샷 (ADR-043): 라운드(`round-N`)·그래프 단계(`step-N`)가 시작할 때와 토론이 끝났을 때.
-# 되돌리기와 대화 분기는 쓰지 않고, 변경 내역을 라운드별로 나눠 볼 때만 읽습니다.
+# 턴 내부 라운드 경계 스냅샷 (ADR-043): 라운드(`round-N`)·그래프 단계(`step-N`) 개시 시점 및 토론 종료 시점.
+# 롤백 및 세션 분기는 불변 턴 스냅샷을 사용하며, 변경 내역을 라운드별로 세분화하여 조회할 때만 참조합니다.
 DEBATE_END = "debate-end"
 _BOUNDARY = re.compile(r"^(round|step)-(\d+)$")
 
@@ -58,10 +58,10 @@ MAX_DIFF_CHARS = 200_000
 # Git 단일 명령어 타임아웃 (초 단위)
 GIT_TIMEOUT = 120
 
-# `git gc --auto` 타임아웃 (초 단위). 기준에 닿으면 저장소 전체를 다시 묶으므로 일반 명령어보다 깁니다.
+# `git gc --auto` 타임아웃 (초 단위). 임계치 도달 시 리팩(repack)이 발생하므로 일반 명령어 대비 여유 있게 설정합니다.
 GC_TIMEOUT = 900
 
-# 체크포인트 보존 기준 (작업 공간별). 최근 턴과 최근 기간을 함께 남기고, 둘 다 넘긴 턴만 지웁니다.
+# 체크포인트 보존 정책 (작업 공간별). 최근 턴 수 또는 최근 경과일 기준을 충족하는 스냅샷을 보존하며, 두 기준을 모두 초과한 턴만 정리합니다.
 KEEP_TURNS = int(positive_float_env("CHECKPOINT_KEEP_TURNS", 200))
 KEEP_DAYS = positive_float_env("CHECKPOINT_KEEP_DAYS", 30.0)
 
@@ -85,7 +85,7 @@ class FileChange:
 
 @dataclass(frozen=True)
 class Segment:
-    """턴 안의 한 구간: `start` 스냅샷에서 `end` 스냅샷까지 바뀐 파일."""
+    """턴 내부의 단일 구간: `start` 스냅샷부터 `end` 스냅샷까지 변경된 파일 목록."""
 
     label: str
     start: str
@@ -142,8 +142,8 @@ def snapshot(workspace: str | Path, ref: Optional[str]) -> Optional[str]:
         real = root / ".git" / "index"
         # 저장소의 인덱스를 복사해 시작합니다. 파일마다 남아 있는 크기·시각 기록 덕에 바뀌지 않은
         # 파일을 다시 해시하지 않습니다. 복사본이 깨졌으면(에이전트가 쓰는 중) 빈 인덱스로 다시 합니다.
-        # 인덱스의 시각도 함께 복사합니다(`copy2`). git 은 인덱스보다 늦거나 같은 시각에 고친 파일의 내용을
-        # 다시 읽는데, 복사본 시각이 지금이 되면 이 검사가 꺼져 같은 초에 같은 크기로 고친 파일을 놓칩니다.
+        # 임시 인덱스 생성 시 타임스탬프(mtime)를 보존 복사합니다(`copy2`). Git은 인덱스 타임스탬프보다 늦거나
+        # 동일한 시각에 수정된 파일만 재검사하므로, mtime이 현재 시각으로 갱신되면 동일 초/동일 크기 파일 수정을 누락하는 결함을 방지합니다.
         if real.is_file():
             try:
                 shutil.copy2(real, index)
@@ -217,10 +217,10 @@ def file_diff(workspace: str | Path, start: str, end: str, path: str) -> str:
 
 
 def turn_segments(workspace: str | Path, turn_id: str, start: str, end: str) -> List[Segment]:
-    """턴을 라운드(그래프는 단계)별 구간으로 나눕니다. 경계 스냅샷이 없는 턴이면 빈 목록입니다.
+    """턴을 라운드(적응형 그래프는 단계)별 세부 구간으로 분할합니다. 경계 스냅샷이 없는 턴은 빈 목록을 반환합니다.
 
-    라운드는 파일이 바뀌지 않았어도 구간으로 둡니다. 토론 앞(계획)과 뒤(합성·발언 다시 실행)는 바뀐 파일이 있을 때만 둡니다.
-    토론이 끝나기 전에 턴이 멈췄으면 마지막 라운드는 턴 끝 스냅샷까지입니다.
+    각 라운드는 파일 변경 여부와 관계없이 구간을 유지하며, 토론 이전(계획 단계)과 이후(결론 합성 및 발언 재생성)는 파일 변경이 발생한 경우에만 구간에 포함합니다.
+    토론 완료 전 중단된 턴의 경우 마지막 라운드 구간은 턴 종료(`end`) 스냅샷까지로 설정됩니다.
     """
     found = _repo(workspace)
     if found is None:
@@ -384,7 +384,7 @@ def forget(workspace: str | Path, turn_ids: Sequence[str]) -> None:
     if found is None or not turn_ids:
         return
     git, root = found
-    # 시작·끝 말고 라운드 경계도 있으므로 턴 아래의 이름을 저장소에서 읽어 옵니다.
+    # start/end 외에 라운드 경계 스냅샷도 포함되므로 턴 네임스페이스 하위의 모든 ref를 조회합니다.
     wanted = set(turn_ids)
     listed = _git(git, root, "for-each-ref", "--format=%(refname)", REF_ROOT)
     names = [n for n in _text(listed).splitlines() if n[len(REF_ROOT) + 1:].split("/")[0] in wanted]
@@ -393,7 +393,7 @@ def forget(workspace: str | Path, turn_ids: Sequence[str]) -> None:
     lines = "".join(f"delete {name}\n" for name in names)
     proc = _git(git, root, "update-ref", "--stdin", stdin=lines.encode("utf-8"))
     if proc.returncode != 0:
-        # 그 사이 사라진 이름이 하나라도 있으면 통째로 실패합니다. 하나씩 지웁니다.
+        # 일괄 삭제 실패 시 개별 ref 단위로 안전하게 삭제를 재시도합니다.
         for name in names:
             _git(git, root, "update-ref", "-d", name)
 
@@ -401,9 +401,9 @@ def forget(workspace: str | Path, turn_ids: Sequence[str]) -> None:
 def expired_turns(
     workspace: str | Path, *, keep_turns: int = KEEP_TURNS, keep_days: float = KEEP_DAYS,
 ) -> List[str]:
-    """보존 기준을 넘긴 턴의 id. 최근 `keep_turns` 턴과 `keep_days` 일 안의 턴은 빼고, 오래된 턴부터 돌려줍니다.
+    """보존 정책을 초과하여 만료된 턴 ID 목록을 반환합니다. 최근 `keep_turns` 턴 및 최근 `keep_days` 일 이내의 턴은 제외하며, 오래된 순으로 정렬합니다.
 
-    저장소의 이름만 읽습니다. 턴의 시각은 스냅샷 커밋의 시각 중 가장 늦은 것입니다.
+    Git ref 커밋 타임스탬프 중 최신값을 해당 턴의 기준 시각으로 판별합니다.
     """
     found = _repo(workspace)
     if found is None:
@@ -429,11 +429,11 @@ _collecting: Set[subprocess.Popen] = set()
 
 
 def collect_garbage(workspace: str | Path) -> None:
-    """`git gc --auto` 를 돌립니다. 쌓인 것이 기준(`gc.auto`, 기본 6,700개) 미만이면 바로 끝납니다.
+    """`git gc --auto`를 실행하여 저장소의 불필요한 객체를 정리하고 압축합니다. 임계치(기본 느슨한 객체 6,700개) 미만인 경우 즉시 종료됩니다.
 
-    이름을 잃은 스냅샷의 객체는 git 의 유예 기간(`gc.pruneExpire`, 기본 2주)이 지난 뒤에 지워집니다. 사용자의
-    gc 설정을 그대로 따르고, 스스로 백그라운드로 나가지 않게만 합니다. 나가면 끝을 기다릴 수 없고 실패가 로그에 남지 않습니다.
-    출력을 파이프로 받지 않는 이유: gc 를 끊어도 자식 프로세스(`git repack`)가 파이프를 쥐고 있어 기다림이 풀리지 않습니다.
+    참조가 해제된 고아 객체는 Git의 기본 만료 유예 기간(`gc.pruneExpire`, 기본 2주)이 경과한 후 안전하게 회수됩니다. 사용자 저장소의
+    gc 설정을 준수하며, `gc.autoDetach=false`를 통해 백그라운드 분리 없이 동기적으로 완료를 대기합니다.
+    출력 파이프를 열지 않는 이유: 프로세스 강제 종료 시 자식 프로세스(`git repack`)가 파이프 핸들을 점유하여 대기가 블로킹되는 현상을 방지합니다.
     """
     found = _repo(workspace)
     if found is None:
@@ -457,9 +457,9 @@ def collect_garbage(workspace: str | Path) -> None:
 
 
 def stop_collecting() -> None:
-    """돌고 있는 `git gc` 를 끊습니다. 스레드에서 도는 gc 가 서버 종료를 붙잡지 않게 합니다.
+    """실행 중인 `git gc` 서브프로세스를 중단합니다. 백그라운드 gc 작업이 서버 종료 절차를 지연시키지 않도록 방지합니다.
 
-    끊어도 저장소는 망가지지 않습니다. git 은 새 묶음을 다 쓴 뒤에 이름을 바꿔 넣습니다.
+    중단하더라도 Git의 원자적 리팩(atomic rename) 메커니즘에 의해 저장소 무결성은 안전하게 보존됩니다.
     """
     for proc in list(_collecting):
         proc.kill()

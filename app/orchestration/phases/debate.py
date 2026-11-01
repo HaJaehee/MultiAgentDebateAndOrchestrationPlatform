@@ -66,7 +66,7 @@ class DebatePhaseExecutor(PhaseExecutor):
     ) -> bool:
         """전문가 토론 라운드를 진행합니다. 사용자가 중단 요청을 한 경우 True를 반환합니다.
 
-        `mark_boundary(이름)` 은 라운드·단계가 시작할 때 부릅니다 (작업 공간 경계 스냅샷, ADR-043).
+        `mark_boundary(name)` 콜백은 라운드/단계 개시 시점에 호출됩니다 (작업 공간 경계 스냅샷 기록 및 슬롯 양보, ADR-043/044).
         """
         redo = dict(redo or {})
         strategy = get_strategy(setup.strategy_name)

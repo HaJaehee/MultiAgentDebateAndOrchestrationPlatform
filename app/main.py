@@ -130,7 +130,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 화면조차 열리지 않는 것은 전혀 다른 이야기입니다 (설정을 고치려면 그
     # 화면이 필요합니다).
     pool = get_runtime_pool()
-    # 작업 공간이 쉬면 오래된 턴 체크포인트를 정리하고 저장소를 압축합니다 (ADR-044).
+    # 유휴 작업 공간에 대해 보존 정책 만료 체크포인트를 정리하고 저장소 가비지 컬렉션을 수행합니다 (ADR-044).
     pool.idle_hook = partial(maintain_workspace, get_session_factory())
     try:
         await pool.warm_default()

@@ -370,9 +370,9 @@ class ExpertPage:
             # 토론은 이 페이지가 아니라 프로세스가 소유합니다. 새로고침하거나
             # 페르소나 화면에 다녀와도 중단되지 않고, 돌아오면 다시 이어 붙습니다.
             # 작업 공간이 상이한 타 세션이 실행 중이더라도 차단하지 않습니다. 폴더마다
-            # MCP 서버 묶음이 따로 뜨기 때문입니다 (`app/mcp/pool.py`). 자리가
-            # 모자라면 줄을 서고, 끝내 자리가 나지 않으면 `RuntimeCapacityError` 로
-            # 끝납니다. 그 사유는 아래 실패 경로를 통해 화면에 그대로 나옵니다.
+            # MCP 서버 그룹이 독립 구동되기 때문입니다 (`app/mcp/pool.py`). 가용 슬롯이
+            # 부족하면 대기열에 진입하며, 타임아웃 초과 시 `RuntimeCapacityError`로
+            # 종료됩니다. 상세 사유는 하단 실패 처리 경로를 통해 사용자에게 안내됩니다.
             run = self.runner.start(
                 self.current_session_id, prompt, self.roster_control.state.workspace_dir,
                 skill_designations=mentions.skill_designations, attachments=mentions.attachment_paths,
@@ -799,7 +799,7 @@ class ExpertPage:
         await self.turn_changes.open(self.current_session_id, turn_id)
 
     async def load_code_versions(self) -> List[CodeVersion]:
-        """산출물 뷰어가 코드를 앞선 라운드·턴과 견줄 때 읽는 이 대화의 코드 버전."""
+        """산출물 뷰어의 버전 간 Diff 비교 시 참조할 현재 세션의 코드 버전 목록을 비동기 조회합니다."""
         if not self.current_session_id:
             return []
         async with self.session_factory() as db:

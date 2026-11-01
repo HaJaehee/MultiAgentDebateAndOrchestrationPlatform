@@ -1,11 +1,11 @@
-"""코드 변경점 뷰어: 통합(Unified)·좌우(Split) 보기, 줄과 낱말 단위 강조 (ADR-043).
+"""코드 변경점(Diff) 뷰어 컴포넌트: Unified(통합) 및 Split(좌우) 뷰, 라인 및 단어 단위 하이라이트 (ADR-043).
 
-턴 변경 창과 산출물 뷰어가 함께 씁니다. 차이 계산은 `app/code_diff.py`, 스타일은 `theme.py` 의 `.mado-diff` 입니다.
+턴 변경 내역 다이얼로그와 산출물 뷰어 코드 탭에서 공통으로 사용됩니다. Diff 연산은 `app/code_diff.py`, CSS 스타일은 `theme.py`의 `.mado-diff` 클래스를 참조합니다.
 
-* HTML 은 이 파일에서 문자열로 만듭니다. 줄마다 NiceGUI 요소를 만들면 수천 줄에서 화면이 멈춥니다.
-  들어가는 글은 전부 `_escape` 를 거칩니다. 내용은 모델과 작업 공간에서 온 것이라 믿지 않습니다.
-* 긴 줄은 접어서 보여 줍니다. 좌우 보기에서 가로 스크롤을 두 칸이 나눠 가지면 맞대어 읽을 수 없습니다.
-* 수천 줄의 HTML 은 워커 스레드에서 만들고, 화면 밖 묶음은 브라우저가 건너뜁니다.
+* 대용량 Diff 렌더링 최적화를 위해 개별 UI 컴포넌트 대신 단일 HTML 문자열로 생성합니다.
+  모든 텍스트는 `_escape`를 거치며, 모델 생성물 및 작업 공간 파일의 신뢰할 수 없는 입력을 안전하게 이스케이프합니다.
+* 긴 라인은 자동 줄바꿈(wrap)하여 좌우 비교 가독성을 유지합니다.
+* 대용량 HTML 생성은 백그라운드 워커 스레드로 오프로드되며, 뷰포트 밖 블록은 `content-visibility: auto`로 가상화됩니다.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from app.code_diff import ADD, DEL, DiffHunk, DiffLine, FileDiff
 
 UNIFIED, SPLIT = "unified", "split"
 
-# 화면 밖을 건너뛰는 단위 (행 수)와, 건너뛴 묶음의 높이를 어림할 때 쓰는 한 행의 높이(px).
+# 뷰포트 가상화 블록 단위(행 수) 및 높이 추정 기준값(px).
 CHUNK_ROWS = 150
 ROW_HEIGHT = 18
 
@@ -31,7 +31,7 @@ def _escape(text: str) -> str:
 
 
 def _code(line: DiffLine) -> str:
-    """한 줄의 본문. 바뀐 낱말은 `<mark>`, 한쪽에만 있는 줄 끝 `\\r` 은 보이는 기호로."""
+    """단일 라인 본문을 렌더링합니다. 변경 단어는 `<mark>` 태그로 강조하며 비대칭 `\\r` 문자는 기호로 가시화합니다."""
     parts: List[str] = []
     at = 0
     for start, end in line.spans:
@@ -79,7 +79,7 @@ def _chunks(rows: Sequence[str]) -> str:
 
 
 def render_diff(diff: FileDiff, mode: str, old_label: str = "", new_label: str = "") -> str:
-    """차이를 HTML 로. `mode` 는 `UNIFIED` 또는 `SPLIT` 입니다."""
+    """FileDiff 모델을 HTML 문자열로 렌더링합니다. `mode`는 `UNIFIED` 또는 `SPLIT`입니다."""
     render_rows = _split_rows if mode == SPLIT else _unified_rows
     parts: List[str] = []
     if old_label or new_label:
@@ -95,7 +95,7 @@ def render_diff(diff: FileDiff, mode: str, old_label: str = "", new_label: str =
 
 
 def empty_message(diff: FileDiff) -> Optional[str]:
-    """그릴 줄이 없는 차이의 안내. 줄이 있으면 None."""
+    """표시할 Diff 라인이 없는 경우의 안내 메시지를 반환합니다. 라인이 존재하면 None을 반환합니다."""
     if diff.too_large:
         return "코드가 너무 길어 비교하지 않았습니다. 파일로 받아 비교해 주세요."
     if diff.binary:
@@ -106,7 +106,7 @@ def empty_message(diff: FileDiff) -> Optional[str]:
 
 
 class DiffViewer:
-    """차이 하나를 보여 주는 칸. 보기를 바꿔도 차이를 다시 계산하지 않습니다."""
+    """단일 Diff 뷰를 표시하는 UI 컴포넌트. 뷰 모드 전환 시 Diff 재연산 없이 즉시 재렌더링합니다."""
 
     def __init__(self, mode: str = SPLIT, on_mode_change: Optional[Callable[[str], None]] = None) -> None:
         self.mode = mode
@@ -114,7 +114,7 @@ class DiffViewer:
         self.diff: Optional[FileDiff] = None
         self.labels: Tuple[str, str] = ("", "")
         self._rendered: Dict[str, str] = {}
-        # 파일을 빠르게 옮겨 누르면 늦게 온 답이 나중 파일을 덮습니다. 마지막 요청의 답만 씁니다.
+        # 파일 전환 시 이전 비동기 요청의 응답이 최신 결과를 덮어쓰지 않도록 티켓 기반 레이스 컨디션을 방어합니다.
         self._ticket = 0
         self.caption: Optional[ui.label] = None
         self.stats: Optional[ui.label] = None
@@ -142,7 +142,7 @@ class DiffViewer:
             self.caption.set_text(text)
 
     def show_message(self, text: str) -> None:
-        """줄 대신 안내를 보여 줍니다. 진행 중인 요청의 답은 버립니다."""
+        """Diff 라인 대신 안내 메시지를 표시합니다. 진행 중인 비동기 요청은 무효화됩니다."""
         self._ticket += 1
         self.diff = None
         self._rendered = {}
@@ -151,7 +151,7 @@ class DiffViewer:
             self.content.set_content(f'<div class="mado-diff-empty">{_escape(text)}</div>')
 
     async def load(self, compute: Callable[[], Awaitable[Optional[FileDiff]]], old_label: str = "", new_label: str = "") -> None:
-        """`compute` 가 구한 차이를 보여 줍니다. 그 사이 다른 요청이 오면 이 답은 버립니다."""
+        """`compute` 연산 결과의 Diff를 비동기 렌더링합니다. 실행 중 신규 요청이 유입되면 이전 결과는 폐기됩니다."""
         self._ticket += 1
         ticket = self._ticket
         diff = await compute()
@@ -173,7 +173,7 @@ class DiffViewer:
             await self._paint()
 
     def clear(self) -> None:
-        """닫힌 창에 큰 HTML 을 남기지 않습니다. 창은 페이지가 닫힐 때까지 살아 있습니다."""
+        """다이얼로그 종료 시 대용량 HTML DOM 메모리를 명시적으로 해제합니다."""
         self.show_message("")
 
     async def _set_mode(self, mode: str) -> None:
@@ -193,7 +193,7 @@ class DiffViewer:
         rendered = self._rendered.get(mode)
         if rendered is None:
             rendered = await run.io_bound(render_diff, diff, mode, *self.labels)
-            if rendered is None or ticket != self._ticket or not self.alive:  # 서버 종료 중이거나 다음 요청이 왔습니다
+            if rendered is None or ticket != self._ticket or not self.alive:  # 서버 종료 중이거나 신규 요청이 유입된 경우
                 return
             self._rendered[mode] = rendered
         self.content.set_content(rendered)

@@ -1,10 +1,10 @@
-"""작업 공간별 MCP 런타임 풀.
+"""작업 공간별 MCP 런타임 풀 단위 테스트.
 
-여기서 확인하는 것은 **프로세스 묶음의 소유권**입니다. 누가 빌렸고, 언제 놓았고,
-자리가 모자랄 때 무엇을 내리고 무엇을 거절하는가.
+런타임 프로세스 그룹의 수명 주기, 참조 카운팅, 유휴 TTL 회수,
+FIFO 대기열 큐잉, 라운드 경계 협업적 슬롯 양보 및 유휴 저장소 유지보수를 검증합니다.
 
-서버를 실제로 띄우지는 않습니다 (`tests/conftest.py` 의 대역). 그래도 참조 카운트,
-유휴 TTL, 상한, 회수는 전부 진짜 코드가 돕니다 — 이 파일이 보는 것이 그것입니다.
+테스트 환경에서는 프로세스 기동 비용 격리를 위해 모의 객체(`tests/conftest.py`)를 사용하며,
+참조 제어, 대기열 스케줄링, 회수 알고리즘은 실제 프로덕션 코드를 온전히 실행합니다.
 """
 
 import asyncio
@@ -41,7 +41,7 @@ async def _until(condition, timeout: float = 3.0) -> None:
         await asyncio.sleep(0.005)
 
 
-# ------------------------------------------------------------------ 빌리고 놓기
+# ------------------------------------------------------------------ 런타임 획득 및 반납
 
 
 @pytest.mark.asyncio
@@ -122,12 +122,12 @@ async def test_releasing_an_unknown_holder_is_quiet(tmp_path):
     assert pool.status()[pool.key_for(tmp_path / "ws")]["holders"] == ["session-a"]
 
 
-# ------------------------------------------------------------------ 자리 다툼
+# ------------------------------------------------------------------ 동시성 상한 및 가용 슬롯 회수
 
 
 @pytest.mark.asyncio
 async def test_an_idle_runtime_makes_room_for_a_new_one(tmp_path):
-    """자리가 모자라면 가장 오래 놀고 있던 것부터 내립니다."""
+    """가용 슬롯 고갈 시 유휴 시간이 가장 긴 런타임부터 우선 회수한다."""
     pool = _pool(max_runtimes=1, idle_ttl=60.0)
     await pool.acquire(tmp_path / "ws-a", holder="session-a")
     await pool.release("session-a")
@@ -170,7 +170,7 @@ async def test_the_holder_of_a_full_pool_can_still_reacquire(tmp_path):
     assert again is first
 
 
-# ------------------------------------------------------------------ 줄 서기
+# ------------------------------------------------------------------ FIFO 대기열 큐잉
 
 
 @pytest.mark.asyncio
@@ -198,7 +198,7 @@ async def test_a_full_pool_makes_the_next_turn_wait_instead_of_failing(tmp_path)
 
 @pytest.mark.asyncio
 async def test_the_line_is_first_come_first_served(tmp_path):
-    """늦게 온 턴이 빈자리를 먼저 가져가지 않고, 순번이 당겨지면 알려 줍니다."""
+    """선입선출(FIFO) 보장: 신규 턴이 선행 대기 턴을 추월하지 않으며, 순번 변동 시 알림이 발행된다."""
     pool = _pool(max_runtimes=1, idle_ttl=60.0)
     await pool.acquire(tmp_path / "ws-a", holder="a")
     told = []
@@ -226,7 +226,7 @@ async def test_the_line_is_first_come_first_served(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_live_workspace_never_queues(tmp_path):
-    """떠 있는 폴더는 자리를 새로 요구하지 않으므로 줄이 있어도 바로 함께 씁니다."""
+    """기활성화된 작업 공간은 신규 슬롯이 불필요하므로 대기열 진입 없이 즉시 공유 점유한다."""
     pool = _pool(max_runtimes=1, idle_ttl=60.0)
     first = await pool.acquire(tmp_path / "ws-a", holder="a")
     waiting = asyncio.create_task(pool.acquire(tmp_path / "ws-b", holder="b"))
@@ -250,7 +250,7 @@ async def test_waiting_too_long_gives_up_and_names_the_holders(tmp_path):
 
 @pytest.mark.asyncio
 async def test_leaving_the_line_lets_the_next_one_through(tmp_path):
-    """맨 앞이 취소돼도 줄이 막히지 않습니다."""
+    """대기열 최상위 턴이 취소되더라도 후속 대기 턴들의 큐 처리가 블로킹되지 않는다."""
     pool = _pool(max_runtimes=1, idle_ttl=60.0)
     await pool.acquire(tmp_path / "ws-a", holder="a")
     head = asyncio.create_task(pool.acquire(tmp_path / "ws-b", holder="b"))
@@ -282,7 +282,7 @@ async def test_a_stop_request_leaves_the_line(tmp_path, monkeypatch):
     assert pool.waiting() == []
 
 
-# ------------------------------------------------------------------ 라운드 경계의 양보
+# ------------------------------------------------------------------ 라운드 경계 협업적 슬롯 양보
 
 
 async def _with_overdue_waiter(tmp_path, **kwargs):
@@ -298,7 +298,7 @@ async def _with_overdue_waiter(tmp_path, **kwargs):
 
 @pytest.mark.asyncio
 async def test_a_turn_gives_way_at_a_round_boundary_and_gets_the_same_manager_back(tmp_path):
-    """자문 범위처럼 매니저를 들고 있는 쪽이 있으므로, 돌아온 뒤에도 같은 객체여야 합니다."""
+    """서브 토론 등의 참조 일관성을 위해 슬롯 재획득 후에도 동일한 MCPManager 인스턴스를 유지한다."""
     pool, manager, waiting = await _with_overdue_waiter(tmp_path, yield_after=50.0)
 
     giving_way = asyncio.create_task(pool.yield_slot(tmp_path / "ws-a", "a"))
@@ -317,7 +317,7 @@ async def test_a_turn_gives_way_at_a_round_boundary_and_gets_the_same_manager_ba
 
 @pytest.mark.asyncio
 async def test_giving_way_waits_as_long_as_it_takes(tmp_path):
-    """이미 시작한 턴은 자리 때문에 실패로 끝나지 않습니다 (`wait_timeout` 을 적용하지 않습니다)."""
+    """이미 실행 중인 턴은 슬롯 경합으로 인해 타임아웃 오류가 발생하지 않는다 (`wait_timeout` 미적용)."""
     pool, _manager, waiting = await _with_overdue_waiter(tmp_path, yield_after=50.0, wait_timeout=1000.0)
     pool.wait_timeout = 0.01
 
@@ -342,9 +342,9 @@ async def test_no_one_waiting_means_no_yield(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_short_wait_does_not_cost_anyone_their_kernels(tmp_path):
-    """막 줄을 선 턴 때문에 라운드마다 서버를 다시 띄우지 않습니다."""
+    """대기열에 갓 진입한 턴으로 인해 매 라운드마다 불필요하게 런타임을 양보하지 않는다."""
     pool, manager, waiting = await _with_overdue_waiter(tmp_path, yield_after=50.0)
-    pool._waiters[0].since += 100  # noqa: SLF001 - 방금 줄을 선 것으로 되돌립니다
+    pool._waiters[0].since += 100  # noqa: SLF001 - 직전에 대기열에 진입한 상태로 타임스탬프 복원
 
     assert await pool.yield_slot(tmp_path / "ws-a", "a") is False
     assert pool.get(tmp_path / "ws-a") is manager
@@ -362,7 +362,7 @@ async def test_a_turn_that_just_got_the_slot_keeps_it_for_a_while(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_shared_runtime_does_not_yield(tmp_path):
-    """같은 폴더의 다른 턴은 지금 라운드 경계에 있지 않습니다. 내리면 도구가 도중에 사라집니다."""
+    """동일 작업 공간을 공유하는 타 세션이 활성 상태인 경우 라운드 경계라도 슬롯을 양보하지 않는다."""
     pool, manager, waiting = await _with_overdue_waiter(tmp_path, yield_after=50.0)
     await pool.acquire(tmp_path / "ws-a", holder="a2")
 
@@ -380,7 +380,7 @@ async def test_yielding_can_be_turned_off(tmp_path):
     waiting.cancel()
 
 
-# ------------------------------------------------------------------ 엔진과 함께
+# ------------------------------------------------------------------ 오케스트레이션 엔진 통합 검증
 
 
 async def _session_in(workspace: Path, max_rounds: int = 1) -> str:
@@ -413,7 +413,7 @@ class _Blocking(FakeLLMCaller):
 
 @pytest.mark.asyncio
 async def test_two_turns_take_turns_on_one_slot(tmp_path, monkeypatch):
-    """자리가 하나뿐이어도 두 토론이 모두 끝나고, 어느 발언도 남의 폴더 도구를 받지 않습니다."""
+    """단일 슬롯 환경에서도 복수 세션의 토론이 교차 완주되며 작업 공간 간 도구 격리가 유지된다."""
     monkeypatch.setattr(pool_module, "_pool", _pool(max_runtimes=1, idle_ttl=60.0, yield_after=0.01))
     ws_a, ws_b = tmp_path / "ws-a", tmp_path / "ws-b"
     sid_a, sid_b = await _session_in(ws_a, max_rounds=2), await _session_in(ws_b)
@@ -436,7 +436,7 @@ async def test_two_turns_take_turns_on_one_slot(tmp_path, monkeypatch):
     ))
     await _until(lambda: events_b)
     assert events_b[0] == {"type": EventType.RUNTIME_QUEUED, "ahead": 0}
-    await asyncio.sleep(0.02)  # 줄의 맨 앞이 양보를 받을 만큼 기다립니다
+    await asyncio.sleep(0.02)  # 대기열 최상위 턴이 양보 임계치(YIELD_AFTER)를 충족할 때까지 대기
 
     gate.set()
     await asyncio.wait_for(asyncio.gather(turn_a, turn_b), 15)
@@ -450,7 +450,7 @@ async def test_two_turns_take_turns_on_one_slot(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stopping_a_queued_turn_starts_nothing(tmp_path, monkeypatch):
-    """줄에 선 턴을 정지하면 취소로 끝납니다. 요청은 기록되지 않았으므로 턴도 남지 않습니다."""
+    """대기열 상태의 턴에 중단 요청 시 취소(cancelled)로 수렴하고 DB 레코드를 잔존시키지 않는다."""
     monkeypatch.setattr(pool_module, "ABORT_POLL_SECONDS", 0.01)
     pool = _pool(max_runtimes=1, idle_ttl=60.0)
     monkeypatch.setattr(pool_module, "_pool", pool)
@@ -486,7 +486,7 @@ def _expert_view(run: TurnRun):
 
 @pytest.mark.asyncio
 async def test_a_run_that_never_opened_a_turn_returns_its_request_to_the_input():
-    """줄에서 나온 턴의 요청은 어디에도 기록되지 않았습니다. 돌려주지 않으면 글이 사라집니다."""
+    """대기열에서 취소된 턴의 사용자 프롬프트는 입력창으로 온전히 복원된다."""
     run = TurnRun("s", "요청", None)
     view, feed = _expert_view(run)
 
@@ -517,7 +517,7 @@ async def test_stopping_in_line_does_not_promise_a_synthesis():
     assert "대기를 취소" in feed.set_busy.call_args.args[1]
 
 
-# ------------------------------------------------------------------ 쉬는 작업 공간
+# ------------------------------------------------------------------ 유휴 작업 공간 유지보수
 
 
 def _recording_hook(pool: MCPRuntimePool) -> list:
@@ -532,7 +532,7 @@ def _recording_hook(pool: MCPRuntimePool) -> list:
 
 @pytest.mark.asyncio
 async def test_the_idle_hook_runs_once_the_workspace_has_rested(tmp_path):
-    """반납이 더 오지 않는 서버에서도 시간이 되면 불립니다. 런타임은 그대로 둡니다."""
+    """유휴 TTL 경과 시 런타임 종료 여부와 독립적으로 idle_hook 유지보수가 실행된다."""
     pool = _pool(idle_ttl=0.01)
     seen = _recording_hook(pool)
     await pool.acquire(tmp_path / "ws", holder="a")
@@ -610,7 +610,7 @@ async def test_shutdown_stops_running_maintenance(tmp_path):
     assert stopped and pool.live_workspaces() == []
 
 
-# ------------------------------------------------------------------ 조회
+# ------------------------------------------------------------------ 상태 조회 및 지연 기동 검증
 
 
 @pytest.mark.asyncio

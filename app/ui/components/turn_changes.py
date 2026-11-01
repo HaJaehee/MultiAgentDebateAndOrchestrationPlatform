@@ -1,15 +1,15 @@
 """작업 공간 턴 파일 변경 내역(Diff) 조회 및 롤백 다이얼로그 (v1.5).
 
 결론 카드의 파일 칩(`ChatFeed.set_turn_actions`)을 클릭하면 호출됩니다.
-변경된 파일 목록에서 항목을 선택하면 통합·좌우 보기로 변경점을 확인할 수 있고(`DiffViewer`, ADR-043),
-라운드 경계 스냅샷이 있는 턴은 턴 전체와 라운드별 구간을 골라 볼 수 있습니다.
+변경된 파일 목록에서 항목을 선택하면 Unified/Split 뷰로 변경 사항(Diff)을 확인할 수 있으며(`DiffViewer`, ADR-043),
+라운드 경계 스냅샷이 존재하는 턴은 턴 전체 및 개별 라운드별 구간을 선택하여 조회할 수 있습니다.
 `이 턴 되돌리기`를 통해 해당 턴에서 변경된 모든 파일을 턴 시작 전 상태로 안전하게 복원합니다
 (`app/workspace_checkpoint.py`, `app/session_ops.revert_turn_files`).
 
 * 해당 대화 세션이 실행 중인 동안에는 충돌 방지를 위해 되돌리기가 제한됩니다.
 * 턴 완료 이후 외부에서 추가로 수정된 파일이 발견되면 롤백을 중단하고 충돌 파일 목록을 안내합니다.
 * 이미 롤백된 턴은 중복 되돌리기를 수행하지 않습니다.
-* 되돌리기는 고른 구간과 상관없이 항상 턴 전체에 적용됩니다.
+* 롤백(되돌리기)은 선택된 조회 구간과 무관하게 항상 해당 턴 전체에 원자적으로 적용됩니다.
 """
 
 from __future__ import annotations
@@ -33,11 +33,11 @@ _NO_DIFF_PATH = "좌측 목록에서 파일을 선택하면 변경 내역(Diff)�
 
 
 class _ChangesView:
-    """창 하나의 구간 선택, 파일 목록, 변경점 칸."""
+    """턴 변경 내역 다이얼로그의 구간 셀렉터, 파일 목록 트리, Diff 뷰어 영역을 구성하는 뷰 클래스."""
 
     def __init__(self, changes: TurnChanges, *, mode: str, on_mode_change: Callable[[str], None]) -> None:
         self.changes = changes
-        # 첫 항목은 턴 전체입니다. 없으면 그 턴에는 라운드 경계 스냅샷이 없습니다.
+        # 기본 첫 번째 구간은 턴 전체 범위입니다. 하위 항목이 없으면 라운드 경계 스냅샷이 부재한 턴입니다.
         self.segments = [Segment("턴 전체", changes.start, changes.end, changes.files), *changes.segments]
         self.segment = self.segments[0]
         self.selected: Optional[str] = None
@@ -52,7 +52,7 @@ class _ChangesView:
                     options = {i: f"{s.label} ({len(s.files)}개)" for i, s in enumerate(self.segments)}
                     ui.select(options, value=0, label="구간", on_change=self._on_pick_segment).props(
                         "dense outlined dark options-dense"
-                    ).classes("w-full text-xs flex-shrink-0").tooltip("턴 전체 또는 라운드별로 나눠 봅니다.")
+                    ).classes("w-full text-xs flex-shrink-0").tooltip("턴 전체 또는 개별 라운드별 구간으로 변경 내역을 필터링합니다.")
                 with ui.scroll_area().classes("w-full flex-grow min-h-0 border border-slate-700 rounded"):
                     self.file_list = ui.column().classes("w-full gap-0.5 p-1")
                     self._render_files()
@@ -83,7 +83,7 @@ class _ChangesView:
         await self.open_first_file()
 
     async def open_first_file(self) -> None:
-        """고르던 파일이 이 구간에도 있으면 그대로 두고, 없으면 첫 파일을 엽니다."""
+        """현재 선택된 파일이 전환된 구간에도 존재하면 선택을 유지하고, 부재 시 해당 구간의 첫 번째 파일을 선택합니다."""
         files: List[FileChange] = self.segment.files
         if not files:
             self.selected = None
@@ -120,7 +120,7 @@ class TurnChangesDialog:
         self.session_factory = session_factory
         self.is_running = is_running
         self.on_reverted = on_reverted
-        # 통합·좌우 선택은 창을 다시 열어도 유지합니다.
+        # Unified/Split 뷰 모드 선택 상태는 다이얼로그를 재오픈해도 유지됩니다.
         self.diff_mode = SPLIT
 
     async def open(self, session_id: Optional[str], turn_id: str) -> None:
@@ -176,7 +176,7 @@ class TurnChangesDialog:
         dialog.on("hide", view.viewer.clear)
         dialog.open()
         if changes.files:
-            # 첫 파일을 바로 보여 줍니다. 칩을 누른 사람은 대개 "무엇이 바뀌었나" 부터 봅니다.
+            # 다이얼로그 오픈 즉시 첫 번째 변경 파일의 Diff를 자동 로드합니다.
             ui.timer(0.05, view.open_first_file, once=True)
 
     def _confirm_revert(self, parent: ui.dialog, session_id: str, changes: TurnChanges) -> None:

@@ -1,8 +1,8 @@
-"""대화 안에 나온 코드의 버전들: 산출물을 앞선 라운드·턴의 코드와 견주는 재료 (ADR-043).
+"""대화 세션 내 발언 이력에서 코드 버전을 추출하여 이전 라운드 및 이전 턴과의 Diff 비교 대상을 제공하는 모듈 (ADR-043).
 
-코드 산출물에는 파일 이름도 턴 id 도 없고, 턴마다 전문가별 마지막 발언의 코드만 올라옵니다. 그래서 라운드별
-버전은 발언 기록에서 다시 모읍니다. 어느 코드가 어느 코드의 이전 모습인지 표시가 없으므로 유사도로 비교 기준을
-제안하고, 화면에서 사람이 바꿀 수 있게 합니다.
+코드 산출물 메타데이터에는 파일 경로와 턴 ID가 누적되지 않으며, 매 턴마다 각 전문가의 최종 발언 코드 블록만 수집됩니다.
+따라서 라운드별 점진적 코드 변화는 전체 발언 이력에서 재수집합니다. 코드 간의 명시적 계통 정보가 없으므로 어휘 유사도를
+기반으로 비교 기준을 자동 추천하며, 사용자가 UI에서 유연하게 변경할 수 있도록 지원합니다.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ def _language(name: Optional[str]) -> str:
 
 
 def speech_code_versions(speeches: Iterable[Any], turn_numbers: Mapping[str, int]) -> List[CodeVersion]:
-    """발언 기록(시간순)의 코드 블록을 버전으로 모읍니다. 기준은 산출물 수집(`debate_code_artifacts`)과 같습니다."""
+    """발언 이력(시간순)에서 코드 블록을 버전 단위로 추출합니다. 추출 기준은 최종 산출물 수집(`debate_code_artifacts`)과 동일합니다."""
     versions: List[CodeVersion] = []
     for speech in speeches:
         if not in_main_record(speech):
@@ -59,7 +59,7 @@ def speech_code_versions(speeches: Iterable[Any], turn_numbers: Mapping[str, int
 
 
 def artifact_versions(artifacts: Iterable[Dict[str, Any]]) -> List[CodeVersion]:
-    """뷰어에 있는 코드 산출물을 버전으로. 발언 기록을 읽지 못해도 턴끼리는 견줄 수 있게 합니다."""
+    """산출물 뷰어의 코드 산출물 목록을 버전으로 변환합니다. 발언 이력을 조회할 수 없는 경우에도 턴 간 코드 비교가 가능하도록 지원합니다."""
     return [
         CodeVersion(
             content=art.get("content", ""), language=_language(art.get("language")),
@@ -72,10 +72,10 @@ def artifact_versions(artifacts: Iterable[Dict[str, Any]]) -> List[CodeVersion]:
 def earlier_versions(
     content: str, language: Optional[str], versions: Sequence[CodeVersion], created_at: Any = None,
 ) -> List[Tuple[CodeVersion, float]]:
-    """`content` 와 견줄 앞선 버전과 유사도. 최근 것부터, 같은 언어만, 같은 코드는 한 번만.
+    """대상 코드(`content`)와 비교 가능한 이전 버전 목록 및 유사도를 반환합니다. 최신순 정렬, 동일 언어 한정, 중복 코드는 단일 항목만 포함합니다.
 
-    `created_at` 은 산출물이 만들어진 시각입니다. 그 뒤의 코드는 이전 버전이 아니고, 같은 턴이라도 그 코드가
-    나온 발언 뒤의 것은 이전 버전이 아닙니다. 그 발언을 찾지 못하면(다시 실행한 발언) 시각으로만 거릅니다.
+    `created_at`은 해당 산출물이 생성된 시점입니다. 해당 시점 이후에 작성된 코드는 이전 버전이 아니며, 같은 턴 내에서도 해당 코드가
+    포함된 발언 이후의 코드는 이전 버전에서 제외됩니다. 발언을 특정할 수 없는 경우(재생성된 발언 등) 생성 시각(timestamp)을 기준으로 필터링합니다.
     """
     target = content.strip()
     lang = _language(language)

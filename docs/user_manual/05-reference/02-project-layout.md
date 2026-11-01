@@ -63,7 +63,7 @@ app/
 ├── plugins.py                       224   토론 전략 및 호스트 도구 플러그인 로더 (디렉터리 및 엔트리포인트 지원, ADR-042)
 ├── tool_rules.py                    125   도구 보안 규칙 문법 (read(경로) · net(호스트) …)
 ├── timestamps.py                    176   발언·턴·보고서 시각 표기 (화면·문서·보고서 공용)
-├── session_ops.py                   593   세션 되돌리기·이어받기, 피드 기록 읽기, 쉬는 작업 공간 정리
+├── session_ops.py                   593   세션 롤백·이어받기, 피드 기록 조회, 유휴 작업 공간 유지보수
 ├── export.py                        239   대화 → 마크다운 문서
 ├── export_mermaid.py              1,618   Mermaid → StarUML·HTML 변환 (외부 의존 없음)
 ├── mermaid_lint.py                  491   다이어그램 문법 검사·복구
@@ -72,9 +72,9 @@ app/
 ├── security.py                      782   원격 접속 토큰, 접근 제어 미들웨어
 ├── headless.py                      256   헤드리스 토론 실행 코어 (REST·MCP 공용) (v1.5)
 ├── mcp_server.py                    180   내장 MCP 서버 엔드포인트 /mcp (v1.5)
-├── workspace_checkpoint.py          465   작업 공간 턴 체크포인트·라운드 구간·롤백·분기 내보내기·보존과 압축 (v1.5)
-├── code_diff.py                     234   두 코드의 차이 계산 (git diff 해석, 줄 안 강조) (v1.5.1)
-├── code_versions.py                  96   대화에 나온 코드 버전, 비교 기준 후보 (v1.5.1)
+├── workspace_checkpoint.py          465   작업 공간 턴 체크포인트·라운드 구간 스냅샷·롤백·세션 분기 내보내기·보존 및 GC 압축 (v1.5)
+├── code_diff.py                     234   코드 Diff 연산 엔진 (git diff 파싱, 인라인 단어 강조) (v1.5.1)
+├── code_versions.py                  96   세션 발언 기반 코드 버전 추출 및 비교 추천 엔진 (v1.5.1)
 ├── session_fork.py                  291   대화 세션 분기(Fork), 비교 데이터 구성 및 결론 평가 (v1.5)
 ├── bench.py                         339   전략 벤치마크 하네스 python -m app.bench (v1.5)
 ├── graph_store.py                   105   그래프 토론의 그래프 파일 data/graphs/
@@ -120,7 +120,7 @@ app/
 ├── mcp/
 │   ├── client.py                    746   stdio·HTTP 세션 하나, 도구 검색·실행
 │   ├── manager.py                   736   작업 공간 하나의 서버 묶음, 도구 색인
-│   ├── pool.py                      611   작업 공간별 런타임 풀 (대기열·라운드 경계 양보)
+│   ├── pool.py                      611   작업 공간별 런타임 풀 (FIFO 대기열·라운드 경계 협업적 슬롯 양보)
 │   ├── policy.py                    952   도구 보안 판정 허용·묻기·거부
 │   ├── guards.py                    102   바이너리 문서 쓰기 거부
 │   └── exec_scan.py                 343   실행 전 코드 검사
@@ -197,9 +197,9 @@ app/
     ├── components/model_status.py   143   모델 연결 상태 단추와 창
     ├── components/access_token.py   352   원격 접속 토큰 버튼
     ├── components/workspace_download.py   224   작업 공간 파일 다운로드 창
-    ├── components/turn_changes.py   221   턴 파일 변경 내역(Diff) 및 롤백 창 (v1.5)
-    ├── components/diff_viewer.py   199   코드 변경점 뷰어, 통합·좌우 보기 (v1.5.1)
-    ├── components/code_compare.py   155   코드 탭의 변경점 비교 (v1.5.1)
+    ├── components/turn_changes.py   221   턴 파일 변경 내역(Diff) 및 롤백 다이얼로그 (v1.5)
+    ├── components/diff_viewer.py   199   코드 변경점 뷰어 (Unified / Split 뷰 지원) (v1.5.1)
+    ├── components/code_compare.py   155   산출물 코드 탭 버전 간 Diff 비교 컴포넌트 (v1.5.1)
     ├── components/skill_draft_dialog.py   97   스킬 초안 생성 및 편집 창 (v1.5)
     ├── components/graph_canvas.py   217   그래프 편집 캔버스
     └── components/quiet_splitter.py    98   드래그가 가벼운 스플리터
@@ -243,7 +243,7 @@ app/
 | 토큰 및 LLM 실행 시간 계측 | `agents/llm_usage.py` |
 | 합의 판정 및 조기 종료 | 판정은 `orchestration/context_memory.py` (`ledger_converged`), 라운드 마감은 `orchestration/phases/debate.py` (`_close_round`) |
 | 턴 체크포인트 및 롤백 | `workspace_checkpoint.py` · 화면은 `ui/components/turn_changes.py` |
-| 코드 변경점 비교 | 계산은 `code_diff.py`, 비교 기준은 `code_versions.py` · 화면은 `ui/components/diff_viewer.py`, `ui/components/code_compare.py` |
+| 코드 변경점 Diff 비교 | 연산 코어는 `code_diff.py`, 비교 추천은 `code_versions.py` · UI는 `ui/components/diff_viewer.py`, `ui/components/code_compare.py` |
 | 대화 세션 및 발언 검색 | `database/search.py` · 화면은 `ui/components/sidebar.py` |
 | 세션 분기, 비교 및 결론 평가 | `session_fork.py` · 화면은 `ui/compare_page.py` |
 | 에이전트 사용자 질문 | `agents/ask_user.py` · 응답 대기는 `orchestration/control.py`, UI 카드는 `ui/components/chat_feed/approvals.py` |

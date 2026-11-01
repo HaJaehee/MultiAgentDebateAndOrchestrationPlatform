@@ -39,23 +39,23 @@ argv 로, sandbox 는 `SANDBOX_WORKSPACE` 를 env 로. 프로세스가 살아 �
 않고 `MCP_RUNTIME_IDLE_TTL` 동안 살려 둡니다 — 같은 폴더에서 턴을 연달아 돌릴 때
 기동 비용(샌드박스는 IPython 커널을 띄워 수 초)을 매번 치르지 않기 위해서입니다.
 
-그 시간이 다 지나도록 아무도 찾지 않은 작업 공간에는 `idle_hook` 을 부릅니다. 저장소를
-정리하기 좋은 때를 아는 것은 풀뿐이고, 무엇을 정리할지는 부르는 쪽이 정합니다 (ADR-044).
+해당 유휴 지속 시간 동안 접근이 발생하지 않은 작업 공간에 대해서는 `idle_hook` 콜백을 호출합니다.
+저장소 정리 주기를 판별할 수 있는 주체는 풀 계층이며, 정리 대상 선별 및 실행은 등록된 핸들러가 담당합니다 (ADR-044).
 
-## 자리가 모자랄 때 (ADR-044)
+## 런타임 슬롯 경합 시 동작 정책 (ADR-044)
 
-쓰고 있는 런타임은 라운드 도중에 내리지 않습니다. 그러면 그 토론의 도구가 도중에 사라집니다.
-대신 두 가지를 합니다.
+실행 중인 런타임은 라운드 진행 도중 강제 종료하지 않습니다. 토론 도중 도구 인터페이스가 단절되기 때문입니다.
+대신 다음과 같은 두 단계 정책을 적용합니다.
 
-* **줄 서기** — 바로 거절하지 않고 `MCP_RUNTIME_WAIT` 동안 먼저 온 순서대로 기다립니다.
-  이미 떠 있는 폴더는 자리를 새로 요구하지 않으므로 줄을 서지 않습니다.
-* **라운드 경계의 양보** — 턴 하나가 런타임을 끝까지 쥐고 있으면 다음 턴은 그 턴 전체를
-  기다려야 합니다. 그래서 줄의 맨 앞이 `MCP_RUNTIME_YIELD_AFTER` 를 넘게 기다렸으면, 라운드를
-  시작하려는 턴이 자리를 내주고 줄 맨 뒤에 다시 섭니다 (`yield_slot`). 서버는 다시 뜨므로
-  **샌드박스 커널의 변수는 사라집니다.** 파일과 지식 그래프는 남습니다.
+* **선입선출(FIFO) 대기열** — 슬롯 부족 시 즉시 거절하지 않고 `MCP_RUNTIME_WAIT` 동안 순차 대기합니다.
+  이미 프로세스가 활성화된 작업 공간은 신규 슬롯이 불필요하므로 대기열 진입 없이 즉시 공유 점유합니다.
+* **라운드 경계 협업적 슬롯 양보** — 특정 턴이 런타임을 턴 종료 시까지 독점 점유할 경우 후속 턴의 대기 시간이 과도해집니다.
+  따라서 대기열 최상위 턴이 `MCP_RUNTIME_YIELD_AFTER`를 초과하여 대기한 경우, 차기 라운드를 시작하려는 턴이
+  슬롯을 양보하고 대기열 맨 뒤로 이동합니다 (`yield_slot`). 복귀 시 서버가 재기동되므로
+  **IPython 샌드박스 커널의 인메모리 변수는 초기화됩니다** (작업 디렉터리 파일 및 지식 그래프 데이터는 영구 보존).
 
-도구를 부를 때만 빌리는 방식은 쓰지 않습니다. 발언 도중에 커널이 사라지고, 도구가 뜰 때까지
-발언이 멈추며, 도구 목록을 프로세스 없이 들고 있어야 합니다.
+도구 호출 단위의 동적 점유 방식은 채택하지 않습니다. 발언 중간에 커널 변수가 소실되고, 호출마다 지연이 발생하며,
+프로세스 없이 도구 스키마를 별도 캐싱해야 하는 구조적 한계가 존재하기 때문입니다.
 """
 
 import asyncio
@@ -101,17 +101,17 @@ MAX_RUNTIMES = _positive_int_env("MCP_MAX_RUNTIMES", 4)
 # 아무도 안 쓰는 런타임을 살려 두는 시간(초).
 IDLE_TTL = positive_float_env("MCP_RUNTIME_IDLE_TTL", 300.0)
 
-# 자리가 날 때까지 기다리는 시간(초). 넘기면 거절합니다. 0 이면 기다리지 않습니다.
+# 가용 슬롯 확보 대기 타임아웃(초 단위). 초과 시 요청을 거부하며, 0이면 대기열 없이 즉시 거절합니다.
 #
-# 줄을 선 턴은 아직 아무것도 기록하지 않았고 언제든 멈출 수 있으므로 길게 잡습니다. 계획 승인을
-# 기다리는 턴(기본 10분)도 자리를 쥐고 있어, 그보다 짧으면 앞 턴의 답을 기다리다 거절됩니다.
+# 대기 중인 턴은 DB 레코드가 생성되지 않은 상태이며 사용자 취소가 가능하므로 여유 있게 설정합니다.
+# 계획 승인 대기 턴(기본 10분) 또한 슬롯을 점유하므로 기본값을 15분(900초)으로 유지합니다.
 WAIT_TIMEOUT = _seconds_env("MCP_RUNTIME_WAIT", 900.0)
 
-# 줄의 맨 앞이 이만큼 기다렸고 자기도 이만큼 쓴 턴이 라운드 경계에서 자리를 내줍니다(초).
-# 0 이면 양보하지 않습니다 — 라운드를 넘어 샌드박스 변수를 이어 써야 하는 환경에서 끕니다.
+# 대기열 최상위 턴의 대기 시간 및 현재 턴의 사용 시간이 이 기준(초)을 초과할 때 라운드 경계에서 슬롯을 양보합니다.
+# 0으로 설정 시 슬롯 양보를 비활성화합니다 (라운드를 넘어 샌드박스 인메모리 변수를 유지해야 하는 환경).
 YIELD_AFTER = _seconds_env("MCP_RUNTIME_YIELD_AFTER", 60.0)
 
-# 줄에서 기다리는 동안 멈춰 달라는 요청을 확인하는 간격(초).
+# 대기열 대기 중 사용자 중단(Abort) 요청 폴링 주기(초 단위).
 ABORT_POLL_SECONDS = 1.0
 
 # 샌드박스 커널은 런타임마다 따로 뜹니다. conf.json 의 값을 그대로 N 벌 두면
@@ -129,17 +129,17 @@ class RuntimeCapacityError(RuntimeError):
 
 
 class RuntimeWaitAborted(RuntimeCapacityError):
-    """자리를 기다리다 멈춰 달라는 요청을 받았을 때. 아직 아무것도 시작하지 않았습니다."""
+    """가용 슬롯 대기 중 사용자의 중단(Stop) 요청으로 실행이 취소된 경우 발생하는 예외."""
 
 
 class _Waiter:
-    """자리를 기다리는 턴 하나."""
+    """가용 슬롯 대기열(FIFO)의 단일 대기자 항목."""
 
     def __init__(self, key: str, holder: str):
         self.key = key
         self.holder = holder
         self.since = time.monotonic()
-        # 자리가 날 만한 일이 생기면 풀립니다. 풀려도 자리가 있다는 뜻은 아닙니다.
+        # 슬롯 상태 변경 시 신호 전달 (선입선출 보장 및 경합 해소를 위해 깨어난 후 가용 여부를 재검증).
         self.wake: Optional["asyncio.Future[None]"] = None
 
 
@@ -242,9 +242,9 @@ class MCPRuntimePool:
         `holder` 는 보통 세션 id 입니다. 같은 holder 가 두 번 잡아도 참조는
         하나입니다 (집합이라서). 반드시 `release(holder)` 로 짝을 맞추세요.
 
-        자리가 없으면 `wait_timeout` 동안 줄을 서고, 그래도 없으면 `RuntimeCapacityError` 입니다.
-        `on_wait(앞에 선 수)` 는 순번이 바뀔 때마다 불립니다. `should_abort()` 가 참이 되면
-        `RuntimeWaitAborted` 로 줄에서 나옵니다.
+        가용 슬롯이 부족한 경우 `wait_timeout` 동안 FIFO 대기열에서 대기하며, 제한 시간을 초과하면 `RuntimeCapacityError` 예외를 발생시킵니다.
+        `on_wait(선행 대기 수)` 콜백은 대기열 순번 변동 시 호출됩니다. `should_abort()`가 True를 반환하면
+        `RuntimeWaitAborted` 예외와 함께 대기열에서 안전하게 이탈합니다.
         """
         return await self._acquire(self.key_for(workspace), holder, self.wait_timeout, on_wait, should_abort)
 
@@ -255,11 +255,11 @@ class MCPRuntimePool:
         *,
         on_wait: Optional[Callable[[int], Awaitable[None]]] = None,
     ) -> bool:
-        """오래 기다린 턴이 있으면 자리를 내주고 줄 맨 뒤에서 다시 받습니다. 양보했으면 True.
+        """선행 대기 턴이 존재하는 경우 슬롯을 협업적으로 양보하고 대기열 맨 뒤로 이동하여 슬롯을 재획득합니다. 양보 시 True를 반환합니다.
 
-        라운드(그래프 단계)가 시작하기 직전에 부릅니다. 이 턴의 발언과 도구 호출이 하나도 돌고
-        있지 않은 자리는 거기뿐입니다. 돌아올 때까지 기다리며, 시간 제한을 두지 않습니다.
-        이미 시작한 턴을 자리 때문에 실패로 끝내면 그때까지의 토론이 헛일이 됩니다.
+        차기 라운드(또는 적응형 그래프 단계) 개시 직전에 호출됩니다. 해당 시점은 발언 및 도구 실행이 진행되지
+        않는 유일한 안전 지점입니다. 재할당까지 무기한 대기하며, 이미 진행 중인 토론의 부분 결과가 리소스 타임아웃으로
+        유실되는 것을 방지합니다.
         """
         key = self.key_for(workspace)
         async with self._lock:
@@ -306,14 +306,14 @@ class MCPRuntimePool:
         on_wait: Optional[Callable[[int], Awaitable[None]]] = None,
         should_abort: Optional[Callable[[], bool]] = None,
     ) -> MCPManager:
-        """`timeout` 이 None 이면 자리가 날 때까지 기다립니다."""
+        """`timeout`이 None인 경우 기본 대기 정책에 따라 가용 슬롯을 대기합니다."""
         waiter: Optional[_Waiter] = None
         told: Optional[int] = None
         try:
             while True:
                 async with self._lock:
                     runtime = self._runtimes.get(key)
-                    # 떠 있는 폴더는 자리를 새로 요구하지 않으므로 줄과 상관없이 함께 씁니다.
+                    # 이미 활성화된 작업 공간은 신규 슬롯이 불필요하므로 대기열 진입 없이 즉시 공유 점유합니다.
                     if runtime is None and self._first_in_line(waiter) and await self._make_room_locked():
                         runtime = await self._start_locked(key, self._parked.pop(key, None))
                     if runtime is not None:
@@ -336,7 +336,7 @@ class MCPRuntimePool:
                 self._wake_waiters()
 
     def _first_in_line(self, waiter: Optional[_Waiter]) -> bool:
-        """자리를 새로 요구해도 되는가. 줄이 있으면 새치기하지 않습니다."""
+        """신규 런타임 슬롯 할당 가능 여부를 판정합니다. 대기열에 선행 대기자가 존재할 경우 선입선출을 보장합니다."""
         return not self._waiters or self._waiters[0] is waiter
 
     def _hand_out(self, key: str, runtime: _Runtime, holder: str) -> MCPManager:
@@ -350,7 +350,7 @@ class MCPRuntimePool:
     async def _wait_in_line(
         self, waiter: _Waiter, timeout: Optional[float], should_abort: Optional[Callable[[], bool]],
     ) -> None:
-        """자리가 날 만한 일이 생길 때까지 잡니다. 시간이 다 됐거나 멈춰 달라고 하면 예외입니다."""
+        """가용 슬롯이 확보되거나 이벤트가 발생할 때까지 대기합니다. 타임아웃 또는 사용자 중단 요청 시 예외를 발생시킵니다."""
         while True:
             if should_abort is not None and should_abort():
                 raise RuntimeWaitAborted("MCP 런타임 자리를 기다리던 중 정지 요청을 받아 토론을 시작하지 않았습니다.")
@@ -363,16 +363,16 @@ class MCPRuntimePool:
                 return
 
     def _wake_waiters(self) -> None:
-        """자리가 생겼을 수 있습니다. 줄 전부가 다시 확인합니다 (순서는 `_first_in_line` 이 지킵니다)."""
+        """슬롯 상태 변경을 대기자들에게 통지합니다. `_first_in_line` 순서 검증을 통해 선입선출을 보장합니다."""
         for waiter in self._waiters:
             if waiter.wake is not None and not waiter.wake.done():
                 waiter.wake.set_result(None)
 
     def _should_yield_locked(self, runtime: _Runtime, holder: str) -> bool:
-        # 함께 쓰는 턴이 있으면 내릴 수 없습니다. 그 턴은 지금 라운드 경계에 있지 않습니다.
+        # 동일 작업 공간을 공유하는 타 세션이 활성 상태인 경우 중단하지 않습니다 (해당 세션은 라운드 경계 상태가 아님).
         if not self.yield_after or not self._waiters or runtime.holders != {holder}:
             return False
-        # 빈자리가 있으면 맨 앞이 곧 가져갑니다. 또 내리면 서버만 헛되이 다시 띄웁니다.
+        # 이미 가용 슬롯이 존재하는 경우 최상위 대기자가 즉시 획득하므로 추가 양보를 생략합니다.
         if len(self._runtimes) < self.max_runtimes:
             return False
         now = time.monotonic()
@@ -382,10 +382,9 @@ class MCPRuntimePool:
         )
 
     def _watch_idle(self, key: str) -> None:
-        """이 작업 공간이 TTL 동안 쉬면 `idle_hook` 을 부르도록 걸어 둡니다.
+        """해당 작업 공간이 유휴 TTL을 충족할 때 `idle_hook` 을 실행하도록 타이머를 예약합니다.
 
-        런타임을 내리는 시점과는 별개입니다. 런타임은 지금처럼 다음 획득·반납에서 회수되므로
-        토론이 끊긴 서버에서는 그 일이 오지 않지만, 저장소를 정리하기에는 그때가 가장 좋습니다.
+        런타임 프로세스 회수 시점과 독립적으로 동작하며, 유휴 주기 도달 시 저장소 유지보수를 비동기 실행합니다.
         """
         self._cancel_idle_watch(key)
         if self.idle_hook is not None:
@@ -416,7 +415,7 @@ class MCPRuntimePool:
             logger.warning(f"Idle maintenance failed for '{key}': {type(e).__name__}: {e}")
 
     async def _start_locked(self, key: str, manager: Optional[MCPManager] = None) -> _Runtime:
-        """런타임을 띄웁니다. `manager` 를 주면 그 객체에 프로세스를 다시 붙입니다 (`yield_slot`)."""
+        """런타임을 기동합니다. `manager` 인스턴스가 전달된 경우 기존 객체를 유지한 채 프로세스만 재연결합니다 (`yield_slot`)."""
         workspace = Path(key)
         env = self.runtime_env(workspace)
         try:
@@ -466,10 +465,10 @@ class MCPRuntimePool:
                 await self._stop_locked(key)
 
     async def _make_room_locked(self) -> bool:
-        """새 런타임 자리를 만듭니다. 쓰고 있는 것은 내리지 않으므로 못 만들 수도 있습니다."""
+        """신규 런타임 슬롯 공간을 확보합니다. 활성 점유 중인 런타임은 회수 대상에서 제외됩니다."""
         await self._reap_expired_locked()
 
-        # 오래 놀고 있던 것부터 내립니다.
+        # 유휴 시간이 가장 긴 런타임부터 우선 회수합니다.
         idle = sorted(
             (r for r in self._runtimes.values() if not r.in_use),
             key=lambda r: r.idle_for(),
@@ -554,7 +553,7 @@ class MCPRuntimePool:
         return list(self._runtimes)
 
     def waiting(self) -> List[Dict]:
-        """자리를 기다리는 순서 (UI/헬스체크용)."""
+        """현재 슬롯 대기열 목록을 반환합니다 (UI 대기 배지 및 모니터링용)."""
         now = time.monotonic()
         return [
             {"workspace": w.key, "holder": w.holder, "waited_seconds": round(now - w.since, 1)}
@@ -587,7 +586,7 @@ class MCPRuntimePool:
             return self.status()
 
     async def shutdown_all(self) -> None:
-        """서버 종료 시 모든 런타임을 정리합니다. 돌고 있는 저장소 정리도 멈춥니다."""
+        """서버 종료 시 모든 런타임을 안전하게 종료하고 실행 중인 저장소 유지보수 태스크를 중단합니다."""
         for key in list(self._idle_watches):
             self._cancel_idle_watch(key)
         loop = asyncio.get_running_loop()

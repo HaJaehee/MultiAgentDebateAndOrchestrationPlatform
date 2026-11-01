@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 
 def _queue_notice(on_event: Optional[EventCallback]) -> Optional[Callable[[int], Awaitable[None]]]:
-    """줄의 순번이 바뀔 때마다 화면에 알리는 콜백 (`MCPRuntimePool.acquire` 의 `on_wait`)."""
+    """대기열 순번 변동 시 UI에 상태를 브로드캐스트하는 콜백 (`MCPRuntimePool.acquire`의 `on_wait`)."""
     if on_event is None:
         return None
 
@@ -617,7 +617,7 @@ class OrchestratorEngine:
             )
             return state
 
-    # ------------------------------------------------------------ MCP 런타임 자리
+    # ------------------------------------------------------------ MCP 런타임 슬롯 관리
 
     @staticmethod
     async def _borrow_runtime(
@@ -626,7 +626,7 @@ class OrchestratorEngine:
         on_event: Optional[EventCallback],
         control: Optional[TurnControl] = None,
     ) -> None:
-        """이 턴의 작업 공간 런타임을 빌립니다. 자리가 없으면 줄을 서고, 정지를 누르면 시작하지 않고 끝냅니다."""
+        """현재 턴의 작업 공간 MCP 런타임을 획득합니다. 슬롯 부족 시 대기열에 진입하며, 중단 요청 시 실행을 취소합니다."""
         await get_runtime_pool().acquire(
             workspace, holder=session_id,
             on_wait=_queue_notice(on_event),
@@ -636,7 +636,7 @@ class OrchestratorEngine:
     async def _round_boundary(
         self, workspace: Path, session_id: str, turn_id: str, on_event: Optional[EventCallback], name: str,
     ) -> None:
-        """라운드·단계가 시작할 때: 경계 스냅샷을 남기고, 오래 기다린 턴이 있으면 런타임 자리를 내줍니다 (ADR-044)."""
+        """라운드/단계 시작 시 경계 스냅샷을 기록하고, 대기열 대기 발생 시 슬롯을 협업적으로 양보합니다 (ADR-044)."""
         await self._mark_boundary(workspace, turn_id, name)
         await get_runtime_pool().yield_slot(workspace, session_id, on_wait=_queue_notice(on_event))
 
@@ -651,19 +651,19 @@ class OrchestratorEngine:
             )
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 - 체크포인트는 턴의 부산물입니다
+        except Exception as exc:  # noqa: BLE001 - 스냅샷 실패가 턴 실행을 중단시키지 않도록 격리
             logger.warning(f"Could not checkpoint the workspace {workspace} ({which} of turn {turn_id}): {exc}")
             return None
 
     async def _mark_boundary(self, workspace: Path, turn_id: str, name: str) -> None:
-        """라운드·단계 경계의 스냅샷 (ADR-043). 이어 가는 턴은 이미 지난 경계를 지금 모습으로 덮어쓰지 않습니다."""
+        """라운드 및 적응형 그래프 단계 경계 스냅샷 기록 (ADR-043). 중단 후 재개된 턴은 이전 경계를 덮어쓰지 않습니다."""
         ref = workspace_checkpoint.turn_ref(turn_id, name)
         try:
             if await asyncio.to_thread(workspace_checkpoint.resolve, workspace, ref):
                 return
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 - 체크포인트는 턴의 부산물입니다
+        except Exception as exc:  # noqa: BLE001 - 스냅샷 실패가 턴 실행을 중단시키지 않도록 격리
             logger.warning(f"Could not read the workspace checkpoint {ref}: {exc}")
             return
         await self._snapshot(workspace, turn_id, name)
@@ -700,7 +700,7 @@ class OrchestratorEngine:
                 await db.commit()
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 - 체크포인트는 턴의 부산물입니다
+        except Exception as exc:  # noqa: BLE001 - 스냅샷 실패가 턴 실행을 중단시키지 않도록 격리
             logger.warning(f"Could not close the workspace checkpoint of turn {turn_id}: {exc}")
             return
         if on_event:

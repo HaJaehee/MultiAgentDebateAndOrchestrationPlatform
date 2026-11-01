@@ -93,15 +93,15 @@ async def forget_checkpoints(db, session_id: str, turn_ids: Optional[Sequence[st
 
 
 def reviewable_changes(checkpoint: Optional[Dict[str, Any]]) -> Optional[int]:
-    """턴 변경 창을 열 수 있으면 바뀐 파일 수. 보존 기간이 지나 스냅샷이 없는 턴이면 None."""
+    """턴 변경 내역 다이얼로그 조회가 가능한 경우 변경 파일 수를 반환합니다. 보존 만료로 스냅샷이 정리된 턴은 None을 반환합니다."""
     checkpoint = checkpoint or {}
     return checkpoint.get("changed") if checkpoint.get("end") else None
 
 
 async def expire_checkpoints(db, turn_ids: Sequence[str]) -> None:
-    """보존 기간이 지난 턴의 기록에서 스냅샷 값을 지웁니다. 바뀐 파일 수는 턴의 기록으로 남깁니다.
+    """보존 정책이 만료된 턴의 레코드에서 start/end 스냅샷 해시를 제거합니다. 변경 파일 수 통계는 유지됩니다.
 
-    스냅샷이 없다는 사실을 기록이 먼저 알아야 화면이 되돌리기를 내놓지 않습니다.
+    DB 메타데이터가 선행 갱신되어야 UI에서 유효하지 않은 롤백 버튼이 노출되는 불일치를 방지할 수 있습니다.
     """
     rows = (await db.execute(select(TurnModel).where(TurnModel.id.in_(list(turn_ids))))).scalars().all()
     for turn in rows:
@@ -111,10 +111,9 @@ async def expire_checkpoints(db, turn_ids: Sequence[str]) -> None:
 
 
 async def maintain_workspace(session_factory: Any, workspace: Path) -> None:
-    """쉬고 있는 작업 공간의 저장소를 정리합니다 (ADR-044, `MCPRuntimePool.idle_hook`).
+    """유휴 작업 공간의 체크포인트를 정리하고 Git 가비지 컬렉션을 수행합니다 (ADR-044, `MCPRuntimePool.idle_hook`).
 
-    기록을 먼저 고치고 이름을 나중에 지웁니다. 중간에 실패해도 이름이 남을 뿐이고, 다음 정리가 다시 찾아냅니다.
-    거꾸로 하면 스냅샷이 사라진 턴의 기록에 되돌리기가 남습니다.
+    DB 메타데이터를 선행 갱신한 후 Git ref를 삭제합니다. 작업 중 오류가 발생하더라도 ref만 잔존하여 차기 주기에 재정리되며, 반대로 실행 시 스냅샷이 소실된 턴에 롤백 UI가 잔존하는 결함을 방지합니다.
     """
     expired = await asyncio.to_thread(workspace_checkpoint.expired_turns, workspace)
     if expired:
@@ -140,7 +139,7 @@ class TurnChanges:
     files: List[workspace_checkpoint.FileChange]
     started_at: Any = None
     reverted_at: Optional[str] = None
-    # 라운드(그래프는 단계)별 구간. 경계 스냅샷이 없는 턴이면 비어 있습니다.
+    # 라운드(적응형 그래프는 단계)별 구간 목록. 경계 스냅샷이 없는 과거 턴은 빈 목록입니다.
     segments: List[workspace_checkpoint.Segment] = field(default_factory=list)
 
 
@@ -166,13 +165,13 @@ async def turn_changes(db, session_id: str, turn_id: str) -> Optional[TurnChange
 async def turn_file_diff(
     changes: TurnChanges, path: str, segment: Optional[workspace_checkpoint.Segment] = None,
 ) -> str:
-    """한 파일의 diff. `segment` 를 주면 그 구간의 것, 아니면 턴 전체의 것입니다."""
+    """단일 파일의 Diff를 반환합니다. segment가 지정되면 해당 라운드 구간의 Diff를, 생략 시 턴 전체 Diff를 반환합니다."""
     start, end = (segment.start, segment.end) if segment is not None else (changes.start, changes.end)
     return await asyncio.to_thread(workspace_checkpoint.file_diff, changes.workspace, start, end, path)
 
 
 async def session_code_versions(db, session_id: str) -> List[CodeVersion]:
-    """대화에 나온 코드 블록을 시간순으로 모읍니다 (산출물 뷰어의 비교 기준, `app/code_versions.py`)."""
+    """대화 세션 내 발언에서 코드 블록들을 시간순으로 추출합니다 (산출물 뷰어 비교 추천용, `app/code_versions.py`)."""
     turn_ids = (await db.execute(
         select(TurnModel.id).where(TurnModel.session_id == session_id).order_by(TurnModel.started_at)
     )).scalars().all()

@@ -166,7 +166,7 @@ class ExpertEventView:
 
     @_handles(EventType.STOP_REQUESTED)
     async def _on_stop_requested(self, event: Event) -> None:
-        # 런타임 자리를 기다리던 턴은 아직 합성할 것이 없습니다. 곧 취소로 끝납니다 (ADR-044).
+        # 런타임 슬롯 대기 중인 턴은 생성된 발언이나 산출물이 없으므로 즉시 취소 처리합니다 (ADR-044).
         run = self.page.runner.get(self.page.current_session_id)
         if run is not None and not run.turn_id and run.round_info == "Queue":
             self.page.chat_feed.set_busy(True, "정지 요청됨 — 대기를 취소합니다.", "Stopping")
@@ -552,7 +552,7 @@ class ExpertEventView:
         # 확정되는 시점이 여기라, 잠금 해제도 여기서 알립니다.
         self.page.roster_control.refresh_mcp_lock()
         status = event.get("status")
-        # 턴이 열리기 전에 끝났으면(자리를 받지 못함) 요청이 어디에도 기록되지 않았습니다. 입력창으로 돌려줍니다.
+        # 턴 생성 전 슬롯 미확보로 종료(취소/실패)된 경우 사용자 프롬프트가 DB에 미기록 상태이므로 입력창으로 복원합니다.
         run = self.page.runner.get(self.page.current_session_id)
         if status in ("failed", "cancelled") and run is not None and not run.turn_id and run.user_prompt:
             self.page.chat_feed.restore_input(run.user_prompt)

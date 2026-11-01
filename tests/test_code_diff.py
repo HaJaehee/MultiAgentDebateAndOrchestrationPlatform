@@ -1,11 +1,11 @@
-"""코드 변경점 뷰어 시험 (ADR-043).
+"""코드 변경점(Diff) 뷰어 컴포넌트 및 연산 엔진 테스트 (ADR-043).
 
-1. unified diff 해석: 줄 번호, `--- x` 처럼 머리글을 닮은 줄, 폼 피드, 파일 끝 줄바꿈, 바이너리, 잘린 출력.
-2. 줄 안 강조와 좌우 정렬: 바뀐 낱말만 표시하고, 끼어든 줄이 아래 짝을 밀지 않으며, 큰 묶음은 시도하지 않습니다.
-3. HTML: 모델과 작업 공간에서 온 글은 어디서든 이스케이프되고, 보기를 바꿔도 다시 계산하지 않습니다.
-4. 코드 버전: 앞선 것만, 같은 언어만, 같은 코드는 한 번만, 만들어진 뒤의 코드는 빼고 고릅니다.
-5. 라운드 경계 스냅샷: 구간 나누기, 이어 가는 턴, 이름 지우기, 실제 턴.
-6. 화면 부품: 늦게 온 답 버리기, 비교 기준 제안, 구간 고르기.
+1. Unified diff 파싱: 라인 번호 매핑, 유사 헤더 라인 처리, 폼 피드/개행 정규화, 바이너리 및 출력 절삭 처리 검증.
+2. 인라인 단어 강조(Word Diff) 및 Split 정렬: 단어 단위 변경 감지, 중간 삽입 시 정렬 불변성 및 대용량 생략 검증.
+3. HTML 렌더링: XSS 방어 이스케이프 처리 및 뷰 모드 전환 시 Diff 재연산 생략 검증.
+4. 코드 버전 추출: 선행 버전 선별, 동일 프로그래밍 언어 매칭, 중복 제거 및 시점별 필터링 검증.
+5. 라운드 경계 스냅샷 연동: 세부 구간 분할, 중단 턴 재개 시 스냅샷 불변성 및 ref 정리 검증.
+6. UI 컴포넌트: 비동기 응답 레이스 컨디션 방어, 비교 기준 추천 셀렉터 및 구간 필터 동작 검증.
 """
 
 import asyncio
@@ -38,7 +38,7 @@ from tests.test_graph_debate import GraphLLM
 from tests.test_graph_debate import _pool as graph_pool
 from tests.test_graph_debate import example as graph_example
 
-needs_git =pytest.mark.skipif(shutil.which("git") is None, reason="git 이 없습니다")
+needs_git =pytest.mark.skipif(shutil.which("git") is None, reason="Git 실행 파일이 환경에 설치되어 있지 않습니다")
 
 
 GIT_DIFF = """diff --git a/app.py b/app.py
@@ -62,7 +62,7 @@ def _rows(diff: FileDiff):
     return [row for hunk in diff.hunks for row in hunk.rows]
 
 
-# ------------------------------------------------------------ 해석
+# ------------------------------------------------------------ Unified Diff 파싱 검증
 
 
 def test_line_numbers_and_counts_follow_the_hunk_header():
@@ -135,7 +135,7 @@ def test_similarity_ignores_indentation_and_blank_lines():
     assert similarity("python run.py --version 1", "python run.py --version 2") >= 0.75, "한 줄짜리 명령도 비슷합니다"
 
 
-# ------------------------------------------------------------ 줄 안 강조와 좌우 정렬
+# ------------------------------------------------------------ 인라인 단어 강조(Word Diff) 및 Split 정렬
 
 
 def test_only_the_changed_word_is_marked():
@@ -186,7 +186,7 @@ def test_crlf_is_hidden_unless_only_the_line_ending_changed():
     both = parse_unified("@@ -1,2 +1,2 @@\n ctx\r\n-old\r\n+new\r\n")
     assert [l.text for l in both.hunks[0].lines] == ["ctx", "old", "new"]
 
-    # 파일 전체가 CRLF → LF. 묶음이 커도 짝을 지어, 무엇이 바뀌었는지 보이게 합니다.
+    # 파일 전체 CRLF → LF 변환. 대용량 헝크에서도 페어링을 유지하여 변경 사항을 정확히 표시.
     count = MAX_ALIGN_LINES + 1
     body = "".join(f"-line {i}\r\n" for i in range(count)) + "".join(f"+line {i}\n" for i in range(count))
     converted = parse_unified(f"@@ -1,{count} +1,{count} @@\n{body}")
@@ -234,7 +234,7 @@ def test_long_diffs_are_chunked_for_the_browser():
     assert rendered.count('class="mado-diff-chunk"') == 3
 
 
-# ------------------------------------------------------------ 코드 버전
+# ------------------------------------------------------------ 코드 버전 추출 및 비교 추천
 
 
 def _version(content, language="python", label="v", created_at=None):
@@ -313,7 +313,7 @@ def test_artifacts_are_versions_when_the_record_cannot_be_read():
     assert [(v.content, v.language, v.label) for v in versions] == [("x", "python", "코드")]
 
 
-# ------------------------------------------------------------ 라운드 경계 스냅샷
+# ------------------------------------------------------------ 라운드 경계 스냅샷 연동
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -426,7 +426,7 @@ async def test_a_resumed_turn_keeps_the_boundaries_it_already_passed(repo):
 
 
 class RoundWriter(FakeLLMCaller):
-    """코더가 발언할 때마다 파일을 고치는 대역. 라운드마다 다른 내용이 됩니다."""
+    """코더 에이전트의 발언마다 파일을 수정하는 테스트 대역. 라운드별 점진적 변경 사항을 생성합니다."""
 
     def __init__(self, workspace: Path) -> None:
         super().__init__()
@@ -474,7 +474,7 @@ async def test_a_real_turn_can_be_read_round_by_round(repo):
 
 
 class GraphWriter(GraphLLM):
-    """구현 노드가 발언할 때 파일을 고치는 그래프 토론 대역."""
+    """구현 노드 발언 시 작업 공간 파일을 수정하는 적응형 그래프 테스트 대역."""
 
     def __init__(self, workspace: Path, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -565,7 +565,7 @@ async def test_session_code_versions_reads_specialist_speeches_in_order():
     assert versions[1].label.startswith("턴 2 · R2 · coder")
 
 
-# ------------------------------------------------------------ 화면 부품
+# ------------------------------------------------------------ UI Diff 뷰어 컴포넌트
 
 
 def _html(viewer: DiffViewer) -> str:
@@ -584,7 +584,7 @@ async def test_switching_views_redraws_without_recomputing(ui_page, monkeypatch)
     await viewer._set_mode(UNIFIED)
     assert 'class="u' in _html(viewer) and modes == [UNIFIED]
 
-    # 한 번 그린 보기는 다시 만들지 않습니다.
+    # 기렌더링된 뷰는 캐시되어 재연산되지 않음을 검증.
     monkeypatch.setattr("app.ui.components.diff_viewer.render_diff", lambda *a: pytest.fail("다시 그렸습니다"))
     await viewer._set_mode(SPLIT)
     assert 'class="s"' in _html(viewer)

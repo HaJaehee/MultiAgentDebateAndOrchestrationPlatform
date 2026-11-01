@@ -1,11 +1,9 @@
-"""두 코드의 차이를 화면에 그리기 좋은 줄 목록으로 만듭니다 (ADR-043).
+"""두 소스 코드의 차이점(Diff)을 파싱하여 UI 렌더링용 라인 자료구조로 변환하는 순수 함수 모듈 (ADR-043).
 
-화면을 모르는 순수 함수만 둡니다. 턴 변경 창은 `git diff` 결과를 `parse_unified` 로, 산출물 뷰어는 두 코드를
-`diff_texts` 로 읽습니다. 통합·좌우 보기는 같은 결과를 다르게 그릴 뿐입니다 (`app/ui/components/diff_viewer.py`).
+UI 프레임워크에 종속되지 않는 독립적인 파서 및 비교 연산 함수들로 구성됩니다. 턴 파일 변경 내역은 parse_unified로 git diff 출력을 파싱하고, 산출물 뷰어는 diff_texts로 두 코드 문자열을 직접 비교합니다. Unified(통합) 및 Split(좌우) 뷰는 동일한 정규화 모델(FileDiff)을 다르게 렌더링합니다 (`app/ui/components/diff_viewer.py`).
 
-* 줄은 `\\n` 으로만 나눕니다. `str.splitlines` 는 폼 피드(`\\f`)나 `\\u2028` 에서도 끊어, 헝크의 줄 수가 어긋납니다.
-* 헝크는 머리글의 줄 수만큼만 읽습니다. 지운 줄 `-- x` 는 diff 에 `--- x` 로 나오는데, 파일 머리글로 오인하면
-  그 줄이 사라집니다.
+* 라인은 오직 `\n` 기준으로만 분할합니다. str.splitlines는 폼 피드(`\f`)나 `\u2028` 등에서도 줄바꿈을 수행하여 헝크 라인 수가 불일치할 수 있기 때문입니다.
+* 헝크 본문은 헤더에 선언된 라인 수만큼만 정확히 파싱합니다. 삭제된 SQL 주석 라인 `-- x` 등은 diff 출력에서 `--- x` 형태로 나타나므로, 이를 파일 헤더로 오인하여 유실하지 않도록 방지합니다.
 """
 
 from __future__ import annotations
@@ -17,20 +15,20 @@ from typing import List, Optional, Sequence, Tuple
 
 ADD, DEL, SAME = "+", "-", " "
 
-# 바뀐 줄 앞뒤로 함께 보여 줄 줄 수 (`git diff` 기본값과 같습니다).
+# 변경 라인 전후의 컨텍스트 라인 수 (git diff 기본값인 3과 동일).
 CONTEXT_LINES = 3
 
-# `file_diff` 가 긴 출력을 자르고 덧붙이는 안내의 첫 글자. 헝크 본문의 줄은 ` `·`+`·`-` 로만 시작합니다.
+# 대용량 출력 절삭 시 덧붙여지는 절삭 안내 문구의 접두사 (헝크 본문 라인은 ` `·`+`·`-` 로만 시작).
 TRUNCATION_MARK = "…"
 
-# 이보다 길면 비교하지 않습니다. difflib 은 파이썬 코드라 입력이 커지면 이벤트 루프와 GIL 을 오래 다툽니다.
+# 최대 비교 허용 문자 수. difflib 연산은 순수 파이썬 구현체이므로 대용량 입력 시 CPU 및 GIL 점유율이 급증하여 이벤트 루프를 블로킹할 수 있습니다.
 MAX_COMPARE_CHARS = 400_000
 
-# 줄 안 강조의 한도. 한 줄이 이보다 길거나(압축된 코드) 한 묶음이 이보다 크면 줄 단위 색만 칠합니다.
+# 인라인 단어 강조(Word Diff) 제한 임계치. 단일 라인이 너무 길거나(압축 코드 등) 헝크 크기가 초과되면 성능 보호를 위해 라인 단위 하이라이트만 적용합니다.
 MAX_WORD_DIFF_CHARS = 2_000
 MAX_ALIGN_LINES = 200
 
-# 지운 줄의 짝을 찾을 때 살펴볼 추가 줄 수와, 짝으로 볼 최소 유사도.
+# 삭제 라인과 수정 라인 간 페어링 탐색 윈도우 크기 및 최소 매칭 유사도 임계치.
 ALIGN_WINDOW = 8
 SIMILAR_RATIO = 0.5
 
@@ -45,12 +43,12 @@ class DiffLine:
     text: str
     old_no: Optional[int] = None
     new_no: Optional[int] = None
-    # 줄 안에서 바뀐 구간 (글자 위치). 비슷한 짝이 있는 줄에만 있습니다.
+    # 라인 내부에서 변경된 문자 구간(start, end). 페어링된 유사 라인에만 부여됩니다.
     spans: List[Tuple[int, int]] = field(default_factory=list)
     no_newline: bool = False
 
 
-# 좌우 보기의 한 행: (왼쪽 줄, 오른쪽 줄). 없는 쪽은 None, 같은 줄은 양쪽에 같은 객체입니다.
+# Split(좌우) 뷰의 단일 행: (left_line, right_line). 공백 행은 None이며, 변경 없는 행은 동일 인스턴스입니다.
 Row = Tuple[Optional[DiffLine], Optional[DiffLine]]
 
 
@@ -67,17 +65,17 @@ class FileDiff:
     added: int = 0
     removed: int = 0
     binary: bool = False
-    truncated: bool = False  # 출력이 길어 앞부분만 있습니다
-    too_large: bool = False  # 비교를 시도하지 않았습니다 (`MAX_COMPARE_CHARS`)
+    truncated: bool = False  # 출력이 임계치를 초과하여 전반부만 절삭 수집됨
+    too_large: bool = False  # 크기 임계치 초과로 비교 연산이 생략됨 (`MAX_COMPARE_CHARS`)
 
 
 def parse_unified(text: str) -> FileDiff:
-    """unified diff 글을 읽습니다. 머리글(`diff --git` 등)은 건너뜁니다."""
+    """Unified diff 형식의 텍스트를 파싱합니다. 파일 헤더(`diff --git` 등)는 건너뜁니다."""
     diff = FileDiff()
     hunk: Optional[DiffHunk] = None
     old_no = new_no = old_left = new_left = 0
     for raw in (text or "").split("\n"):
-        if raw.startswith("\\"):  # `\ No newline at end of file`: 바로 앞 줄의 속성입니다
+        if raw.startswith("\\"):  # `\ No newline at end of file`: 직전 라인의 속성
             if hunk is not None and hunk.lines:
                 hunk.lines[-1].no_newline = True
             continue
@@ -93,7 +91,7 @@ def parse_unified(text: str) -> FileDiff:
                 hunk.lines.append(DiffLine(SAME, raw[1:], old_no=old_no, new_no=new_no))
                 old_no, new_no, old_left, new_left = old_no + 1, new_no + 1, old_left - 1, new_left - 1
             else:
-                # 남은 줄이 있는데 본문이 아닙니다. 출력이 헝크 중간에서 잘린 자리입니다.
+                # 잔여 라인이 존재하나 헝크 본문 형식이 아닌 경우, 출력이 중간 절삭된 지점으로 간주합니다.
                 diff.truncated = True
                 old_left = new_left = 0
             continue
@@ -114,7 +112,7 @@ def parse_unified(text: str) -> FileDiff:
 
 
 def diff_texts(old: str, new: str, context: int = CONTEXT_LINES) -> FileDiff:
-    """두 글의 차이. 너무 길면 시도하지 않고 `too_large` 로 알립니다."""
+    """두 텍스트 간의 Diff를 계산합니다. 문자 수가 임계치를 초과하면 연산을 생략하고 `too_large=True`를 반환합니다."""
     if len(old) + len(new) > MAX_COMPARE_CHARS:
         return FileDiff(too_large=True)
     lines = difflib.unified_diff(old.split("\n"), new.split("\n"), lineterm="", n=context)
@@ -122,16 +120,16 @@ def diff_texts(old: str, new: str, context: int = CONTEXT_LINES) -> FileDiff:
 
 
 def similarity(old: str, new: str) -> float:
-    """두 코드가 얼마나 같은 낱말로 이루어졌는가 (0~1). 비교 기준을 고르는 근사값입니다.
+    """두 코드의 어휘(Word Token) 유사도를 계산합니다 (0.0 ~ 1.0). 비교 기준 추천을 위한 통계 지표입니다.
 
-    줄로 비교하면 숫자 하나 바뀐 한 줄짜리 명령이 전혀 다른 코드가 되고, 글자로 비교하면 아무 코드나 비슷해집니다.
+    라인 단위 비교는 단일 인자가 바뀐 명령어도 완전 불일치로 처리되고, 문자 단위 비교는 의미 없는 노이즈가 과대평가되는 한계를 보완합니다.
     """
     matcher = difflib.SequenceMatcher(None, _WORD.findall(old), _WORD.findall(new), autojunk=False)
     return matcher.quick_ratio()
 
 
 def _pair_lines(hunk: DiffHunk) -> None:
-    """좌우 보기의 행을 만들고, 비슷한 짝의 줄 안 차이를 표시합니다."""
+    """Split(좌우) 뷰의 매칭 행 목록을 구성하고, 페어링된 유사 라인의 인라인 변경 단어 위치를 계산합니다."""
     lines, index = hunk.lines, 0
     while index < len(lines):
         if lines[index].kind == SAME:
@@ -151,7 +149,7 @@ def _pair_lines(hunk: DiffHunk) -> None:
 
 
 def _pair_block(dels: Sequence[DiffLine], adds: Sequence[DiffLine]) -> List[Row]:
-    """바뀐 묶음 하나의 행. 짝은 같은 행에, 짝이 없는 줄은 그 사이에 위에서부터 나란히 둡니다."""
+    """단일 수정 헝크 블록의 행들을 정렬합니다. 매칭 쌍은 동일 행에 배치하고, 단독 추가/삭제 라인은 상단부터 순차 배치합니다."""
     rows: List[Row] = []
     old_at = new_at = 0
     for i, j in [*_align(dels, adds), (len(dels), len(adds))]:
@@ -171,10 +169,10 @@ def _pair_block(dels: Sequence[DiffLine], adds: Sequence[DiffLine]) -> List[Row]
 
 
 def _align(dels: Sequence[DiffLine], adds: Sequence[DiffLine]) -> List[Tuple[int, int]]:
-    """비슷한 줄끼리 순서를 지켜 짝짓습니다. 위에 줄 하나가 끼어들어도 아래 줄들이 어긋나지 않습니다."""
+    """유사 라인 간의 순서를 보존하며 페어링합니다. 중간에 라인이 삽입되더라도 후속 라인의 매칭 순서가 왜곡되지 않도록 유지합니다."""
     if not dels or not adds:
         return []
-    # 줄바꿈 문자만 바뀐 파일은 묶음이 파일 전체라도 그대로 짝입니다. 그러지 않으면 똑같아 보이는 줄만 늘어섭니다.
+    # 개행 문자(CRLF/LF)만 변경된 경우 파일 전체 헝크를 1:1 매칭으로 직결 페어링합니다.
     if len(dels) == len(adds) and all(d.text.rstrip("\r") == a.text.rstrip("\r") for d, a in zip(dels, adds)):
         return [(i, i) for i in range(len(dels))]
     if len(dels) > MAX_ALIGN_LINES or len(adds) > MAX_ALIGN_LINES:
@@ -204,7 +202,7 @@ def _similar(old: str, new: str) -> bool:
 
 
 def _mark_words(old: DiffLine, new: DiffLine) -> None:
-    """짝지은 두 줄에서 실제로 바뀐 낱말의 위치를 적습니다. 끝의 `\\r` 은 한쪽에만 있을 때만 남겨 보여 줍니다."""
+    """페어링된 두 라인 간의 인라인 단어 Diff 위치를 추출합니다. 끝의 `\\r` 은 한쪽에만 존재하는 경우에 한해 가시화합니다."""
     if old.text.endswith("\r") and new.text.endswith("\r"):
         _chomp(old)
         _chomp(new)
