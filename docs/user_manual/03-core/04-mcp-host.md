@@ -45,7 +45,7 @@ MCPManager  (프로세스 전역 싱글턴)
 | `sandbox` | Python | 5 | 상태 유지형 Python 코드 실행. 제안된 알고리즘의 실제 동작 검증 |
 | `sequential_thinking` | Node.js (공식) | 1 | 단계적 심층 추론 도구 (`mcp` 추론 모드에서 사용) |
 | `fetch` | Python | 1 | 외부 URL 웹페이지 내용 마크다운 변환 (**폐쇄망 환경에서는 비활성화 권장**) |
-| `kb` | Python (**내장 서버**) | 2 | AnythingLLM 작업 공간의 문서 검색. 원문 청크와 근거 출처 제공 (기본 비활성, v1.5.1) |
+| `kb` | Python (**내장 서버**) | 2 | AnythingLLM 작업 공간의 문서 검색. 원문 청크와 근거 출처 제공 (기본 비활성) |
 
 ### 공식 Memory 서버를 포크(Fork)하여 개선한 이유
 
@@ -231,7 +231,7 @@ MADO 호스트는 MCP 표준 사양인 `roots/list` 프로토콜 요청에 대�
 
 ---
 
-## AnythingLLM 문서 검색 연결 (`kb`, v1.5.1)
+## AnythingLLM 문서 검색 연결 (`kb`)
 
 AnythingLLM 작업 공간(Workspace)에 등록된 사내 규정, 아키텍처 설계서, 보고서 등의 지식 문서를 전문가 에이전트가 토론 근거 자료로 검색할 수 있도록 지원하는 내장 MCP 서버입니다 (`mcp_servers/anythingllm_kb/server.py`). 추가적인 패키지 설치 없이 즉시 사용할 수 있습니다.
 

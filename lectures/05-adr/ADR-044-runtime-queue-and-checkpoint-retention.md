@@ -4,7 +4,7 @@
 
 ## 상태 (Status)
 
-채택됨 · 2026-11-01 (v1.5.1) · 관련: [ADR-024](ADR-024-resume-interrupted-turns.md), [ADR-028](ADR-028-plan-approval-gate.md), [ADR-043](ADR-043-code-diff-viewer.md)
+채택됨 · 2026-11-01 · 관련: [ADR-024](ADR-024-resume-interrupted-turns.md), [ADR-028](ADR-028-plan-approval-gate.md), [ADR-043](ADR-043-code-diff-viewer.md)
 
 ## 맥락 (Context)
 

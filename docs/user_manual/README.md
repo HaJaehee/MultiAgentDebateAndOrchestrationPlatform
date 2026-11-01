@@ -1,6 +1,6 @@
 # MADO 사용 설명서
 
-**MADO: Multi-Agent Debate & Orchestration Platform** — `conf.json` 설정 파일 하나로 정의한 여러 LLM 에이전트가 MCP 도구를 활용하여 토론하고, 그 결과를 실행 가능한 산출물로 종합하는 파이썬 웹 애플리케이션입니다.
+`v2.0` · **MADO: Multi-Agent Debate & Orchestration Platform** — `conf.json` 설정 파일 하나로 정의한 여러 LLM 에이전트가 MCP 도구를 활용하여 토론하고, 그 결과를 실행 가능한 산출물로 종합하는 파이썬 웹 애플리케이션입니다.
 
 이 설명서 문서는 **기술 스택 · 핵심 기술 · 워크플로우**의 세 가지 축으로 체계화되어 있습니다. MADO를 처음 접하신다면 [시스템 개요](01-overview/README.md)부터 순서대로 살펴보시기 바랍니다.
 

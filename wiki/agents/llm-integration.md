@@ -76,7 +76,7 @@ so the two cannot drift apart. One round is a fixed sequence of steps:
 ### Key Behaviors:
 1. **Observation Feedback**: The tool output is appended to the message context with `role: "tool"`. The LLM observes the real output (or error message) and refines its reasoning in the next iteration.
 2. **Incremental Token Streaming**: Using `acompletion(stream=True)` and `litellm.stream_chunk_builder`, partial word tokens are streamed to `on_chunk`, dynamically rendering in the UI while tools are accumulating.
-   Since v1.5.1 the assembly (`stream_chunk_builder`, synchronous) runs in a worker thread (`asyncio.to_thread`,
+   The assembly (`stream_chunk_builder`, synchronous) runs in a worker thread (`asyncio.to_thread`,
    with a copy of the message list). On the event loop it held every other speech's stream, every other
    conversation and every page until it returned — the stack in [Diagnostics §1](../operations/diagnostics.md).
    The speech itself still waits for it, and the GIL means it is not faster; the loop just keeps getting turns.

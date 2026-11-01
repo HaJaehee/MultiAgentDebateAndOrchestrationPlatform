@@ -4,7 +4,7 @@
 
 ## 상태 (Status)
 
-채택됨 · 2026-10-31 (v1.5.1) · 관련: [ADR-020](ADR-020-conversation-memory.md), [ADR-036](ADR-036-retry-one-speech-and-inline-comments.md)
+채택됨 · 2026-10-31 · 관련: [ADR-020](ADR-020-conversation-memory.md), [ADR-036](ADR-036-retry-one-speech-and-inline-comments.md)
 
 ## 맥락 (Context)
 

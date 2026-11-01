@@ -4,7 +4,7 @@
 
 ## 상태 (Status)
 
-채택됨 · 2026-10-30 (v1.5.1) · 관련: [ADR-021](ADR-021-graph-debate.md), [ADR-024](ADR-024-resume-interrupted-turns.md), [ADR-028](ADR-028-plan-approval-gate.md)
+채택됨 · 2026-10-30 · 관련: [ADR-021](ADR-021-graph-debate.md), [ADR-024](ADR-024-resume-interrupted-turns.md), [ADR-028](ADR-028-plan-approval-gate.md)
 
 ## 맥락 (Context)
 

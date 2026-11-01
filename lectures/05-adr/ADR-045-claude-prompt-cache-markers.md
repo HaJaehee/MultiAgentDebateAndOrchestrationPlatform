@@ -4,7 +4,7 @@
 
 ## 상태 (Status)
 
-채택됨 · 2026-11-01 (v1.5.1) · 관련: [ADR-002](ADR-002-litellm-gateway.md), [ADR-020](ADR-020-conversation-memory.md), [ADR-025](ADR-025-resume-speeches-by-tool-step.md), [ADR-039](ADR-039-lazy-tool-schemas.md), [ADR-040](ADR-040-compact-stale-file-reads.md)
+채택됨 · 2026-11-01 · 관련: [ADR-002](ADR-002-litellm-gateway.md), [ADR-020](ADR-020-conversation-memory.md), [ADR-025](ADR-025-resume-speeches-by-tool-step.md), [ADR-039](ADR-039-lazy-tool-schemas.md), [ADR-040](ADR-040-compact-stale-file-reads.md)
 
 ## 맥락 (Context)
 

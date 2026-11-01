@@ -23,15 +23,15 @@ pytest -k "snapshot"
 | `test_mcp.py` | MCP 클라이언트 stdio 연결 수립, 도구 스키마 검색 및 안전 실행 |
 | `test_mcp_runtime_pool.py` | 런타임 풀: 참조 카운팅·유휴 TTL·회수, FIFO 대기열(순번 보장, 타임아웃, 취소, 사용자 중단), 라운드 경계 협업적 슬롯 양보(트리거 조건, 동일 매니저 인스턴스 복원, 단일 슬롯 환경 복수 토론 완주), 유휴 유지보수 훅 |
 | `test_remote_mcp.py` | 원격(HTTP/SSE) MCP 서버: 설정 유효성, 전송 방식 자동 폴백, 인증 토큰 격리 |
-| `test_anythingllm_kb.py` | AnythingLLM 문서 검색(`kb`): Mock AnythingLLM 서버 기반 검색 결과 및 근거 출처 포맷팅, 실패 시 오류 처리, 작업 공간 허용 목록(allowlist), stdio 연결 및 읽기 권한 판정, 실제 도구 루프 연동 검증 (v1.5.1) |
-| `test_llm_offload.py` | 스트림 조립(`stream_chunk_builder`)을 워커 스레드로 분리: 조립 중에도 타 코루틴의 논블로킹 보장, 답·사용량 불변, 조립 중 취소 (v1.5.1) |
+| `test_anythingllm_kb.py` | AnythingLLM 문서 검색(`kb`): Mock AnythingLLM 서버 기반 검색 결과 및 근거 출처 포맷팅, 실패 시 오류 처리, 작업 공간 허용 목록(allowlist), stdio 연결 및 읽기 권한 판정, 실제 도구 루프 연동 검증 |
+| `test_llm_offload.py` | 스트림 조립(`stream_chunk_builder`)을 워커 스레드로 분리: 조립 중에도 타 코루틴의 논블로킹 보장, 답·사용량 불변, 조립 중 취소 |
 | `test_tool_loading.py` | 도구 스키마 지연 로딩: 분할 기준, 지침 프롬프트 불변성, 온디맨드 로드 및 직호출 처리, 세션 내 도구 메모리, 도구 보안 정책, 세션 재개 (ADR-039) |
 | `test_plugins.py` | 플러그인: 디렉터리 및 엔트리포인트 탐색/로드, 오류 플러그인 격리, 예약어 가로채기 차단, 디렉터리 보호, 전략 예외 발생 시 안전 폴백, 매뉴얼 예제 실행 검증 (ADR-042) |
 | `test_host_tools.py` | 호스트 도구 레지스트리: 내장 도구 순서 보존, 플러그인 활성화 및 도구 보안 정책 판정, 플러그인 예외 격리, 도구 루프 연동 (ADR-042) |
 | `test_tool_compaction.py` | 과거 대용량 파일 읽기 결과 압축: 압축 대상 선별, 요약 스텁 내용 검증, 컨텍스트 임계치 조건, 접두사 캐시 보존, 도구 로그 원문 보존 및 세션 재개 (ADR-040) |
 | `test_prompt_cache.py` | Claude 프롬프트 캐시 제어: 마커 주입 대상 프로바이더 판별, 후보 위치 및 4개 상한 준수, 타 공급자 요청 불변성, LiteLLM 변환 Anthropic·Bedrock 페이로드 검증, 스트리밍 및 사용량 계측, 실제 오케스트레이션 엔진 생성 요청의 접두사 일치 검증 (ADR-045) |
 | `test_code_diff.py` | 코드 Diff 뷰어: git diff 파싱(유사 헤더 라인, 잘린 출력, 개행 문자 정규화), 인라인 단어 강조 및 Split 정렬, HTML 이스케이프 및 XSS 방어, 비교 기준 후보 추출, 라운드 경계 스냅샷 통합 및 레이스 컨디션 방어 (ADR-043) |
-| `test_markdown_offload.py` | 대용량 마크다운의 워커 스레드 오프로드: 백그라운드 렌더링 중 이벤트 루프 논블로킹 보장, 최신 요청 디바운스, 요소 제거/실패 처리, O(N^2) 알고리즘 개선, 기동 시 Pygments 렉서 웜업, StarUML 변환 (v1.5.1) |
+| `test_markdown_offload.py` | 대용량 마크다운의 워커 스레드 오프로드: 백그라운드 렌더링 중 이벤트 루프 논블로킹 보장, 최신 요청 디바운스, 요소 제거/실패 처리, O(N^2) 알고리즘 개선, 기동 시 Pygments 렉서 웜업, StarUML 변환 |
 | `test_llm_settings.py` | `llm` 전역 설정 상속, 요청 파라미터 매핑, 단계적 사고 모드 동작 |
 | `test_orchestrator.py` | 에이전트 발언 우선순위 정렬 및 전략별 발언 순서 배치 |
 | `test_speaker_selection.py` | 오케스트레이터의 동적 발언자 지명 및 실패 시 안전 폴백 메커니즘 |

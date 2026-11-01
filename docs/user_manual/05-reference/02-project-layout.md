@@ -18,9 +18,9 @@ MultiAgentDebateOrchestration/
 │   └── render_user_manual.py 렌더러
 ├── mcp_servers/              자체 내장 MCP 서버 디렉터리
 │   ├── memory_scoped/        세션별 격리 지식 그래프 (공식 memory 포크)
-│   └── anythingllm_kb/       AnythingLLM 사내 문서 검색 (kb, v1.5.1)
+│   └── anythingllm_kb/       AnythingLLM 사내 문서 검색 (kb)
 │
-├── bench/                    전략 비교 시나리오 (v1.5, python -m app.bench)
+├── bench/                    전략 비교 시나리오 (python -m app.bench)
 │
 ├── conf.example.json         설정 템플릿 (저장소에 커밋)
 ├── conf.json                 실제 설정 (gitignore)
@@ -70,13 +70,13 @@ app/
 ├── workspace_files.py               797   작업 공간 파일 목록·@언급·업로드·다운로드 (경로 안전장치)
 ├── diagnostics.py                   394   이벤트 루프 정체 스택·브라우저 끊김 보고
 ├── security.py                      782   원격 접속 토큰, 접근 제어 미들웨어
-├── headless.py                      256   헤드리스 토론 실행 코어 (REST·MCP 공용) (v1.5)
-├── mcp_server.py                    180   내장 MCP 서버 엔드포인트 /mcp (v1.5)
-├── workspace_checkpoint.py          465   작업 공간 턴 체크포인트·라운드 구간 스냅샷·롤백·세션 분기 내보내기·보존 및 GC 압축 (v1.5)
-├── code_diff.py                     234   코드 Diff 연산 엔진 (git diff 파싱, 인라인 단어 강조) (v1.5.1)
-├── code_versions.py                  96   세션 발언 기반 코드 버전 추출 및 비교 추천 엔진 (v1.5.1)
-├── session_fork.py                  291   대화 세션 분기(Fork), 비교 데이터 구성 및 결론 평가 (v1.5)
-├── bench.py                         339   전략 벤치마크 하네스 python -m app.bench (v1.5)
+├── headless.py                      256   헤드리스 토론 실행 코어 (REST·MCP 공용)
+├── mcp_server.py                    180   내장 MCP 서버 엔드포인트 /mcp
+├── workspace_checkpoint.py          465   작업 공간 턴 체크포인트·라운드 구간 스냅샷·롤백·세션 분기 내보내기·보존 및 GC 압축
+├── code_diff.py                     234   코드 Diff 연산 엔진 (git diff 파싱, 인라인 단어 강조)
+├── code_versions.py                  96   세션 발언 기반 코드 버전 추출 및 비교 추천 엔진
+├── session_fork.py                  291   대화 세션 분기(Fork), 비교 데이터 구성 및 결론 평가
+├── bench.py                         339   전략 벤치마크 하네스 python -m app.bench
 ├── graph_store.py                   105   그래프 토론의 그래프 파일 data/graphs/
 │
 ├── config/
@@ -93,7 +93,7 @@ app/
 │   ├── personas.py                  415   세션별 페르소나·외형, 구성 스냅샷
 │   ├── skills.py                    762   스킬 스캔·도구·지침·스크립트 복사
 │   ├── host_tools.py                362   호스트 도구 통합 레지스트리 및 HostToolProvider 기반 인터페이스 (ADR-042)
-│   ├── ask_user.py                  129   에이전트 사용자 질문 ask__ask_user (v1.5)
+│   ├── ask_user.py                  129   에이전트 사용자 질문 ask__ask_user
 │   ├── consultation.py              458   동료 자문 peers__consult_agent
 │   ├── draft.py                     306   에이전트 설계도 및 프롬프트 빌더, 관리자 설정 저장
 │   ├── catalog.py                   155   도구 및 스킬 카탈로그 메타데이터 및 선택 목록
@@ -111,7 +111,7 @@ app/
 │   ├── tool_loading.py              299   도구 스키마 온디맨드 지연 로딩: 스키마 분할, 동적 로드 및 세션 유지 (ADR-039)
 │   ├── tool_compaction.py           130   과거 대용량 파일 읽기 결과의 스텁(Stub) 압축 최적화 (ADR-040)
 │   ├── llm_fingerprint.py           101   거절 시 요청 지문
-│   ├── llm_usage.py                 180   토큰 및 LLM 실행 시간 계측 (v1.5)
+│   ├── llm_usage.py                 180   토큰 및 LLM 실행 시간 계측
 │   ├── llm_types.py                  51   LLMUnavailableError, 콜백 형식
 │   ├── reasoning.py                  86   사고 과정 떼기·결론 찾기
 │   ├── llm_gate.py                  154   서버 전체 LLM 동시 요청 상한
@@ -154,7 +154,7 @@ app/
 │   ├── graph.py                     541   그래프 모델·검증·스케줄러
 │   ├── graph_run.py                 304   그래프 실행 표시
 │   ├── graph_draft.py               265   그래프 작성 프롬프트·응답 읽기·허용 범위 (LLM 을 부르지 않음)
-│   ├── skill_draft.py               143   결론 기반 스킬 초안 생성 (v1.5)
+│   ├── skill_draft.py               143   결론 기반 스킬 초안 생성
 │   ├── roster_service.py            328   로스터 도메인 서비스: conf.json 갱신, 런타임 반영 및 잠금 검증 (UI 비종속)
 │   ├── plan_gate.py                 430   계획 승인 규칙 (ADR-028)
 │   ├── tool_gate.py                 453   도구 보안 판정을 토론에 붙임
@@ -168,7 +168,7 @@ app/
 │   └── worker.py                    168   태스크 워커 풀
 │
 ├── database/
-│   ├── search.py                    331   대화 세션 및 발언 검색, DB 별 색인 (FTS5 / pg_trgm + tsvector) (v1.5, ADR-041)
+│   ├── search.py                    331   대화 세션 및 발언 검색, DB 별 색인 (FTS5 / pg_trgm + tsvector) (ADR-041)
 │   ├── models.py                    396   SQLAlchemy ORM
 │   └── session.py                   406   비동기 엔진·세션 팩토리, init_db, 컬럼 이관, PostgreSQL 설정
 │
@@ -183,7 +183,7 @@ app/
     ├── expert/chrome.py             106   머리 줄, 정보 창
     ├── shared/page.py               119   체험·쉬운 화면 공용 틀
     ├── personas_page.py             347   /personas/{id}
-    ├── compare_page.py              162   /compare 대화 세션 비교 및 평가 (v1.5)
+    ├── compare_page.py              162   /compare 대화 세션 비교 및 평가
     ├── graph_page.py                430   /graphs/{id} 그래프 편집
     ├── theme.py                     512   색·아이콘·파비콘
     ├── mermaid_export.py            407   다이어그램 내려받기 스크립트
@@ -200,10 +200,10 @@ app/
     ├── components/model_status.py   143   모델 연결 상태 단추와 창
     ├── components/access_token.py   352   원격 접속 토큰 버튼
     ├── components/workspace_download.py   224   작업 공간 파일 다운로드 창
-    ├── components/turn_changes.py   221   턴 파일 변경 내역(Diff) 및 롤백 다이얼로그 (v1.5)
-    ├── components/diff_viewer.py   199   코드 변경점 뷰어 (Unified / Split 뷰 지원) (v1.5.1)
-    ├── components/code_compare.py   155   산출물 코드 탭 버전 간 Diff 비교 컴포넌트 (v1.5.1)
-    ├── components/skill_draft_dialog.py   97   스킬 초안 생성 및 편집 창 (v1.5)
+    ├── components/turn_changes.py   221   턴 파일 변경 내역(Diff) 및 롤백 다이얼로그
+    ├── components/diff_viewer.py   199   코드 변경점 뷰어 (Unified / Split 뷰 지원)
+    ├── components/code_compare.py   155   산출물 코드 탭 버전 간 Diff 비교 컴포넌트
+    ├── components/skill_draft_dialog.py   97   스킬 초안 생성 및 편집 창
     ├── components/graph_canvas.py   217   그래프 편집 캔버스
     └── components/quiet_splitter.py    98   드래그가 가벼운 스플리터
 ```

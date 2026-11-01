@@ -4,7 +4,7 @@
 
 ## 상태 (Status)
 
-채택됨 · 2026-10-31 (v1.5.1) · 관련: [ADR-028](ADR-028-plan-approval-gate.md)
+채택됨 · 2026-10-31 · 관련: [ADR-028](ADR-028-plan-approval-gate.md)
 
 ## 맥락 (Context)
 

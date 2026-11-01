@@ -140,7 +140,7 @@ MultiAgentDebateOrchestration_source/
 ├── mcp_servers/                  포크한 MCP 서버 원본
 ├── mcp_node/memory-scoped.mjs    그 실행 사본
 ├── docs/                         사용 설명서 (마크다운 원본 + 렌더러)
-├── wiki/                         영문 기술 위키 (마크다운, v1.5)
+├── wiki/                         영문 기술 위키 (마크다운)
 ├── conf.example.json             설정 템플릿
 ├── .env.example
 ├── requirements.txt
@@ -154,7 +154,7 @@ MultiAgentDebateOrchestration_source/
 ### 설명서는 어떻게 담기는가
 
 두 패키지 모두 `docs/` 디렉터리(사용자 설명서 및 `docs/examples/` 플러그인 예제 포함)를 포함합니다. 폐쇄망 환경에서는 외부 저장소나 온라인 위키에 접속할 수 없으므로
-문서가 설치 패키지에 동봉되어야 합니다. 동일한 이유로 소스 업데이트 패키지는 v1.5부터 영문 기술 위키(`wiki/`) 역시 마크다운 원본 그대로 포함합니다.
+문서가 설치 패키지에 동봉되어야 합니다. 동일한 이유로 소스 업데이트 패키지는 영문 기술 위키(`wiki/`) 역시 마크다운 원본 그대로 포함합니다.
 
 | | 마크다운 원본 | 렌더링된 HTML |
 | :--- | :--- | :--- |

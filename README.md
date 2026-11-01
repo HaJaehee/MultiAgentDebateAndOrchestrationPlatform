@@ -1,15 +1,9 @@
 # 🤖 MADO — Multi-Agent Debate & Orchestration Platform
 
-`v1.5.1` · `LGPL-3.0-or-later` · `Python 3.11+`
+`v2.0` · `LGPL-3.0-or-later` · `Python 3.11+`
 
 > **MCP 도구를 활용하는 반응형 멀티 에이전트 협업 & 토론 웹 애플리케이션**  
 > Dynamic Agent Profiling via `conf.json`, MCP Tool Integration, Multi-Model LLM Abstraction (LiteLLM), StateGraph Orchestration, and NiceGUI + FastAPI Reactive Web Interface.
-
-```
-Author: Ha, Jaehee, Email: lovesm135@naver.com, Version: v1.5.1
-```
-
-동일한 애플리케이션 메타데이터는 웹 UI 우측 상단의 **ⓘ** 버튼을 통해서도 확인하실 수 있습니다.
 
 ---
 
@@ -184,7 +178,6 @@ python docs/render_user_manual.py
 |------|-----|
 | **Author** | Ha, Jaehee |
 | **Email** | lovesm135@naver.com |
-| **Version** | **v1.5.1** |
 | **License** | LGPL-3.0-or-later ([LICENSE.md](LICENSE.md)) |
 
 버전 정보는 [`app/about.py`](app/about.py) 한 곳에서 단일 관리되며, 헬스체크 API를 통해서도 확인할 수 있습니다:

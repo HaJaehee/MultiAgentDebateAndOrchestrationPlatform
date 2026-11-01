@@ -153,7 +153,7 @@ The web application workspace is organized into four primary UI components in [a
   have no open issues and no new decisions ([Conversation Memory §2.6](../orchestration/context-memory.md)).
 - **에이전트 질문 받기** (v1.5): specialists may ask the person a question mid-speech
   ([Ask the User](../agents/ask-user.md)). New conversations start with it on.
-- **쟁점은 따로 토론** (v1.5.1, default off): two specialists may settle an open issue on the side between rounds or graph
+- **쟁점은 따로 토론** (default off): two specialists may settle an open issue on the side between rounds or graph
   steps ([Debate Strategies §2-b](../orchestration/debate-strategies.md)). The box right of the switch sets the maximum
   rounds of one sub-debate, separate from 최대 라운드; it stays in place, dimmed and locked, while the switch is off. In the
   feed those speeches are indented and badged 서브 토론, without a round number because they sit between rounds; the opening
@@ -172,7 +172,7 @@ The web application workspace is organized into four primary UI components in [a
   the graph and are disabled — in this strategy the graph decides who takes part, and a checkbox that
   changes nothing would mislead. Below it: a read-only preview of the graph, a one-line run summary and
   **크게 보기** — see §1.2.2.
-  For 적응형 그래프 토론 (v1.5.1) the same row appears with the picker labelled **기준 그래프** (optional), the checkboxes stay
+  For 적응형 그래프 토론 the same row appears with the picker labelled **기준 그래프** (optional), the checkboxes stay
   live because the checked specialists take part, and the preview shows the graph the orchestrator drew, also after the
   turn ends, since it has no file to read back.
 
@@ -762,7 +762,7 @@ browser's DOMPurify. Formulas are cached by source, so a streaming card does not
 on every redraw. If Markdown itself cannot convert the text (2,000 `>` raise `RecursionError` in `markdown2`), the
 text is shown as it is in a `<pre>`.
 
-**Long text (v1.5.1).** From `OFFLOAD_CHARS` (20,000) characters a `MathMarkdown` is drawn by one dedicated worker
+**Long text.** From `OFFLOAD_CHARS` (20,000) characters a `MathMarkdown` is drawn by one dedicated worker
 thread instead of on the event loop; shorter text is drawn on the spot as before. The element shows its previous
 content until the new one is ready (a new element is empty for that moment). Each element draws one thing at a time
 and then looks at its current `content`, so intermediate versions are skipped and a slow worker does not pile up work.

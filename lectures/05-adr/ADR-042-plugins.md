@@ -4,7 +4,7 @@
 
 ## 상태 (Status)
 
-채택됨 · 2026-10-31 (v1.5.1) · 관련: [ADR-012](ADR-012-agent-owned-debate-order.md), [ADR-014](ADR-014-tool-failure-is-observation.md), [ADR-026](ADR-026-skills-as-host-tools.md), [ADR-039](ADR-039-lazy-tool-schemas.md)
+채택됨 · 2026-10-31 · 관련: [ADR-012](ADR-012-agent-owned-debate-order.md), [ADR-014](ADR-014-tool-failure-is-observation.md), [ADR-026](ADR-026-skills-as-host-tools.md), [ADR-039](ADR-039-lazy-tool-schemas.md)
 
 ## 맥락 (Context)
 

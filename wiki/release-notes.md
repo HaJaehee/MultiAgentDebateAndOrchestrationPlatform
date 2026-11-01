@@ -4,7 +4,7 @@ Change history for the MADO: Multi-Agent Debate & Orchestration Platform, newest
 entry links to the topic page carrying the full explanation — this file is an index of *what
 changed*, not a second copy of the documentation.
 
-## v1.5.1
+## v2.0
 
 **A resumed turn now knows what reached the disk, and can bring kernel variables back.** When a write tool is cut off by a restart, MADO compares the file with the SHA-256 it saved just before the call and tells the model whether the write was applied, not applied or needs a look, instead of "result unknown". So a resumed speech no longer has to guess, and an append is not repeated by mistake. This covers `write_file`, `write_workspace_file`, `append_workspace_file` and `edit_file` on local servers inside the workspace; other calls stay unknown. Speeches resumed after a restart are also told that kernel variables are gone. When the turn ran code, the violet bar adds `셀 재실행 후 이어서`: it empties the kernel, runs this turn's finished cells again through the current tool gate, stops at the first failure, and then puts back any workspace file the replay changed. Nothing is re-run unless you press it, and it refuses to run when no snapshot can be taken or another turn shares the workspace. The result is an approximation: random or time-based values can differ, earlier turns' variables are not rebuilt, and network calls cannot be undone. Drafts from before this change restart their speech. Checked against the real sandbox by killing the process right after an append. → [Interrupted Turns §5.1–5.2](orchestration/turn-recovery.md#51-checking-the-write-that-was-cut) · [ADR-046](../lectures/05-adr/ADR-046-check-cut-writes-and-replay-kernels.md) · `tests/test_turn_restore.py`
 

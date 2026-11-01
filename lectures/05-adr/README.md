@@ -33,54 +33,54 @@ ADR은 **기존 내용을 수정하지 않고 불변의 문서로 누적 보존�
 
 ## 목록
 
-| 번호 | 제목 | 날짜 | 상태 | 관련 버전 |
-| :--- | :--- | :--- | :--- | :--- |
-| [001](ADR-001-python-single-process.md) | 파이썬 단일 프로세스로 API와 화면을 함께 서빙한다 | 08-26 | 채택됨 | 초기 |
-| [002](ADR-002-litellm-gateway.md) | 모든 LLM 호출은 LiteLLM을 거친다 | 08-26 | 채택됨 | 초기 |
-| [003](ADR-003-mcp-tool-protocol.md) | 도구는 MCP 서버로, 앱과 다른 프로세스에서 돌린다 | 08-26 | 채택됨 | 초기 |
-| [004](ADR-004-sqlite-persistence.md) | 저장소는 SQLite 파일 하나로 한다 | 08-26 | 채택됨 | 초기 |
-| [005](ADR-005-long-lived-mcp-sessions.md) | MCP 세션은 한 번 열어 오래 유지한다 | 08-26 | 채택됨 | 초기 |
-| [006](ADR-006-airgap-first-packaging.md) | 폐쇄망 반입을 전제로 두 종류의 패키지를 만든다 | 08-26 ~ 28 | 채택됨 | 초기 |
-| [007](ADR-007-no-simulated-answers.md) | 연결에 실패한 LLM의 답을 흉내 내지 않는다 | 08-28 | 채택됨 | 초기 |
-| [008](ADR-008-background-debate-runner.md) | 토론 실행을 브라우저 화면에서 떼어 낸다 | 08-28 | 채택됨 | 초기 |
-| [009](ADR-009-refuse-cross-workspace-debates.md) | 작업 공간이 다른 토론은 동시에 돌리지 않는다 | 08-28 | **대체됨** (→016) | 초기 |
-| [010](ADR-010-host-defined-tool-scope.md) | 도구 상태의 격리 경계는 호스트가 정한다 | 08-28 | 채택됨 | 초기 |
-| [011](ADR-011-session-config-snapshot.md) | 시작한 대화는 에이전트 설정 전체를 고정한다 | 08-30 | 채택됨 | v0.1 |
-| [012](ADR-012-agent-owned-debate-order.md) | 발언 순서와 진영은 에이전트가 들고, 전략은 순서와 지침만 정한다 | 08-30 | 채택됨 | v0.1 |
-| [013](ADR-013-json-config.md) | 설정 형식을 TOML에서 JSON으로 바꾼다 | 08-30 | 채택됨 | v0.1 |
-| [014](ADR-014-tool-failure-is-observation.md) | 도구 실패는 관찰 결과다, 취소만 전파한다 | 09-08 | 채택됨 | v0.5 |
-| [015](ADR-015-reasoning-out-of-prompts.md) | 추론 흔적은 사람에게만 보이고 프롬프트에는 넣지 않는다 | 09-09 | 채택됨 | v0.5 |
-| [016](ADR-016-per-workspace-mcp-runtime.md) | 작업 공간마다 MCP 런타임을 따로 띄운다 | 09-09 | 채택됨 | v0.6 |
-| [017](ADR-017-never-lose-a-write.md) | 저장 실패로 결과물을 잃지 않는다 | 09-13 | 채택됨 | v0.7.1 |
-| [018](ADR-018-orchestrator-writes-conclusions.md) | 오케스트레이터는 결론과 다이어그램만 쓴다 | 09-14 | 채택됨 | v0.7.2 |
-| [019](ADR-019-owner-token-remote-access.md) | 원격 접속은 주인이 발급한 토큰 하나로 연다 | 09-15 | 채택됨 | v0.8.2 |
-| [020](ADR-020-conversation-memory.md) | 긴 대화는 버리기 전에 고정하고 접는다 | 09-17 | 채택됨 | v0.8.3 |
-| [021](ADR-021-graph-debate.md) | 사람이 그린 그래프로 토론 흐름을 정한다 | 09-17 | 채택됨 | v0.9.0 |
-| [022](ADR-022-knowledge-base-deferred.md) | 지식베이스(RAG) 도구는 근거를 모을 때까지 보류한다 | 09-21 | **보류** | 미정 |
-| [023](ADR-023-keep-litellm-and-own-engine.md) | LangChain·LangGraph로 옮기지 않고 LiteLLM과 자체 엔진을 유지한다 | 09-27 | 채택됨 | - |
-| [024](ADR-024-resume-interrupted-turns.md) | 서버가 턴 도중에 내려가도 그 턴을 이어 가거나 마무리할 수 있게 한다 | 09-27 | 채택됨 | v1.0 |
-| [025](ADR-025-resume-speeches-by-tool-step.md) | 끊긴 발언은 마지막으로 끝난 도구 다음부터 이어 간다 | 09-28 | 채택됨 | v1.0 |
-| [026](ADR-026-skills-as-host-tools.md) | 스킬은 MCP 서버가 아닌 호스트 도구로 실시간 제공 | 09-30 | 채택됨 | v1.1 |
-| [027](ADR-027-designate-skills-from-the-input-bar.md) | 입력창에서 지정한 스킬은 그 턴에만 주고, 호스트가 미리 불러 둔다 | 10-01 | 채택됨 | v1.1.1 |
-| [028](ADR-028-plan-approval-gate.md) | 계획이 나오면 토론을 시작하기 전에 사람의 승인을 받는다 | 10-04 | 채택됨 | v1.2 |
-| [029](ADR-029-beginner-pages.md) | 비엔지니어 화면을 체험 서버 경로 하위에 분리 배치하고, 에이전트의 작업 과정을 실제 도구 실행과 함께 시각화 | 10-08 | 채택됨 | v1.3 |
-| [030](ADR-030-fallback-to-the-global-model.md) | 개별 모델의 연결이 실패하면, 켜 둔 배치에 한해 전역 기본 모델이 대신 답하고 그 사실을 남긴다 | 10-11 | 채택됨 | v1.3.1 |
-| [031](ADR-031-assemble-streams-off-the-loop.md) | 스트리밍이 끝난 답의 조립은 이벤트 루프 밖 스레드에서 한다 | 10-29 | 채택됨 | v1.5.1 |
-| [032](ADR-032-compose-roster-and-feed.md) | 로스터와 피드를 믹스인(mixin) 대신 컴포넌트 합성 구조로 리팩터링하고, conf.json 처리 규칙 및 스키마 검증을 UI 레이어 외부로 분리한다 | 10-30 | 채택됨 | v1.5.1 |
-| [033](ADR-033-render-long-text-off-the-loop.md) | 긴 텍스트 렌더링을 백그라운드 워커 스레드로 오프로드하고, 정규식 및 모듈 임포트 병목을 해소한다 | 10-30 | 채택됨 | v1.5.1 |
-| [034](ADR-034-adaptive-graph-and-sub-debates.md) | 오케스트레이터의 적응형 실행 그래프 생성과 쟁점별 서브 토론(Sub-debate) 메커니즘을 도입한다 | 10-30 | 채택됨 | v1.5.1 |
-| [035](ADR-035-agent-input-modalities.md) | 멀티모달 파일 입력을 지정된 에이전트의 LLM 요청 시점에 동적으로 주입한다 | 10-31 | 채택됨 | v1.5.1 |
-| [036](ADR-036-retry-one-speech-and-inline-comments.md) | 단일 발언 재생성(Retry) 및 특정 문장에 대한 인라인 코멘트 전달 기능을 추가한다 | 10-31 | 채택됨 | v1.5.1 |
-| [037](ADR-037-tell-people-looking-elsewhere.md) | 사용자 입력을 대기하는 상태를 전역 알림으로 브로드캐스트하고 실행 런타임에서 최신 상태를 동기화한다 | 10-31 | 채택됨 | v1.5.1 |
-| [038](ADR-038-edit-the-ledger-directly.md) | 토론 유휴 상태에서 결정 장부를 항목 단위로 직접 편집하고 변경 이력을 사용자 발언으로 기록한다 | 10-31 | 채택됨 | v1.5.1 |
-| [039](ADR-039-lazy-tool-schemas.md) | 자주 사용하는 핵심 도구 스키마만 선별 로드하고 보조 도구는 온디맨드(on-demand) 지연 로딩으로 전환한다 | 10-31 | 채택됨 | v1.5.1 |
-| [040](ADR-040-compact-stale-file-reads.md) | 컨텍스트 한도 도달 시 이전 도구 호출의 대용량 파일 읽기 결과를 스텁(Stub)으로 압축한다 | 10-31 | 채택됨 | v1.5.1 |
-| [041](ADR-041-postgresql-compatibility.md) | SQLite와 동일한 동작 보증 하에 PostgreSQL 호환성을 지원하고 다중 인스턴스 확장의 데이터베이스 계층을 준비한다 | 10-31 | 채택됨 | v1.5.1 |
-| [042](ADR-042-plugins.md) | 토론 전략과 호스트 도구를 코드 수정 없이 플러그인으로 확장하고 도구 보안 정책을 적용한다 | 10-31 | 채택됨 | v1.5.1 |
-| [043](ADR-043-code-diff-viewer.md) | 코드 변경 사항의 통합·좌우 Diff 비교 뷰를 제공하고 라운드 경계에 작업 공간 스냅샷을 기록한다 | 11-01 | 채택됨 | v1.5.1 |
-| [044](ADR-044-runtime-queue-and-checkpoint-retention.md) | 런타임 슬롯 경합 시 대기열 큐잉과 라운드 경계 양보를 도입하고 유휴 작업 공간의 체크포인트를 정리한다 | 11-01 | 채택됨 | v1.5.1 |
-| [045](ADR-045-claude-prompt-cache-markers.md) | Claude 연동 시 후속 요청에서 불변인 지점에 프롬프트 캐시 제어 마커를 주입하고 캐시 생성 토큰을 계측한다 | 11-01 | 채택됨 | v1.5.1 |
-| [046](ADR-046-check-cut-writes-and-replay-kernels.md) | 비정상 중단된 파일 쓰기 작업의 디스크 반영 여부를 검증하고 사용자 승인 시에만 커널 코드 셀을 선별 재실행한다 | 11-01 | 채택됨 | v1.5.1 |
+| 번호 | 제목 | 날짜 | 상태 |
+| :--- | :--- | :--- | :--- |
+| [001](ADR-001-python-single-process.md) | 파이썬 단일 프로세스로 API와 화면을 함께 서빙한다 | 08-26 | 채택됨 |
+| [002](ADR-002-litellm-gateway.md) | 모든 LLM 호출은 LiteLLM을 거친다 | 08-26 | 채택됨 |
+| [003](ADR-003-mcp-tool-protocol.md) | 도구는 MCP 서버로, 앱과 다른 프로세스에서 돌린다 | 08-26 | 채택됨 |
+| [004](ADR-004-sqlite-persistence.md) | 저장소는 SQLite 파일 하나로 한다 | 08-26 | 채택됨 |
+| [005](ADR-005-long-lived-mcp-sessions.md) | MCP 세션은 한 번 열어 오래 유지한다 | 08-26 | 채택됨 |
+| [006](ADR-006-airgap-first-packaging.md) | 폐쇄망 반입을 전제로 두 종류의 패키지를 만든다 | 08-26 ~ 28 | 채택됨 |
+| [007](ADR-007-no-simulated-answers.md) | 연결에 실패한 LLM의 답을 흉내 내지 않는다 | 08-28 | 채택됨 |
+| [008](ADR-008-background-debate-runner.md) | 토론 실행을 브라우저 화면에서 떼어 낸다 | 08-28 | 채택됨 |
+| [009](ADR-009-refuse-cross-workspace-debates.md) | 작업 공간이 다른 토론은 동시에 돌리지 않는다 | 08-28 | **대체됨** (→016) |
+| [010](ADR-010-host-defined-tool-scope.md) | 도구 상태의 격리 경계는 호스트가 정한다 | 08-28 | 채택됨 |
+| [011](ADR-011-session-config-snapshot.md) | 시작한 대화는 에이전트 설정 전체를 고정한다 | 08-30 | 채택됨 |
+| [012](ADR-012-agent-owned-debate-order.md) | 발언 순서와 진영은 에이전트가 들고, 전략은 순서와 지침만 정한다 | 08-30 | 채택됨 |
+| [013](ADR-013-json-config.md) | 설정 형식을 TOML에서 JSON으로 바꾼다 | 08-30 | 채택됨 |
+| [014](ADR-014-tool-failure-is-observation.md) | 도구 실패는 관찰 결과다, 취소만 전파한다 | 09-08 | 채택됨 |
+| [015](ADR-015-reasoning-out-of-prompts.md) | 추론 흔적은 사람에게만 보이고 프롬프트에는 넣지 않는다 | 09-09 | 채택됨 |
+| [016](ADR-016-per-workspace-mcp-runtime.md) | 작업 공간마다 MCP 런타임을 따로 띄운다 | 09-09 | 채택됨 |
+| [017](ADR-017-never-lose-a-write.md) | 저장 실패로 결과물을 잃지 않는다 | 09-13 | 채택됨 |
+| [018](ADR-018-orchestrator-writes-conclusions.md) | 오케스트레이터는 결론과 다이어그램만 쓴다 | 09-14 | 채택됨 |
+| [019](ADR-019-owner-token-remote-access.md) | 원격 접속은 주인이 발급한 토큰 하나로 연다 | 09-15 | 채택됨 |
+| [020](ADR-020-conversation-memory.md) | 긴 대화는 버리기 전에 고정하고 접는다 | 09-17 | 채택됨 |
+| [021](ADR-021-graph-debate.md) | 사람이 그린 그래프로 토론 흐름을 정한다 | 09-17 | 채택됨 |
+| [022](ADR-022-knowledge-base-deferred.md) | 지식베이스(RAG) 도구는 근거를 모을 때까지 보류한다 | 09-21 | **보류** |
+| [023](ADR-023-keep-litellm-and-own-engine.md) | LangChain·LangGraph로 옮기지 않고 LiteLLM과 자체 엔진을 유지한다 | 09-27 | 채택됨 |
+| [024](ADR-024-resume-interrupted-turns.md) | 서버가 턴 도중에 내려가도 그 턴을 이어 가거나 마무리할 수 있게 한다 | 09-27 | 채택됨 |
+| [025](ADR-025-resume-speeches-by-tool-step.md) | 끊긴 발언은 마지막으로 끝난 도구 다음부터 이어 간다 | 09-28 | 채택됨 |
+| [026](ADR-026-skills-as-host-tools.md) | 스킬은 MCP 서버가 아닌 호스트 도구로 실시간 제공 | 09-30 | 채택됨 |
+| [027](ADR-027-designate-skills-from-the-input-bar.md) | 입력창에서 지정한 스킬은 그 턴에만 주고, 호스트가 미리 불러 둔다 | 10-01 | 채택됨 |
+| [028](ADR-028-plan-approval-gate.md) | 계획이 나오면 토론을 시작하기 전에 사람의 승인을 받는다 | 10-04 | 채택됨 |
+| [029](ADR-029-beginner-pages.md) | 비엔지니어 화면을 체험 서버 경로 하위에 분리 배치하고, 에이전트의 작업 과정을 실제 도구 실행과 함께 시각화 | 10-08 | 채택됨 |
+| [030](ADR-030-fallback-to-the-global-model.md) | 개별 모델의 연결이 실패하면, 켜 둔 배치에 한해 전역 기본 모델이 대신 답하고 그 사실을 남긴다 | 10-11 | 채택됨 |
+| [031](ADR-031-assemble-streams-off-the-loop.md) | 스트리밍이 끝난 답의 조립은 이벤트 루프 밖 스레드에서 한다 | 10-29 | 채택됨 |
+| [032](ADR-032-compose-roster-and-feed.md) | 로스터와 피드를 믹스인(mixin) 대신 컴포넌트 합성 구조로 리팩터링하고, conf.json 처리 규칙 및 스키마 검증을 UI 레이어 외부로 분리한다 | 10-30 | 채택됨 |
+| [033](ADR-033-render-long-text-off-the-loop.md) | 긴 텍스트 렌더링을 백그라운드 워커 스레드로 오프로드하고, 정규식 및 모듈 임포트 병목을 해소한다 | 10-30 | 채택됨 |
+| [034](ADR-034-adaptive-graph-and-sub-debates.md) | 오케스트레이터의 적응형 실행 그래프 생성과 쟁점별 서브 토론(Sub-debate) 메커니즘을 도입한다 | 10-30 | 채택됨 |
+| [035](ADR-035-agent-input-modalities.md) | 멀티모달 파일 입력을 지정된 에이전트의 LLM 요청 시점에 동적으로 주입한다 | 10-31 | 채택됨 |
+| [036](ADR-036-retry-one-speech-and-inline-comments.md) | 단일 발언 재생성(Retry) 및 특정 문장에 대한 인라인 코멘트 전달 기능을 추가한다 | 10-31 | 채택됨 |
+| [037](ADR-037-tell-people-looking-elsewhere.md) | 사용자 입력을 대기하는 상태를 전역 알림으로 브로드캐스트하고 실행 런타임에서 최신 상태를 동기화한다 | 10-31 | 채택됨 |
+| [038](ADR-038-edit-the-ledger-directly.md) | 토론 유휴 상태에서 결정 장부를 항목 단위로 직접 편집하고 변경 이력을 사용자 발언으로 기록한다 | 10-31 | 채택됨 |
+| [039](ADR-039-lazy-tool-schemas.md) | 자주 사용하는 핵심 도구 스키마만 선별 로드하고 보조 도구는 온디맨드(on-demand) 지연 로딩으로 전환한다 | 10-31 | 채택됨 |
+| [040](ADR-040-compact-stale-file-reads.md) | 컨텍스트 한도 도달 시 이전 도구 호출의 대용량 파일 읽기 결과를 스텁(Stub)으로 압축한다 | 10-31 | 채택됨 |
+| [041](ADR-041-postgresql-compatibility.md) | SQLite와 동일한 동작 보증 하에 PostgreSQL 호환성을 지원하고 다중 인스턴스 확장의 데이터베이스 계층을 준비한다 | 10-31 | 채택됨 |
+| [042](ADR-042-plugins.md) | 토론 전략과 호스트 도구를 코드 수정 없이 플러그인으로 확장하고 도구 보안 정책을 적용한다 | 10-31 | 채택됨 |
+| [043](ADR-043-code-diff-viewer.md) | 코드 변경 사항의 통합·좌우 Diff 비교 뷰를 제공하고 라운드 경계에 작업 공간 스냅샷을 기록한다 | 11-01 | 채택됨 |
+| [044](ADR-044-runtime-queue-and-checkpoint-retention.md) | 런타임 슬롯 경합 시 대기열 큐잉과 라운드 경계 양보를 도입하고 유휴 작업 공간의 체크포인트를 정리한다 | 11-01 | 채택됨 |
+| [045](ADR-045-claude-prompt-cache-markers.md) | Claude 연동 시 후속 요청에서 불변인 지점에 프롬프트 캐시 제어 마커를 주입하고 캐시 생성 토큰을 계측한다 | 11-01 | 채택됨 |
+| [046](ADR-046-check-cut-writes-and-replay-kernels.md) | 비정상 중단된 파일 쓰기 작업의 디스크 반영 여부를 검증하고 사용자 승인 시에만 커널 코드 셀을 선별 재실행한다 | 11-01 | 채택됨 |
 
 날짜는 모두 2026년 기준입니다.
 

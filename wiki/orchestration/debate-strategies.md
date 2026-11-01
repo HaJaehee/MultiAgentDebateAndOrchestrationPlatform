@@ -227,7 +227,7 @@ graph TD
   the defaults, with integer `pos`; reading fills the defaults back in. The turn snapshot uses the
   same shape.
 
-### 2.6. Adaptive Graph (`adaptive_graph`) — v1.5.1 ([ADR-034](../../lectures/05-adr/ADR-034-adaptive-graph-and-sub-debates.md))
+### 2.6. Adaptive Graph (`adaptive_graph`) ([ADR-034](../../lectures/05-adr/ADR-034-adaptive-graph-and-sub-debates.md))
 - **Key**: `adaptive_graph` · **Display Name**: 적응형 그래프 토론 (Adaptive Graph) · `runs_graph = True`,
   `draws_graph = True` (`uses_graph_file` is false, which is what the API, the benchmark and the session card check).
 - **Idea**: the same engine as Graph Debate, but the orchestrator draws the graph for this turn instead of a person
@@ -252,7 +252,7 @@ graph TD
 
 ---
 
-## 2-b. Sub-debates (any strategy) — v1.5.1
+## 2-b. Sub-debates (any strategy)
 
 A conversation setting, not a strategy: **쟁점은 따로 토론** (`sessions.sub_debates`, off by default). It sits between
 peer consultation (one question, one answer, kept as the asker's tool output) and another whole round.

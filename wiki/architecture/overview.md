@@ -161,8 +161,8 @@ flowchart TD
 | `app/headless.py`, `app/mcp_server.py` | Debates without a page: REST and MCP ([Headless API](../operations/headless-api.md)) |
 | `app/session_fork.py` | Forking a conversation at a turn, compare data, ratings ([Session Handoff §7](../orchestration/session-handoff.md)) |
 | `app/orchestration/skill_draft.py` | Skill drafts from a turn ([Skills §10](../agents/skills.md)) |
-| `app/orchestration/speech_comments.py` | Inline comments delivered to one agent's next speech, v1.5.1 ([Retrying One Speech §6](../orchestration/speech-revisions.md#6-inline-comments)) |
-| `app/orchestration/ledger_edit.py` | A person's direct edit of the decision ledger, v1.5.1 ([Conversation Memory §4.1](../orchestration/context-memory.md#41-editing-it-directly)) |
+| `app/orchestration/speech_comments.py` | Inline comments delivered to one agent's next speech ([Retrying One Speech §6](../orchestration/speech-revisions.md#6-inline-comments)) |
+| `app/orchestration/ledger_edit.py` | A person's direct edit of the decision ledger ([Conversation Memory §4.1](../orchestration/context-memory.md#41-editing-it-directly)) |
 | `app/bench.py` | Strategy comparison harness ([Bench](../operations/bench.md)) |
 | `app/ui/compare_page.py`, `app/ui/components/turn_changes.py`, `app/ui/components/skill_draft_dialog.py` | Compare page and the conclusion card's dialogs |
 | `app/code_diff.py`, `app/code_versions.py`, `app/ui/components/diff_viewer.py`, `app/ui/components/code_compare.py` | Code diffs in the turn dialog and on code tabs ([UI Components §1.4.1](../ui/components.md#141-code-diff-viewer-adr-043)) |

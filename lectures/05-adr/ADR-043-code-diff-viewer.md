@@ -4,7 +4,7 @@
 
 ## 상태 (Status)
 
-채택됨 · 2026-11-01 (v1.5.1) · 관련: [ADR-024](ADR-024-turns-as-records.md), [ADR-033](ADR-033-render-long-text-off-the-loop.md), [ADR-036](ADR-036-retry-one-speech-and-inline-comments.md)
+채택됨 · 2026-11-01 · 관련: [ADR-024](ADR-024-turns-as-records.md), [ADR-033](ADR-033-render-long-text-off-the-loop.md), [ADR-036](ADR-036-retry-one-speech-and-inline-comments.md)
 
 ## 맥락 (Context)
 

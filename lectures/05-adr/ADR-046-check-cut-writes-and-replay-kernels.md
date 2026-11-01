@@ -4,7 +4,7 @@
 
 ## 상태 (Status)
 
-채택됨 · 2026-11-01 (v1.5.1) · 관련: [ADR-014](ADR-014-tool-failure-is-observation.md), [ADR-024](ADR-024-resume-interrupted-turns.md), [ADR-025](ADR-025-resume-speeches-by-tool-step.md), [ADR-041](ADR-041-postgresql-compatibility.md), [ADR-043](ADR-043-code-diff-viewer.md), [ADR-044](ADR-044-runtime-queue-and-checkpoint-retention.md)
+채택됨 · 2026-11-01 · 관련: [ADR-014](ADR-014-tool-failure-is-observation.md), [ADR-024](ADR-024-resume-interrupted-turns.md), [ADR-025](ADR-025-resume-speeches-by-tool-step.md), [ADR-041](ADR-041-postgresql-compatibility.md), [ADR-043](ADR-043-code-diff-viewer.md), [ADR-044](ADR-044-runtime-queue-and-checkpoint-retention.md)
 
 ## 맥락 (Context)
 

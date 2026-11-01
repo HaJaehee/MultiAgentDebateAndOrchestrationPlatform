@@ -4,7 +4,7 @@
 
 ## 상태 (Status)
 
-채택됨 · 2026-10-31 (v1.5.1) · 관련: [ADR-024](ADR-024-resume-interrupted-turns.md), [ADR-025](ADR-025-resume-speeches-by-tool-step.md)
+채택됨 · 2026-10-31 · 관련: [ADR-024](ADR-024-resume-interrupted-turns.md), [ADR-025](ADR-025-resume-speeches-by-tool-step.md)
 
 ## 맥락 (Context)
 

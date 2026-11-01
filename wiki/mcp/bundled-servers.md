@@ -14,7 +14,7 @@ The platform comes pre-configured with a suite of official and open-source MCP s
 | `sandbox` | Python | [AirgappedPySandbox](https://github.com/HaJaehee/AirgappedPySandbox) v0.8.0 | 7 | **Enabled** | Stateful IPython kernel code execution, one namespace per conversation and speaker. |
 | `sequential_thinking` | Node.js | `@modelcontextprotocol/server-sequential-thinking`| 1 | *Disabled* | Step-by-step reasoning (used only when `mode = "mcp"`). |
 | `fetch` | Python | `mcp-server-fetch` (pip package) | 1 | *Disabled* | Web URL to Markdown extractor. **Keep disabled in air-gaps.** |
-| `kb` (v1.5.1) | Python | this repository ([`mcp_servers/anythingllm_kb/`](file:///d:/MultiAgentDebateOrchestration/mcp_servers/anythingllm_kb/server.py)) | 2 | *Disabled* | Document search in an AnythingLLM workspace: source chunks with title, source and score. |
+| `kb` | Python | this repository ([`mcp_servers/anythingllm_kb/`](file:///d:/MultiAgentDebateOrchestration/mcp_servers/anythingllm_kb/server.py)) | 2 | *Disabled* | Document search in an AnythingLLM workspace: source chunks with title, source and score. |
 
 ---
 
@@ -70,7 +70,7 @@ The platform comes pre-configured with a suite of official and open-source MCP s
     names it ahead of the filesystem server's `edit_file` ([LLM Integration §2.2](../agents/llm-integration.md)).
   - `reset_kernel_state`: Clears kernel state and memory when starting a clean session.
 
-### 2.5. AnythingLLM Document Search (`kb`, v1.5.1)
+### 2.5. AnythingLLM Document Search (`kb`)
 - **Source**: [`mcp_servers/anythingllm_kb/server.py`](file:///d:/MultiAgentDebateOrchestration/mcp_servers/anythingllm_kb/server.py),
   a FastMCP stdio server owned by this repository. It needs nothing beyond `mcp` and `httpx` (an `mcp`
   dependency), so the offline bundle needs no extra wheels.

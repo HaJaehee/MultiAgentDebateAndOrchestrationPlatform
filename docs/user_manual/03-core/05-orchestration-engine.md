@@ -137,7 +137,7 @@ for round_num in 1..max_rounds:                     ← parallel_dispatch 전용
 
 ---
 
-## 대화 기억 보존 체계 (Conversation Memory, v0.8.3)
+## 대화 기억 보존 체계 (Conversation Memory)
 
 과거에는 컨텍스트 창이 가득 차면 오래된 발언부터 전체를 삭제했습니다. 이로 인해 1턴에서 사용자가 제시했던 핵심 제약 조건이 가장 먼저 소실되어, 후속 턴에서 사용자의 초기 지시를 위반하는 문제가 발생했습니다. 현재 시스템은 4중 계층으로 대화 맥락을 철저히 보존합니다:
 
@@ -220,7 +220,7 @@ _make_budget_arbiter()  ──▶ on_event: tool_budget_exhausted ──▶ UI �
 
 ---
 
-## 계획 승인 (Plan Approval, v1.2 · ADR-028)
+## 계획 승인 (Plan Approval · ADR-028)
 
 오케스트레이터의 계획(0라운드)이 수립되면 엔진은 토론 단계로 넘어가기 **전에** 사용자 승인 카드를 표시합니다. 사용자가 승인하기 전에는 어떤 전문가도 발언하지 않습니다. 요구사항이 잘못 반영된 계획으로 여러 라운드가 불필요하게 실행되는 문제를 사전에 차단하기 위한 단계이며, `plan_approval.enabled` 로 켜고 끕니다 (기본값: 켜짐).
 

@@ -4,7 +4,7 @@
 
 ## 상태 (Status)
 
-채택됨 · 2026-10-31 (v1.5.1) · 관련: [ADR-001](ADR-001-python-single-process.md), [ADR-004](ADR-004-sqlite-persistence.md), [ADR-017](ADR-017-never-lose-a-write.md), [ADR-024](ADR-024-resume-interrupted-turns.md)
+채택됨 · 2026-10-31 · 관련: [ADR-001](ADR-001-python-single-process.md), [ADR-004](ADR-004-sqlite-persistence.md), [ADR-017](ADR-017-never-lose-a-write.md), [ADR-024](ADR-024-resume-interrupted-turns.md)
 
 ## 맥락 (Context)
 

@@ -16,7 +16,7 @@ FastAPI 엔드포인트는 **조회 전용**입니다. 토론 진행과 설정 �
 ```json
 {
   "status": "healthy",
-  "version": "v1.5.1",
+  "version": "<APP_VERSION_LABEL>",
   "author": { "name": "Ha, Jaehee", "email": "lovesm135@naver.com" },
   "app": { "host": "127.0.0.1", "port": 8000, "debug": true },
   "registered_agents": ["orchestrator", "architect", "coder", "critic"],
@@ -234,7 +234,7 @@ MCP 서버별 연결 상태. `"enabled": false` 로 꺼 둔 서버도 함께 보
 
 ---
 
-## 헤드리스(Headless) 토론 실행 — `/api/sessions/...` (v1.5)
+## 헤드리스(Headless) 토론 실행 — `/api/sessions/...`
 
 외부 스크립트, CI/CD 파이프라인, 타 에이전트 환경에서 웹 UI 없이도 토론을 시작하고 결과를 수신할 수 있는 REST API입니다.
 동일한 세션을 웹 브라우저에서 열면 실시간으로 진행 상황을 함께 모니터링할 수 있습니다. 자세한 내용은 위키 `wiki/operations/headless-api.md`를 참고하세요.
@@ -263,7 +263,7 @@ curl -s "http://127.0.0.1:8000/api/sessions/<id>/result?wait=300"
 
 ---
 
-## MADO를 외부 MCP 서버로 제공 — `/mcp` (v1.5)
+## MADO를 외부 MCP 서버로 제공 — `/mcp`
 
 MADO의 토론 오케스트레이션 기능을 Model Context Protocol(MCP Streamable HTTP) 도구로 외부에 제공합니다.
 제공 도구: `list_agents`, `list_debates`, `start_debate`, `get_debate_status`, `get_debate_result`(완료 대기 중 진행 알림 지원), `stop_debate`.
@@ -282,7 +282,7 @@ claude mcp add --transport http mado http://127.0.0.1:8000/mcp
 | `/` | 메인 전문가 화면 (사이드바 + 로스터 패널 + 토론 피드 + 산출물 뷰어) |
 | `/personas/{session_id}` | 세션별 페르소나 편집 |
 | `/graphs/{graph_id}` | 그래프 토론 편집기 |
-| `/compare?a=<id>&b=<id>` | 두 대화 세션 나란히 비교 및 결론 평가 (v1.5) |
+| `/compare?a=<id>&b=<id>` | 두 대화 세션 나란히 비교 및 결론 평가 |
 
 ---
 
@@ -291,7 +291,7 @@ claude mcp add --transport http mado http://127.0.0.1:8000/mcp
 * **로컬 루프백(`127.0.0.1` / `localhost`)**에서 유입되는 요청은 마스터 권한으로 간주하여 별도 인증 없이 즉시 허용합니다.
 * **외부 원격 접속 시**에는 원격 접속 토큰(`.env`의 `MADO_ACCESS_TOKEN`)이 필요합니다. 웹 브라우저는 `/login` 페이지에서
   토큰으로 로그인하여 쿠키(7일간 유지)로 인증하며, REST API(`/api/*`) 및 MCP 서버(`/mcp`) 엔드포인트는 `Authorization: Bearer <토큰>`
-  헤더를 통해 인증합니다 (v1.5). 잘못된 토큰을 반복 입력할 경우 계정 잠금 정책이 동일하게 적용됩니다 (잠금 상태 시 `429 Too Many Requests`).
+  헤더를 통해 인증합니다. 잘못된 토큰을 반복 입력할 경우 계정 잠금 정책이 동일하게 적용됩니다 (잠금 상태 시 `429 Too Many Requests`).
 * 토큰이 설정되지 않은 경우 외부 원격 접속은 기본 차단됩니다. 체험 모드가 활성화된 경우 일반 방문자는 `/trial` 하위 페이지만 이용 가능하며 `/api/*` 엔드포인트는 접근할 수 없습니다.
 * 타 사이트로부터의 무단 접근을 방지하기 위해 CSRF 및 교차 출처(Cross-Origin) 요청은 출처와 관계없이 엄격히 거부합니다.
 
