@@ -42,7 +42,8 @@ docs/user_manual/
 │   ├── 02-session-lifecycle.md .......... 세션 생성 → 잠금 → 재개
 │   ├── 03-roster-editing.md ............. 로스터 편집
 │   ├── 04-artifact-and-export.md ........ 산출물 생성과 내보내기
-│   └── 05-airgap-deployment.md .......... 폐쇄망 배포
+│   ├── 05-airgap-deployment.md .......... 폐쇄망 배포
+│   └── 06-trial-and-easy-mode.md ........ 체험 서버와 비엔지니어 화면
 │
 └── 05-reference/ ........................ 레퍼런스 및 참조 자료
     ├── README.md ........................ 레퍼런스 개관
@@ -69,6 +70,7 @@ docs/user_manual/
 | 코드 수정 없이 토론 전략 및 호스트 도구 확장하기 | [플러그인](03-core/11-plugins.md) |
 | 다자간 토론의 실행 순서와 생애주기 이해하기 | [토론 한 턴의 생애주기](04-workflows/01-debate-turn.md) |
 | 오프라인 폐쇄망 환경에 패키징 및 배포하기 | [폐쇄망 배포](04-workflows/05-airgap-deployment.md) |
+| 다중 사용자 체험 모드 및 비엔지니어 화면 활용하기 | [체험 서버와 비엔지니어 화면](04-workflows/06-trial-and-easy-mode.md) |
 | 코드 수정 전 전체 아키텍처 및 디렉터리 파악하기 | [아키텍처](01-overview/02-architecture.md), [프로젝트 구조](05-reference/02-project-layout.md) |
 
 ---

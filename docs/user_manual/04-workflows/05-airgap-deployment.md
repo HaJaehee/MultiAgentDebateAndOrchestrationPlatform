@@ -1,6 +1,6 @@
 # 폐쇄망 배포
 
-> 상위: [워크플로우 개관](README.md) · 이전: [산출물 생성과 내보내기](04-artifact-and-export.md)
+> 상위: [워크플로우 개관](README.md) · 이전: [산출물 생성과 내보내기](04-artifact-and-export.md) · 다음: [체험 서버와 비엔지니어 화면](06-trial-and-easy-mode.md)
 >
 > 파일: `package_offline.py` (전체 번들) · `package_source.py` (소스 갱신)
 
@@ -284,4 +284,4 @@ python package_offline.py --launchers-only <설치본 경로>
 
 ---
 
-> 다음 섹션: [레퍼런스 개관](../05-reference/README.md)
+> 다음: [체험 서버와 비엔지니어 화면](06-trial-and-easy-mode.md)

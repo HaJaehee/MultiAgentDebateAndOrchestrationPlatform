@@ -12,12 +12,17 @@
 
 ```json
 {
-  "app":         { },
-  "llm":         { "sequential_thinking": { } },
+  "app":         { "llm_concurrency": 0 },
+  "llm":         { "sequential_thinking": { }, "fallback": { } },
+  "plan_approval": { "enabled": true, "timeout": 600 },
+  "tool_loading": { "enabled": true, "core_tools": [], "min_saving_tokens": 1000 },
+  "tool_output_compaction": { "enabled": true, "stale_rounds": 3, "min_chars": 8000, "min_usage": 0.5 },
   "mcp_servers": { "<서버이름>": { } },
   "agents":      { "<에이전트키>": { "sequential_thinking": { } } },
   "tool_security": { },
-  "skills":      { "dir": "skills", "disabled": [] }
+  "skills":      { "dir": "skills", "disabled": [] },
+  "plugins":     { },
+  "trial":       { "enabled": false }
 }
 ```
 
@@ -71,6 +76,7 @@
 | `db_pool_size` | int | `10` | PostgreSQL 연결 풀(Connection Pool) 크기입니다. SQLite 환경에서는 사용되지 않습니다. |
 | `db_max_overflow` | int | `10` | 연결 풀 크기를 초과하여 일시적으로 추가 생성할 수 있는 최대 커넥션 수입니다. |
 | `debug` | bool | `true` | 코드 변경 감지 자동 재시작 및 상세 DB 쿼리 로깅 활성화 여부입니다. |
+| `llm_concurrency` | int | `0` | 서버 전역 LLM 동시 요청 수 상한입니다 (`0`이면 무제한). 상한 초과 시 대기열(FIFO)에서 순차 대기합니다. |
 
 ### 원격 접속 토큰 (다른 PC 에서 접근 시)
 
@@ -268,6 +274,90 @@ MADO는 기본적으로 로컬 루프백(`127.0.0.1`) 환경에서만 인입 요
 로드에 실패한 플러그인이 있더라도 서버 기동이 중단되지 않습니다. 실패 원인은 서버 로그, `GET /api/plugins` 엔드포인트 응답, 로스터 패널의 전략 선택 상자 옆 경고 아이콘에서 확인할 수 있습니다.
 
 호스트 도구 플러그인은 에이전트 카드의 **도구** 패널에 표시되며, 활성화 시 해당 에이전트의 `allowed_mcp_servers` 목록에 플러그인 접두사가 추가됩니다. 도구 호출 시 MCP 도구와 동일하게 도구 보안 정책의 검증을 거치며, 위험 등급을 명시하지 않은 플러그인은 기본 모드에서 사용자 승인을 요구하고 읽기 전용 모드에서는 실행이 거부됩니다. 보안 정책 규칙은 `mcp(접두사/도구이름)` 형식으로 설정합니다. 상세 작성법과 예제는 [플러그인 개발 가이드](../03-core/11-plugins.md)를 참조하십시오.
+
+---
+
+## `plan_approval` — 계획 승인
+
+오케스트레이터의 계획(Round 0) 수립 후 본 토론 개시 전에 사용자 승인 카드를 표시합니다.
+
+```json
+"plan_approval": {
+  "enabled": true,
+  "timeout": 600
+}
+```
+
+| 키 | 타입 | 기본값 | 설명 |
+| :--- | :--- | :--- | :--- |
+| `enabled` | bool | `true` | `false`이면 계획 직후 사용자 대기 없이 즉시 토론을 진행합니다. |
+| `timeout` | int | `600` | 승인 카드 대기 제한시간(초)입니다 (30 ~ 86400). 만료 시 턴이 approval 단계로 멈춥니다. |
+
+승인 카드에서는 전문가별 태스크 및 완료 기준을 직접 수정한 뒤 승인하거나, 수정 요청 의견을 전달하여 계획을 재생성하도록 지시할 수 있습니다. 자세한 원리는 [오케스트레이션 엔진](../03-core/05-orchestration-engine.md#계획-승인-plan_approval)을 참고하십시오.
+
+---
+
+## `tool_loading` — 도구 스키마 온디맨드 로딩
+
+다수의 도구를 보유한 에이전트의 입력 토큰 소모를 줄이기 위해, 자주 사용하는 핵심 도구 스키마만 선별하여 상시 로드하고 나머지는 지연 로딩합니다.
+
+```json
+"tool_loading": {
+  "enabled": true,
+  "core_tools": ["read_text_file", "list_directory", "search_files", "add_observations", "execute_python_code", "list_workspace_files", "git_status", "git_diff_unstaged"],
+  "min_saving_tokens": 1000
+}
+```
+
+| 키 | 타입 | 기본값 | 설명 |
+| :--- | :--- | :--- | :--- |
+| `enabled` | bool | `true` | 도구 스키마 지연 로딩 활성화 여부입니다. 목록 탐색을 잘 처리하지 못하는 소형 모델의 경우 `false`로 권장합니다. |
+| `core_tools` | list[str] | 기본 8종 | 항상 상시 주입할 도구 이름, 전체 이름(`git__git_log`), 또는 서버 키(`git`) 목록입니다. 파일 쓰기 도구와 3개 이하 도구 서버는 자동으로 항상 로드됩니다. |
+| `min_saving_tokens` | int | `1000` | 분할로 절감되는 토큰이 이 값 미만이면 전체 스키마를 분할 없이 상시 로드합니다. |
+
+---
+
+## `tool_output_compaction` — 대용량 파일 읽기 결과 압축
+
+도구 루프 내 컨텍스트 사용률이 임계치를 초과할 때, 오래된 대용량 파일 읽기 결과를 스텁(요약 안내)으로 교체하여 컨텍스트 윈도우를 확보합니다.
+
+```json
+"tool_output_compaction": {
+  "enabled": true,
+  "stale_rounds": 3,
+  "min_chars": 8000,
+  "min_usage": 0.5
+}
+```
+
+| 키 | 타입 | 기본값 | 설명 |
+| :--- | :--- | :--- | :--- |
+| `enabled` | bool | `true` | 오래된 파일 읽기 결과 압축 활성화 여부입니다. |
+| `stale_rounds` | int | `3` | 압축 대상이 되기 위해 경과해야 하는 최소 도구 루프 라운드 수입니다. |
+| `min_chars` | int | `8000` | 압축 대상이 되는 최소 텍스트 글자 수입니다. |
+| `min_usage` | float | `0.5` | 컨텍스트 사용률(0.0~1.0)이 이 비율을 초과할 때만 압축을 수행합니다. |
+
+---
+
+## `trial` — 다중 사용자 체험 모드
+
+사내 공용 서버에서 방문자 계정(이름/PIN) 기반으로 안전하게 템플릿 토론을 체험할 수 있도록 합니다.
+
+```json
+"trial": {
+  "enabled": false,
+  "templates_dir": "trial_templates",
+  "notice": "사내 공용 체험 서버입니다."
+}
+```
+
+| 키 | 타입 | 기본값 | 설명 |
+| :--- | :--- | :--- | :--- |
+| `enabled` | bool | `false` | 체험 모드 활성화 여부입니다. `true` 시 비인증 원격 접속자가 체험 방문자 권한으로 자동 전환됩니다. |
+| `templates_dir` | str | `"trial_templates"` | 공식 템플릿 JSON 파일이 저장된 디렉터리 경로입니다. |
+| `notice` | str | `""` | 체험 화면 하단에 상시 고지되는 운영 공지 문구입니다. |
+
+상세한 사용법과 권한 모델은 [체험 서버와 비엔지니어 화면](../04-workflows/06-trial-and-easy-mode.md)을 참조하십시오.
 
 ---
 
