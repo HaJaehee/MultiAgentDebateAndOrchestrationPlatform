@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import signal
 import sys
 from pathlib import Path
@@ -414,6 +415,58 @@ def test_scope_policy_splits_the_kernel_but_not_the_graph():
     # 폴더를 공유하는 서버는 경로가 곧 경계라 스코프를 쓰지 않습니다.
     assert compose_scope("filesystem", "sess-A", "coder") == "sess-A"
     assert compose_scope("sandbox", None, "coder") is None
+
+
+def _sandbox_namespace(raw: str) -> str:
+    """샌드박스가 받은 값을 다루는 그대로 (`mcp_sandbox/server.py` 의 `_sanitize_ns`). 복사본은 저장소에 없습니다."""
+    return re.sub(r"[^A-Za-z0-9_-]", "", raw.strip())[:40]
+
+
+SESSION_UUID = "0f3c2b1a-1111-2222-3333-444455556666"
+
+
+@pytest.mark.parametrize("first, second", [
+    ("critic", "critic2"),          # 앞 세 글자가 같습니다
+    ("code_reviewer", "coder"),
+    ("평론가", "검토자"),            # 샌드박스가 글자를 통째로 지웁니다
+    ("a.b", "ab"),                  # 지우고 나면 같아집니다
+])
+def test_agents_the_sandbox_would_merge_still_get_their_own_kernels(first, second):
+    from app.mcp.manager import compose_scope
+
+    one = _sandbox_namespace(compose_scope("sandbox", SESSION_UUID, first))
+    two = _sandbox_namespace(compose_scope("sandbox", SESSION_UUID, second))
+    assert one != two
+
+
+@pytest.mark.parametrize("session", [SESSION_UUID, "짧은-대화", "s" * 80])
+@pytest.mark.parametrize("agent", ["coder", "평론가", "a-very-long-agent-key-" * 4])
+def test_the_sandbox_takes_the_scope_as_it_is(session, agent):
+    """샌드박스가 깎지 않아야 호스트가 아는 이름과 커널의 이름이 같습니다. 재실행이 그 이름으로 커널을 비웁니다."""
+    from app.mcp.manager import AGENT_SCOPE_CHARS, compose_scope
+
+    scope = compose_scope("sandbox", session, agent)
+    assert len(scope) <= AGENT_SCOPE_CHARS
+    assert compose_scope("sandbox", session, agent) == scope, "같은 호출은 같은 커널입니다"
+    if session.isascii():
+        assert _sandbox_namespace(scope) == scope
+
+
+def test_the_same_agent_in_two_conversations_gets_two_kernels():
+    from app.mcp.manager import compose_scope
+
+    assert compose_scope("sandbox", SESSION_UUID, "critic") != compose_scope(
+        "sandbox", "0f3c2b1a-1111-2222-3333-444455557777", "critic",
+    ), "대화 id 는 뒤쪽만 달라도 다른 대화입니다"
+
+
+def test_only_a_scope_that_would_not_survive_is_shortened():
+    from app.mcp.manager import compose_scope
+
+    assert compose_scope("sandbox", SESSION_UUID, "qa") == f"{SESSION_UUID}-qa"
+    shortened = compose_scope("sandbox", SESSION_UUID, "critic")
+    assert shortened.startswith(SESSION_UUID[:27]), "로그에서 어느 대화인지 찾을 수 있습니다"
+    assert compose_scope("memory", SESSION_UUID, "critic") == SESSION_UUID, "지식 그래프 파일 이름은 그대로입니다"
 
 
 @pytest.mark.asyncio

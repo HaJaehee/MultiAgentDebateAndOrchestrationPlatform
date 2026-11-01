@@ -210,10 +210,16 @@ its state is pinned to, and a model asked to declare it will eventually forget.
 | :--- | :--- | :--- | :--- |
 | Workspace directory | shared by all | — (the path *is* the boundary) | The handoff channel between agents. Visible in `filesystem`, in git diffs, in the artifact viewer. |
 | Knowledge graph (`memory`) | conversation | `<session_id>` | Agreed facts belong to every participant in that debate. |
-| Kernel namespace (`sandbox`) | conversation x speaker | `<session_id>-<agent_key>` | Kernel variables are recorded nowhere. |
+| Kernel namespace (`sandbox`) | conversation x speaker | `<session_id>-<agent_key>`, shortened if needed | Kernel variables are recorded nowhere. |
 
 `MCPManager.compose_scope()` holds this policy; `AGENT_SCOPED_SERVERS` lists the servers that
 get the speaker appended.
+
+The sandbox keeps only letters, digits, `_` and `-`, and cuts a namespace at 40 characters. A session id is
+already 36, so the full value would leave three characters of the agent key: `critic` and `critic2` would share a
+kernel, and Korean keys would vanish entirely. A value that would not survive is sent as the first 27 characters
+of the session id plus a 12-character hash of the whole value, for example
+`0f3c2b1a-1111-2222-3333-444-d183bc464379`. Kernels are not persisted, so nothing depends on the old form.
 
 The kernel split is the non-obvious one. `ConversationMemory.build_context_for_agent` passes only each message's
 **prose** to the next speaker — tool call logs stay in the UI accordion and never enter another

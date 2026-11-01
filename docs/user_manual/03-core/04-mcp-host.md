@@ -71,9 +71,11 @@ def compose_scope(server_name, scope, actor):
     if not scope:
         return None
     if server_name in AGENT_SCOPED_SERVERS and actor:
-        return f"{scope}-{actor}"     # 샌드박스: 대화 세션 × 발언자 단위
+        return f"{scope}-{actor}"     # 샌드박스: 대화 세션 × 발언자 단위 (제한을 넘으면 줄입니다)
     return scope                      # 그 외 도구: 대화 세션 단위
 ```
+
+샌드박스는 네임스페이스에서 영숫자와 `_`, `-`만 남기고 40자로 자릅니다. 세션 ID가 이미 36자이므로, 이 제한에 들어가지 않는 값은 세션 ID 앞 27자와 해시 12자로 줄여 보냅니다. 그래서 `critic`과 `critic2`처럼 이름이 비슷한 에이전트나 한글 키를 쓰는 에이전트도 각자의 커널을 씁니다.
 
 | 서버 식별자 | 스코프 격리 단위 | 격리 사유 |
 | :--- | :--- | :--- |

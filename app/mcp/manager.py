@@ -1,7 +1,9 @@
 import asyncio
+import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 from functools import lru_cache
@@ -347,14 +349,29 @@ def carry_over_memory_graph(
 #                      아티팩트 뷰어에 남아서 검증할 수 있습니다.
 AGENT_SCOPED_SERVERS = frozenset({"sandbox"})
 
+# 샌드박스는 네임스페이스에서 이 글자만 남기고 이 길이로 자릅니다 (`mcp_sandbox/server.py` 의 `_sanitize_ns`).
+AGENT_SCOPE_CHARS = 40
+_AGENT_SCOPE_SAFE = re.compile(r"[A-Za-z0-9_-]+")
+# 줄인 스코프에서 대화와 발언자를 가르는 해시의 길이 (16진수).
+_AGENT_SCOPE_DIGEST_CHARS = 12
+
 
 def compose_scope(server_name: str, scope: Optional[str], actor: Optional[str]) -> Optional[str]:
-    """이 서버에 보낼 스코프를 만듭니다 (`AGENT_SCOPED_SERVERS` 는 발언자까지 포함)."""
+    """이 서버에 보낼 스코프를 만듭니다 (`AGENT_SCOPED_SERVERS` 는 발언자까지 포함).
+
+    발언자를 붙인 값이 샌드박스의 제한 안에 들지 않으면 대화 id 앞부분과 해시로 줄입니다. 대화 id 가 36자라 그대로
+    보내면 발언자 키는 앞 세 글자만 남아 `critic` 과 `critic2` 가 커널을 함께 쓰고, 한글 키는 통째로 지워져 그
+    대화의 발언자가 모두 한 커널에 모입니다. 커널은 저장되지 않으므로 이름이 바뀌어도 잃는 것이 없습니다.
+    """
     if not scope:
         return None
-    if server_name in AGENT_SCOPED_SERVERS and actor:
-        return f"{scope}-{actor}"
-    return scope
+    if server_name not in AGENT_SCOPED_SERVERS or not actor:
+        return scope
+    composed = f"{scope}-{actor}"
+    if len(composed) <= AGENT_SCOPE_CHARS and _AGENT_SCOPE_SAFE.fullmatch(composed):
+        return composed
+    digest = hashlib.sha256(composed.encode("utf-8")).hexdigest()[:_AGENT_SCOPE_DIGEST_CHARS]
+    return f"{scope[:AGENT_SCOPE_CHARS - _AGENT_SCOPE_DIGEST_CHARS - 1]}-{digest}"
 
 
 def protected_files() -> List[Path]:
