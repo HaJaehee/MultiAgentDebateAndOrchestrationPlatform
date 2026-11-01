@@ -25,7 +25,7 @@ import asyncio
 import logging
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
@@ -44,6 +44,7 @@ from app.database.models import (
     utc_now,
 )
 from app import workspace_checkpoint
+from app.code_versions import CodeVersion, speech_code_versions
 from app.config import ORCHESTRATOR_KEY, resolve_workspace_dir
 from app.mcp.manager import carry_over_memory_graph
 from app.orchestration.session_title import DEFAULT_SESSION_TITLE, title_from_speech
@@ -102,6 +103,8 @@ class TurnChanges:
     files: List[workspace_checkpoint.FileChange]
     started_at: Any = None
     reverted_at: Optional[str] = None
+    # 라운드(그래프는 단계)별 구간. 경계 스냅샷이 없는 턴이면 비어 있습니다.
+    segments: List[workspace_checkpoint.Segment] = field(default_factory=list)
 
 
 async def turn_changes(db, session_id: str, turn_id: str) -> Optional[TurnChanges]:
@@ -116,14 +119,38 @@ async def turn_changes(db, session_id: str, turn_id: str) -> Optional[TurnChange
     files = await asyncio.to_thread(workspace_checkpoint.changes, workspace, start, end)
     if files is None:
         return None
+    segments = await asyncio.to_thread(workspace_checkpoint.turn_segments, workspace, turn_id, start, end)
     return TurnChanges(
         turn_id=turn_id, workspace=workspace, start=start, end=end, files=files,
-        started_at=turn.started_at, reverted_at=turn.checkpoint.get("reverted_at"),
+        started_at=turn.started_at, reverted_at=turn.checkpoint.get("reverted_at"), segments=segments,
     )
 
 
-async def turn_file_diff(changes: TurnChanges, path: str) -> str:
-    return await asyncio.to_thread(workspace_checkpoint.file_diff, changes.workspace, changes.start, changes.end, path)
+async def turn_file_diff(
+    changes: TurnChanges, path: str, segment: Optional[workspace_checkpoint.Segment] = None,
+) -> str:
+    """한 파일의 diff. `segment` 를 주면 그 구간의 것, 아니면 턴 전체의 것입니다."""
+    start, end = (segment.start, segment.end) if segment is not None else (changes.start, changes.end)
+    return await asyncio.to_thread(workspace_checkpoint.file_diff, changes.workspace, start, end, path)
+
+
+async def session_code_versions(db, session_id: str) -> List[CodeVersion]:
+    """대화에 나온 코드 블록을 시간순으로 모읍니다 (산출물 뷰어의 비교 기준, `app/code_versions.py`)."""
+    turn_ids = (await db.execute(
+        select(TurnModel.id).where(TurnModel.session_id == session_id).order_by(TurnModel.started_at)
+    )).scalars().all()
+    speeches = (await db.execute(
+        select(
+            MessageModel.sender_name, MessageModel.round_number, MessageModel.content, MessageModel.turn_id,
+            MessageModel.graph_node_id, MessageModel.turn_meta, MessageModel.created_at,
+        ).where(
+            MessageModel.session_id == session_id,
+            MessageModel.sender_key.not_in(("user", "system", ORCHESTRATOR_KEY)),
+            MessageModel.msg_type != "error",
+        ).order_by(MessageModel.created_at)
+    )).all()
+    numbers = {turn_id: number for number, turn_id in enumerate(turn_ids, start=1)}
+    return await asyncio.to_thread(speech_code_versions, speeches, numbers)
 
 
 async def revert_turn_files(db, session_id: str, turn_id: str) -> workspace_checkpoint.RevertResult:

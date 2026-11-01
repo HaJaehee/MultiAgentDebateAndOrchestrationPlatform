@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -30,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from app.code_diff import TRUNCATION_MARK
 from app.mcp.manager import find_git_executable
 from app.workspace_files import EXCLUDED_DIRS
 
@@ -37,6 +39,11 @@ logger = logging.getLogger(__name__)
 
 REF_ROOT = "refs/mado/turns"
 START, END = "start", "end"
+
+# 턴 안의 경계 스냅샷 (ADR-043): 라운드(`round-N`)·그래프 단계(`step-N`)가 시작할 때와 토론이 끝났을 때.
+# 되돌리기와 대화 분기는 쓰지 않고, 변경 내역을 라운드별로 나눠 볼 때만 읽습니다.
+DEBATE_END = "debate-end"
+_BOUNDARY = re.compile(r"^(round|step)-(\d+)$")
 
 # 스냅샷 제외 대상 디렉터리 (`dist`, `build`는 사용자 산출물일 수 있으므로 보존)
 SNAPSHOT_EXCLUDED_DIRS = sorted(EXCLUDED_DIRS - {"dist", "build", ".git", ".hg", ".svn"})
@@ -63,6 +70,16 @@ class FileChange:
     @property
     def label(self) -> str:
         return STATUS_LABELS.get(self.status, self.status)
+
+
+@dataclass(frozen=True)
+class Segment:
+    """턴 안의 한 구간: `start` 스냅샷에서 `end` 스냅샷까지 바뀐 파일."""
+
+    label: str
+    start: str
+    end: str
+    files: List[FileChange]
 
 
 @dataclass
@@ -114,9 +131,11 @@ def snapshot(workspace: str | Path, ref: Optional[str]) -> Optional[str]:
         real = root / ".git" / "index"
         # 저장소의 인덱스를 복사해 시작합니다. 파일마다 남아 있는 크기·시각 기록 덕에 바뀌지 않은
         # 파일을 다시 해시하지 않습니다. 복사본이 깨졌으면(에이전트가 쓰는 중) 빈 인덱스로 다시 합니다.
+        # 인덱스의 시각도 함께 복사합니다(`copy2`). git 은 인덱스보다 늦거나 같은 시각에 고친 파일의 내용을
+        # 다시 읽는데, 복사본 시각이 지금이 되면 이 검사가 꺼져 같은 초에 같은 크기로 고친 파일을 놓칩니다.
         if real.is_file():
             try:
-                shutil.copyfile(real, index)
+                shutil.copy2(real, index)
             except OSError:
                 pass
         env = {**os.environ, **_IDENTITY, "GIT_INDEX_FILE": str(index)}
@@ -179,11 +198,52 @@ def file_diff(workspace: str | Path, start: str, end: str, path: str) -> str:
     if found is None:
         return ""
     git, root = found
-    proc = _git(git, root, "diff", "--no-renames", "--no-color", start, end, "--", path)
+    proc = _git(git, root, "diff", "--no-renames", "--no-color", "--no-ext-diff", start, end, "--", path)
     text = (proc.stdout or b"").decode("utf-8", errors="replace")
     if len(text) > MAX_DIFF_CHARS:
-        text = text[:MAX_DIFF_CHARS] + f"\n… (내용이 길어 최대 {MAX_DIFF_CHARS:,}자까지만 표시합니다)\n"
+        text = text[:MAX_DIFF_CHARS] + f"\n{TRUNCATION_MARK} (내용이 길어 최대 {MAX_DIFF_CHARS:,}자까지만 표시합니다)\n"
     return text
+
+
+def turn_segments(workspace: str | Path, turn_id: str, start: str, end: str) -> List[Segment]:
+    """턴을 라운드(그래프는 단계)별 구간으로 나눕니다. 경계 스냅샷이 없는 턴이면 빈 목록입니다.
+
+    라운드는 파일이 바뀌지 않았어도 구간으로 둡니다. 토론 앞(계획)과 뒤(합성·발언 다시 실행)는 바뀐 파일이 있을 때만 둡니다.
+    토론이 끝나기 전에 턴이 멈췄으면 마지막 라운드는 턴 끝 스냅샷까지입니다.
+    """
+    found = _repo(workspace)
+    if found is None:
+        return []
+    git, root = found
+    proc = _git(git, root, "for-each-ref", "--format=%(refname) %(objectname)", f"{REF_ROOT}/{turn_id}")
+    if proc.returncode != 0:
+        return []
+    marks: List[Tuple[int, str, str]] = []
+    debate_end: Optional[str] = None
+    for line in _text(proc).splitlines():
+        name, _, sha = line.rpartition(" ")
+        short = name.rsplit("/", 1)[-1]
+        boundary = _BOUNDARY.match(short)
+        if boundary:
+            marks.append((int(boundary[2]), boundary[1], sha))
+        elif short == DEBATE_END:
+            debate_end = sha
+    if not marks:
+        return []
+    marks.sort()
+
+    def segment(label: str, a: str, b: str, *, keep_empty: bool) -> List[Segment]:
+        files = changes(root, a, b)
+        return [Segment(label, a, b, files)] if files is not None and (files or keep_empty) else []
+
+    out = segment("계획 단계", start, marks[0][2], keep_empty=False)
+    for index, (number, kind, sha) in enumerate(marks):
+        following = marks[index + 1][2] if index + 1 < len(marks) else (debate_end or end)
+        label = f"라운드 {number}" if kind == "round" else f"{number}단계"
+        out += segment(label, sha, following, keep_empty=True)
+    if debate_end:
+        out += segment("토론 이후", debate_end, end, keep_empty=False)
+    return out
 
 
 def revert(workspace: str | Path, start: str, end: str) -> RevertResult:
@@ -313,10 +373,15 @@ def forget(workspace: str | Path, turn_ids: Sequence[str]) -> None:
     if found is None or not turn_ids:
         return
     git, root = found
-    lines = "".join(f"delete {turn_ref(t, which)}\n" for t in turn_ids for which in (START, END))
+    # 시작·끝 말고 라운드 경계도 있으므로 턴 아래의 이름을 저장소에서 읽어 옵니다.
+    wanted = set(turn_ids)
+    listed = _git(git, root, "for-each-ref", "--format=%(refname)", REF_ROOT)
+    names = [n for n in _text(listed).splitlines() if n[len(REF_ROOT) + 1:].split("/")[0] in wanted]
+    if not names:
+        return
+    lines = "".join(f"delete {name}\n" for name in names)
     proc = _git(git, root, "update-ref", "--stdin", stdin=lines.encode("utf-8"))
     if proc.returncode != 0:
-        # 한 줄이라도 없는 이름이면 통째로 실패합니다. 하나씩 지웁니다.
-        for turn_id in turn_ids:
-            for which in (START, END):
-                _git(git, root, "update-ref", "-d", turn_ref(turn_id, which))
+        # 그 사이 사라진 이름이 하나라도 있으면 통째로 실패합니다. 하나씩 지웁니다.
+        for name in names:
+            _git(git, root, "update-ref", "-d", name)

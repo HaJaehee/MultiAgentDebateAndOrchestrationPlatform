@@ -29,7 +29,8 @@ from app.orchestration.strategies import resolve_strategy_name
 from app.orchestration.turns import KIND_SYNTHESIS, kind_of, unfinished_turn
 from app.security import is_loopback
 from app.session_fork import ForkError, fork_session
-from app.session_ops import discard_turn
+from app.code_versions import CodeVersion
+from app.session_ops import discard_turn, session_code_versions
 from app.ui.attention import ATTENTION_JS, WaitingTabTitle, WaitingWatcher
 from app.ui.components.artifact_viewer import ArtifactViewer, merge_artifacts
 from app.ui.components.chat_feed.feed import ChatFeed
@@ -133,7 +134,9 @@ class ExpertPage:
         self.roster_control.on_ledger_edited = self.on_ledger_edited
         self.roster_control.viewer_is_local = self.viewer_is_local
         self.roster_control.on_open_tool_call = self.open_tool_call
-        self.artifact_viewer = ArtifactViewer(on_open_workspace_files=self.workspace_download.open)
+        self.artifact_viewer = ArtifactViewer(
+            on_open_workspace_files=self.workspace_download.open, load_code_versions=self.load_code_versions,
+        )
 
         # 로스터가 카드를 다시 그릴 때마다 채팅 피드도 같은 겉모습을 받습니다.
         # 잠긴 대화에서는 이 값이 conf.json 이 아니라 그때 고정된 스냅샷에서 오므로,
@@ -795,6 +798,13 @@ class ExpertPage:
     async def open_turn_changes(self, turn_id: str) -> None:
         await self.turn_changes.open(self.current_session_id, turn_id)
 
+    async def load_code_versions(self) -> List[CodeVersion]:
+        """산출물 뷰어가 코드를 앞선 라운드·턴과 견줄 때 읽는 이 대화의 코드 버전."""
+        if not self.current_session_id:
+            return []
+        async with self.session_factory() as db:
+            return await session_code_versions(db, self.current_session_id)
+
     async def reload_current_session(self) -> None:
         if self.current_session_id:
             await self.load_session_state(self.current_session_id)
@@ -978,6 +988,7 @@ class ExpertPage:
                     "title": a.title,
                     "content": a.content,
                     "language": a.language,
+                    "created_at": a.created_at,
                 }
                 for a in arts_db
             ]

@@ -135,10 +135,12 @@ class GraphRunner(PhaseExecutor):
         replay: Optional[turns.GraphReplay] = None,
         redo: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         between_steps: Optional[Callable[[int], Awaitable[None]]] = None,
+        mark_boundary: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> bool:
         """그래프를 단계별로 실행합니다. 사용자가 정지 요청을 한 경우 True를 반환합니다.
 
         `between_steps(단계)` 는 단계를 마치고 장부를 갱신한 뒤, 다음 단계로 가기 전에 부릅니다 (서브 토론).
+        `mark_boundary(이름)` 은 단계가 시작할 때 부릅니다 (작업 공간 경계 스냅샷, ADR-043).
         """
         agents = {a.key: a for a in active_agents}
         redo = redo if redo is not None else {}
@@ -255,6 +257,8 @@ class GraphRunner(PhaseExecutor):
 
             step += 1
             state.current_round = step
+            if mark_boundary is not None:
+                await mark_boundary(f"step-{step}")
             activations = [scheduler.activate(node) for node in ready]
             if on_event:
                 await on_event({"type": EventType.ROUND_STARTED, "round": step, "max_rounds": max_steps})

@@ -4,8 +4,11 @@ import uuid
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 from nicegui import run, ui
 
+from app.code_versions import CodeVersion
 from app.export_mermaid import convert_mermaid_to_staruml_mdj, generate_mermaid_standalone_html
 from app.ui.clipboard import copy_to_clipboard
+from app.ui.components.code_compare import CodeCompare
+from app.ui.components.diff_viewer import UNIFIED
 from app.ui.math_markdown import MathMarkdown
 
 logger = logging.getLogger(__name__)
@@ -56,10 +59,18 @@ def default_tab_index(artifacts: List[Dict[str, Any]]) -> int:
 class ArtifactViewer:
     """Tabbed artifact viewer for Synthesized Markdown, Code, Mermaid diagrams, and JSON exports."""
 
-    def __init__(self, on_open_workspace_files: Optional[Callable[[], Coroutine[None, None, None]]] = None):
+    def __init__(
+        self,
+        on_open_workspace_files: Optional[Callable[[], Coroutine[None, None, None]]] = None,
+        load_code_versions: Optional[Callable[[], Coroutine[None, None, List[CodeVersion]]]] = None,
+    ):
         # 보고서 탭의 "작업 공간 파일" 버튼이 여는 다운로드 창. 토론이 만든 파일을 결론을
         # 읽는 그 자리에서 찾게 합니다. 없으면 버튼을 그리지 않습니다.
         self.on_open_workspace_files = on_open_workspace_files
+        # 코드 탭의 "변경점" 이 비교 기준으로 쓸 라운드별 코드. 없으면 코드 산출물끼리만 견줍니다.
+        self.load_code_versions = load_code_versions
+        # 통합·좌우 선택. 패널이 좁아 처음에는 통합으로 열고, 탭을 옮겨도 유지합니다.
+        self.diff_mode = UNIFIED
         self.artifacts: List[Dict[str, Any]] = []
         self.container: Optional[ui.card] = None
         self.content_column: Optional[ui.column] = None
@@ -146,6 +157,7 @@ class ArtifactViewer:
         content = art.get("content", "")
         language = art.get("language", "markdown")
         wrapper_id = f"art-mermaid-{uuid.uuid4().hex[:8]}"
+        compare = self._code_compare(art) if art_type == "code" else None
 
         with ui.column().classes("w-full h-full gap-2 flex flex-col flex-nowrap overflow-hidden"):
             # Sub-header with copy/download controls
@@ -202,6 +214,8 @@ class ArtifactViewer:
                         ).props("flat dense size=12px color=slate-4").tooltip("Mermaid 원본 스크립트(.mmd) 파일로 다운로드합니다.")
                 else:
                     with ui.row().classes("items-center gap-1"):
+                        if compare is not None:
+                            compare.build_button()
                         if art_type == "markdown" and self.on_open_workspace_files is not None:
                             ui.button(
                                 "작업 공간 파일",
@@ -222,7 +236,7 @@ class ArtifactViewer:
                         ).props("flat dense size=12px color=slate-3")
 
             # Body based on type (Scrolls vertically)
-            with ui.scroll_area().classes("w-full flex-grow min-h-0 p-3 bg-slate-950/80 border border-slate-800 rounded-lg"):
+            with ui.scroll_area().classes("w-full flex-grow min-h-0 p-3 bg-slate-950/80 border border-slate-800 rounded-lg") as body:
                 if art_type == "mermaid":
                     self._render_mermaid(content, wrapper_id=wrapper_id)
                 elif art_type == "code":
@@ -241,6 +255,17 @@ class ArtifactViewer:
                             icon="download",
                             on_click=self._open_workspace_files,
                         ).props("outline dense no-caps size=12px color=sky-4").classes("mt-3")
+            if compare is not None:
+                compare.build_panel(body)
+
+    def _code_compare(self, art: Dict[str, Any]) -> CodeCompare:
+        def remember(mode: str) -> None:
+            self.diff_mode = mode
+
+        return CodeCompare(
+            art, artifacts=lambda: self.artifacts, load_versions=self.load_code_versions,
+            mode=self.diff_mode, on_mode_change=remember,
+        )
 
     def _render_mermaid(self, content: str, wrapper_id: Optional[str] = None) -> None:
         """Mermaid 다이어그램. 렌더링에 실패하면 그 사실과 원본을 같이 보여줍니다.

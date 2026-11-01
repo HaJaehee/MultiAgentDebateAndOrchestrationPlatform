@@ -72,7 +72,9 @@ app/
 ├── security.py                      782   원격 접속 토큰, 접근 제어 미들웨어
 ├── headless.py                      256   헤드리스 토론 실행 코어 (REST·MCP 공용) (v1.5)
 ├── mcp_server.py                    180   내장 MCP 서버 엔드포인트 /mcp (v1.5)
-├── workspace_checkpoint.py          323   작업 공간 턴 체크포인트·롤백·분기 내보내기 (v1.5)
+├── workspace_checkpoint.py          387   작업 공간 턴 체크포인트·라운드 구간·롤백·분기 내보내기 (v1.5)
+├── code_diff.py                     234   두 코드의 차이 계산 (git diff 해석, 줄 안 강조) (v1.5.1)
+├── code_versions.py                  96   대화에 나온 코드 버전, 비교 기준 후보 (v1.5.1)
 ├── session_fork.py                  291   대화 세션 분기(Fork), 비교 데이터 구성 및 결론 평가 (v1.5)
 ├── bench.py                         339   전략 벤치마크 하네스 python -m app.bench (v1.5)
 ├── graph_store.py                   105   그래프 토론의 그래프 파일 data/graphs/
@@ -190,12 +192,14 @@ app/
     ├── components/chat_feed/      3,218   토론 피드 (feed 가 조립 · cards · approvals · decisions · mentions · speech_actions · common)
     ├── components/agent_builder_chat.py   111   도우미와 대화해 설계도를 채우는 부분 (전문가·쉬운 화면 공용)
     ├── components/sidebar.py        850   세션 목록
-    ├── components/artifact_viewer.py   377   산출물 탭, 복사·다운로드
+    ├── components/artifact_viewer.py   405   산출물 탭, 복사·다운로드
     ├── components/agent_appearance.py   257   카드 색·아이콘 편집기
     ├── components/model_status.py   143   모델 연결 상태 단추와 창
     ├── components/access_token.py   352   원격 접속 토큰 버튼
     ├── components/workspace_download.py   224   작업 공간 파일 다운로드 창
-    ├── components/turn_changes.py   155   턴 파일 변경 내역(Diff) 및 롤백 창 (v1.5)
+    ├── components/turn_changes.py   221   턴 파일 변경 내역(Diff) 및 롤백 창 (v1.5)
+    ├── components/diff_viewer.py   199   코드 변경점 뷰어, 통합·좌우 보기 (v1.5.1)
+    ├── components/code_compare.py   155   코드 탭의 변경점 비교 (v1.5.1)
     ├── components/skill_draft_dialog.py   97   스킬 초안 생성 및 편집 창 (v1.5)
     ├── components/graph_canvas.py   217   그래프 편집 캔버스
     └── components/quiet_splitter.py    98   드래그가 가벼운 스플리터
@@ -239,6 +243,7 @@ app/
 | 토큰 및 LLM 실행 시간 계측 | `agents/llm_usage.py` |
 | 합의 판정 및 조기 종료 | 판정은 `orchestration/context_memory.py` (`ledger_converged`), 라운드 마감은 `orchestration/phases/debate.py` (`_close_round`) |
 | 턴 체크포인트 및 롤백 | `workspace_checkpoint.py` · 화면은 `ui/components/turn_changes.py` |
+| 코드 변경점 비교 | 계산은 `code_diff.py`, 비교 기준은 `code_versions.py` · 화면은 `ui/components/diff_viewer.py`, `ui/components/code_compare.py` |
 | 대화 세션 및 발언 검색 | `database/search.py` · 화면은 `ui/components/sidebar.py` |
 | 세션 분기, 비교 및 결론 평가 | `session_fork.py` · 화면은 `ui/compare_page.py` |
 | 에이전트 사용자 질문 | `agents/ask_user.py` · 응답 대기는 `orchestration/control.py`, UI 카드는 `ui/components/chat_feed/approvals.py` |

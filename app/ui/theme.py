@@ -113,6 +113,100 @@ body {
     height: auto;
 }
 
+/* --- 코드 변경점 (diff_viewer.py) ---------------------------------------------
+   수천 줄을 보내므로 표시는 짧은 태그로 합니다: 행 `.u`(통합)·`.s`(좌우), 좌우의 한쪽 `.l`,
+   종류 `.a`(추가)·`.d`(삭제)·`.e`(반대쪽 없음). 칸은 `i` 줄 번호, `b` 기호, `code` 본문이고,
+   `mark` 는 줄 안에서 바뀐 낱말, `u` 는 한쪽에만 있는 줄 끝 `\\r` 입니다. 색만으로 구분하지 않도록
+   기호 칸의 +/− 를 남깁니다. 묶음 단위로 화면 밖을 건너뛰는 일은 보고서와 같습니다. */
+.mado-diff {
+    width: 100%;
+    font-family: ui-monospace, "Cascadia Mono", "D2Coding", Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #e2e8f0;
+}
+.mado-diff-chunk {
+    content-visibility: auto;
+}
+.mado-diff .u {
+    display: grid;
+    grid-template-columns: 3.6em 3.6em 1.4em minmax(0, 1fr);
+}
+.mado-diff .s {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.mado-diff .l {
+    display: grid;
+    grid-template-columns: 3.6em 1.4em minmax(0, 1fr);
+    min-width: 0;
+}
+.mado-diff .l + .l,
+.mado-diff-head.s > div + div {
+    border-left: 1px solid rgba(148, 163, 184, 0.25);
+}
+.mado-diff i,
+.mado-diff b {
+    font-style: normal;
+    font-weight: 400;
+    user-select: none;
+}
+.mado-diff i {
+    padding-right: 0.5em;
+    text-align: right;
+    color: #94a3b8;
+}
+.mado-diff b {
+    text-align: center;
+    color: #94a3b8;
+}
+.mado-diff code {
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-family: inherit;
+}
+.mado-diff .a { background: rgba(34, 197, 94, 0.13); }
+.mado-diff .a b { color: #86efac; }
+.mado-diff .a mark { color: inherit; background: rgba(34, 197, 94, 0.42); }
+.mado-diff .d { background: rgba(244, 63, 94, 0.13); }
+.mado-diff .d b { color: #fda4af; }
+.mado-diff .d mark { color: inherit; background: rgba(244, 63, 94, 0.42); }
+.mado-diff .e { background: rgba(148, 163, 184, 0.07); }
+.mado-diff u {
+    text-decoration: none;
+    color: #fde68a;
+}
+.mado-diff em {
+    margin-left: 0.8em;
+    font-style: normal;
+    color: #94a3b8;
+}
+.mado-diff-hunk {
+    padding: 2px 8px;
+    color: #7dd3fc;
+    background: rgba(56, 189, 248, 0.09);
+    overflow-wrap: anywhere;
+}
+.mado-diff-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    color: #cbd5e1;
+    background: #1e293b;
+}
+.mado-diff-head > div {
+    min-width: 0;
+    padding: 2px 8px;
+    overflow-wrap: anywhere;
+}
+.mado-diff-empty {
+    padding: 24px;
+    font-size: 12px;
+    text-align: center;
+    color: #94a3b8;
+}
+
 /* --- 입력창의 @언급 창 (mention_input.py) -----------------------------------
    입력창 바로 위에 뜹니다. 위치는 스크립트가 입력창 좌표로 정합니다(fixed). */
 .mado-comment-button {

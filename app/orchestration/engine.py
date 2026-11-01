@@ -8,6 +8,7 @@
 import asyncio
 import logging
 import uuid
+from functools import partial
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -429,7 +430,9 @@ class OrchestratorEngine:
                         if plan_message is not None and plan_message.msg_type != "error"
                         else opening.id
                     ],
+                    mark_boundary=partial(self._mark_boundary, workspace, turn_id),
                 )
+            await self._mark_boundary(workspace, turn_id, workspace_checkpoint.DEBATE_END)
 
             # 6. Phase 3: Final Consensus & Artifact Synthesis
             await self.synthesis_phase.conclude(
@@ -591,7 +594,9 @@ class OrchestratorEngine:
                             if state.plan_index is not None else opening.id
                         ],
                         resume=True, redo=redo,
+                        mark_boundary=partial(self._mark_boundary, workspace, turn_id),
                     )
+                await self._mark_boundary(workspace, turn_id, workspace_checkpoint.DEBATE_END)
                 # 정지 등으로 다시 불리지 않은 발언의 초안은, 그 도구 기록을 "끊김" 안내로 돌립니다.
                 # 합성의 초안은 바로 아래 합성이 씁니다.
                 await self.recorder.settle_drafts(db, state, setup, on_event=on_event, keep=(turns.KIND_SYNTHESIS,))
@@ -616,6 +621,19 @@ class OrchestratorEngine:
         except Exception as exc:  # noqa: BLE001 - 체크포인트는 턴의 부산물입니다
             logger.warning(f"Could not checkpoint the workspace {workspace} ({which} of turn {turn_id}): {exc}")
             return None
+
+    async def _mark_boundary(self, workspace: Path, turn_id: str, name: str) -> None:
+        """라운드·단계 경계의 스냅샷 (ADR-043). 이어 가는 턴은 이미 지난 경계를 지금 모습으로 덮어쓰지 않습니다."""
+        ref = workspace_checkpoint.turn_ref(turn_id, name)
+        try:
+            if await asyncio.to_thread(workspace_checkpoint.resolve, workspace, ref):
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - 체크포인트는 턴의 부산물입니다
+            logger.warning(f"Could not read the workspace checkpoint {ref}: {exc}")
+            return
+        await self._snapshot(workspace, turn_id, name)
 
     async def _close_checkpoint(
         self,

@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from app.agents.base import Agent
 from app.agents.llm_types import LLMUnavailableError
@@ -62,8 +62,12 @@ class DebatePhaseExecutor(PhaseExecutor):
         start_value: List[str],
         resume: bool = False,
         redo: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        mark_boundary: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> bool:
-        """전문가 토론 라운드를 진행합니다. 사용자가 중단 요청을 한 경우 True를 반환합니다."""
+        """전문가 토론 라운드를 진행합니다. 사용자가 중단 요청을 한 경우 True를 반환합니다.
+
+        `mark_boundary(이름)` 은 라운드·단계가 시작할 때 부릅니다 (작업 공간 경계 스냅샷, ADR-043).
+        """
         redo = dict(redo or {})
         strategy = get_strategy(setup.strategy_name)
         orchestrator_agent = setup.orchestrator
@@ -109,6 +113,7 @@ class DebatePhaseExecutor(PhaseExecutor):
                 replay=replay,
                 redo=redo,
                 between_steps=_sub_debate,
+                mark_boundary=mark_boundary,
             )
 
         start_round, spoken, record = 1, set(), turns.RoundRecord()
@@ -133,6 +138,8 @@ class DebatePhaseExecutor(PhaseExecutor):
                 break
 
             state.current_round = round_num
+            if mark_boundary is not None:
+                await mark_boundary(f"round-{round_num}")
             if on_event:
                 await on_event({
                     "type": EventType.ROUND_STARTED,

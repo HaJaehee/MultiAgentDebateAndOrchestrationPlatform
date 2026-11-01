@@ -832,8 +832,8 @@ so each one flips from `확인 중` as its answer arrives; the timer stops when 
 - **Conclusion card buttons** (`ChatFeed.set_turn_actions`), shown once the turn has ended:
   `call_split` forks the conversation at this turn ([Session Handoff §7](../orchestration/session-handoff.md));
   `auto_stories` drafts a skill from it ([Skills §10](../agents/skills.md)); `📁 N` (only when files
-  changed) opens the turn's changed files with diffs and `이 턴 되돌리기`
-  ([Workspace Checkpoints](../orchestration/workspace-checkpoints.md)). Live, they appear on
+  changed) opens the turn's changed files with [diffs](#141-code-diff-viewer-adr-043), by whole turn or round,
+  and `이 턴 되돌리기` ([Workspace Checkpoints](../orchestration/workspace-checkpoints.md)). Live, they appear on
   `turn_completed` (`synthesis_id`) and `workspace_checkpointed`; on reload, from the turn rows.
 - **Question cards** (violet, in the approval column): a specialist's question with option buttons, a
   free-text box (Enter sends), `건너뛰기` and a countdown `N초 후 답 없이 진행`. Answered elsewhere or
@@ -885,6 +885,40 @@ The rules live in [Retrying One Speech and Inline Comments](../orchestration/spe
     the source, the panel shows the parse error and the raw diagram text rather than going blank.
   - **JSON Summary Tab**: Structured session metadata.
 - **Action Toolbar**: Includes one-click **"Copy to Clipboard"** and **"Download File"** buttons for all extracted artifacts.
+- **`변경점` on code tabs** ([`code_compare.py`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/code_compare.py)):
+  swaps the code for a comparison with earlier code from this conversation. Nothing is read until the first
+  click. Candidates come from the speech record, by the same rule that collects code artifacts
+  ([`code_versions.py`](file:///d:/MultiAgentDebateOrchestration/app/code_versions.py)): same language,
+  written before this code, each distinct code once. Artifacts carry no link to their earlier versions, so the
+  closest match by shared words is only a suggestion: `비교 기준` lists every candidate with its turn, round,
+  speaker and similarity, and under 20% similar a note says it may be different code. If the record cannot be
+  read, code artifacts are compared with each other. `크게 보기` opens the same comparison across the window.
+
+### 1.4.1. Code Diff Viewer (ADR-043)
+
+[`diff_viewer.py`](file:///d:/MultiAgentDebateOrchestration/app/ui/components/diff_viewer.py) draws the diff for
+both the code tabs and the turn changes dialog ([Workspace Checkpoints §2](../orchestration/workspace-checkpoints.md#2-seeing-and-reverting));
+[`app/code_diff.py`](file:///d:/MultiAgentDebateOrchestration/app/code_diff.py) computes it and knows nothing about the screen.
+
+- **`통합` / `좌우`** redraw the same diff without recomputing it. The choice is kept per screen area. Code tabs
+  start unified because the panel is narrow; the dialog and `크게 보기` start side by side.
+- **Highlighting**: added and removed lines are colored and keep their `+`/`−` marks, so color is not the only
+  signal. Within a pair of similar lines, only the changed words are marked. Long lines wrap so both sides stay
+  readable together.
+- **Aligning**: similar lines share a row in order, so one inserted line does not push the rest out of line.
+  Blocks over 200 lines and lines over 2,000 characters get line colors only.
+- **Line endings**: a `\r` is shown (`␍`) only when one side of a pair has it, so a CRLF file does not show it on
+  every line and a file converted to LF shows what changed.
+- **Size**: `git diff` output is cut at 200,000 characters and says so (`앞부분만 표시`). Two pieces of code over
+  400,000 characters in total are not compared. HTML is built as one string on a worker thread rather than as
+  one NiceGUI element per line, and off-screen chunks are skipped with `content-visibility`. Measured: 310,000
+  characters compare in 0.2 seconds and draw in under 10 ms, producing 590 KB (unified) or 870 KB (side by side).
+- **Late answers**: only the latest request is drawn, so a slow file cannot replace the one clicked after it.
+- **Untrusted text**: everything from the model and the workspace goes through `_escape`, and `ui.html` keeps
+  DOMPurify on.
+
+Not included: syntax colors, comparing reports or diagrams, and code from before a speech was retried.
+Pinned in `tests/test_code_diff.py`.
 
 ### 1.5. Persona Editor Page ([app/ui/personas_page.py](file:///d:/MultiAgentDebateOrchestration/app/ui/personas_page.py))
 - Dedicated page accessible at `/personas/{session_id}`.

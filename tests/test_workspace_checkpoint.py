@@ -9,6 +9,7 @@
 
 import shutil
 import subprocess
+import time
 import uuid
 from pathlib import Path
 
@@ -89,6 +90,17 @@ def test_changes_diff_and_revert(repo):
     assert (repo / "gone.txt").read_text(encoding="utf-8") == "지워질 파일\n"
     assert not (repo / "src").exists(), "턴이 만든 파일과 그 빈 폴더는 사라집니다"
     assert "staged.txt" in _git(repo, "diff", "--cached", "--name-only")      # 인덱스는 여전히 그대로
+
+
+def test_a_same_size_edit_right_after_the_index_was_written_is_not_missed(repo):
+    """복사한 인덱스의 시각이 지금이 되면 git 의 재확인이 꺼져, 크기가 같은 수정을 변경 없음으로 봅니다."""
+    (repo / "same.txt").write_text("v = 0\n", encoding="utf-8")
+    _git(repo, "add", "same.txt")
+    start = wc.snapshot(repo, None)
+    (repo / "same.txt").write_text("v = 1\n", encoding="utf-8")
+    time.sleep(1.1)                                                           # 복사 시각이 수정보다 뒤의 초가 되도록
+    end = wc.snapshot(repo, None)
+    assert [(c.status, c.path) for c in wc.changes(repo, start, end)] == [("M", "same.txt")]
 
 
 def test_revert_refuses_when_a_file_changed_again_after_the_turn(repo):

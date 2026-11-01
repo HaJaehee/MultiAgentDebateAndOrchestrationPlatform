@@ -1,28 +1,112 @@
 """작업 공간 턴 파일 변경 내역(Diff) 조회 및 롤백 다이얼로그 (v1.5).
 
 결론 카드의 파일 칩(`ChatFeed.set_turn_actions`)을 클릭하면 호출됩니다.
-변경된 파일 목록에서 항목을 선택하면 상세 diff를 확인할 수 있으며,
+변경된 파일 목록에서 항목을 선택하면 통합·좌우 보기로 변경점을 확인할 수 있고(`DiffViewer`, ADR-043),
+라운드 경계 스냅샷이 있는 턴은 턴 전체와 라운드별 구간을 골라 볼 수 있습니다.
 `이 턴 되돌리기`를 통해 해당 턴에서 변경된 모든 파일을 턴 시작 전 상태로 안전하게 복원합니다
 (`app/workspace_checkpoint.py`, `app/session_ops.revert_turn_files`).
 
 * 해당 대화 세션이 실행 중인 동안에는 충돌 방지를 위해 되돌리기가 제한됩니다.
 * 턴 완료 이후 외부에서 추가로 수정된 파일이 발견되면 롤백을 중단하고 충돌 파일 목록을 안내합니다.
 * 이미 롤백된 턴은 중복 되돌리기를 수행하지 않습니다.
+* 되돌리기는 고른 구간과 상관없이 항상 턴 전체에 적용됩니다.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Coroutine, Optional
+from typing import Any, Callable, Coroutine, Dict, List, Optional
 
-from nicegui import ui
+from nicegui import run, ui
 
+from app.code_diff import parse_unified
 from app.session_ops import TurnChanges, revert_turn_files, turn_changes, turn_file_diff
 from app.timestamps import to_local
+from app.ui.components.diff_viewer import SPLIT, DiffViewer
+from app.workspace_checkpoint import FileChange, Segment
 
 logger = logging.getLogger(__name__)
 
 _STATUS_COLORS = {"A": "green-8", "M": "amber-9", "D": "red-8"}
+
+_NO_DIFF_PATH = "좌측 목록에서 파일을 선택하면 변경 내역(Diff)을 확인할 수 있습니다."
+
+
+class _ChangesView:
+    """창 하나의 구간 선택, 파일 목록, 변경점 칸."""
+
+    def __init__(self, changes: TurnChanges, *, mode: str, on_mode_change: Callable[[str], None]) -> None:
+        self.changes = changes
+        # 첫 항목은 턴 전체입니다. 없으면 그 턴에는 라운드 경계 스냅샷이 없습니다.
+        self.segments = [Segment("턴 전체", changes.start, changes.end, changes.files), *changes.segments]
+        self.segment = self.segments[0]
+        self.selected: Optional[str] = None
+        self.rows: Dict[str, ui.row] = {}
+        self.file_list: Optional[ui.column] = None
+        self.viewer = DiffViewer(mode=mode, on_mode_change=on_mode_change)
+
+    def build(self) -> None:
+        with ui.row().classes("w-full no-wrap gap-3 items-stretch h-[60vh]"):
+            with ui.column().classes("w-72 flex-shrink-0 h-full gap-1 flex-nowrap"):
+                if self.changes.segments:
+                    options = {i: f"{s.label} ({len(s.files)}개)" for i, s in enumerate(self.segments)}
+                    ui.select(options, value=0, label="구간", on_change=self._on_pick_segment).props(
+                        "dense outlined dark options-dense"
+                    ).classes("w-full text-xs flex-shrink-0").tooltip("턴 전체 또는 라운드별로 나눠 봅니다.")
+                with ui.scroll_area().classes("w-full flex-grow min-h-0 border border-slate-700 rounded"):
+                    self.file_list = ui.column().classes("w-full gap-0.5 p-1")
+                    self._render_files()
+            with ui.column().classes("flex-1 min-w-0 h-full gap-1 flex-nowrap"):
+                self.viewer.build()
+                self.viewer.set_caption(_NO_DIFF_PATH)
+
+    def _render_files(self) -> None:
+        self.rows = {}
+        self.file_list.clear()
+        with self.file_list:
+            for change in self.segment.files:
+                self.rows[change.path] = self._render_file(change)
+
+    def _render_file(self, change: FileChange) -> ui.row:
+        with ui.row().classes(
+            "w-full items-center gap-1.5 no-wrap px-1 py-0.5 rounded cursor-pointer hover:bg-slate-800"
+        ).on("click", lambda _, path=change.path: self.show_file(path)) as row:
+            ui.badge(change.label, color=_STATUS_COLORS.get(change.status, "slate-7")).props("dense text-[11px]")
+            ui.label(change.path).classes("text-xs font-mono truncate min-w-0").tooltip(change.path)
+        return row
+
+    async def _on_pick_segment(self, event: Any) -> None:
+        if event.value is None:
+            return
+        self.segment = self.segments[event.value]
+        self._render_files()
+        await self.open_first_file()
+
+    async def open_first_file(self) -> None:
+        """고르던 파일이 이 구간에도 있으면 그대로 두고, 없으면 첫 파일을 엽니다."""
+        files: List[FileChange] = self.segment.files
+        if not files:
+            self.selected = None
+            self.viewer.set_caption(self.segment.label)
+            self.viewer.show_message("이 구간에 바뀐 파일이 없습니다.")
+            return
+        paths = [c.path for c in files]
+        await self.show_file(self.selected if self.selected in paths else paths[0])
+
+    async def show_file(self, path: str) -> None:
+        if self.selected in self.rows:
+            self.rows[self.selected].classes(remove="bg-slate-800")
+        self.selected = path
+        if path in self.rows:
+            self.rows[path].classes(add="bg-slate-800")
+        self.viewer.set_caption(path)
+        segment, scope = self.segment, "턴" if self.segment is self.segments[0] else self.segment.label
+
+        async def compute() -> Any:
+            text = await turn_file_diff(self.changes, path, segment)
+            return await run.io_bound(parse_unified, text)
+
+        await self.viewer.load(compute, old_label=f"{scope} 이전", new_label=f"{scope} 이후")
 
 
 class TurnChangesDialog:
@@ -36,6 +120,8 @@ class TurnChangesDialog:
         self.session_factory = session_factory
         self.is_running = is_running
         self.on_reverted = on_reverted
+        # 통합·좌우 선택은 창을 다시 열어도 유지합니다.
+        self.diff_mode = SPLIT
 
     async def open(self, session_id: Optional[str], turn_id: str) -> None:
         if not session_id:
@@ -47,10 +133,14 @@ class TurnChangesDialog:
             return
         self._build(session_id, changes)
 
+    def _remember_mode(self, mode: str) -> None:
+        self.diff_mode = mode
+
     def _build(self, session_id: str, changes: TurnChanges) -> None:
         dialog = ui.dialog()
+        view = _ChangesView(changes, mode=self.diff_mode, on_mode_change=self._remember_mode)
         with dialog, ui.card().classes(
-            "w-[960px] max-w-[96vw] p-4 bg-slate-900 text-white border border-slate-700 gap-2"
+            "w-[1280px] max-w-[96vw] p-4 bg-slate-900 text-white border border-slate-700 gap-2"
         ):
             started = to_local(changes.started_at).strftime("%m-%d %H:%M") if changes.started_at else ""
             with ui.row().classes("w-full items-center justify-between no-wrap gap-3"):
@@ -64,26 +154,7 @@ class TurnChangesDialog:
                 ui.label("이미 변경 사항이 되돌려진 턴입니다. 작업 공간이 턴 시작 전 상태로 복원되어 있습니다.").classes(
                     "text-xs text-amber-300"
                 )
-            with ui.row().classes("w-full no-wrap gap-3 items-stretch"):
-                with ui.scroll_area().classes("w-72 h-[50vh] border border-slate-700 rounded"):
-                    with ui.column().classes("w-full gap-0.5 p-1"):
-                        for change in changes.files:
-                            with ui.row().classes(
-                                "w-full items-center gap-1.5 no-wrap px-1 py-0.5 rounded "
-                                "cursor-pointer hover:bg-slate-800"
-                            ).on("click", lambda _, c=change: self._show_diff(changes, c.path, viewer, title)):
-                                ui.badge(change.label, color=_STATUS_COLORS.get(change.status, "slate-7")).props(
-                                    "dense text-[11px]"
-                                )
-                                ui.label(change.path).classes("text-xs font-mono truncate min-w-0").tooltip(
-                                    change.path
-                                )
-                with ui.column().classes("flex-1 min-w-0 gap-1"):
-                    title = ui.label("좌측 목록에서 파일을 선택하면 변경 내역(Diff)을 확인할 수 있습니다.").classes(
-                        "text-xs text-slate-400"
-                    )
-                    with ui.scroll_area().classes("w-full h-[46vh] border border-slate-700 rounded"):
-                        viewer = ui.code("", language="diff").classes("w-full text-xs")
+            view.build()
             with ui.row().classes("w-full justify-end gap-2 mt-1"):
                 running = self.is_running(session_id)
                 revert_btn = ui.button(
@@ -102,17 +173,11 @@ class TurnChangesDialog:
                         "턴 완료 후 추가 수정된 파일이 있다면 롤백을 중단합니다."
                     )
                 ui.button("닫기", on_click=dialog.close).props("flat no-caps color=grey-4 dense")
+        dialog.on("hide", view.viewer.clear)
         dialog.open()
         if changes.files:
             # 첫 파일을 바로 보여 줍니다. 칩을 누른 사람은 대개 "무엇이 바뀌었나" 부터 봅니다.
-            ui.timer(0.05, lambda: self._show_diff(changes, changes.files[0].path, viewer, title), once=True)
-
-    async def _show_diff(self, changes: TurnChanges, path: str, viewer: ui.code, title: ui.label) -> None:
-        text = await turn_file_diff(changes, path)
-        if viewer.is_deleted:
-            return
-        title.set_text(path)
-        viewer.set_content(text or "(변경 내역을 표시할 수 없습니다 — 바이너리 파일이거나 빈 파일입니다.)")
+            ui.timer(0.05, view.open_first_file, once=True)
 
     def _confirm_revert(self, parent: ui.dialog, session_id: str, changes: TurnChanges) -> None:
         with ui.dialog() as confirm, ui.card().classes("p-4 w-[420px] bg-slate-900 text-white border border-slate-700"):

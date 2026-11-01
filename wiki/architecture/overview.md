@@ -165,6 +165,7 @@ flowchart TD
 | `app/orchestration/ledger_edit.py` | A person's direct edit of the decision ledger, v1.5.1 ([Conversation Memory §4.1](../orchestration/context-memory.md#41-editing-it-directly)) |
 | `app/bench.py` | Strategy comparison harness ([Bench](../operations/bench.md)) |
 | `app/ui/compare_page.py`, `app/ui/components/turn_changes.py`, `app/ui/components/skill_draft_dialog.py` | Compare page and the conclusion card's dialogs |
+| `app/code_diff.py`, `app/code_versions.py`, `app/ui/components/diff_viewer.py`, `app/ui/components/code_compare.py` | Code diffs in the turn dialog and on code tabs ([UI Components §1.4.1](../ui/components.md#141-code-diff-viewer-adr-043)) |
 
 ### 4.8. Module Boundaries
 Which package may import which is checked by a test. See [Module Boundaries](file:///d:/MultiAgentDebateOrchestration/wiki/architecture/module-boundaries.md), which also records the decisions of the v1.4.1 restructuring (§6).
