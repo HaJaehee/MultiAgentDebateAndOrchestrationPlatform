@@ -245,8 +245,8 @@ def _build_agent_card(
     card = ui.card().classes(
         "w-full bg-slate-900 border border-slate-800 p-4 rounded-xl shadow-md gap-3"
     )
-    # 목록에서 어느 카드가 어느 에이전트인지 색으로 바로 읽히게, 사람이 색을
-    # 정한 에이전트는 테두리도 그 색으로 칠합니다.
+    # 에이전트 식별성을 높이기 위해, 사용자 지정 테마 색상이 설정된 에이전트 카드는
+    # 테두리도 동일 색상으로 렌더링합니다.
     if (persona.card_color or "").strip():
         card.style(f"border-color: {style['badge_color']}")
 

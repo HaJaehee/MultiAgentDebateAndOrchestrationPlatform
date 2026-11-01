@@ -63,7 +63,7 @@ class ChatFeed:
         on_delete_comment: Optional[Callable[[str], Coroutine[None, None, bool]]] = None,
     ):
         self.on_send_message = on_send_message
-        # 토론이 도는 중에 들어온 입력과 정지 버튼의 행선지. 주어지지 않으면
+        # 토론 실행 도중 전달된 개입 입력 및 정지 요청 핸들러. 미지정 시
         # 예전처럼 토론 중에는 입력을 잠그고 정지 버튼도 숨깁니다.
         self.on_interject = on_interject
         self.on_stop = on_stop
@@ -180,7 +180,7 @@ class ChatFeed:
                 self.approvals.build()
                 self.plan.build()
 
-                # 쓸려 가는 막대. 글자가 한동안 오지 않아도 무언가 돌고 있다는
+                # 쉬머(Shimmer) 진행 막대. 스트리밍 지연 중에도 백그라운드 작업이 진행 중임을
                 # 것을 한눈에 보여줍니다.
                 self.progress_bar = ui.element("div").classes("feed-progress w-full")
                 self.progress_bar.set_visibility(False)
@@ -208,7 +208,7 @@ class ChatFeed:
             # 바닥 재조정. 예약이 없으면 아무것도 하지 않습니다.
             ui.timer(0.2, self.timeline.settle_scroll)
             # 스트리밍 카드 그리기. 조각마다 그리지 않고 여기서 모아 그립니다.
-            # 조각을 받는 쪽은 백그라운드 태스크라 거기서 타이머를 만들면 돌지 않으므로
+            # 청크를 수신하는 수신부는 백그라운드 태스크이므로 이벤트 루프 타이머가 정상 동작하도록
             # (`CardTimeline.scroll_to_bottom` 주석), 여기 만든 시계가 깃발을 보고 처리합니다.
             ui.timer(STREAM_RENDER_INTERVAL, self.timeline.flush_streams)
 
@@ -263,9 +263,9 @@ class ChatFeed:
     async def _handle_send(self) -> None:
         """같은 입력칸이 상황에 따라 새 턴이 되기도, 개입이 되기도 합니다.
 
-        토론이 도는 중에 보낸 글로 새 턴을 시작할 수는 없습니다 (러너가 세션당
-        하나만 돌립니다). 그렇다고 입력을 잠가 버리면 사람이 방향을 고칠 방법이
-        토론이 끝날 때까지 없으므로, 진행 중이면 개입으로 보냅니다.
+        토론 실행 도중 전달된 프롬프트로 새 턴을 즉시 시작할 수는 없습니다 (단일 세션 1개 턴 실행 원칙).
+        단, 입력을 차단하면 사용자가 개입하여 진행 방향을 전환할 수 없으므로,
+        진행 중인 토론에는 개입 메시지로 전달합니다.
         """
         if not self.input_field:
             return
@@ -275,7 +275,7 @@ class ChatFeed:
 
         # 무언가를 보냈다는 것은 그 결과를 보겠다는 뜻입니다. 앞서 스크롤을 잡아
         # 두었더라도 여기서 놓아 줍니다 (펼쳐 둔 카드는 그대로 둡니다 — 그건
-        # 사람이 접기 전까지 계속 읽고 있는 글입니다).
+        # 사용자가 수동으로 축소하기 전까지 열람 상태를 유지합니다).
         self.timeline.release_scroll()
 
         if self.is_busy:
@@ -376,11 +376,11 @@ class ChatFeed:
         self._refresh_live_indicator()
 
     def _refresh_live_indicator(self) -> None:
-        """'지금 돌고 있다' 를 화면 세 곳에 반영합니다.
+        """토론의 활성 실행 상태를 UI의 3개 영역에 실시간 반영합니다.
 
         같은 사실을 세 번 말하는 것은 자리마다 보이는 조건이 다르기 때문입니다.
         상태 막대는 늘 보이고, 진행 막대는 곁눈으로도 움직임이 잡히고, 아래쪽
-        생성 중 줄은 사람이 실제로 글을 읽고 있는 자리에 붙습니다.
+        실시간 생성 표시줄은 사용자의 현재 시선이 위치하는 피드 최하단에 부착됩니다.
         """
         if not self.alive:
             return
@@ -392,7 +392,7 @@ class ChatFeed:
             else:
                 self.status_bar.classes(remove="feed-status-live")
         if self.status_label is not None and not self.status_label.is_deleted:
-            # 대기 중일 때까지 밝게 두면 정작 도는 중임을 알리지 못합니다.
+            # 대기 중 상태까지 강조 표시하면 실제 턴 실행 중 상태와의 시각적 구분이 모호해집니다.
             self.status_label.classes(
                 replace="font-semibold truncate min-w-0 "
                         + ("text-sm text-indigo-100" if busy else "text-xs text-slate-300")
@@ -410,7 +410,7 @@ class ChatFeed:
         """경과 시간을 1초마다 갱신합니다.
 
         서버 이벤트에 기대지 않는 것이 핵심입니다. 도구 하나가 30초를 잡아먹는
-        동안에는 이벤트가 하나도 오지 않고, 그 침묵이 바로 사람이 "멈췄다" 고
+        동안에는 이벤트가 발행되지 않으며, 사용자에게 시스템이 일시 정지된 것처럼 오인될 수 있습니다.
         느끼는 구간입니다. 시계는 그동안에도 움직입니다.
         """
         if not self.alive:
@@ -441,7 +441,7 @@ class ChatFeed:
             return False
         if (self.input_field.value or "").strip():
             return False
-        # 앱이 붙인 참조 블록은 떼고 사람이 쓴 글만 돌려줍니다. 다시 보내면 새로 붙습니다.
+        # 시스템이 자동 첨부한 참조 블록을 분리하고 사용자가 작성한 원본 입력 텍스트만 복원합니다. 재전송 시 새로 생성됩니다.
         self.input_field.value = strip_reference_block(text)
         return True
 

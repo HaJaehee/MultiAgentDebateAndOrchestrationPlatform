@@ -240,7 +240,7 @@ def protect_math(text: str) -> Tuple[str, Dict[str, str]]:
     def handle_prose(segment: str) -> str:
         def repl(m: re.Match) -> str:
             if m.group("dd") is not None:
-                tex, display = m.group("dd"), True       # `$$…$$` 는 쓴 사람이 수식이라고 밝힌 것입니다
+                tex, display = m.group("dd"), True       # `$$…$$`는 작성자가 명시적으로 선언한 디스플레이 수식
             else:
                 tex = next(m.group(k) for k in ("br", "pa", "sd") if m.group(k) is not None)
                 display = m.group("br") is not None

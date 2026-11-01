@@ -34,7 +34,7 @@ ATTENTION_JS = """
 (function () {
     if (window.MadoAttention) return;
 
-    // 물음 id → 띄워 둔 알림. 다른 화면에서 답했거나 시간이 지나면 닫습니다.
+    // 요청 id → 활성화된 알림 객체 매핑. 타 화면에서 처리되었거나 타임아웃 시 닫습니다.
     var live = {};
 
     function wanted() {
@@ -58,7 +58,7 @@ ATTENTION_JS = """
     function looking() { return !document.hidden && document.hasFocus(); }
 
     function open(title, body, id) {
-        // tag 가 같으면 브라우저가 한 장으로 합칩니다. 같은 물음을 여러 탭이 띄워도 알림은 하나입니다.
+        // tag가 동일하면 브라우저가 단일 알림으로 병합합니다. 동일 요청을 복수 탭에서 띄워도 알림은 하나로 유지됩니다.
         return new Notification(title, { body: body, tag: id, icon: iconUrl(), requireInteraction: true });
     }
 
@@ -113,7 +113,7 @@ ALERT_STATES: Dict[str, Tuple[str, str, str]] = {
 
 
 def waiting_title(count: int, brand: str) -> str:
-    """기다리는 물음이 있을 때의 탭 제목."""
+    """대기 중인 사용자 승인/결정 요청이 존재할 때의 브라우저 탭 타이틀 관리자."""
     return f"({count}) 승인 대기 — {brand}"
 
 
@@ -199,9 +199,9 @@ async def session_titles(session_ids: Iterable[str]) -> Dict[str, str]:
 
 
 class WaitingWatcher:
-    """한 탭이 모든 대화의 물음을 지켜봅니다. 탭마다 하나이고, 탭이 닫히면 구독을 끊습니다.
+    """단일 브라우저 탭에서 전체 세션의 대기 요청 상태를 모니터링합니다. 탭별로 싱글턴 동작하며 탭 종료 시 구독을 해제합니다.
 
-    `RunBinding` 은 지금 보는 대화 하나에만 붙으므로 다른 대화의 물음은 그쪽으로 오지 않습니다.
+    `RunBinding`은 현재 활성 세션에만 바인딩되므로 타 세션의 대기 요청은 전달되지 않습니다.
     """
 
     def __init__(
@@ -220,7 +220,7 @@ class WaitingWatcher:
         self.is_showing = is_showing
         self.on_changed = on_changed
         self.on_open = on_open
-        # 이 탭이 이미 아는 물음 (id → (대화 id, 물음)). 여기 없는 것만 새 물음으로 알립니다.
+        # 현재 탭에서 이미 인지한 대기 요청 (id → (세션 id, 요청 객체)). 신규 항목만 알림을 발행합니다.
         self.known: Dict[str, Tuple[str, WaitingRequest]] = {}
         self._queue: Optional["asyncio.Queue[Dict[str, Any]]"] = None
         self._task: Optional[asyncio.Task] = None
@@ -229,7 +229,7 @@ class WaitingWatcher:
         ui.on(OPEN_SESSION_EVENT, self._handle_open)
 
     def start(self) -> None:
-        """구독을 시작합니다. 이미 떠 있던 물음은 사람이 지금 이 탭에서 보고 있으니 다시 울리지 않습니다."""
+        """구독을 시작합니다. 기 존재하는 대기 요청은 사용자가 현재 탭에서 확인 가능하므로 중복 알림을 방지합니다."""
         self.known = self._read()
         self.tab_title.show(len(self.known))
         self._queue = self.runner.event_bus.subscribe(WAITING_CHANNEL)
@@ -290,7 +290,7 @@ class WaitingWatcher:
             }
             for sid, request in arrived
         ]) + ")")
-        # 지금 보는 대화의 카드는 그 화면이 이미 그리고 알립니다. 그 밖의 물음은 여기가 아니면 알 길이 없습니다.
+        # 현재 활성 세션의 승인 카드는 해당 화면에서 직접 렌더링 및 안내합니다. 그 외 세션의 요청은 본 감시자가 중개합니다.
         for sid, request in arrived:
             if not self.is_showing(sid):
                 ui.notify(

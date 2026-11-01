@@ -80,8 +80,8 @@ class UnfinishedTurnBar:
         ):
             ui.label("끊긴 턴을 버리시겠습니까?").classes("text-base font-bold text-red-300")
             ui.label(
-                "이 턴의 요청과 기록된 발언, 끝나지 못한 발언이 남긴 도구 기록을 삭제합니다. "
-                "요청 내용은 입력창으로 복원됩니다. 작업 공간의 파일은 그대로 남습니다."
+                "해당 턴의 요청 및 기록된 발언, 미완료 발언에서 실행된 도구 로그를 삭제합니다. "
+                "요청 내용은 입력창으로 복원됩니다. 작업 공간의 파일은 그대로 유지됩니다."
             ).classes("text-xs text-slate-300")
             ui.label(
                 "지금까지의 발언으로 결론만 받으시려면 '지금까지로 결론'을 이용하십시오. "
@@ -96,7 +96,7 @@ class UnfinishedTurnBar:
                 )
 
     def set_turn(self, info: Optional[Dict[str, Any]]) -> None:
-        """끊긴 턴 안내를 띄우거나(`info`) 걷습니다(None). 토론이 도는 동안에는 숨깁니다."""
+        """중단된 턴 복구 배너를 표시하거나(`info`) 해제합니다(None). 토론 실행 중에는 비표시합니다."""
         self._info = dict(info) if info else None
         self.refresh()
 

@@ -74,7 +74,7 @@
 | :--- | :--- |
 | **P0 안전망** | `tests/test_public_surface.py` (공개 표면 import·시그니처), `tests/test_layering.py` (AST 로 의존 방향 검사 — 남은 위반은 허용 목록, 단계마다 줄임) |
 | **P1 잔여물** | 엔진·export 재내보내기 삭제, 중복 상수·함수 통합, `get_mcp_manager()` 삭제, 패키지 `__init__` 즉시 import 축소, `EventCallback` 한 벌 |
-| **P2 이벤트 프로토콜** | `orchestration/events.py` — 이벤트 이름 상수 + `EventCallback`. 내보내는 쪽은 상수, 받는 쪽은 `{type: handler}` 표. `TurnRun.apply` 를 이벤트별 처리로 |
+| **P2 이벤트 프로토콜** | `orchestration/events.py` — 이벤트 이름 상수 + `EventCallback`. 발행 측은 상수 정의, 수신 측은 `{type: handler}` 매핑. `TurnRun.apply` 를 이벤트별 처리로 |
 | **P3 엔진 2차 분해** | 실행기가 엔진을 되부르지 않도록 `speech.py`(발언 실행), `persistence.py`(기록), `context_builder.py`(맥락·요약·장부), `lifecycle.py`(턴 시작·재개) 로 나누고, `debate.py` 는 `rounds`·`parallel`·`graph` 로. 엔진은 조립과 `run_turn`·`resume_turn` 만 |
 | **P4 화면 공용층** | `ui/shared/` (화면 틀·마크다운 확장·피드 메시지 로드 등) 로 trial·easy 상호 import 제거. 에이전트 초안·카탈로그 같은 도메인 조각은 화면 밖으로. 세 화면 공용 실행 바인딩. `create_ui` 를 `ui/expert/` 로 |
 | **P5 큰 컴포넌트** | `roster.py` → `ui/components/roster/` (control · agent_card · graph_row · dialogs/), conf 적용·잠금 규칙은 NiceGUI 없는 서비스로. `chat_feed.py` → `ui/components/chat_feed/` (feed · cards · approvals …) |
@@ -111,7 +111,7 @@
 **AppServices 는 하지 않았습니다.** 전역 `get_*()` 는 이미 각 모듈이 처음 불릴 때 만들어 들고 있고, 테스트와
 MADOWarGame 구동기가 그 이름에 기대고 있습니다. 컨테이너를 하나 더 두면 소유자가 둘이 되어 오히려 읽기 어렵습니다.
 대신 시작 순서를 `app/main.py` 의 `lifespan` 한 곳에서 정하고, 모듈 설명에 적어 두었습니다 (DB 엔진이 처음
-부른 쪽의 주소로 고정된다는 주의 포함).
+호출 측의 엔드포인트 주소로 바인딩된다는 유의사항 포함).
 
 ## 8. 결과
 

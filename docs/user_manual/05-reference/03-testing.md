@@ -23,7 +23,7 @@ pytest -k "snapshot"
 | `test_mcp.py` | MCP 클라이언트 stdio 연결 수립, 도구 스키마 검색 및 안전 실행 |
 | `test_remote_mcp.py` | 원격(HTTP/SSE) MCP 서버: 설정 유효성, 전송 방식 자동 폴백, 인증 토큰 격리 |
 | `test_anythingllm_kb.py` | AnythingLLM 문서 검색(`kb`): Mock AnythingLLM 서버 기반 검색 결과 및 근거 출처 포맷팅, 실패 시 오류 처리, 작업 공간 허용 목록(allowlist), stdio 연결 및 읽기 권한 판정, 실제 도구 루프 연동 검증 (v1.5.1) |
-| `test_llm_offload.py` | 스트림 조립(`stream_chunk_builder`)을 스레드에서: 조립 중에도 다른 코루틴이 도는지, 답·사용량 불변, 조립 중 취소 (v1.5.1) |
+| `test_llm_offload.py` | 스트림 조립(`stream_chunk_builder`)을 워커 스레드로 분리: 조립 중에도 타 코루틴의 논블로킹 보장, 답·사용량 불변, 조립 중 취소 (v1.5.1) |
 | `test_tool_loading.py` | 도구 스키마 지연 로딩: 분할 기준, 지침 프롬프트 불변성, 온디맨드 로드 및 직호출 처리, 세션 내 도구 메모리, 도구 보안 정책, 세션 재개 (ADR-039) |
 | `test_plugins.py` | 플러그인: 디렉터리 및 엔트리포인트 탐색/로드, 오류 플러그인 격리, 예약어 가로채기 차단, 디렉터리 보호, 전략 예외 발생 시 안전 폴백, 매뉴얼 예제 실행 검증 (ADR-042) |
 | `test_host_tools.py` | 호스트 도구 레지스트리: 내장 도구 순서 보존, 플러그인 활성화 및 도구 보안 정책 판정, 플러그인 예외 격리, 도구 루프 연동 (ADR-042) |
@@ -102,7 +102,7 @@ def test_a_write_that_fails_validation_never_touches_the_file(conf):
     assert conf.read_text(encoding="utf-8") == before
 ```
 
-입력 유효성 검증 단계가 디스크 I/O 이전에 엄격히 선행되므로, 유효하지 않은 데이터로 인해 불완전한 반쪽짜리 설정 파일이 남는 사고를 원천 방지합니다.
+입력 유효성 검증 단계가 디스크 I/O 이전에 엄격히 선행되므로, 유효하지 않은 데이터로 인해 불완전하게 손상된 설정 파일이 잔류하는 오류를 원천 방지합니다.
 
 ### 실제 MCP 서버 프로세스 반영 여부 검증
 

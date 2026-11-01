@@ -166,7 +166,7 @@ def build_start() -> None:
                     ui.notify(str(exc), type="negative")
                     start_button.enable()
                     return
-                except Exception as exc:  # noqa: BLE001 - 시작하지 못한 이유는 사람에게 보여야 합니다
+                except Exception as exc:  # noqa: BLE001 - 세션 시작 실패 사유는 사용자에게 명확히 피드백
                     logger.error("Could not start a trial debate: %s", exc, exc_info=True)
                     ui.notify(f"토론을 시작하지 못했습니다: {exc}", type="negative")
                     start_button.enable()

@@ -122,7 +122,7 @@ MADO는 기본적으로 로컬 루프백(`127.0.0.1`) 환경에서만 인입 요
 
 ### 개별 모델 폴백 — `llm.fallback`
 
-에이전트가 자기만의 연결을 쓰다가 연결 문제로 실패하면 전역 기본 연결로 물러서게 합니다 (ADR-030). 에이전트에게 상속되는 값이 아니라 전역 연결에 딸린 설정입니다.
+에이전트가 개별 연결을 사용하다가 네트워크 장애 등으로 실패할 경우 전역 기본 연결로 폴백하도록 설정합니다 (ADR-030). 에이전트에게 상속되는 값이 아니라 전역 연결에 딸린 설정입니다.
 
 | 키 | 타입 | 기본값 | 설명 |
 | :--- | :--- | :--- | :--- |
@@ -214,7 +214,7 @@ MADO는 기본적으로 로컬 루프백(`127.0.0.1`) 환경에서만 인입 요
 | `allowed_mcp_servers` | list[str] | `[]` | 해당 에이전트에게 호출 권한이 허용된 MCP 도구 서버 목록입니다. |
 | `allowed_skills` | list[str] | `[]` | 해당 에이전트가 불러 사용할 수 있는 스킬(스킬 폴더명) 목록입니다. [스킬](../03-core/09-skills.md)을 참조하십시오. |
 | `allowed_modalities` | list[str] | `[]` | @언급된 파일 및 도구가 반환한 미디어 파일 중 본문 내용을 모델에게 직접 전달할 형식 목록입니다 (`image`, `audio`, `video`, `document`). 비어 있는 경우 텍스트 및 파일 경로 문자열만 전달됩니다. [입력 모달리티](../04-workflows/01-debate-turn.md#입력-모달-파일-내용을-직접-전달) 가이드를 참조하십시오. |
-| `peer_consultation` | object | 없음 | `allowed_mcp_servers` 에 `"peers"` 가 있을 때 물을 상대(`targets`)와 자문받는 쪽의 도구 상한(`max_tool_iterations`, 기본 3)입니다. [동료 자문 (peers)](../03-core/10-peer-consultation.md)을 참조하십시오. |
+| `peer_consultation` | object | 없음 | `allowed_mcp_servers` 에 `"peers"` 가 있을 때 질의 대상 에이전트(`targets`)와 피자문 전문가의 도구 상한(`max_tool_iterations`, 기본 3)입니다. [동료 자문 (peers)](../03-core/10-peer-consultation.md)을 참조하십시오. |
 | `debate_priority` | int | `100` | 라운드 내 발언 순서입니다. 값이 작을수록 선순위이며, 동일할 경우 파일 선언 순서를 따릅니다. |
 | `debate_stance` | str | `neutral` | 토론 진영 속성이며 `proponent`(제안), `critic`(비판), `neutral`(중립)을 지원합니다 (디베이트 전략에서 활용). |
 | `system_prompt` | str \| list[str] | `""` | 에이전트의 기본 시스템 프롬프트(페르소나)입니다. |

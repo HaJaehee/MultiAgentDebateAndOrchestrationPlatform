@@ -83,7 +83,7 @@ app/
 │   ├── paths.py                     124   프로젝트 루트·데이터 폴더·작업 공간·아이콘 저장소
 │   ├── schema.py                    742   Pydantic 모델과 기본값
 │   ├── loader.py                    101   conf.json 읽기·쓰기, get_config 싱글턴
-│   └── editors.py                   680   화면에서 고친 값을 conf.json 에 되쓰기
+│   └── editors.py                   680   UI 수정값을 conf.json에 반영
 │
 ├── agents/
 │   ├── base.py                      215   Agent 모델, 카드 색·아이콘
@@ -244,7 +244,7 @@ app/
 | 에이전트 사용자 질문 | `agents/ask_user.py` · 응답 대기는 `orchestration/control.py`, UI 카드는 `ui/components/chat_feed/approvals.py` |
 | 전략 비교 벤치마크 | `bench.py` · 테스트 시나리오는 루트 디렉터리의 `bench/` |
 | 결론 기반 스킬 초안 생성 | `orchestration/skill_draft.py` · 화면은 `ui/components/skill_draft_dialog.py` |
-| 버전·저작자 표기 | `about.py` (여기만 고치면 전부 따라옵니다) |
+| 버전·저작자 표기 | `about.py` (이곳만 수정하면 전체에 일괄 반영) |
 | DB 스키마 | `database/models.py` |
 
 ---

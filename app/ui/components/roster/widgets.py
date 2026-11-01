@@ -45,7 +45,7 @@ def peers_choice(
 
     오케스트레이터는 켜 두어도 쓰지 않으므로 새로 켤 수 없게 합니다. 이미 켜져 있으면
     풀 수는 있게 남겨 둡니다. `on_select` 가 있으면 체크박스 옆에 '에이전트 선택' 버튼과
-    지금 고른 것의 요약(`summary`)을 붙이고, 그 요약 라벨을 돌려줍니다 (고친 뒤 다시 쓰라고).
+    선택 항목의 요약(`summary`) 텍스트를 바인딩하고, 변경 시 갱신할 수 있도록 라벨 컴포넌트를 반환합니다.
     """
     orchestrator = agent_key == ORCHESTRATOR_KEY
     text = "text-xs" if compact else "text-[13px]"
@@ -64,7 +64,7 @@ def peers_choice(
                 "flat dense no-caps size=sm color=indigo-3"
             ).classes("text-[12px]")
             select_btn.bind_enabled_from(box, "value")
-            select_btn.tooltip("peers 로 질문할 수 있는 상대와 자문받는 쪽의 도구 호출 상한을 고릅니다.")
+            select_btn.tooltip("peers로 질의할 수 있는 대상 에이전트 및 피자문 전문가의 도구 호출 상한을 설정합니다.")
             summary_label = ui.label(summary).classes("text-[11px] text-slate-400 truncate")
         elif not compact:
             ui.label(

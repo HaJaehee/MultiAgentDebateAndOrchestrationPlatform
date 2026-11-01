@@ -1,7 +1,7 @@
 """체험 화면이 읽고 쓰는 것 — 내 대화, 내 사본, 평가, 결과.
 
-모든 조회는 **방문자 id 로 거릅니다.** 대화 id 는 주소창에 드러나므로, 남의 대화 id 를 적어
-넣어도 "없는 대화" 로 보여야 합니다. 그래서 대화를 가져오는 길은 `owned_session()` 하나입니다.
+모든 조회의 접근 권한은 **방문자 ID 기준으로 격리**됩니다. 세션 ID는 URL에 노출되므로, 타인의 세션 ID를
+임의 입력하더라도 부재한 세션으로 응답해야 합니다. 따라서 세션 조회는 `owned_session()`으로 일원화합니다.
 """
 
 from __future__ import annotations
@@ -88,7 +88,7 @@ async def list_user_sessions(db: AsyncSession, user_id: str) -> List[SessionRow]
 
 
 async def owned_session(db: AsyncSession, user_id: str, session_id: str) -> Optional[TrialSessionModel]:
-    """이 방문자의 대화면 그 표시를, 아니면(없거나 남의 것) None."""
+    """현재 방문자의 세션이면 해당 엔티티를, 부재하거나 타인의 세션이면 None을 반환."""
     row = (await db.execute(
         select(TrialSessionModel)
         .join(SessionModel, SessionModel.id == TrialSessionModel.session_id)

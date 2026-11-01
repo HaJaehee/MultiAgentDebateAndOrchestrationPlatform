@@ -57,9 +57,9 @@ def clip_reloaded_output(text: str, limit: int = MAX_RELOADED_TOOL_OUTPUT) -> st
     )
 
 
-# 입력창 문구. 토론이 도는 중에는 같은 칸이 "새 요청" 이 아니라 "개입" 으로
-# 동작하므로, 무엇이 될지 문구로 먼저 알려 줍니다. props 로 넘어가는 값이라
-# 큰따옴표는 쓰지 않습니다.
+# 입력창 플레이스홀더. 토론 실행 중에는 동일 입력 필드가 "새 요청"이 아닌 "개입"으로
+# 동작하므로, 현재 입력 모드를 명확히 고지합니다. props로 전달되므로
+# 큰따옴표는 사용하지 않습니다.
 IDLE_PLACEHOLDER = "멀티 에이전트에게 토론 및 설계를 요청할 목표나 질문을 입력하십시오... (Shift+Enter 줄바꿈)"
 INTERJECT_PLACEHOLDER = "토론 진행 중 — 지금 전송하시면 다음 발언 순서에 개입 메시지로 전달됩니다 (Shift+Enter 줄바꿈)"
 
@@ -131,7 +131,7 @@ DECISION_STYLES = {
     },
     "context_window": {
         # 컨텍스트의 무응답은 마무리가 아닙니다 — 오래된 것부터 생략하고 계속
-        # 돕니다. 사람이 자리에 없다고 토론을 접을 이유는 없습니다.
+        # 진행합니다. 사용자 무응답 시에도 토론을 임의 종료하지 않고 기본 트리밍을 적용합니다.
         "timeout_label": "자동 생략",
         "icon": "compress",
         "bar": "bg-orange-950/50 border-orange-600/70",
@@ -181,8 +181,8 @@ PLAN_COMMENT_HINT = "작성하면 오케스트레이터가 계획을 다시 씁�
 def toggled_visibility(visible: bool, value: Any) -> bool:
     """접는 버튼을 눌렀을 때 그 칸이 보일지. 글이 적힌 칸은 접지 않습니다.
 
-    접힌 칸의 글도 답에 실립니다. 적어 둔 것이 보이지 않는 채로 전달되면, 무엇을 보냈는지
-    사람이 알 수 없습니다.
+    축소된 필드의 내용도 전송 페이로드에 포함됩니다. 입력한 내용이 화면에 보이지 않은 채 전달되면
+    사용자가 전송 내용을 확인하기 어렵기 때문입니다.
     """
     if visible and str(value or "").strip():
         return True
@@ -192,9 +192,8 @@ def toggled_visibility(visible: bool, value: Any) -> bool:
 def background_paint(color: str) -> Tuple[str, str]:
     """에이전트의 색으로 배경을 칠하는 (클래스, 인라인 스타일). 아바타가 칠해지는 것과 같은 규칙입니다.
 
-    에이전트의 색은 Quasar 색 이름(`teal-8`)이거나 사람이 고른 CSS 색(`#009688`)입니다. 이름이면
-    Quasar 의 배경 클래스를, CSS 색이면 인라인 스타일을 씁니다. 표에 적어 둔 근사값(`badge_color`)을
-    쓰면 아바타와 살짝 다른 색이 됩니다.
+    에이전트 테마 색상은 Quasar 컬러 키워드(`teal-8`) 또는 사용자 지정 CSS 컬러 코드(`#009688`)입니다. 키워드이면
+    Quasar 배경 유틸리티 클래스를, CSS 컬러 코드이면 인라인 스타일을 적용합니다.
     """
     value = (color or "").strip()
     if not value:
@@ -218,7 +217,7 @@ OUTCOME_STYLES = {
 }
 
 BAR_CLASSES = "w-full items-center gap-2 px-3 py-2 rounded-lg text-xs flex-nowrap"
-# 끊긴 턴 안내 줄 (ADR-024). 한도·승인 물음과 달리 토론이 돌지 않을 때 뜨므로 보라색으로 구분합니다.
+# 중단된 턴 복구 안내 배너 (ADR-024). 한도/승인 요청과 달리 토론 유휴 상태에서 노출되므로 보라색 계열로 구분합니다.
 UNFINISHED_BAR_CLASSES = (
     "w-full items-center gap-2 px-3 py-2 rounded-lg text-xs border "
     "bg-violet-950/50 border-violet-700/70"
@@ -257,7 +256,7 @@ def unfinished_turn_text(info: Dict[str, Any]) -> str:
             pass
     facts.append(f"전문가 발언 {int(info.get('speeches') or 0)}개 기록됨")
     if info.get("orphan_tools"):
-        facts.append(f"끝나지 못한 발언이 실행한 도구 {int(info['orphan_tools'])}건")
+        facts.append(f"미완료 발언에서 실행된 도구 {int(info['orphan_tools'])}건")
     if info.get("resumable_speeches") and info.get("can_continue"):
         facts.append(f"도구 단위로 이어 갈 발언 {int(info['resumable_speeches'])}개")
     parts.append(" · ".join(facts) + ".")
@@ -314,8 +313,8 @@ def _card_clock_text(msg: Dict[str, Any]) -> Tuple[str, str]:
         return f"{finished.strftime(clock)} 종료", speech_time_text(msg)
 
     end = finished.strftime(clock if finished.date() == started.date() else "%m-%d " + clock)
-    # 경과 시간은 종료 시각 **오른쪽에**, 무엇의 시간인지 이름을 붙여 적습니다. 숫자만
-    # 두면 "2분 5초" 가 경과인지 남은 시간인지 읽는 사람이 짐작해야 합니다.
+    # 경과 시간은 종료 시각 **오른쪽에** 라벨과 함께 명시합니다. 숫자만 단독 표기할 경우
+    # 소요 시간인지 잔여 시간인지 사용자가 혼동할 수 있습니다.
     label = f"{started.strftime(clock)} → {end} · 경과 {format_duration(t['seconds'])}"
     return label, speech_time_text(msg)
 

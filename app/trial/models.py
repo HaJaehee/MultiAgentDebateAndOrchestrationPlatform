@@ -54,7 +54,7 @@ class TrialSessionModel(Base):
 
 
 class TrialTemplateCopyModel(Base):
-    """방문자가 템플릿을 복사해 고친 것. 본인만 보고 씁니다."""
+    """방문자가 템플릿을 복제하여 커스텀한 사본 모델. 본인 세션에만 노출됩니다."""
 
     __tablename__ = "trial_template_copies"
 
@@ -69,7 +69,7 @@ class TrialTemplateCopyModel(Base):
 
 
 class TrialFeedbackModel(Base):
-    """결과에 대한 평가. 한 사람이 한 대화에 하나 (고치면 덮어씁니다)."""
+    """토론 결과에 대한 평가 모델. 세션당 1건 등록 (재입력 시 갱신)."""
 
     __tablename__ = "trial_feedback"
     __table_args__ = (UniqueConstraint("session_id", "user_id", name="uq_trial_feedback"),)

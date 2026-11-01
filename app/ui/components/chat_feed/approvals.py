@@ -43,7 +43,7 @@ class ApprovalCards:
     ):
         self.alive = alive
         # 도구 승인 카드의 답 (요청 id, 결정, 허용 범위, 거부 사유) → 받아들여졌는가.
-        # 범위가 틀리면 받는 쪽이 알리고 False 를 돌려주며, 그때 카드는 남습니다.
+        # 범위 유효성 검증 실패 시 수신 핸들러가 오류를 반환하며 승인 카드는 닫히지 않고 유지됩니다.
         self.on_tool_approval = on_tool_approval
         # 에이전트 사용자 질문 응답 콜백 (질문 ID, 답변 문자열 — 빈 문자열은 건너뛰기) → 성공 여부.
         self.on_user_question = on_user_question
@@ -316,9 +316,9 @@ class PlanApprovalCard:
     def set_plan_approval(self, info: Optional[Dict[str, Any]]) -> None:
         """계획 승인 카드를 띄우거나(`info`) 걷습니다(None).
 
-        같은 요청의 카드가 이미 떠 있으면 **그대로 둡니다**. 스냅샷 복원이나 다시 붙기로 같은
-        카드가 한 번 더 들어오는 일이 흔한데, 그때마다 다시 그리면 사람이 고치던 태스크와 적던
-        의견이 사라집니다.
+        동일 요청의 카드가 이미 표시 중인 경우 **현재 상태를 유지**합니다. 스냅샷 복원 시 동일 카드가
+        재전달될 수 있으며, 매번 리렌더링하면 사용자가 편집 중이던 태스크 및 입력 피드백이
+        초기화되기 때문입니다.
         """
         request_id = str((info or {}).get("id") or "")
         if self._card is not None and request_id and self._card.get("id") == request_id:
@@ -399,9 +399,9 @@ class PlanApprovalCard:
                                     options[int(e.value or 0)]
                                 ),
                             ).props(f"dense dark {PLAN_RADIO_SIZE}").classes("text-xs text-slate-300")
-                        # 비어 있는 칸을 펼쳐 두면 채워야 하는 칸처럼 보입니다. 완료 기준과 의견은
-                        # 버튼으로 접어 두고, 누른 사람에게만 엽니다. 제안된 완료 기준이 있으면 그
-                        # 칸은 처음부터 보입니다 — 승인하는 내용의 일부이기 때문입니다.
+                        # 비어 있는 필드를 기본 노출하면 필수 입력처럼 보일 수 있으므로 완료 기준과 피드백은
+                        # 버튼으로 기본 축소해 두고 사용자가 명시적으로 열 때만 표시합니다. 제안된 완료 기준이 있으면
+                        # 해당 필드는 초기부터 노출합니다.
                         done_when = str(task.get("done_when") or "")
                         with ui.row().classes("w-full items-center gap-1.5"):
                             if not done_when:

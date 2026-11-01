@@ -1,14 +1,14 @@
-"""체험 템플릿 — 누가 어떤 방식으로 토론하고, 사람에게 무엇을 묻는지.
+"""체험 템플릿 — 참여 에이전트 구성, 토론 전략, 사용자 사전 질의 항목 정의.
 
 템플릿 하나는 **시작하기 전의 대화 한 벌**입니다. 참여자(인격과 기반 에이전트), 토론 방식,
 토론 횟수, 커스텀 지침, 그리고 시작 양식(입력 칸과 그 값을 요청문에 끼우는 틀)을 담습니다.
 
 ## 어디에 있는가
 
-* **공식 템플릿**은 `trial_templates/*.json` 파일입니다 (`trial.templates_dir`). 운영자가 고치고,
-  DB 를 비워도 남습니다. 파일마다 따로 검사해서, 하나가 깨져도 나머지는 갤러리에 나옵니다.
-* **사본**은 방문자가 템플릿을 복사해 고친 것으로, DB(`trial_template_copies`)에 템플릿 전체를
-  JSON 으로 둡니다. 공식 템플릿이 바뀌어도 사본은 복사한 때 그대로입니다.
+* **공식 템플릿**은 `trial_templates/*.json` 파일로 관리됩니다 (`trial.templates_dir`). 관리자가 수정 관리하며,
+  DB를 초기화해도 영속됩니다. 파일별로 격리 검증하여 특정 파일에 오류가 있어도 다른 템플릿은 정상 서비스됩니다.
+* **사본**은 방문자가 템플릿을 복제하여 커스텀한 것으로, DB(`trial_template_copies`)에 템플릿 스키마 전체를
+  JSON으로 보존합니다. 공식 템플릿이 갱신되어도 사본은 복제 시점 상태를 유지합니다.
 
 설정 파일과 같은 규칙으로 읽습니다 — `//` 로 시작하는 키는 설명이고, 여러 줄 글은 문자열
 배열로 적을 수 있습니다.
@@ -50,7 +50,7 @@ from app.trial.models import TrialSessionModel
 
 # 방문자가 고를 수 있는 토론 방식. 그래프 토론은 편집기가 필요해 체험에서는 뺍니다.
 STRATEGY_CHOICES: Dict[str, Tuple[str, str]] = {
-    "sequential_debate": ("차례로 검토", "참여자가 정해진 순서로 앞사람의 결론을 이어받아 검토합니다."),
+    "sequential_debate": ("차례로 검토", "참여자가 지정된 순서대로 선행 발언자의 결론을 계승하여 검토합니다."),
     "adversarial_debate": ("찬반 대결", "찬성과 반대가 번갈아 맞서고, 사회자가 정리합니다."),
     "orchestrator_led": ("사회자가 지휘", "사회자가 매번 지금 필요한 사람만 골라 발언을 시킵니다."),
     "parallel_dispatch": ("동시에 의견 내기", "사회자가 일을 나눠 주고 참여자가 한꺼번에 답합니다."),
@@ -64,7 +64,7 @@ TEXT_UPLOAD_SUFFIXES = (".txt", ".md", ".markdown", ".csv", ".log")
 
 
 class TemplateError(ValueError):
-    """템플릿을 대화로 바꿀 수 없습니다 (사람에게 보여 줄 문장)."""
+    """템플릿 기반 세션 생성이 불가능할 때 발생하는 예외 (사용자 안내 메시지 포함)."""
 
 
 def _join(value: Any) -> Any:
@@ -280,7 +280,7 @@ def split_ref(ref: str) -> Tuple[str, str]:
 
 
 def input_problems(template: TrialTemplate, values: Dict[str, str], max_chars: int) -> Dict[str, str]:
-    """칸 id → 사람에게 보여 줄 문제. 비어 있으면 시작해도 됩니다."""
+    """입력 필드 ID → 사용자에게 표시할 유효성 검증 오류 메시지. 비어 있으면 유효함."""
     problems = {}
     for item in template.inputs:
         value = (values.get(item.id) or "").strip()

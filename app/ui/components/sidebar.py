@@ -111,7 +111,7 @@ def active_agent_count(
 
 # (키, 표시 이름, 기본 방향이 내림차순인가)
 #
-# 기본 방향은 사람이 그 기준으로 찾을 때 먼저 보고 싶은 쪽입니다. 이름은 가나다순,
+# 기본 정렬 방향은 사용자가 해당 기준 선택 시 우선 탐색하려는 순서입니다. 이름은 가나다순,
 # 시각은 최근 것부터.
 SORT_KEYS = (
     ("updated", "최근 변경", True),
@@ -121,7 +121,7 @@ SORT_KEYS = (
 )
 SORT_LABELS = {key: label for key, label, _desc in SORT_KEYS}
 SORT_DEFAULT_DESC = {key: descending for key, _label, descending in SORT_KEYS}
-# 정렬 선택은 보는 사람의 취향이라 DB 가 아니라 그 브라우저에 둡니다.
+# 정렬 설정은 사용자별 UI 선호도이므로 DB가 아닌 브라우저 로컬 스토리지에 유지합니다.
 SORT_STORAGE_KEY = "mado.sessionSort"
 
 
@@ -464,15 +464,15 @@ class SessionSidebar:
                     ):
                         with ui.row().classes("w-full items-center gap-1.5 no-wrap"):
                             if is_running:
-                                # 다른 화면에 있어도 토론은 계속됩니다. 어느 세션이
-                                # 돌고 있는지 목록에서 바로 보이게 합니다.
+                                # 다른 화면에서도 백그라운드 토론이 지속되므로 실행 중인
+                                # 세션을 목록에서 시각적으로 표시합니다.
                                 ui.spinner("dots", size="xs", color="indigo-4")
                             elif s.id in unfinished:
                                 ui.icon("history", size="xs").classes(
                                     "text-violet-300 flex-shrink-0"
                                 ).tooltip(
-                                    "끝나지 못한 턴이 있습니다. 세션을 열어 이어서 진행하거나, "
-                                    "지금까지로 결론을 내거나, 버리십시오."
+                                    "중단된 턴이 존재합니다. 세션을 열어 재개하거나, "
+                                    "현 상태로 결론을 도출하거나, 폐기하십시오."
                                 )
                             # 이름 변경은 연필 버튼으로만 합니다. 제목 더블클릭도 달아
                             # 봤지만, 첫 클릭이 세션 선택으로 이어져 목록이 다시
@@ -541,8 +541,8 @@ class SessionSidebar:
                                 on_click=lambda _, sid=s.id: self._continue_session(sid),
                             ).props("flat round dense size=10px color=amber-4")
                             if is_running:
-                                # 돌고 있는 토론의 결론은 아직 없습니다. 지금
-                                # 이어받을 경우 인수인계 메모의 정합성이 결여됩니다.
+                                # 실행 중인 토론은 아직 최종 결론이 수립되지 않았으므로
+                                # 인수인계 메모 생성을 방지합니다.
                                 continue_btn.disable()
                                 continue_btn.tooltip(
                                     "토론이 진행 중입니다. 토론이 종료된 후 이어받으십시오."
@@ -813,8 +813,8 @@ class SessionSidebar:
             ui.label("이 세션과 모든 대화 내역 및 산출물이 삭제됩니다. 계속하시겠습니까?").classes("text-sm text-slate-300 mb-4")
 
             async def do_delete():
-                # 이 세션의 토론이 백그라운드에서 돌고 있으면 먼저 세웁니다.
-                # 그러지 않으면 방금 지운 세션에 발언을 기록하려다 실패합니다.
+                # 삭제 대상 세션의 토론이 백그라운드에서 실행 중이면 강제 중단합니다.
+                # 삭제된 세션에 대한 비동기 커밋 오류를 방지합니다.
                 get_debate_runner().forget(session_id)
 
                 async with self.session_factory() as db:

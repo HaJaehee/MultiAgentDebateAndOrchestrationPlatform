@@ -345,9 +345,9 @@ async def record_saved_login(db: AsyncSession, user: TrialUserModel, *, now: Opt
     """저장된 로그인(쿠키)으로 들어온 것도 로그인으로 적습니다.
 
     쿠키가 7일 동안 살아 있어, 다시 온 방문자는 PIN 을 치지 않고 바로 들어옵니다. 예전에는
-    PIN 을 칠 때만 `last_login_at` 을 적어서, 계속 드나드는 사람의 "마지막 로그인" 이 처음
-    로그인한 무렵에 멈춰 있었습니다. 화면을 옮길 때마다 쓰지 않도록 `LOGIN_RECORD_SECONDS` 에
-    한 번만 적고, 적지 못해도(DB 잠김 등) 들어오는 것은 막지 않습니다.
+    PIN을 입력할 때만 `last_login_at`을 기록하면 지속적으로 재방문하는 사용자의 "최종 로그인" 시각이
+    최초 로그인 시점에 머무르는 문제가 있었습니다. 페이지 이동마다 과도하게 쓰지 않도록 `LOGIN_RECORD_SECONDS`
+    간격으로 기록하며, 기록 실패 시에도 세션 진입은 정상 허용합니다.
     """
     now = now or _now()
     last = as_utc(user.last_login_at)
@@ -371,7 +371,7 @@ async def user_from_cookie(db: AsyncSession, value: Optional[str]) -> Optional[T
         return None
     user_id, stamp = verified
     user = await db.get(TrialUserModel, user_id)
-    # PIN 을 초기화했거나 바꾼 사람의 옛 로그인은 끊습니다 (초기화는 대개 "남이 쓰고 있다" 는 뜻입니다).
+    # PIN을 초기화하거나 변경한 사용자의 이전 인증 세션은 만료 처리합니다 (타인 도용 방지).
     if user is None or not user.pin_hash or not hmac.compare_digest(stamp, pin_stamp(user.pin_hash)):
         return None
     return user

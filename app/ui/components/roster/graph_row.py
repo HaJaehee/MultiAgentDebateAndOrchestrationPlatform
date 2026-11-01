@@ -203,7 +203,7 @@ class GraphRowComponent:
         self.status.classes(remove="text-red-400 text-amber-400 text-teal-300", add=tone)
 
     def set_run(self, tracker: Optional[Any], active: bool) -> None:
-        """이 대화의 그래프 실행 상태를 받습니다 (`GraphRunTracker`). 도는 중이면 active.
+        """해당 세션의 그래프 실행 상태를 바인딩합니다 (`GraphRunTracker`). 실행 중이면 active.
 
         토론 중에는 이벤트마다 불립니다. 파일을 다시 읽지 않도록 그래프 줄 전체가 아니라 미리보기만 맞춥니다.
         """
@@ -214,9 +214,9 @@ class GraphRowComponent:
     def _preview_source(self):
         """미리보기에 그릴 (그래프, 실행 상태, 안내 문구).
 
-        - 도는 중: 그 턴에 고정한 그래프와 실행 상태. 파일을 고쳐도 도는 턴은 그대로이기 때문입니다.
+        - 실행 중: 해당 턴에 고정된 그래프 스냅샷 및 런타임 상태. 그래프 파일이 수정되어도 실행 중인 턴은 영향받지 않습니다.
         - 끝난 뒤: 고른 파일이 그 턴의 그래프와 같으면 실행 상태를 얹고, 바뀌었으면 파일만 그립니다 —
-          지난 그림을 고친 그래프 위에 얹으면 없는 선이 흐른 것처럼 보입니다.
+          이전 턴의 실행 경로를 수정된 신규 그래프에 투영할 경우 비존재 엣지에 흐름이 표시되는 오류를 방지합니다.
         """
         tracker = self._run
         if tracker is not None and tracker.spec and self._run_active:

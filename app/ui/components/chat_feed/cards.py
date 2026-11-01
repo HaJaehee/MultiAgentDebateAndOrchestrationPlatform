@@ -460,9 +460,9 @@ class CardTimeline:
     def handle_follow(self) -> None:
         """맨 아래로 내려가고, 풀 수 있는 만큼 따라가기를 되살립니다.
 
-        직접 움직인 스크롤은 여기서 풉니다. 펼쳐 둔 카드는 풀지 않습니다 — 사람이
-        편 것을 화면이 마음대로 접으면 읽으려던 글이 사라지므로, 그때 이 버튼은
-        한 번 내려보내는 것까지만 합니다.
+        수동 스크롤 조작 상태를 해제하고 최하단으로 이동합니다. 사용자가 수동으로
+        확장한 카드는 상태를 보존합니다. 열람 중이던 내용이 임의 축소되는 사용성 저하를
+        방지하기 위함입니다.
         """
         self._scroll_detached = False
         self.refresh_follow_button()
@@ -842,7 +842,7 @@ class CardTimeline:
             return False
         if info.get("collapsed"):
             self._toggle_card(info)
-        # 사람이 고른 자리로 갑니다. 새 발언이 와도 맨 아래로 끌려가지 않게 따라가기를 멈춥니다.
+        # 사용자가 선택한 발언 카드로 이동합니다. 신규 발언 스트리밍 시에도 뷰포트가 최하단으로 강제 스크롤되지 않도록 자동 추적을 일시 해제합니다.
         self._scroll_detached = True
         self.refresh_follow_button()
         card.classes(add="ring-2 ring-amber-400")
@@ -946,7 +946,7 @@ class CardTimeline:
         info["collapsed"] = collapsed
 
     def _toggle_card(self, info: Dict[str, Any]) -> None:
-        """사람이 펼치기/접기를 누른 자리. 자동 스크롤이 켜지고 꺼지는 곳입니다."""
+        """발언 카드의 확장/축소 토글 핸들러. 사용자 수동 조작에 따라 자동 스크롤 추적 상태가 연동됩니다."""
         collapsed = not info.get("collapsed", False)
         self._apply_clamp(info, collapsed=collapsed)
 
@@ -967,7 +967,7 @@ class CardTimeline:
             self.scroll_to_bottom()
 
     def collapse_all_cards(self) -> None:
-        """사람이 펼쳐 둔 카드를 한꺼번에 접습니다 (상태 줄의 "카드 모두 접기").
+        """사용자가 수동으로 확장한 모든 카드를 일괄 축소합니다 (상태 표시줄의 "카드 모두 접기" 액션).
 
         생성 중인 카드는 건드리지 않습니다. 펼친 채 그려지는 것이 기본 상태이고, 다 쓰면
         스스로 접힙니다. 펼침 때문에 멈췄던 자동 스크롤은 함께 풀리고, 생성 중이면 하나씩

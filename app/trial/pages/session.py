@@ -1,4 +1,4 @@
-"""대화 화면 — 토론이 도는 동안은 과정이, 끝나면 결과가 주인공입니다.
+"""대화 화면 — 토론 진행 중에는 실시간 과정 중심, 완료 후에는 최종 결과 중심으로 렌더링합니다.
 
 토론은 페이지가 아니라 러너가 굴립니다(`app/orchestration/runner.py`). 이 화면은 그 실행을
 구독해 그릴 뿐이라, 창을 닫았다 다시 열어도 토론은 이어지고 화면은 스냅샷으로 따라잡습니다.
@@ -58,7 +58,7 @@ from app.ui.shared.page import (
 
 logger = logging.getLogger(__name__)
 
-# 발언 수로 세지 않는 기록 (사람의 말, 안내, 실패 표시).
+# 발언 카운트에서 제외되는 레코드 (사용자 발언, 시스템 안내, 실패 마커).
 _NOT_SPEECH = {"user", "system", "error"}
 _ROUND_RE = re.compile(r"(\d+)")
 
@@ -96,7 +96,7 @@ class TrialSessionScreen:
             self.client, self.apply,
             alive=lambda: self.feed is not None and self.feed.alive, name="trial page",
         )
-        # 방문자에게는 이 대화 하나뿐이라 그 물음만 탭 제목에 씁니다 (ADR-037).
+        # 게스트 세션은 단일 대화로 한정되므로 해당 대기 요청만 탭 타이틀에 반영합니다 (ADR-037).
         self.tab_title = WaitingTabTitle(self.client.title, get_config().trial.title)
 
     # ------------------------------------------------------------ 구성
@@ -105,8 +105,8 @@ class TrialSessionScreen:
         run = self.runner.get(self.session_id)
         running = run is not None and run.status == "running"
         streaming: Set[str] = set()
-        # 서버 중단·오류로 끝나지 못한 요청 (ADR-024). 방문자는 이어서 진행하거나 지금까지로
-        # 결론을 낼 수 있습니다. 버리기는 주지 않습니다 — 긴급 종료처럼 기록을 지우는 일은 주인 몫입니다.
+        # 서버 중단 및 오류로 미완료된 요청 (ADR-024). 방문자는 세션 재개 또는 현 상태 결론
+        # 도출을 선택할 수 있습니다. 삭제 권한은 제외합니다 — 강제 취소 등 세션 로그 정리는 관리자 권한입니다.
         unfinished = None if running else await self._unfinished()
         if running:
             snapshot = run.snapshot()
@@ -373,7 +373,7 @@ class TrialSessionScreen:
         copy_to_clipboard(text)
         ui.notify("결과 내용을 클립보드에 복사했습니다.")
 
-    # ------------------------------------------------------------ 사람의 입력
+    # ------------------------------------------------------------ 사용자 입력
 
     async def send(self, prompt: str) -> None:
         prompt = (prompt or "").strip()

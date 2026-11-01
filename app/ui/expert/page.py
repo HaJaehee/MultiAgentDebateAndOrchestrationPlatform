@@ -366,7 +366,7 @@ class ExpertPage:
 
             # 토론은 이 페이지가 아니라 프로세스가 소유합니다. 새로고침하거나
             # 페르소나 화면에 다녀와도 중단되지 않고, 돌아오면 다시 이어 붙습니다.
-            # 작업 공간이 다른 대화가 이미 돌고 있어도 막지 않습니다. 폴더마다
+            # 작업 공간이 상이한 타 세션이 실행 중이더라도 차단하지 않습니다. 폴더마다
             # MCP 서버 묶음이 따로 뜨기 때문입니다 (`app/mcp/pool.py`). 자리가
             # 모자라면 턴이 시작된 뒤 `RuntimeCapacityError` 로 끝나고, 그
             # 사유는 아래 실패 경로를 통해 화면에 그대로 나옵니다.
@@ -452,8 +452,8 @@ class ExpertPage:
     async def on_tool_rules_changed(self, grants: List[str], denials: List[str]) -> None:
         """로스터의 규칙 창에서 지운 결과를 저장합니다.
 
-        토론이 돌고 있으면 그 게이트가 저장합니다 (카드에서 방금 더한 규칙을 이 화면의
-        옛 목록이 덮지 않도록). 돌고 있지 않으면 여기서 세션 행에 씁니다.
+        토론이 실행 중인 경우 해당 게이트가 직접 저장합니다 (UI의 지연된 목록이 신규 규칙을
+        덮어쓰지 않도록). 실행 중이지 않은 경우 세션 엔티티에 직접 기록합니다.
         """
         if not self.current_session_id:
             return
@@ -467,7 +467,7 @@ class ExpertPage:
                 await db.commit()
 
     async def on_ledger_edited(self, expected: str, ledger: str) -> None:
-        """로스터에서 고친 결정 장부를 저장하고, 무엇을 고쳤는지 안내를 피드에 올립니다 (ADR-038)."""
+        """로스터에서 수정한 결정 장부를 저장하고, 변경 요약 안내를 피드에 발행합니다 (ADR-038)."""
         if not self.current_session_id:
             return
         async with self.session_factory() as db:
@@ -492,7 +492,7 @@ class ExpertPage:
             )
 
     async def on_interject(self, text: str) -> None:
-        """토론이 도는 중에 들어온 입력.
+        """토론 실행 도중 전달된 사용자 개입 입력.
 
         새 턴을 열지 않고(러너는 세션당 하나만 돌립니다) 진행 중인 토론의
         다음 발언 차례에 유저 발언으로 끼워 넣습니다.
@@ -516,10 +516,9 @@ class ExpertPage:
     async def on_abort(self) -> None:
         """요청을 잘못 보냈을 때. 토론을 끊고 그 요청을 없던 일로 되돌립니다.
 
-        정지(`on_stop`)와 하는 일이 정반대입니다. 정지는 지금까지의 논의로
-        결론을 받는 것이고, 여기서는 그 논의 자체가 틀린 전제 위에 서 있으므로
-        남기지 않습니다. 지운 자리에 사람이 보냈던 글을 입력창으로 돌려주어
-        고쳐 쓰게 합니다.
+        정지(`on_stop`)와 상반된 강제 취소입니다. 정상 정지는 현재까지의 논의를 기반으로
+        결론을 도출하지만, 본 취소는 입력 프롬프트의 전제 오류 등으로 인해 턴 자체를
+        취소합니다. 삭제된 입력 프롬프트를 입력창에 복원하여 사용자가 재작성할 수 있도록 합니다.
         """
         if not self.current_session_id:
             return
@@ -555,7 +554,7 @@ class ExpertPage:
             )
 
         # 기록이 바뀌었으므로 화면을 DB 기준으로 다시 세웁니다. 취소된 실행의
-        # 스냅샷은 여기서 쓰이지 않습니다 (`load_session_state` 는 돌고 있는
+        # 스냅샷은 여기서 참조되지 않습니다 (`load_session_state`는 실행 중인
         # 토론만 얹습니다).
         await self.load_session_state(self.current_session_id)
         restored = self.chat_feed.restore_input(produced["prompt"])
@@ -642,7 +641,7 @@ class ExpertPage:
     async def open_tool_call(self, session_id: str, message_id: Optional[str]) -> None:
         """보안 감사에서 고른 호출: 그 대화를 열고, 호출을 담은 발언 카드로 이동합니다.
 
-        끝나지 못한 발언이 낸 호출은 담은 발언이 없으므로 대화만 엽니다.
+        미완료 발언에서 실행된 도구 호출은 연결된 발언이 없으므로 세션만 포커스합니다.
         """
         if message_id:
             await self.open_search_hit(session_id, message_id)
@@ -1001,14 +1000,14 @@ class ExpertPage:
                 # 스냅샷은 이번 턴 것뿐입니다. 덮어쓰면 이전 턴 산출물이 화면에서 사라집니다.
                 formatted_arts = merge_artifacts(formatted_arts, snapshot["artifacts"])
 
-        # 그래프 토론의 실행 표시와 노드 배지. 도는 중이면 러너가 들고 있는 그래프와 진행 상태를,
+        # 그래프 토론의 실행 표시와 노드 배지. 실행 중인 경우 러너가 관리하는 그래프 및 진행 상태를,
         # 끝났으면 그 턴에 고정한 그래프(`sessions.graph_snapshot`)와 기록을 씁니다.
         graph_state = snapshot.get("graph") if running else None
         if graph_state and graph_state.get("spec"):
             graph_spec = graph_state["spec"]
         self.chat_feed.set_graph_labels(node_labels(graph_spec))
         if graph_spec:
-            # 도는 중이면 러너가 모은 이번 턴 발언을 씁니다. DB 기록을 합성 발언으로 잘라 내면, 합성이
+            # 실행 중인 경우 러너가 수집한 현재 턴 발언을 참조합니다. DB 기록을 합성 발언으로 잘라 내면, 합성이
             # 막 기록되고 턴이 아직 닫히지 않은 순간에 이번 턴이 통째로 "지난 턴" 쪽으로 넘어갑니다.
             history = snapshot["messages"] if running else last_graph_turn(formatted_msgs, running=False)
             self.events.graph_tracker = GraphRunTracker.from_history(graph_spec, history, state=graph_state)
@@ -1030,9 +1029,8 @@ class ExpertPage:
             # 새로고침 뒤에도 "정지 중" 이라는 사실이 남아 있어야, 이미 접수된
             # 요청을 다시 누르지 않습니다.
             self.chat_feed.set_stop_pending(bool(snapshot["stop_requested"]))
-            # 답을 기다리는 물음은 화면이 아니라 토론이 들고 있습니다. 새로
-            # 붙은 화면에서도 같은 선택지가 보여야, 새로고침 한 번으로 답할
-            # 곳을 잃지 않습니다.
+            # 사용자 응답을 대기 중인 요청은 UI가 아닌 활성 토론 인스턴스가 관리합니다. 새로
+            # 진입한 클라이언트 화면에서도 동일한 선택지를 표시하여 새로고침 시에도 응답 통로를 보존합니다.
             self.chat_feed.set_decision_request(snapshot.get("decision_request"))
             self.chat_feed.set_approvals(snapshot.get("tool_approvals"))
             self.chat_feed.set_questions(snapshot.get("user_questions"))

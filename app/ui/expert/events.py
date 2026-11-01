@@ -123,7 +123,7 @@ class ExpertEventView:
                 type="positive", position="bottom-right", multi_line=True,
             )
         else:
-            # 멀쩡한 발언은 그대로입니다. 실패한 시도는 카드의 버전 넘기기에 남습니다.
+            # 정상 발언은 유지되며, 실패한 시도는 카드의 버전 히스토리에 기록됩니다.
             ui.notify(
                 f"{who} 의 다시 실행이 실패해 기존 발언을 그대로 두었습니다. 원인은 카드의 버전 넘기기에서 볼 수 있습니다.",
                 type="warning", position="bottom-right", multi_line=True,
@@ -432,8 +432,8 @@ class ExpertEventView:
 
     @_handles(EventType.CONTEXT_TRIMMED)
     async def _on_context_trimmed(self, event: Event) -> None:
-        # 답이 필요한 물음이 아니라 사후 통지입니다. 버튼 없는 알림으로만
-        # 띄웁니다 — 배너는 사람이 골라야 하는 자리에만 씁니다.
+        # 사용자 응답이 필요한 요청이 아닌 단순 사후 통지이므로 토스트 알림으로 표시합니다 —
+        # 배너 컴포넌트는 사용자 선택이 필요한 경우에 한정합니다.
         where = "최종 합성 전사" if event.get("where") == "synthesis" else "발언 맥락"
         ui.notify(
             f"{where}에서 기록 {event.get('dropped', 0)}건이 컨텍스트 한도로 "
@@ -445,9 +445,8 @@ class ExpertEventView:
 
     @_handles(EventType.PERSIST_FAILED)
     async def _on_persist_failed(self, event: Event) -> None:
-        # 사람이 자리를 비운 사이에 일어나기 쉬운 일이라(백신 검사·백업이 파일을
-        # 잡는 때), 저절로 사라지는 알림으로는 돌아와서 볼 수가 없습니다. 닫을
-        # 때까지 남깁니다.
+        # 파일 잠금 등 비동기 I/O 오류는 부재 중 발생할 수 있으므로, 자동 소멸 토스트 대신
+        # 사용자가 명시적으로 닫을 때까지 화면에 유지합니다.
         saved = event.get("saved_to")
         where = (
             f"내용은 파일로 저장하였습니다: {saved}"

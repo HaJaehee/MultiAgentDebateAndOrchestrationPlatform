@@ -83,7 +83,7 @@ class AgentDialogs:
                         else:
                             ui.badge("연결 안 됨", color="red-9").props("dense").classes("text-[13px]")
 
-                # peers 의 자문 상대·도구 상한. '에이전트 선택' 창이 고치고, 아래 '저장' 이 함께 씁니다.
+                # peers 자문 대상 및 도구 상한. '에이전트 선택' 다이얼로그에서 설정하고 '저장' 시 함께 영속화.
                 peer_state: Dict[str, Any] = {
                     "targets": agent.peer_consultation.targets,
                     "max": agent.peer_consultation.max_tool_iterations,
@@ -147,7 +147,7 @@ class AgentDialogs:
     def open_peer_targets(
         self, agent: Agent, state: Dict[str, Any], on_done: Callable[[], None]
     ) -> None:
-        """peers 로 물을 상대와 자문받는 쪽의 도구 상한을 고릅니다.
+        """peers 질의 대상 에이전트와 피자문 전문가의 도구 호출 상한을 설정합니다.
 
         고른 값은 도구 할당 창의 `state` 에만 담고, 그 창의 '저장' 이 도구 할당과 함께 conf.json 에
         씁니다. 저장된 값은 아직 시작하지 않은 대화에 걸리고, 대화가 시작되면 첫 발언 때의 다른
@@ -202,7 +202,7 @@ class AgentDialogs:
 
             with ui.row().classes("w-full items-center gap-2 mt-3 no-wrap"):
                 limit_in = ui.number(
-                    "자문받는 쪽 도구 호출 상한", value=state["max"], min=0,
+                    "피자문 도구 호출 상한", value=state["max"], min=0,
                     max=TOOL_ITERATION_CEILING, step=1, format="%.0f",
                 ).props("outlined dense dark").classes("w-56 text-xs")
                 ui.label(

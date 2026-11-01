@@ -43,10 +43,10 @@ ROWS_PER_PAGE = 50
 def serve_once(path: Path, filename: str) -> str:
     """파일을 한 번만 받을 수 있는 주소로 내어 주고 브라우저에 받게 합니다. 주소를 돌려줍니다.
 
-    `ui.download.file` 은 **파일 경로의 해시**로 주소를 만들고 `Cache-Control: public,
-    max-age=3600` 을 붙입니다. 에이전트가 파일을 고친 뒤 한 시간 안에 다시 받으면 같은 주소라
-    브라우저가 **예전 내용을 캐시에서** 내줍니다 (확인: 같은 주소를 다시 받으면 200). 작업 공간
-    파일은 계속 바뀌므로 받을 때마다 새 주소를 만들고 캐시하지 않게 합니다.
+    `ui.download.file`은 **파일 경로 해시** 기반으로 URL을 생성하고 `Cache-Control: public,
+    max-age=3600` 헤더를 설정합니다. 에이전트가 파일을 수정한 후 1시간 이내에 재다운로드할 경우
+    동일 URL로 인해 브라우저 캐시에서 이전 버전이 반환될 수 있습니다. 작업 공간 파일은
+    수시로 변경되므로 다운로드마다 고유 일회용 URL을 발급하고 캐싱을 비활성화합니다.
     """
     suffix = re.sub(r"[^A-Za-z0-9.]", "", path.suffix)[:16]
     url_path = f"/_mado/download/{uuid.uuid4().hex}{suffix}"
