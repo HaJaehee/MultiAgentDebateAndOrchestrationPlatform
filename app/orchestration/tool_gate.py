@@ -13,8 +13,8 @@
   창에서 보고 지울 수 있습니다.
 * 같은 발언자가 이번 턴에 이미 거부된 호출을 똑같이 다시 하면 묻지 않고 거부합니다. 모델이
   거부를 읽고도 같은 호출을 되풀이하면 카드가 끝없이 쌓입니다.
-* 게이트는 턴마다 하나지만 외부 내용을 읽었는지는 **발언마다** 다릅니다. 그래서 도구 루프가 호출마다
-  `tainted_by` 로 건넵니다 (같은 라운드에 나란히 발언하는 전문가끼리 섞이지 않습니다).
+* 게이트 인스턴스는 턴 단위로 공유되지만 외부 내용 열람 여부는 **발언 단위**로 격리됩니다. 따라서 도구 루프가 호출 시마다
+  `tainted_by`를 인자로 전달합니다 (동일 라운드에서 병렬 발언하는 전문가 간에 오염 상태가 섞이지 않습니다).
 * 대화형 사용자가 부재한 경우(배치 실행/헤드리스) "확인" 판정은 안전하게 거부(Denied) 처리됩니다 — Claude Code의 `dontAsk` 원칙.
 
 게이트 자체에 예외가 발생하면 **안전하게 거부**(Fail Closed) 처리합니다. 보안 판정이 불가능한 상태에서
@@ -235,7 +235,7 @@ class ToolGate:
     ) -> GateResult:
         """단일 도구 호출을 판정합니다. 게이트 내부 예외 발생 시 안전하게 거절(Fail Closed)합니다.
 
-        `tainted_by` 는 이 발언이 앞서 읽은 외부 내용의 출처입니다 (`ToolLoop.tainted_by`).
+        `tainted_by`는 해당 발언이 앞서 읽은 외부 콘텐츠 출처 목록입니다 (`ToolLoop.tainted_by`).
         """
         try:
             return await self._check(agent, tool_name, arguments, mcp, tainted_by)
@@ -400,7 +400,7 @@ class ToolGate:
         approver = request.approver or ""
         persisted: List[str] = []
         note = ""
-        # 무슨 근거로 물었는지 표식으로 남깁니다. 기억한 범위가 있으면 그쪽이 먼저입니다.
+        # 사용자 확인이 유발된 사유를 감사 표식으로 기록합니다. 규칙 등록 범위가 있는 경우 해당 범위를 우선합니다.
         marker = TAINT_RULE if verdict.source == "taint" else ""
 
         if decision in ("allow_session", "allow_always", "deny_session", "deny_always") and scope:

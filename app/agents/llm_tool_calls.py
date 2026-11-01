@@ -128,11 +128,11 @@ class ToolCallMixin:
         return await tool_gate.check(agent, fn_name, fn_args, mcp, tainted_by=tainted_by)
 
     def _outside_source(self, fn_name: str, fn_args: Dict[str, Any], mcp: Optional[MCPManager]) -> str:
-        """이 호출의 결과가 외부 내용이면 출처, 아니면 빈 문자열 (`policy.outside_source`).
+        """해당 호출의 결과가 외부 내용에 해당하면 출처 문자열을, 아니면 빈 문자열을 반환합니다 (`policy.outside_source`).
 
-        문지기와 따로 묻습니다. 문지기 없이 도는 발언에도 래퍼는 씌워야 하고, 판정이 끝난 뒤 실행 직전의
-        호출을 봐야 합니다. 판단하지 못하면 외부 내용으로 봅니다 (게이트의 fail closed 와 같은 방향).
-        내장 호스트 도구와 모르는 도구는 메타가 없어 여기서 빈 문자열입니다.
+        도구 보안 게이트와 별개로 판별합니다. 게이트 없이 실행되는 발언에도 보안 래퍼를 적용해야 하며, 보안 판정을 통과한
+        실행 직전의 호출만 대상으로 삼아야 하기 때문입니다. 예외 발생 시 안전을 위해 외부 내용으로 간주합니다(Fail Closed).
+        메타데이터가 없는 내장 호스트 도구 및 미등록 도구는 빈 문자열을 반환합니다.
         """
         runtime = mcp or self.mcp_manager
         try:
@@ -144,7 +144,7 @@ class ToolCallMixin:
                 return ""
             profile = profile_call(meta, fn_args, runtime.workspace)
             return outside_source(profile, parse_rules(get_config().tool_security.untrusted_sources))
-        except Exception as exc:  # noqa: BLE001 - 분류 실패로 발언을 죽이지 않습니다
+        except Exception as exc:  # noqa: BLE001 - 출처 분류 실패로 인해 발언이 중단되지 않도록 방어합니다
             logger.warning(f"Could not tell whether {fn_name} reads outside content: {type(exc).__name__}: {exc}")
             return fn_name
 

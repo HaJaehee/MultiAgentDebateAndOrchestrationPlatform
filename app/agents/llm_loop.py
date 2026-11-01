@@ -200,9 +200,9 @@ class ToolLoop:
     open_writes: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     # 해당 발언이 마지막으로 작성한 파일의 SHA-256 해시 (절대 경로 → {path, sha256}). 세션 재개 시 사후 변경 여부를 판별합니다.
     known_files: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    # 이 발언이 읽은 외부 내용의 출처 (`policy.outside_source`). 메시지에서 다시 구하지 않고 따로 듭니다 —
-    # 창에 맞추다 그 결과를 버려도 읽은 내용은 이미 발언의 판단과 글에 섞여 있습니다. 비어 있지 않으면 삭제·코드
-    # 실행·네트워크를 묻습니다 (`policy.evaluate`, ADR-047).
+    # 해당 발언이 읽은 외부 콘텐츠 출처 목록 (`policy.outside_source`). 메시지 이력에서 재계산하지 않고 별도로 보존합니다 —
+    # 컨텍스트 한도에 맞춰 도구 결과가 절삭되더라도 읽은 내용은 이미 발언의 추론과 응답에 반영되어 있기 때문입니다.
+    # 비어 있지 않으면 파일 삭제·코드 실행·네트워크 호출 시 사용자 승인을 요청합니다 (`policy.evaluate`, ADR-047).
     tainted_by: List[str] = field(default_factory=list)
 
     # --- 도구 목록에서 한 번 구해 두는 것
@@ -338,8 +338,8 @@ class ToolLoopMixin:
         LLM 한 판 → 도구 호출이 없으면 답으로 마무리(`_settle_answer`), 있으면 도구 실행
         (`_run_tool_round`). 상한에 닿으면 확장을 묻고(`_extend_tool_budget`), 못 받으면 도구 없이 마무리합니다.
         """
-        # 자문받는 발언은 묻는 발언이 보낸 글로 시작합니다. 그 글이 외부 내용을 옮긴 것일 수 있으니 오염을 잇습니다.
-        # 끊지 않으면 오염된 발언이 도구를 가진 동료에게 "이 코드를 돌려 달라" 고 부탁하는 길이 열립니다.
+        # 피자문 발언은 자문 요청 발언이 전달한 텍스트를 기반으로 시작됩니다. 해당 텍스트에 외부 내용이 포함되어 있을 수 있으므로
+        # 오염 상태를 승계합니다. 이를 차단하지 않으면 오염된 발언이 도구 권한을 가진 동료에게 코드 실행을 위임하여 우회할 수 있습니다.
         consulting = current_consultation_scope()
         loop = ToolLoop(
             agent=agent, tools=tools, on_chunk=on_chunk, on_tool_call=on_tool_call,
@@ -728,8 +728,8 @@ class ToolLoopMixin:
                 output, status = await self._execute_tool_safely(
                     agent, fn_name, fn_args, loop.session_id, loop.mcp, tools=loop.tools, loop=loop,
                 )
-                # 실패도 감쌉니다. 원격이 돌려준 오류문(robots.txt 전문 등)도 남이 쓴 글입니다. 다만 `denied` 는
-                # 매니저의 고정 보호에 걸려 실행되지 않은 호출이라 아무것도 읽지 않았습니다.
+                # 실행 실패 응답도 외부 내용으로 감쌉니다. 원격 서버가 반환한 오류 메시지(robots.txt 전문 등) 역시 외부 작성 텍스트이기 때문입니다.
+                # 단, `denied`는 매니저의 고정 보호에 의해 차단되어 실행되지 않은 호출이므로 제외합니다.
                 outside = "" if status == "denied" else outside or getattr(output, "outside", "")
                 await self._note_write_end(loop, call_id, status)
                 output = await self._take_tool_media(loop, fn_name, output)
@@ -750,7 +750,7 @@ class ToolLoopMixin:
         loop.tool_logs.append(call_log)
         await self._notify_tool_call(agent, loop.on_tool_call, call_log)
 
-        # 화면과 DB 는 원문을 봅니다 (`call_log`). 래퍼는 모델이 읽는 쪽에만 씌웁니다.
+        # UI와 DB에는 원문을 기록하고(`call_log`), 보안 래퍼는 모델에게 전달되는 메시지에만 적용합니다.
         loop.messages.append({
             "role": "tool",
             "tool_call_id": call_id,
@@ -836,7 +836,7 @@ class ToolLoopMixin:
         """
         if not loop.tool_media:
             return
-        # 첨부는 `user` 메시지로 들어갑니다. 글로 된 첨부는 래퍼로 감싸지 못하므로 머리말에서 일러 둡니다.
+        # 첨부 미디어는 `user` 메시지로 주입되므로 개별 래퍼로 감쌀 수 없어 헤더 텍스트에 주의 안내를 추가합니다.
         header = f"{TOOL_MEDIA_HEADER} {UNTRUSTED_MEDIA_NOTE}" if loop.tainted_by else TOOL_MEDIA_HEADER
         blocks: List[Dict[str, Any]] = [{"type": "text", "text": header}]
         for block in loop.tool_media:

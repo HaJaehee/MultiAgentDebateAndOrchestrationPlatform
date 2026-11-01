@@ -1,13 +1,13 @@
-"""외부 내용 표시와 오염 추적 (`app/mcp/policy.py`, `app/agents/llm_loop.py`, ADR-047).
+"""외부 콘텐츠 보안 래퍼 표시 및 발언 단위 오염 추적 테스트 (`app/mcp/policy.py`, `app/agents/llm_loop.py`, ADR-047).
 
-지키려는 것.
+설계 불변식(Design Invariants) 및 검증 목표:
 
-1. 외부 내용은 모델이 읽는 쪽에서만 `<untrusted_content>` 로 감싼다. 화면과 DB 는 원문을 본다.
-   내용이 스스로 래퍼를 닫고 빠져나오지 못한다.
-2. 외부 내용을 읽은 발언의 삭제·코드 실행·네트워크는 모드 기본값과 허용 규칙을 넘어 묻는다.
-   거부 규칙과 `read_only` 의 거부는 그대로이고, `auto` 는 묻지 않는다.
-3. 오염은 발언 단위다. 컨텍스트 절삭과 재개로 사라지지 않고, 다른 발언으로 번지지 않는다.
-   한 발언 안의 일인 동료 자문만 양쪽으로 번진다.
+1. **보안 래퍼 격리** — 외부 콘텐츠는 모델 입력 메시지에서만 `<untrusted_content>`로 감싸며, UI와 DB는 원문을 보존한다.
+   본문 내부의 태그 문자열을 무력화하여 래퍼 탈출(Tag Escape)을 차단한다.
+2. **오염 발언 권한 승격** — 외부 콘텐츠를 읽은 발언의 파일 삭제·코드 실행·네트워크 호출은 모드 기본값과 허용 규칙에 우선하여 사용자 확인(`ask`)을 거친다.
+   거부 규칙과 `read_only` 모드의 거부는 그대로 유지되며, `auto` 모드는 확인 없이 실행한다.
+3. **발언 단위 격리 및 자문 전파** — 오염 상태는 발언 단위로 유지되어 컨텍스트 절삭 및 세션 재개 후에도 보존되며, 다음 발언으로 전파되지 않는다.
+   단일 발언 내부 실행인 동료 전문가 자문(`peers__consult_agent`)에 한해 양방향으로 전파된다.
 """
 
 import asyncio
@@ -102,7 +102,7 @@ def test_code_runs_quietly_until_the_speech_reads_outside_content():
 ])
 def test_allow_rules_and_grants_do_not_carry_a_tainted_speech(rules):
     args = {"url": "https://example.org/?q=secret"}
-    assert _verdict(FETCH, args, tainted=(), **rules).effect == ALLOW, "오염 전에는 규칙대로 돕니다"
+    assert _verdict(FETCH, args, tainted=(), **rules).effect == ALLOW, "오염 전에는 허용 규칙에 따라 통과합니다"
     assert _verdict(FETCH, args, **rules).effect == ASK
 
 
@@ -121,7 +121,7 @@ def test_deny_and_ask_rules_keep_their_place():
 def test_read_only_keeps_denying_and_never_turns_a_denial_into_a_question():
     assert _verdict(PY, {"code": "print(1)"}, mode="read_only").effect == DENY
     assert _verdict(FETCH, {"url": "https://example.org"}, mode="read_only").effect == DENY
-    # 허용 규칙이 덮던 호출은 거부가 아니라 묻기로 올라갑니다 (모드가 막은 것이 아니므로).
+    # 허용 규칙이 적용되던 호출은 거부가 아닌 사용자 확인(ask)으로 승격됩니다 (모드에 의한 차단이 아니므로).
     assert _verdict(FETCH, {"url": "https://example.org"}, mode="read_only", allow=["net(example.org)"]).effect == ASK
 
 
@@ -142,7 +142,7 @@ def test_reads_and_workspace_writes_stay_quiet():
 
 
 def test_deleting_outside_the_workspace_counts_as_deleting():
-    """밖에서의 삭제는 등급이 `outside` 라 등급만 보면 놓칩니다."""
+    """작업 공간 외부 삭제는 위험 등급이 `outside`이므로 행위 종류(`kind`)로 판별해야 누락되지 않습니다."""
     action = _path_action("delete", str(ROOT.parent / "outside.txt"), WS, "arg")
     assert action.risk == OUTSIDE
     profile = CallProfile("x", "y", OUTSIDE, actions=[action], tainted_by=("s",))
@@ -176,7 +176,7 @@ def test_a_long_list_of_sources_is_clipped_on_the_card():
 
 
 # ---------------------------------------------------------------------------
-# 무엇이 외부 내용인가 (`policy.outside_source`)
+# 외부 콘텐츠 출처 판별 (`policy.outside_source`)
 # ---------------------------------------------------------------------------
 
 
@@ -267,7 +267,7 @@ def test_notices_about_earlier_tools_wrap_their_outputs():
 
 
 # ---------------------------------------------------------------------------
-# 대역
+# 테스트 대역 (Test Doubles)
 # ---------------------------------------------------------------------------
 
 
@@ -280,7 +280,7 @@ def _config(**security: Any) -> RootConfig:
 
 @pytest.fixture
 def security(monkeypatch):
-    """게이트·매니저·도구 루프가 읽는 설정을 테스트가 정합니다 (개발 PC 의 conf.json 과 무관)."""
+    """게이트·매니저·도구 루프가 참조하는 도구 보안 설정을 테스트별로 격리 주입합니다 (로컬 conf.json과 무관)."""
     holder = {"config": _config()}
 
     def use(**values: Any) -> RootConfig:
@@ -293,7 +293,7 @@ def security(monkeypatch):
 
 
 class _Client:
-    """부르면 기록을 남기고 정해 둔 글을 돌려주는 서버 연결."""
+    """호출 이력을 기록하고 지정된 응답 문자열을 반환하는 모의 MCP 클라이언트."""
 
     def __init__(self, server_name: str, tools: Sequence[Any], log: List[str]) -> None:
         self.server_name = server_name
@@ -317,7 +317,7 @@ class _Tool:
 
 
 class _Runtime(MCPManager):
-    """도구 정의까지 내놓는 매니저. 실제 `tool_meta` 와 고정 보호를 그대로 씁니다."""
+    """OpenAI 도구 스키마를 반환하는 모의 매니저. 실제 `tool_meta` 및 고정 보호 로직을 그대로 사용합니다."""
 
     def get_openai_tools_for_servers(self, servers):
         return [
@@ -359,7 +359,7 @@ async def _speak(runtime: _Runtime, gate: Any = None, agent: Any = None, **kw: A
 
 
 async def _approve_all(control: TurnControl, decision: str = "allow_once", **kw: Any) -> None:
-    """사람 대역. 카드가 뜰 때마다 답합니다 (태스크를 취소할 때까지)."""
+    """사용자 응답 대역. 대기 중인 승인 카드가 등록될 때마다 지정된 결정으로 응답합니다."""
     answered = set()
     while True:
         for request in control.pending_approvals:
@@ -460,7 +460,7 @@ async def test_outside_content_is_wrapped_for_the_model_and_not_for_the_record(m
 
     seen = _tool_results(requests[1])[0]
     assert seen.startswith(UNTRUSTED_NOTE) and f'source="fetch/fetch (example.com)"' in seen and INJECTION in seen
-    assert logs[0]["output"] == f"<html>{INJECTION}</html>", "화면과 DB 는 원문을 봅니다"
+    assert logs[0]["output"] == f"<html>{INJECTION}</html>", "UI와 DB에는 원문이 보존됩니다"
     assert logged[0]["output"] == logs[0]["output"]
     assert logs[0]["outside"] == "fetch/fetch (example.com)"
 
@@ -480,7 +480,7 @@ async def test_code_before_the_read_runs_and_code_after_it_asks(monkeypatch, tmp
 
 @pytest.mark.asyncio
 async def test_a_second_network_call_asks_even_under_an_allow_rule(monkeypatch, tmp_path, security):
-    """읽은 내용이 시킨 유출은 허용된 호스트로도 나갑니다 (`?q=비밀`)."""
+    """외부 문서가 유도한 데이터 유출은 허용된 호스트로도 발생할 수 있으므로(`?q=비밀`) 확인을 거쳐야 합니다."""
     security(allow=["net(example.com)"])
     _install(monkeypatch, [("", [FETCH_CALL]), ("", [FETCH_CALL]), ("끝", [])])
     _content, logs = await _speak(_runtime(tmp_path), ToolGate(session_id="s", control=None))
@@ -547,7 +547,7 @@ async def test_a_call_the_manager_blocked_reads_nothing(monkeypatch, tmp_path, s
 
 @pytest.mark.asyncio
 async def test_a_failed_read_still_counts(monkeypatch, tmp_path, security):
-    """원격이 돌려준 오류문(robots.txt 전문 등)도 남이 쓴 글입니다."""
+    """원격 서버가 반환한 오류 메시지(robots.txt 전문 등) 역시 외부 작성 텍스트이므로 오염 대상으로 분류합니다."""
     requests = _install(monkeypatch, [("", [FETCH_CALL]), ("끝", [])])
     runtime = _runtime(tmp_path)
 
@@ -568,7 +568,7 @@ async def test_a_speech_without_a_gate_is_still_wrapped(monkeypatch, tmp_path, s
 
 @pytest.mark.asyncio
 async def test_one_speech_does_not_taint_the_next(monkeypatch, tmp_path, security):
-    """오염은 발언 단위입니다. 다음 발언으로 번지지 않는다는 한계도 여기 적어 둡니다 (ADR-047)."""
+    """오염 상태는 발언 단위로 격리되며 후속 발언으로 전파되지 않습니다 (ADR-047)."""
     security(allow=["net(example.com)"])
     gate = ToolGate(session_id="s", control=None)
     runtime = _runtime(tmp_path)
@@ -581,7 +581,7 @@ async def test_one_speech_does_not_taint_the_next(monkeypatch, tmp_path, securit
 
 @pytest.mark.asyncio
 async def test_the_mark_survives_a_cut_and_a_lost_message(monkeypatch, tmp_path, security):
-    """창에 맞추다 결과를 버려도, 끊겼다 이어 가도 그 발언은 외부 내용을 읽은 발언입니다."""
+    """컨텍스트 절삭으로 도구 결과 메시지가 제거되거나 세션이 중단 후 재개되더라도 오염 상태는 유지됩니다."""
     saved: List[Dict[str, Any]] = []
 
     async def checkpoint(state: Dict[str, Any]) -> None:
@@ -592,7 +592,7 @@ async def test_the_mark_survives_a_cut_and_a_lost_message(monkeypatch, tmp_path,
     state = saved[-1]
     assert state["tainted_by"] == ["fetch/fetch (example.com)"]
 
-    # 메시지에 래퍼가 전혀 남아 있지 않아도 표시로 판단합니다.
+    # 메시지 이력에서 래퍼가 포함된 응답이 모두 절삭된 상태에서도 오염 필드를 기준으로 판정합니다.
     state = {**state, "messages": [m for m in state["messages"] if m["role"] not in ("tool", "assistant")]}
     _install(monkeypatch, [("", [CODE]), ("끝", [])])
     runtime = _runtime(tmp_path)
@@ -633,7 +633,7 @@ async def test_a_file_a_tainted_speech_received_carries_a_warning():
 
 
 # ---------------------------------------------------------------------------
-# 동료 자문 — 한 발언 안의 일이라 양쪽으로 번집니다
+# 동료 전문가 자문 — 단일 발언 내부 실행이므로 오염 상태가 양방향으로 전파됩니다
 # ---------------------------------------------------------------------------
 
 
@@ -649,10 +649,10 @@ def _scope(peer: Agent, caller: LLMCaller, runtime: _Runtime, gate: ToolGate):
 async def test_what_a_peer_read_comes_back_with_its_answer(monkeypatch, tmp_path, security):
     security(allow=["net(example.com)"])
     requests = _install(monkeypatch, [
-        ("", [_consult()]),      # 묻는 발언
-        ("", [FETCH_CALL]),      # 자문받는 발언
+        ("", [_consult()]),      # 자문 요청 발언
+        ("", [FETCH_CALL]),      # 피자문 발언
         (INJECTION, []),         # 자문 응답
-        ("", [CODE]),            # 묻는 발언: 응답을 읽고 코드 실행
+        ("", [CODE]),            # 자문 요청 발언: 응답 수신 후 코드 실행
         ("끝", []),
     ])
     runtime = _runtime(tmp_path)
@@ -672,12 +672,12 @@ async def test_what_a_peer_read_comes_back_with_its_answer(monkeypatch, tmp_path
 
 @pytest.mark.asyncio
 async def test_a_peer_inherits_what_the_asker_read(monkeypatch, tmp_path, security):
-    """오염된 발언이 도구를 가진 동료에게 "이 코드를 돌려 달라" 고 부탁해 빠져나가지 못합니다."""
+    """오염된 발언이 도구 권한을 보유한 동료에게 코드 실행을 위임하여 보안 검사를 우회하는 경로를 차단합니다."""
     security(allow=["net(example.com)"])
     _install(monkeypatch, [
-        ("", [FETCH_CALL]),      # 묻는 발언: 외부 내용을 읽음
-        ("", [_consult()]),      # 묻는 발언: 동료에게 부탁
-        ("", [CODE]),            # 자문받는 발언: 코드 실행 시도
+        ("", [FETCH_CALL]),      # 자문 요청 발언: 외부 콘텐츠 열람
+        ("", [_consult()]),      # 자문 요청 발언: 동료에게 자문 요청
+        ("", [CODE]),            # 피자문 발언: 코드 실행 시도
         ("못 했습니다", []),      # 자문 응답
         ("끝", []),
     ])
@@ -689,7 +689,7 @@ async def test_a_peer_inherits_what_the_asker_read(monkeypatch, tmp_path, securi
             _agent(allow_peer_consultation=True), [{"role": "user", "content": "조사하세요"}],
             session_id="s1", mcp=runtime, tool_gate=gate,
         )
-    assert runtime.ran == [FETCH_CALL[0]], "동료의 코드 실행은 물을 사람이 없어 거부됩니다"
+    assert runtime.ran == [FETCH_CALL[0]], "피자문 에이전트의 코드 실행은 승인할 사용자가 없으므로 거부됩니다"
 
 
 @pytest.mark.asyncio

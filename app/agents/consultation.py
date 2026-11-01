@@ -91,7 +91,7 @@ class ConsultationScope:
     max_depth: int = DEFAULT_MAX_CONSULTATION_DEPTH
     force_enable: bool = False
     history: Tuple[str, ...] = field(default_factory=tuple)
-    # 이 자문을 부른 발언이 읽은 외부 내용의 출처. 자문받는 발언의 도구 루프가 이어받습니다.
+    # 자문을 요청한 발언이 읽은 외부 콘텐츠 출처 목록. 피자문 에이전트의 도구 루프로 승계됩니다.
     tainted_by: Tuple[str, ...] = ()
 
 
@@ -316,10 +316,10 @@ async def run_consultation_tool(
     llm_caller: Optional[Any] = None,
     tainted_by: Sequence[str] = (),
 ) -> Tuple[str, str]:
-    """`peers__consult_agent` 도구를 실행하고 `(응답 문자열, 상태)` 를 반환합니다.
+    """`peers__consult_agent` 도구를 실행하고 `(응답 문자열, 상태)`를 반환합니다.
 
-    오염은 양쪽으로 번집니다. 묻는 발언이 읽은 외부 내용(`tainted_by`)은 자문받는 발언이 이어받고, 자문받는
-    발언이 도구로 읽은 외부 내용은 응답에 실려 돌아옵니다(`ToolOutput.outside`). 자문은 한 발언 안의 일입니다.
+    오염 상태는 양방향으로 전파됩니다. 자문 요청 발언이 읽은 외부 내용(`tainted_by`)은 피자문 에이전트로 승계되며,
+    피자문 에이전트가 도구를 통해 조회한 외부 내용은 자문 응답과 함께 반환됩니다(`ToolOutput.outside`). 동료 자문은 단일 발언 내부의 실행 과정으로 취급됩니다.
     """
     args = arguments if isinstance(arguments, dict) else {}
     target_key = str(args.get("agent_key") or args.get("agent") or "").strip()

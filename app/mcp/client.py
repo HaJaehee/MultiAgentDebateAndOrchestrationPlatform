@@ -124,8 +124,8 @@ class ToolOutput(str):
     도구 실행의 결과는 곳곳에서 `(문자열, 상태)` 로 약속되어 있고, 문자열로 쓰는 쪽은 첨부를 알 필요가
     없습니다. 받는 쪽(도구 루프)만 `media` 를 읽습니다 (`ToolLoopMixin._take_tool_media`).
 
-    `outside` 는 이 글에 외부 내용이 섞였을 때의 출처입니다. 호출만 봐서는 알 수 없는 경우(동료 자문)에
-    도구가 직접 밝힙니다 (`ToolLoopMixin._run_one_tool`).
+    `outside`는 반환 텍스트에 외부 내용이 포함된 경우의 출처 식별자입니다. 호출 시그니처만으로는 판별할 수 없는 경우(동료 자문 등)에
+    도구 실행 함수가 직접 명시하여 전달합니다 (`ToolLoopMixin._run_one_tool`).
     """
 
     media: Tuple[ToolMedia, ...]

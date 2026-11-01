@@ -389,9 +389,9 @@ def sub_debate_at(messages: Iterable[Any], boundary: int) -> Optional[SubDebateR
 
 
 def tool_call_lines(calls: Sequence[Mapping[str, Any]], output_chars: int = 300) -> str:
-    """이미 실행된 도구와 결과를 프롬프트에 적는 줄들.
+    """이전에 실행된 도구 호출 및 결과 목록을 프롬프트 인용 문자열로 포맷합니다.
 
-    어느 결과가 외부 내용이었는지 기록에 남지 않으므로 전부 감쌉니다. 모델에게 도구 결과는 어차피 자료입니다.
+    개별 호출의 외부 콘텐츠 여부는 DB에 별도 기록되지 않으므로 전체를 보안 래퍼로 감쌉니다. 도구 실행 결과는 모두 모델의 참고 자료에 해당합니다.
     """
     lines = []
     for call in calls:

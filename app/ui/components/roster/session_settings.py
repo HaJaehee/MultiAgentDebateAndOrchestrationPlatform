@@ -1,4 +1,4 @@
-"""로스터 패널 — 대화 설정: 전략·라운드·동시 실행 수, 토큰 예산, 도구 보안 모드·규칙, 지침."""
+"""로스터 패널 — 세션 설정: 토론 전략·최대 라운드·동시 실행 수, 토큰 예산, 도구 보안 모드·규칙, 커스텀 지침."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from app.ui.components.roster.state import RosterState
 
 
 class ToolRulesDialog:
-    """승인 카드의 "이 대화에서 허용·거부" 로 쌓인 규칙을 보고 지우는 창."""
+    """승인 카드에서 '이 대화에서 허용/거부'로 등록된 세션 규칙을 조회하고 삭제하는 대화상자."""
 
     def __init__(
         self,
@@ -32,7 +32,7 @@ class ToolRulesDialog:
         self._body: Optional[ui.column] = None
 
     def set_rules(self, grants: Optional[List[str]], denials: Optional[List[str]]) -> None:
-        """이 대화의 허용·거부 목록을 바꿔 그립니다 (세션을 열 때, 카드에 답했을 때)."""
+        """현재 세션의 허용/거부 규칙 목록을 갱신하고 다시 렌더링합니다 (세션 로드 시 또는 승인 카드 응답 시 호출)."""
         self.state.set_tool_rules(grants, denials)
         if self.button is not None and not self.button.is_deleted:
             self.button.set_text(self.state.tool_rules_label())
@@ -56,7 +56,7 @@ class ToolRulesDialog:
                 ).classes("text-xs text-slate-400")
                 self._body = ui.column().classes("w-full gap-3")
                 ui.label(
-                    "'항상 허용·거부' 로 저장한 규칙은 conf.json 에 있고, 옆의 '전역 규칙·감사' 창에서 보고 고칩니다."
+                    "'항상 허용/거부'로 영구 저장한 규칙은 conf.json에 기록되며, 우측의 '전역 규칙·감사' 창에서 조회 및 수정할 수 있습니다."
                 ).classes("text-[11px] text-slate-500")
         self.render()
         self._dialog.open()
@@ -88,20 +88,20 @@ class ToolRulesDialog:
                             ui.button(
                                 icon="delete_outline",
                                 on_click=lambda _e, k=kind, r=rule: self.remove(k, r),
-                            ).props("flat round dense color=grey-5 size=12px").tooltip("이 규칙 지우기")
+                            ).props("flat round dense color=grey-5 size=12px").tooltip("이 규칙 삭제")
 
     async def remove(self, kind: str, rule: str) -> None:
         grants = [r for r in self.state.tool_grants if not (kind == "grants" and r == rule)]
         denials = [r for r in self.state.tool_denials if not (kind == "denials" and r == rule)]
         await self.on_changed(grants, denials)
-        # 알림을 먼저 띄웁니다. 다시 그리면 방금 누른 버튼이 지워지고, 그 버튼 자리에서는
-        # 더 이상 알림을 띄울 수 없습니다.
+        # UI 재렌더링 전에 알림을 먼저 표시합니다. 먼저 다시 그리면 클릭된 버튼 요소가 DOM에서 제거되어
+        # 해당 컨텍스트에서 알림을 띄울 수 없기 때문입니다.
         ui.notify(f"세션 대화 규칙을 삭제하였습니다: {rule}", type="info", position="bottom-right")
         self.set_rules(grants, denials)
 
 
 class SessionSettingsComponent:
-    """이 대화에만 걸리는 손잡이들. 값은 `RosterState` 에 두고, 저장은 `RosterChanges` 를 거쳐 화면에 맡깁니다."""
+    """현재 대화 세션에 적용되는 설정 컨트롤. 상태 값은 `RosterState`에 보관하며, 영속화는 `RosterChanges`를 통해 상위 뷰에 위임합니다."""
 
     def __init__(
         self,
@@ -147,12 +147,12 @@ class SessionSettingsComponent:
                     value=self.state.strategy_name,
                     on_change=self.on_strategy_change,
                 ).props("outlined dense dark options-dense").classes("w-80 text-xs")
-                # 파일을 넣었는데 목록에 없으면 여기서 이유를 봅니다. 앱은 깨진 플러그인 없이 떠 있습니다.
+                # 플러그인 파일을 추가했으나 목록에 표시되지 않는 경우 로드 실패 사유를 툴팁으로 안내합니다. 오류가 발생한 플러그인은 제외된 상태로 기동됩니다.
                 problems = plugin_problems()
                 if problems:
                     with ui.icon("extension_off", size="xs").classes("text-amber-400 cursor-help"):
                         ui.tooltip("\n".join(
-                            ["읽지 못한 플러그인이 있습니다."]
+                            ["로드하지 못한 플러그인이 있습니다."]
                             + [f"· {p.source}: {p.problem}" for p in problems]
                         )).classes("whitespace-pre-line text-[11px]")
 
@@ -181,16 +181,16 @@ class SessionSettingsComponent:
                     "채팅 피드에 질문 카드가 표시되며, 5분 이내에 답변이 없으면 자체 가정을 명시하고 계속 진행합니다. "
                     "답변 내용은 후속 발언자들에게도 공유됩니다."
                 )
-                # 줄이 바뀌어도 라운드 칸이 토글 오른쪽에서 떨어지지 않게 한 줄로 묶습니다.
+                # 줄바꿈이 발생하더라도 라운드 입력란이 토글 우측에서 분리되지 않도록 단일 행으로 묶습니다.
                 with ui.row().classes("items-center gap-2 flex-nowrap"):
                     self.sub_debate_switch = ui.switch(
                         "쟁점은 따로 토론", value=self.state.sub_debates, on_change=self.on_sub_debates_change,
                     ).props("dense dark color=teal-4").classes("text-xs text-slate-300")
                     self.sub_debate_switch.tooltip(
-                        "라운드(그래프는 단계)가 끝날 때 결정 장부에 미해결 쟁점이 있으면, 오케스트레이터가 필요하다고 "
-                        "판단한 경우에 관련 전문가 두 명만 따로 주고받게 하고 그 결론을 본 토론에 합류시킵니다 "
-                        "(턴당 최대 2회). 판단에 호출 1번, 열리면 라운드마다 발언 2번과 결론·장부 갱신 2번이 더 듭니다. "
-                        "마지막 라운드 뒤에는 열리지 않습니다."
+                        "각 라운드(그래프 토론은 단계) 종료 시 결정 장부에 미해결 쟁점이 남아 있는 경우, 오케스트레이터의 판단에 따라 "
+                        "관련 전문가 2인의 별도 서브 토론을 진행하고 그 결론을 본 토론에 병합합니다(턴당 최대 2회). "
+                        "개최 여부 판단에 1회, 서브 토론 진행 시 라운드당 발언 2회와 결론 도출 및 장부 갱신 2회의 추가 호출이 발생합니다. "
+                        "마지막 라운드 종료 후에는 실행되지 않습니다."
                     )
                     self.sub_debate_rounds_row = ui.row().classes("items-center gap-1 flex-nowrap")
                     with self.sub_debate_rounds_row:
@@ -200,9 +200,9 @@ class SessionSettingsComponent:
                             on_change=self.on_sub_debate_rounds_change,
                         ).props("outlined dense dark").classes("w-16 text-xs")
                         self.sub_debate_rounds_input.tooltip(
-                            "서브 토론 한 번의 최대 라운드 수입니다. 왼쪽의 '최대 라운드'(본 토론)와 별개로 정하며, 서브 토론이 "
-                            "본 토론의 라운드를 쓰지 않습니다. 한 라운드에 두 전문가가 한 번씩 말합니다. 응답을 받지 못하거나 "
-                            "토큰 예산을 다 쓰면 그 전에 끝나고, 그때까지의 발언으로 결론을 씁니다."
+                            "단일 서브 토론의 최대 라운드 수입니다. 좌측의 본 토론 '최대 라운드'와 별개로 설정되며 본 토론의 "
+                            "라운드 수를 소모하지 않습니다. 1라운드당 두 전문가가 1회씩 발언하며, 응답 실패 또는 토큰 예산 소진 시 "
+                            "조기 종료하고 그때까지의 발언을 바탕으로 결론을 도출합니다."
                         )
                         ui.label("라운드").classes("text-xs text-slate-300")
                 self.sync_sub_debate_rounds()
@@ -221,8 +221,8 @@ class SessionSettingsComponent:
                     "비우거나 0으로 설정하면 상한이 없습니다. 발언 카드 및 세션 정보에서 실제 사용량을 확인할 수 있습니다."
                 )
 
-            # 도구 보안 모드 (`app/mcp/policy.py`). 대화마다 고르고, 토론 중에 바꾸면
-            # 진행 중인 턴에도 다음 도구 호출부터 걸립니다.
+            # 도구 보안 모드 (`app/mcp/policy.py`). 세션별로 설정하며, 토론 도중 변경 시
+            # 진행 중인 턴에서도 다음 도구 호출부터 즉시 적용됩니다.
             with ui.row().classes("items-center gap-2 min-w-[220px]"):
                 ui.icon("shield", size="xs").classes("text-emerald-400")
                 ui.label("도구 보안:").classes("text-xs font-semibold text-slate-300")
@@ -232,28 +232,28 @@ class SessionSettingsComponent:
                     on_change=self.on_tool_mode_change,
                 ).props("outlined dense dark options-dense").classes("w-40 text-xs")
                 self.tool_mode_select.tooltip(
-                    "읽기 전용: 읽기만 · 기본: 작업 공간 쓰기와 검사를 통과한 코드는 묻지 "
-                    "않음 · 검토: 읽기 말고 전부 묻기 · 자동: 거부 규칙 말고 묻지 않음. "
-                    "고정 보호(MADO 설정·비밀·다른 대화의 기억)는 어느 모드에서도 풀리지 않습니다."
+                    "읽기 전용: 읽기 작업만 허용 · 기본: 작업 공간 내부 쓰기 및 정적 검사를 통과한 코드 실행은 자동 허용 "
+                    "· 검토: 읽기 외 모든 작업 시 사용자 확인 · 자동: 거부 규칙 외 모든 작업을 확인 없이 실행. "
+                    "고정 보호 대상(MADO 설정, 비밀키 파일, 타 세션 메모리)은 어떤 모드에서도 해제되지 않습니다."
                 )
                 self.tool_rules.button = (
                     ui.button(self.state.tool_rules_label(), icon="rule",
                               on_click=self.tool_rules.open)
                     .props("flat dense no-caps color=emerald-4 size=12px")
                     .tooltip(
-                        "승인 카드에서 '이 대화에서 허용·거부' 로 쌓인 규칙을 보고 지웁니다. "
-                        "'항상' 규칙은 옆의 '전역 규칙·감사' 에 있습니다."
+                        "승인 카드에서 '이 대화에서 허용/거부'로 등록된 세션 규칙을 조회하고 삭제합니다. "
+                        "'항상 허용/거부' 규칙은 우측의 '전역 규칙·감사' 창에서 관리합니다."
                     )
                 )
                 ui.button(
                     "전역 규칙·감사", icon="admin_panel_settings", on_click=self.on_open_tool_security,
                 ).props("flat dense no-caps color=emerald-4 size=12px").tooltip(
-                    "conf.json 의 허용·묻기·거부 규칙을 보고 고칩니다 (고치기는 서버 PC 에서만). "
-                    "규칙·모드·고정 보호에 막힌 호출을 대화를 가로질러 모아 봅니다."
+                    "conf.json의 전역 허용·확인·거부 규칙을 조회하고 수정합니다(규칙 수정은 로컬 호스트에서만 가능). "
+                    "전체 세션에 걸쳐 보안 규칙·모드·고정 보호에 의해 차단된 도구 호출 감사 로그를 통합 조회합니다."
                 )
 
-            # 동시 실행 상한 — 병렬 지시 전략에서만 뜹니다. 다른 전략에서는
-            # 읽히지 않는 값이라, 늘 띄워 두면 안 듣는 손잡이가 됩니다.
+            # 동시 실행 상한 — 병렬 실행 전략(병렬 지시 및 그래프 토론)에서만 표시합니다.
+            # 순차 실행 전략에서는 참조되지 않는 설정이므로 불필요한 노출을 방지합니다.
             self.parallel_row = ui.row().classes("items-center gap-2 min-w-[180px]")
             with self.parallel_row:
                 ui.icon("call_split", size="xs").classes("text-teal-400")
@@ -263,9 +263,8 @@ class SessionSettingsComponent:
                     on_change=self.on_parallel_limit_change,
                 ).props("outlined dense dark").classes("w-16 text-xs")
                 self.parallel_input.tooltip(
-                    "한 라운드에 동시에 띄울 에이전트 수. 이보다 많이 지시받으면 "
-                    "나머지는 순차적으로 밀려 실행됩니다. 로컬 단일 엔드포인트"
-                    "(Ollama 등)에서는 낮게 두세요"
+                    "단일 라운드에서 동시에 실행할 최대 에이전트 수입니다. 이를 초과하여 배정된 에이전트는 "
+                    "대기열에서 순차적으로 실행됩니다. 로컬 단일 엔드포인트(Ollama 등) 사용 시에는 낮게 설정하십시오."
                 )
             self.sync_parallel_visibility()
 
@@ -280,7 +279,7 @@ class SessionSettingsComponent:
             ).props("outlined dark dense autogrow rows=2").classes("w-full text-xs")
 
     def sync_from_state(self) -> None:
-        """대화를 열 때 값을 손잡이에 옮깁니다. 값이 바뀐 손잡이는 자기 핸들러도 부릅니다."""
+        """세션 로드 시 상태 값을 UI 컨트롤에 동기화합니다. 값이 변경된 컨트롤은 연결된 이벤트 핸들러도 함께 호출합니다."""
         state = self.state
         if self.strategy_select:
             self.strategy_select.value = state.strategy_name
@@ -300,7 +299,7 @@ class SessionSettingsComponent:
             self.sub_debate_rounds_input.value = state.sub_debate_rounds
         self.sync_sub_debate_rounds()
         if self.tool_mode_select:
-            # conf.json 의 기본 모드가 바뀌었을 수 있으니 목록도 새로 그립니다.
+            # conf.json의 기본 보안 모드가 변경되었을 수 있으므로 옵션 목록도 함께 갱신합니다.
             self.tool_mode_select.set_options(self.tool_mode_options(), value=state.tool_mode)
         self.sync_parallel_visibility()
         if self.rounds_label:
@@ -324,7 +323,7 @@ class SessionSettingsComponent:
         )
 
     def tool_mode_options(self) -> Dict[str, str]:
-        """모드 목록. 빈 값은 "conf.json 의 기본값" 이고, 그 값이 무엇인지 함께 적습니다."""
+        """보안 모드 선택지 딕셔너리를 반환합니다. 빈 문자열 키는 conf.json의 전역 기본값을 의미하며 현재 설정값을 병기합니다."""
         default = self.service.default_tool_mode()
         options = {"": f"설정 기본값 ({MODE_LABELS.get(default, default)})"}
         options.update({mode: MODE_LABELS[mode] for mode in MODES})
@@ -341,8 +340,8 @@ class SessionSettingsComponent:
         self.changes.config_changed_later()
 
     def on_parallel_limit_change(self, e) -> None:
-        # 빈 칸으로 지우는 중이면 (`None`) 마지막 값을 지킵니다. 0 이나 음수는
-        # "동시에 아무도 못 돈다" 는 뜻이 되므로 최소 1 입니다.
+        # 입력란을 비우는 중(`None`)에는 직전 유효 값을 유지합니다. 0 이하의 값은
+        # 동시 실행 불가 상태를 의미하므로 최소값을 1로 제한합니다.
         if e.value is None:
             return
         self.state.parallel_limit = max(1, int(e.value))
@@ -363,7 +362,7 @@ class SessionSettingsComponent:
         self.changes.config_changed_later()
 
     def sync_sub_debate_rounds(self) -> None:
-        """라운드 칸은 토글이 켜져 있을 때만 읽힙니다. 꺼져 있으면 자리는 지키되 흐리게 잠급니다."""
+        """서브 토론 라운드 입력란은 스위치가 활성화된 경우에만 조작할 수 있습니다. 비활성 시에는 레이아웃을 유지한 채 반투명하게 비활성화합니다."""
         if self.sub_debate_rounds_input is None or self.sub_debate_rounds_row is None:
             return
         self.sub_debate_rounds_input.set_enabled(self.state.sub_debates)
@@ -373,7 +372,7 @@ class SessionSettingsComponent:
             self.sub_debate_rounds_row.classes(add="opacity-50")
 
     def on_sub_debate_rounds_change(self, e) -> None:
-        # 빈 칸으로 지우는 중이면 (`None`) 마지막 값을 지킵니다.
+        # 입력란을 비우는 중(`None`)에는 직전 유효 값을 유지합니다.
         if e.value is None:
             return
         self.state.sub_debate_rounds = clamp_sub_debate_rounds(e.value)

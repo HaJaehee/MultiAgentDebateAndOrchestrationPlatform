@@ -23,7 +23,7 @@ conf.json의 `env` 블록에 명시적으로 지정해야 합니다 (`"ANYTHINGL
 
 두 도구 모두 어노테이션에 읽기 전용·닫힌 세계(`readOnlyHint=True`, `openWorldHint=False`)가 명시되어 있어
 MADO 도구 보안 엔진에서 안전한 읽기(read) 권한으로 판정되며, 사용자 승인 팝업 없이 즉시 실행됩니다.
-다만 문서는 남이 쓴 글이므로 `search` 결과는 외부 내용으로 표시됩니다 (`tool_security.untrusted_sources`).
+다만 검색된 문서는 외부 작성 콘텐츠이므로 `search` 결과는 외부 내용으로 분류되어 보안 래퍼로 감싸집니다 (`tool_security.untrusted_sources`).
 
 실행: python server.py  (stdio)
 """
