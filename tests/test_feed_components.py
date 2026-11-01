@@ -18,6 +18,7 @@ from app.orchestration.turns import (
 )
 from app.ui.components.chat_feed.approvals import ApprovalCards, PlanApprovalCard
 from app.ui.components.chat_feed.cards import CardTimeline
+from app.ui.components.chat_feed.common import unfinished_turn_text
 from app.ui.components.chat_feed.decisions import DecisionBar, UnfinishedTurnBar
 from app.ui.components.chat_feed.feed import ChatFeed
 from app.ui.components.chat_feed.mentions import MentionUpload
@@ -302,6 +303,22 @@ def test_the_bar_offers_what_can_be_done():
     assert bar.bar.visible is True
     assert bar.continue_button.visible is False
     assert bar.discard_button.visible is True
+
+
+def test_the_replay_button_needs_cells_and_a_way_to_continue():
+    bar = _unfinished([])
+    bar.set_turn({**INFO, "can_continue": True})
+    assert bar.continue_button.visible is True and bar.replay_button.visible is False
+    bar.set_turn({**INFO, "can_continue": True, "replayable_cells": 2})
+    assert bar.replay_button.visible is True
+    bar.set_turn({**INFO, "can_continue": False, "replayable_cells": 2})
+    assert bar.replay_button.visible is False
+
+
+def test_the_bar_says_how_many_cells_can_run_again():
+    assert "코드 셀 2개" in unfinished_turn_text({**INFO, "can_continue": True, "replayable_cells": 2})
+    assert "코드 셀" not in unfinished_turn_text({**INFO, "can_continue": False, "replayable_cells": 2})
+    assert "코드 셀" not in unfinished_turn_text({**INFO, "can_continue": True})
 
 
 @pytest.mark.asyncio

@@ -32,7 +32,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 
 from app.database.models import (
     TURN_ABANDONED,
@@ -48,6 +48,7 @@ from app.database.models import (
 )
 from app.agents.llm_loop import SPEECH_STATE_VERSION
 from app.agents.llm_usage import Usage
+from app.mcp.manager import compose_scope
 from app.orchestration.graph import Activation, GraphScheduler, GraphSpec
 from app.orchestration.graph_run import OUTPUT_PORTS
 from app.timestamps import _as_datetime
@@ -81,6 +82,8 @@ KIND_SUBDEBATE_SPEECH = "subdebate_speech"          # 그 안의 발언. 본 기
 KIND_SUBDEBATE_CONCLUSION = "subdebate_conclusion"  # 오케스트레이터의 결론. 이것이 본 토론에 합류합니다
 # 사용자가 결정 장부를 직접 편집한 기록 (ADR-038). 유저 발언 기록에 함께 고정됩니다 (`build_user_record`).
 KIND_LEDGER_EDIT = "ledger_edit"
+# 끊긴 턴을 이어 가기 전에 커널 셀을 다시 실행한 기록 (ADR-046). 값: kernels. 다시 실행한 도구 기록이 이것에 이어집니다.
+KIND_KERNEL_REPLAY = "kernel_replay"
 
 # 실패로 끝나면 "그 에이전트가 이번 턴에 말하지 못했다" 는 뜻이 되는 자리.
 _SPEAKING_KINDS = (
@@ -414,6 +417,71 @@ def resume_notice(calls: Sequence[Mapping[str, Any]], output_chars: int = 300) -
     )
 
 
+# ---------------------------------------------------------------- 커널 셀 (ADR-046)
+
+# 커널에서 코드를 실행하는 도구와 커널을 비우는 도구 (이름 꼬리).
+KERNEL_RUN_TOOLS = ("execute_python_code", "run_python_file")
+KERNEL_RESET_TOOL = "reset_kernel_state"
+# 실행 결과의 첫 줄. 샌드박스는 `FAILED`·`TIMEOUT` 이 아니면 `RAN_` 으로 시작하는 판정을 줍니다.
+_CELL_RAN_PREFIX = "execution_status: RAN_"
+# 코드가 시간을 넘겨 커널을 다시 띄웠다는 글. 그때까지의 변수는 그 자리에서 사라졌습니다.
+_KERNEL_LOST_MARKS = ("The kernel had to be restarted", "Kernel was unresponsive")
+
+
+def cell_ran(status: Any, output: Any) -> bool:
+    """이 호출의 코드가 끝까지 실행됐는가. 서버는 코드가 실패해도 도구 호출은 성공으로 돌려줍니다."""
+    return status == "success" and str(output or "").startswith(_CELL_RAN_PREFIX)
+
+
+def kernel_namespace(tool_name: str, session_id: str, agent_key: str) -> str:
+    """이 호출이 쓰는 커널의 이름. 호스트가 메타데이터로 보내는 값과 같습니다 (`compose_scope`)."""
+    server = tool_name.split("__", 1)[0] if "__" in tool_name else ""
+    return compose_scope(server, session_id, agent_key) or ""
+
+
+def kernel_cells(
+    rows: Iterable[Any], session_id: str, replay_notes: Iterable[str] = (),
+) -> Dict[str, List[Any]]:
+    """커널을 되살리려면 다시 실행할 셀 — {네임스페이스: 도구 기록들}. `rows` 는 시간순입니다.
+
+    끝까지 실행된 호출만 고릅니다. 커널이 비워진 뒤의 것만 남기고, 앞서 다시 실행한 기록
+    (`replay_notes` 에 이어진 행)은 원본과 겹치므로 뺍니다.
+    """
+    skipped = set(replay_notes)
+    cells: Dict[str, List[Any]] = {}
+    for row in rows:
+        if _get(row, "message_id") in skipped:
+            continue
+        name = str(_get(row, "tool_name") or "")
+        tail = name.split("__", 1)[-1]
+        status, output = _get(row, "status"), str(_get(row, "output") or "")
+        namespace = kernel_namespace(name, session_id, str(_get(row, "agent_key") or ""))
+        if tail == KERNEL_RESET_TOOL:
+            if status == "success" and output.startswith('Namespace "'):
+                cells[namespace] = []
+        elif tail in KERNEL_RUN_TOOLS:
+            if any(mark in output for mark in _KERNEL_LOST_MARKS):
+                cells[namespace] = []
+            elif cell_ran(status, output):
+                cells.setdefault(namespace, []).append(row)
+    return {namespace: found for namespace, found in cells.items() if found}
+
+
+async def turn_kernel_cells(db, session_id: str, turn_id: str, messages: Iterable[Any]) -> Dict[str, List[Any]]:
+    """이 턴의 기록에서 고른 셀 (`kernel_cells`). 도구는 실행 즉시 기록되므로 끊겨도 빠지지 않습니다."""
+    tails = (*KERNEL_RUN_TOOLS, KERNEL_RESET_TOOL)
+    rows = (await db.execute(
+        select(ToolCallRecordModel)
+        .where(
+            ToolCallRecordModel.turn_id == turn_id,
+            or_(*(ToolCallRecordModel.tool_name.like(f"%{tail}") for tail in tails)),
+        )
+        .order_by(ToolCallRecordModel.created_at)
+    )).scalars().all()
+    notes = [_get(m, "id") for m in messages if kind_of(m) == KIND_KERNEL_REPLAY]
+    return kernel_cells(rows, session_id, notes)
+
+
 # ---------------------------------------------------------------- 감지
 
 async def mark_interrupted_turns(db) -> Dict[str, int]:
@@ -507,6 +575,8 @@ class UnfinishedTurn:
     resumable_speeches: int
     can_continue: bool
     can_finish: bool
+    # 이어 가기 전에 다시 실행할 수 있는 커널 셀 수 (ADR-046). 0 이면 그 버튼이 보이지 않습니다.
+    replayable_cells: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -534,6 +604,7 @@ async def unfinished_turn(db, session_id: str) -> Optional[UnfinishedTurn]:
         select(SpeechDraftModel.state).where(SpeechDraftModel.turn_id == turn.id)
     )).scalars().all()
     resumable = sum(1 for s in drafts if (s or {}).get("version") == SPEECH_STATE_VERSION)
+    cells = await turn_kernel_cells(db, session_id, turn.id, messages)
     opening = next((m for m in messages if m.id == turn.opening_message_id), None)
     config = turn.config or {}
     speeches = specialist_speeches(messages)
@@ -553,6 +624,7 @@ async def unfinished_turn(db, session_id: str) -> Optional[UnfinishedTurn]:
         resumable_speeches=resumable,
         can_continue=can_continue(str(config.get("strategy") or ""), turn.phase),
         can_finish=speeches > 0,
+        replayable_cells=sum(len(found) for found in cells.values()),
     )
 
 

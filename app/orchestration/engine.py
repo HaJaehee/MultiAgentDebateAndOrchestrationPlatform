@@ -24,6 +24,7 @@ from app.agents.llm_usage import Usage, measuring
 from app.agents.pool import AgentPool, get_agent_pool
 from app.config import resolve_workspace_dir
 from app.database.models import (
+    TURN_INTERRUPTED,
     TURN_RUNNING,
     TURN_UNFINISHED,
     SessionModel,
@@ -35,7 +36,7 @@ from app.database.models import (
 from app.database.session import get_session_factory
 from app.events import EventCallback, EventType
 from app.mcp.pool import get_runtime_pool
-from app.orchestration import speech_retry, turns
+from app.orchestration import kernel_replay, speech_retry, turns
 from app.orchestration.context import EngineContext
 from app.orchestration.control import TurnControl
 from app.orchestration.conversation import ConversationMemory
@@ -48,7 +49,7 @@ from app.orchestration.recording import TurnRecorder
 from app.orchestration.speech import SpeechRunner
 from app.orchestration.state import DebateMessage, DebateState
 from app.orchestration.strategies import get_strategy, resolve_strategy_name
-from app.orchestration.turn_setup import TurnPreparer, new_state, restore_turn_state
+from app.orchestration.turn_setup import TurnPreparer, TurnSetup, new_state, restore_turn_state
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,7 @@ class OrchestratorEngine:
         self.synthesis_phase = SynthesisPhaseExecutor(*services)
         self.preparer = TurnPreparer(self.ctx, graph_for_turn=self.debate_phase.graph.graph_for_turn)
         self.revisions = SpeechRevisionExecutor(*services, preparer=self.preparer)
+        self.kernel_replayer = kernel_replay.KernelReplayer(self.ctx, self.recorder)
 
     # 밖(MADOWarGame 구동기, 테스트)에서 쓰는 이름. 실제 값은 서비스들이 함께 보는 `ctx` 에 있습니다.
     @property
@@ -212,11 +214,12 @@ class OrchestratorEngine:
         * `finish` — 기록된 발언만으로 합성합니다. 정지와 같은 의미라 합의로 적지 않고, 합성
           지시와 보고서에 서버 중단으로 덜 논의되었다고 적습니다.
         * `continue` — 기록에서 어디까지 돌았는지 다시 계산해 남은 발언부터 이어 갑니다.
+        * `replay` — `continue` 와 같되, 이어 가기 전에 이번 턴의 커널 셀을 다시 실행합니다 (ADR-046).
 
         참여자·전략·라운드 수·지침·작업 공간은 **그 턴이 시작될 때의 구성**(`TurnModel.config`)을
         따릅니다. 끊긴 사이에 로스터를 바꿨더라도 그 턴은 시작할 때의 모습으로 마칩니다.
         """
-        if mode not in ("finish", "continue"):
+        if mode not in ("finish", "continue", "replay"):
             raise ValueError(f"알 수 없는 재개 방식입니다: {mode}")
         async with self.session_factory() as db:
             turn = await db.get(TurnModel, turn_id)
@@ -508,6 +511,7 @@ class OrchestratorEngine:
             )).scalars().all()
             stopped_at = turns.last_activity(turn, state.messages[start:], [o.created_at for o in orphans])
             paused = int((utc_now() - stopped_at).total_seconds()) if stopped_at is not None else 0
+            server_restarted = turn.status == TURN_INTERRUPTED
             turn.status = TURN_RUNNING
             turn.error = ""
             turn.paused_seconds = int(turn.paused_seconds or 0) + max(0, paused)
@@ -530,11 +534,12 @@ class OrchestratorEngine:
             )).scalars().all()
             usable = [
                 d for d in drafts
-                if mode == "continue" and (d.state or {}).get("version") == SPEECH_STATE_VERSION
+                if mode != "finish" and (d.state or {}).get("version") == SPEECH_STATE_VERSION
             ]
             state.resume_drafts = {
                 turns.draft_key(d.agent_key, d.kind, d.round_number, d.graph_node_id): {
-                    "id": d.id, "kind": d.kind, "started_at": d.started_at, "state": d.state,
+                    "id": d.id, "agent_key": d.agent_key, "kind": d.kind, "started_at": d.started_at,
+                    "state": d.state,
                 }
                 for d in usable
             }
@@ -563,6 +568,10 @@ class OrchestratorEngine:
 
             if not turns.can_continue(setup.strategy_name, turn.phase):
                 raise ValueError("이 전략의 턴은 아직 이어서 진행할 수 없습니다. 지금까지로 결론을 내거나 버려 주십시오.")
+
+            await self._restore_kernels(
+                db, state, setup, workspace, mode, server_restarted, control=control, on_event=on_event,
+            )
 
             if turn.phase == "synthesizing":
                 # 토론은 끝났고 합성만 남았습니다. 정지로 덜 논의된 턴이었는지는 턴 기록이 압니다.
@@ -616,6 +625,37 @@ class OrchestratorEngine:
                 control=control, on_event=on_event,
             )
             return state
+
+    async def _restore_kernels(
+        self,
+        db,
+        state: DebateState,
+        setup: TurnSetup,
+        workspace: Path,
+        mode: str,
+        server_restarted: bool,
+        *,
+        control: Optional[TurnControl],
+        on_event: Optional[EventCallback],
+    ) -> None:
+        """커널을 어떻게 이어 갈지 정하고, 초안에서 이어 가는 발언에게 알립니다 (ADR-046).
+
+        초안의 대화에는 사라진 변수를 만든 기록이 그대로 있어, 알리지 않으면 모델이 있다고 믿습니다. 엔진 오류로
+        멈춘 턴은 커널이 살아 있으므로 `continue` 면 할 말이 없습니다.
+        """
+        if mode == "replay":
+            notes = await self.kernel_replayer.replay(db, state, setup, workspace, control=control, on_event=on_event)
+        elif server_restarted:
+            cells = await turns.turn_kernel_cells(
+                db, state.session_id, state.turn_id, state.messages[state.turn_message_start:],
+            )
+            notes = {key: kernel_replay.KERNEL_LOST_NOTE for key in kernel_replay.agents_of(cells)}
+        else:
+            notes = {}
+        for draft in state.resume_drafts.values():
+            note = notes.get(draft["agent_key"])
+            if note:
+                draft["state"] = {**draft["state"], "kernel_note": note}
 
     # ------------------------------------------------------------ MCP 런타임 슬롯 관리
 

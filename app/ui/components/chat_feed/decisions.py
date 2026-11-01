@@ -29,13 +29,14 @@ class UnfinishedTurnBar:
     ):
         self.alive = alive
         self.is_busy = is_busy
-        # (턴 id, "finish"·"continue") 와 (턴 id).
+        # (턴 id, "finish"·"continue"·"replay") 와 (턴 id).
         self.on_resume_turn = on_resume_turn
         self.on_discard_turn = on_discard_turn
         self._info: Optional[Dict[str, Any]] = None
         self.bar: Optional[ui.row] = None
         self.label: Optional[ui.label] = None
         self.continue_button: Optional[ui.button] = None
+        self.replay_button: Optional[ui.button] = None
         self.finish_button: Optional[ui.button] = None
         self.discard_button: Optional[ui.button] = None
         self.dialog: Optional[ui.dialog] = None
@@ -49,12 +50,26 @@ class UnfinishedTurnBar:
             self.label = ui.label("").classes(
                 "min-w-0 flex-grow text-violet-100 leading-snug"
             )
-            with ui.row().classes("items-center gap-1 flex-shrink-0 flex-nowrap"):
+            # 버튼이 넷까지 늘어납니다. 좁은 칸에서는 줄을 바꿔야 뒤쪽 버튼이 잘리지 않습니다.
+            with ui.row().classes("items-center gap-1 flex-wrap"):
                 self.continue_button = (
                     ui.button("이어서 진행", icon="play_arrow",
                               on_click=lambda: self.handle_resume("continue"))
                     .props("unelevated dense no-caps color=violet-7 size=12px")
-                    .tooltip("기록에서 어디까지 진행되었는지 다시 계산하여 남은 발언부터 이어 갑니다.")
+                    .tooltip(
+                        "기록에서 어디까지 진행되었는지 다시 계산하여 남은 발언부터 이어 갑니다. "
+                        "코드는 다시 실행하지 않으므로, 서버가 다시 시작됐다면 커널의 변수는 비어 있습니다."
+                    )
+                )
+                self.replay_button = (
+                    ui.button("셀 재실행 후 이어서", icon="replay",
+                              on_click=lambda: self.handle_resume("replay"))
+                    .props("flat dense no-caps color=violet-3 size=12px")
+                    .tooltip(
+                        "커널을 비우고 이번 턴에서 끝까지 실행된 코드 셀을 순서대로 다시 실행해 변수를 되살린 뒤 "
+                        "이어 갑니다. 셀마다 지금의 도구 보안 판정을 받습니다. 재실행이 바꾼 작업 공간 파일은 "
+                        "되돌리지만, 네트워크 호출처럼 작업 공간 밖으로 나간 일은 되돌릴 수 없습니다."
+                    )
                 )
                 self.finish_button = (
                     ui.button("지금까지로 결론", icon="done_all",
@@ -116,6 +131,8 @@ class UnfinishedTurnBar:
             self.label.set_text(unfinished_turn_text(info))
         if self.continue_button is not None:
             self.continue_button.set_visibility(bool(info.get("can_continue")))
+        if self.replay_button is not None:
+            self.replay_button.set_visibility(bool(info.get("can_continue") and info.get("replayable_cells")))
         if self.discard_button is not None:
             # 정지·긴급 종료처럼, 받을 곳이 없는 버튼은 보이지 않습니다 (체험 화면은 버리기를 주지 않습니다).
             self.discard_button.set_visibility(self.on_discard_turn is not None)

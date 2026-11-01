@@ -8,8 +8,9 @@
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
+from app.agents import write_probe
 from app.agents.base import Agent
 from app.agents.connection import REJECTED, classify
 from app.agents.host_tools import find_host_tool
@@ -63,7 +64,7 @@ logger = logging.getLogger(__name__)
 
 
 # 초안의 형식. 필드를 바꾸면 올립니다 — 모르는 형식의 초안은 이어 가지 않고 발언을 처음부터 합니다.
-SPEECH_STATE_VERSION = 2
+SPEECH_STATE_VERSION = 3
 
 
 # 도구 단위로 이어 가는 발언의 첫 판 앞에 붙는 안내.
@@ -81,13 +82,24 @@ UNKNOWN_TOOL_RESULT = (
     "정하세요."
 )
 
+# 끊긴 쓰기를 디스크에서 확인했을 때 재개 안내에 덧붙이는 글 (ADR-046).
+WRITES_CHECKED_NOTICE = " 파일 쓰기 호출은 앱이 디스크를 확인해 그 결과를 도구 결과에 적었습니다."
+FILES_DRIFTED_NOTICE = (
+    " 이 발언이 마지막으로 쓴 뒤 내용이 달라진 파일: {paths}. 다른 도구나 사람이 고쳤을 수 있으니 기억에 "
+    "기대지 말고 다시 읽으세요."
+)
 
-def close_open_tool_calls(messages: List[Dict[str, Any]]) -> List[str]:
-    """마지막 assistant 발언이 부른 도구 중 결과가 없는 것에 "결과 모름" 을 채웁니다. 채운 도구 이름.
+
+def close_open_tool_calls(
+    messages: List[Dict[str, Any]], checked: Optional[Mapping[str, str]] = None,
+) -> List[str]:
+    """마지막 assistant 발언이 부른 도구 중 결과가 없는 것에 결과를 채웁니다. 채운 도구 이름.
 
     도구를 부른 발언과 그 결과는 짝이 맞아야 합니다 (`_assistant_turn`). 서버가 도구를 실행하는
     도중에 내려가면 부른 기록만 있고 결과가 없는 호출이 남습니다. 그 자리를 비워 두면 요청이
     거절되고, 지어낸 결과를 넣으면 모델이 그것을 사실로 읽습니다. 모른다고 적습니다.
+
+    `checked` 는 디스크에서 확인한 쓰기의 결과입니다 (호출 id → 글, `write_probe.reconcile`).
     """
     for index in range(len(messages) - 1, -1, -1):
         msg = messages[index]
@@ -106,7 +118,8 @@ def close_open_tool_calls(messages: List[Dict[str, Any]]) -> List[str]:
                 continue
             name = ((call.get("function") or {}).get("name")) or "unknown_tool"
             messages.append({
-                "role": "tool", "tool_call_id": call_id, "name": name, "content": UNKNOWN_TOOL_RESULT,
+                "role": "tool", "tool_call_id": call_id, "name": name,
+                "content": (checked or {}).get(call_id, UNKNOWN_TOOL_RESULT),
             })
             missing.append(name)
         return missing
@@ -181,6 +194,10 @@ class ToolLoop:
     announced_bands: Set[Any] = field(default_factory=set)
     # 현재 루프에서 도구가 반환한 미디어 파일 목록. 해당 라운드 종료 후 사용자 메시지로 주입됩니다 (`_flush_tool_media`).
     tool_media: List[Dict[str, Any]] = field(default_factory=list)
+    # 실행 중인 쓰기 호출의 호출 전 상태 (호출 id → `write_probe.plan_write`). 끊기면 이것으로 결과를 확인합니다.
+    open_writes: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # 이 발언이 마지막으로 쓴 파일의 해시 (절대 경로 → {path, sha256}). 이어 갈 때 그 뒤에 달라졌는지 봅니다.
+    known_files: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     # --- 도구 목록에서 한 번 구해 두는 것
     memory_write: Optional[str] = field(init=False)
@@ -235,6 +252,8 @@ class ToolLoop:
         self.leaked_retries = int(saved.get("leaked_retries") or 0)
         self.context_asked = bool(saved.get("context_asked"))
         self.announced_bands = set(saved.get("announced_bands") or [])
+        self.open_writes = {k: dict(v) for k, v in (saved.get("open_writes") or {}).items()}
+        self.known_files = {k: dict(v) for k, v in (saved.get("known_files") or {}).items()}
         if self.shelf is not None:
             # 기억은 프로세스 안에만 있어 재시작하면 비어 있습니다. 불러온 도구는 초안이 압니다.
             self._refresh_shelf(self.shelf.load(saved.get("loaded_tools") or []))
@@ -254,6 +273,8 @@ class ToolLoop:
             "announced_bands": sorted(self.announced_bands, key=str),
             "turn_anchor": self.turn_anchor,
             "loaded_tools": self.shelf.loaded_names() if self.shelf is not None else [],
+            "open_writes": self.open_writes,
+            "known_files": self.known_files,
         }
 
     def answer(self) -> Tuple[str, List[Dict[str, Any]]]:
@@ -321,11 +342,7 @@ class ToolLoopMixin:
         # 도구에는 "결과 모름" 을 채우고, 이어진다는 사실을 모델에게 알립니다.
         if resume_state is not None:
             loop.restore(resume_state)
-            unknown = close_open_tool_calls(loop.messages)
-            notice = RESUMED_SPEECH_NOTICE
-            if unknown:
-                notice += f" 결과를 받지 못한 호출: {', '.join(unknown)}."
-            self._append_budget_notice(loop.messages, notice)
+            self._append_budget_notice(loop.messages, await self._close_cut_speech(loop, resume_state))
 
         # 유저가 지정한 스킬을 첫 판 전에 불러 둡니다. 이어 가는 발언은 이미 들어 있습니다.
         if resume_state is None and preload_skills:
@@ -368,6 +385,28 @@ class ToolLoopMixin:
                 return await self._wrap_up_without_tools(
                     agent, loop.messages, loop.segments, loop.tool_logs, loop.limit, on_chunk, tools=loop.tools
                 )
+
+    @staticmethod
+    async def _close_cut_speech(loop: ToolLoop, resume_state: Dict[str, Any]) -> str:
+        """끊긴 호출의 결과를 채우고, 모델에게 줄 재개 안내를 만듭니다.
+
+        쓰기 호출은 디스크에서 확인한 결과를, 나머지는 "결과 모름" 을 채웁니다 (ADR-046). 커널 상태는
+        엔진이 초안에 넣어 준 말을 그대로 덧붙입니다 (`kernel_replay`).
+        """
+        checked, drifted = await asyncio.to_thread(write_probe.reconcile, loop.open_writes, loop.known_files)
+        loop.open_writes = {}
+        unknown = close_open_tool_calls(loop.messages, checked)
+        notice = RESUMED_SPEECH_NOTICE
+        if unknown:
+            notice += f" 결과를 받지 못한 호출: {', '.join(unknown)}."
+        if checked:
+            notice += WRITES_CHECKED_NOTICE
+        if drifted:
+            notice += FILES_DRIFTED_NOTICE.format(paths=", ".join(f"`{path}`" for path in drifted))
+        kernel_note = resume_state.get("kernel_note")
+        if kernel_note:
+            notice += f" {kernel_note}"
+        return notice
 
     async def _save_loop_progress(self, loop: ToolLoop) -> None:
         """지금까지를 이어 갈 수 있게 넘깁니다. 넘기다 실패해도 발언은 계속됩니다."""
@@ -670,9 +709,11 @@ class ToolLoopMixin:
             if gate is not None and not gate.allowed:
                 output, status = gate.output, gate.status or "denied"
             else:
+                await self._note_write_start(loop, fn_name, fn_args, call_id)
                 output, status = await self._execute_tool_safely(
                     agent, fn_name, fn_args, loop.session_id, loop.mcp, tools=loop.tools, loop=loop,
                 )
+                await self._note_write_end(loop, call_id, status)
                 output = await self._take_tool_media(loop, fn_name, output)
                 output = loop.note_direct_call(fn_name, output, status)
             security = gate.audit if gate is not None else {}
@@ -695,6 +736,40 @@ class ToolLoopMixin:
         })
         # 도구 하나가 끝날 때마다 남깁니다. 끊기면 그 다음 도구부터 이어 갑니다.
         await self._save_loop_progress(loop)
+
+    async def _note_write_start(
+        self, loop: ToolLoop, fn_name: str, fn_args: Dict[str, Any], call_id: str,
+    ) -> None:
+        """쓰기 도구를 실행하기 직전의 파일 상태를 초안에 남깁니다 (ADR-046).
+
+        보안 판정을 통과한 뒤에 읽습니다. 사람의 승인을 기다리는 동안 파일이 바뀔 수 있고, 거부된 호출의
+        경로는 읽을 이유가 없습니다. 초안을 남기지 않는 발언은 이어 갈 일이 없어 건너뜁니다.
+        """
+        if loop.checkpoint is None:
+            return
+        runtime = loop.mcp or self.mcp_manager
+        tool_meta = getattr(runtime, "tool_meta", None)
+        workspace = getattr(runtime, "workspace", None)
+        meta = tool_meta(fn_name) if tool_meta is not None and workspace is not None else None
+        if meta is None or meta.tool not in write_probe.WRITE_MODES:
+            return
+        plan = await asyncio.to_thread(write_probe.plan_write, meta, fn_args, workspace)
+        if plan is not None:
+            loop.open_writes[call_id] = plan
+            await self._save_loop_progress(loop)
+
+    @staticmethod
+    async def _note_write_end(loop: ToolLoop, call_id: str, status: str) -> None:
+        """쓰기 호출이 돌아왔습니다. 성공했으면 그 뒤의 해시를 기억합니다 (다음 판의 초안에 함께 남습니다)."""
+        plan = loop.open_writes.pop(call_id, None)
+        if plan is None or status != "success":
+            return
+        try:
+            now = await asyncio.to_thread(write_probe.sha256_of, plan["absolute"])
+        except OSError:
+            loop.known_files.pop(plan["absolute"], None)
+            return
+        loop.known_files[plan["absolute"]] = {"path": plan["path"], "sha256": now}
 
     async def _take_tool_media(self, loop: ToolLoop, fn_name: str, output: str) -> str:
         """도구가 반환한 미디어 파일을 처리하고 모델에 전달할 텍스트 관측 결과를 생성합니다 (`app/mcp/client.py`의 `ToolOutput`).

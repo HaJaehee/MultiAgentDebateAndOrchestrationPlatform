@@ -259,6 +259,8 @@ def unfinished_turn_text(info: Dict[str, Any]) -> str:
         facts.append(f"미완료 발언에서 실행된 도구 {int(info['orphan_tools'])}건")
     if info.get("resumable_speeches") and info.get("can_continue"):
         facts.append(f"도구 단위로 이어 갈 발언 {int(info['resumable_speeches'])}개")
+    if info.get("replayable_cells") and info.get("can_continue"):
+        facts.append(f"다시 실행할 수 있는 코드 셀 {int(info['replayable_cells'])}개")
     parts.append(" · ".join(facts) + ".")
     parts.append("새 요청을 보내면 이 턴은 기록에 그대로 남고 더는 묻지 않습니다.")
     return " ".join(parts)

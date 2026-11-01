@@ -130,7 +130,7 @@ class DebateRunner:
 
     def resume(self, session_id: str, turn_id: str, mode: str, user_prompt: str = "",
                workspace: Optional[str] = None, *, announce_waiting: bool = True) -> TurnRun:
-        """끊긴 턴을 백그라운드에서 마무리하거나(`finish`) 이어 갑니다(`continue`)."""
+        """끊긴 턴을 백그라운드에서 마무리하거나(`finish`) 이어 갑니다(`continue`, 셀을 다시 실행하면 `replay`)."""
         existing = self._runs.get(session_id)
         if existing is not None and existing.status == "running":
             return existing
@@ -139,10 +139,10 @@ class DebateRunner:
             session_id, user_prompt, workspace, turn_id=turn_id, resume_mode=mode,
             announce_waiting=announce_waiting, event_bus=self.event_bus,
         )
-        run.status_text = (
-            "끊긴 턴을 지금까지의 발언으로 마무리하는 중..." if mode == "finish"
-            else "끊긴 턴을 이어 가는 중..."
-        )
+        run.status_text = {
+            "finish": "끊긴 턴을 지금까지의 발언으로 마무리하는 중...",
+            "replay": "코드 셀을 다시 실행해 커널을 되살린 뒤 이어 가는 중...",
+        }.get(mode, "끊긴 턴을 이어 가는 중...")
         self._runs[session_id] = run
 
         async def body(on_event) -> None:

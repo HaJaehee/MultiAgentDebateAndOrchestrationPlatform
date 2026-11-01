@@ -100,6 +100,7 @@ app/
 │   ├── media.py                     454   입력 모달리티 처리: LLM 요청 직전 멀티모달 파일 주입 및 도구 반환 미디어 처리 (ADR-035)
 │   ├── llm.py                       469   LLMCaller: 호출, 폴백 판단, 한 판 호출
 │   ├── llm_loop.py                  630   도구 루프 (ToolLoop 상태 + 단계별 함수)
+│   ├── write_probe.py               159   끊긴 파일 쓰기의 반영 여부를 해시로 확인 (ADR-046)
 │   ├── llm_request.py               170   시스템 프롬프트·LiteLLM 인자
 │   ├── llm_prompt_cache.py          147   Claude 프롬프트 캐시 표시 (ADR-045)
 │   ├── llm_tool_calls.py            281   도구 호출 한 번: 읽기·판정·실행·기록
@@ -159,6 +160,7 @@ app/
 │   ├── tool_gate.py                 453   도구 보안 판정을 토론에 붙임
 │   ├── control.py                   693   정지·개입·한도·승인 제어 채널
 │   ├── turns.py                     589   턴 기록, 끊긴 턴 (ADR-024)
+│   ├── kernel_replay.py             283   끊긴 턴을 이어 가기 전 커널 셀 재실행 (ADR-046)
 │   ├── state.py                     148   DebateState · DebateMessage · ArtifactItem
 │   ├── runner.py                    449   DebateRunner — 백그라운드 턴 시작·끝
 │   ├── turn_run.py                  725   TurnRun — 턴 스냅샷 (이벤트별 리듀서)

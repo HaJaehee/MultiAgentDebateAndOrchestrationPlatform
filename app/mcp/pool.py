@@ -549,6 +549,11 @@ class MCPRuntimePool:
             for key, runtime in self._runtimes.items()
         }
 
+    def shared_with(self, workspace: Optional[str | Path], holder: str) -> List[str]:
+        """이 작업 공간의 런타임을 함께 쓰고 있는 다른 턴 (대화 id)."""
+        runtime = self._runtimes.get(self.key_for(workspace))
+        return sorted(runtime.holders - {holder}) if runtime else []
+
     def live_workspaces(self) -> List[str]:
         return list(self._runtimes)
 

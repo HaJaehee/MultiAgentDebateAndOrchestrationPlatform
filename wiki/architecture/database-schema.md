@@ -189,7 +189,7 @@ Stores the sequential transcript of messages exchanged during a debate.
 | `graph_node_id` | `VARCHAR(64)` | Yes | - | Graph debate only: the node that produced this message. Needed because one agent can sit on several nodes. |
 | `graph_port` | `VARCHAR(8)` | Yes | - | Graph debate only: the output port this message left through — `out` for agent and merge speeches, `yes`/`no` for a gate verdict. NULL for notes attached to a node that are not its output (the visit-cap notice). The live overlay, a refreshed page and a reopened conversation all count visits, gate branches and flowed wires from this column. |
 | `turn_id` | `VARCHAR(36)` | Yes | - | The turn this record belongs to (`turns.id`). NULL for rows written before turns were recorded. |
-| `turn_meta` | `JSON` | Yes | - | The record's role in the turn's flow: `{"kind": ...}` with `opening`, `interjection`, `plan`, `speech`, `merge`, `gate`, `nomination` (+ `speakers`), `assignment` (+ `tasks`), `note`, `failure`, `interrupted`, `synthesis`. Interrupted turns are rebuilt from these values, not from the sentences in `content`. See [Interrupted Turns](../orchestration/turn-recovery.md). |
+| `turn_meta` | `JSON` | Yes | - | The record's role in the turn's flow: `{"kind": ...}` with `opening`, `interjection`, `plan`, `speech`, `merge`, `gate`, `nomination` (+ `speakers`), `assignment` (+ `tasks`), `note`, `failure`, `interrupted`, `synthesis`, `kernel_replay` (+ `kernels`). Interrupted turns are rebuilt from these values, not from the sentences in `content`. See [Interrupted Turns](../orchestration/turn-recovery.md). |
 
 `revisions` (`JSON`, nullable) holds a speech's versions that are not live, oldest number first: `n`, `content`, `msg_type`, `llm_meta`, `started_at`, `finished_at`, `tool_record_ids`. It is `NULL` until the speech is run again. The row itself always holds the live version, so readers need no filter. `KIND_SPEECH` rows also keep `turn_meta.prompt_tail`, the last prompt message, for that retry ([Retrying One Speech §2](../orchestration/speech-revisions.md#2-versions)).
 
@@ -295,7 +295,7 @@ unfinished speech. Details in [Interrupted Turns §5](../orchestration/turn-reco
 | `session_id` / `turn_id` | `VARCHAR(36)` | No | - | Owners. `turn_id` cascades on ORM delete of the turn. |
 | `agent_key` / `kind` / `round_number` / `graph_node_id` | | | | Which speech this draft belongs to (`turns.draft_key`). |
 | `started_at` | `DATETIME` | No | `utc_now` | When the speech first started; the resumed card counts from here. |
-| `state` | `JSON` | No | `{}` | Tool loop state (`SPEECH_STATE_VERSION`): messages as sent, text segments, calls used, limit, window, tool logs — plus `tool_record_ids`. |
+| `state` | `JSON` | No | `{}` | Tool loop state (`SPEECH_STATE_VERSION`): messages as sent, text segments, calls used, limit, window, tool logs, file hashes of write calls (`open_writes`, `known_files`) — plus `tool_record_ids`. |
 | `updated_at` | `DATETIME` | No | `utc_now` | Last save. |
 
 ---
