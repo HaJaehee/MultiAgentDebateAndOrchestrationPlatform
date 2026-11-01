@@ -114,6 +114,7 @@ MADO는 기본적으로 로컬 루프백(`127.0.0.1`) 환경에서만 인입 요
 | `timeout` | float | `600` | 응답 청크 간 최대 대기 시간(초)입니다. 전체 응답 완료 시간이 아니라 스트리밍 침묵 허용 시간이므로 길게 설정하는 것을 권장합니다. |
 | `num_retries` | int | `2` | 일시적 네트워크 장애 시 자동 재시도 횟수입니다. |
 | `drop_params` | bool | `true` | 대상 엔드포인트가 지원하지 않는 부가 파라미터를 자동 필터링합니다. |
+| `prompt_cache` | string | `"5m"` | Claude 연결(Anthropic·Bedrock·Vertex·Azure)의 프롬프트 캐시 수명입니다. `"5m"`, `"1h"`, `"off"` 중 하나이며 다른 연결에는 영향이 없습니다. |
 | `max_tool_iterations` | int | `30` | 단일 발언 내에서 허용되는 MCP 도구 호출 루프 최대 횟수입니다 (1~100). |
 | `extra_headers` | dict | `{}` | 사내 게이트웨이 요구 커스텀 HTTP 헤더 맵입니다. |
 | `extra_body` | dict | `{}` | 업스트림 요청에 포함할 커스텀 JSON 바디 필드입니다. |

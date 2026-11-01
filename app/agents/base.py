@@ -158,6 +158,8 @@ class Agent(BaseModel):
     timeout: Optional[float] = None
     num_retries: int = 0
     drop_params: bool = True
+    # Claude 연결의 프롬프트 캐시 표시 (`app/agents/llm_prompt_cache.py`). 값은 캐시 수명이고, "off" 면 달지 않습니다.
+    prompt_cache: Literal["off", "5m", "1h"] = "5m"
     extra_headers: Dict[str, str] = Field(default_factory=dict)
     extra_body: Dict[str, Any] = Field(default_factory=dict)
     max_tool_iterations: int = 30

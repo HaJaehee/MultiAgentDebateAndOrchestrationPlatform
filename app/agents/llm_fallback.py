@@ -31,7 +31,7 @@
 ## 무엇을 바꾸는가
 
 연결(모델·주소·키·버전·Provider·추가 머리말과 본문)과 그 모델의 용량·전송 설정(`max_tokens`,
-`max_context_window`, `timeout`, `num_retries`, `drop_params`)은 전역 것을 씁니다. 페르소나·도구·스킬·
+`max_context_window`, `timeout`, `num_retries`, `drop_params`, `prompt_cache`)은 전역 것을 씁니다. 페르소나·도구·스킬·
 온도·도구 루프 상한은 에이전트 것 그대로입니다. Provider 고유의 사고 옵션(`native`)을 쓰던 에이전트는
 전역의 단계적 사고 설정을 따릅니다.
 
@@ -81,7 +81,7 @@ __all__ = [
 FALLBACK_STATES = frozenset({AUTH, MODEL, UNREACHABLE, TIMEOUT, SERVER_ERROR})
 
 # 전역에서 함께 가져오는 것: 그 모델의 용량과 전송 설정.
-_CAPACITY_FIELDS = ("max_tokens", "max_context_window", "timeout", "num_retries", "drop_params")
+_CAPACITY_FIELDS = ("max_tokens", "max_context_window", "timeout", "num_retries", "drop_params", "prompt_cache")
 
 
 @dataclass(frozen=True)

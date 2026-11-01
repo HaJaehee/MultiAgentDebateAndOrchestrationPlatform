@@ -100,7 +100,8 @@ app/
 │   ├── media.py                     454   입력 모달리티 처리: LLM 요청 직전 멀티모달 파일 주입 및 도구 반환 미디어 처리 (ADR-035)
 │   ├── llm.py                       469   LLMCaller: 호출, 폴백 판단, 한 판 호출
 │   ├── llm_loop.py                  630   도구 루프 (ToolLoop 상태 + 단계별 함수)
-│   ├── llm_request.py               177   시스템 프롬프트·LiteLLM 인자
+│   ├── llm_request.py               170   시스템 프롬프트·LiteLLM 인자
+│   ├── llm_prompt_cache.py          147   Claude 프롬프트 캐시 표시 (ADR-045)
 │   ├── llm_tool_calls.py            281   도구 호출 한 번: 읽기·판정·실행·기록
 │   ├── llm_recovery.py              568   잘린 답·빈 답·새어 나온 도구 호출 되살리기
 │   ├── llm_context.py               464   토큰 어림, 컨텍스트 창 맞춤
@@ -109,7 +110,7 @@ app/
 │   ├── tool_loading.py              299   도구 스키마 온디맨드 지연 로딩: 스키마 분할, 동적 로드 및 세션 유지 (ADR-039)
 │   ├── tool_compaction.py           130   과거 대용량 파일 읽기 결과의 스텁(Stub) 압축 최적화 (ADR-040)
 │   ├── llm_fingerprint.py           101   거절 시 요청 지문
-│   ├── llm_usage.py                 169   토큰 및 LLM 실행 시간 계측 (v1.5)
+│   ├── llm_usage.py                 180   토큰 및 LLM 실행 시간 계측 (v1.5)
 │   ├── llm_types.py                  51   LLMUnavailableError, 콜백 형식
 │   ├── reasoning.py                  86   사고 과정 떼기·결론 찾기
 │   ├── llm_gate.py                  154   서버 전체 LLM 동시 요청 상한
@@ -226,6 +227,7 @@ app/
 | 새 토론 이벤트 | `events.py` 에 이름 → 스냅샷은 `orchestration/turn_run.py`, 전문가 화면은 `ui/expert/events.py` |
 | 사용자 승인 대기 상태 정의 | `orchestration/turn_run.py`의 `waiting_requests`, `events.py`의 `WAITING_EVENTS`, 알림 메시지는 `ui/attention.py` |
 | LLM 호출 파라미터 | `agents/llm_request.py` (`build_completion_kwargs`) |
+| Claude 프롬프트 캐시 표시 자리 | `agents/llm_prompt_cache.py` |
 | 도구 루프 | `agents/llm_loop.py` (`_run_litellm_loop` 와 단계 함수) · 도구 호출 한 번은 `agents/llm_tool_calls.py` |
 | MCP 서버 다루는 방식 | `mcp/manager.py` · 작업 공간별 런타임은 `mcp/pool.py` |
 | 도구 보안 규칙 | 문법은 `tool_rules.py`, 판정은 `mcp/policy.py` |

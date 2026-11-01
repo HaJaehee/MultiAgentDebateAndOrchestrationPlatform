@@ -825,7 +825,7 @@ so each one flips from `확인 중` as its answer arrives; the timer stops when 
 ### 1.3.9. Usage, turn actions and question cards (v1.5)
 
 - **Usage on cards.** A speech card's time line ends with `토큰 13.4k` when the speech's token count is
-  known; the tooltip adds `입력 … (캐시 …) · 출력 … · LLM …초` (`llm_meta.usage`,
+  known; the tooltip adds `입력 … (캐시 … · 캐시 쓰기 …) · 출력 … · LLM …초` (`llm_meta.usage`,
   [LLM Integration §6](../agents/llm-integration.md#6-usage-metering-v15)). The status line at the end of a
   turn carries the turn total. Exports print the same line under each speech and the conversation total
   in the header table.

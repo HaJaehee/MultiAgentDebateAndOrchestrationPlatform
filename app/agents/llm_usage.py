@@ -27,7 +27,8 @@ from typing import Any, Dict, Iterator, Mapping, Optional, Tuple
 from pydantic import BaseModel
 
 _FIELDS = (
-    "prompt_tokens", "completion_tokens", "cached_tokens", "reasoning_tokens", "calls", "llm_seconds",
+    "prompt_tokens", "completion_tokens", "cached_tokens", "cache_write_tokens", "reasoning_tokens", "calls",
+    "llm_seconds",
 )
 
 
@@ -38,6 +39,8 @@ class Usage(BaseModel):
     completion_tokens: int = 0
     # 프롬프트 캐시 적중 토큰 수 (prompt_tokens에 포함)
     cached_tokens: int = 0
+    # 프롬프트 캐시에 새로 쓴 토큰 수 (prompt_tokens에 포함). Claude 는 이 몫에 쓰기 할증을 매깁니다.
+    cache_write_tokens: int = 0
     # 추론/사고(Reasoning) 토큰 수 (completion_tokens에 포함)
     reasoning_tokens: int = 0
     calls: int = 0
@@ -112,18 +115,20 @@ def usage_of(response: Any) -> Usage:
     """LiteLLM 응답의 `usage` 를 읽습니다. 없으면 빈 값입니다.
 
     캐시 토큰은 OpenAI 식(`prompt_tokens_details.cached_tokens`)과 Anthropic 식
-    (`cache_read_input_tokens`)을 모두 봅니다.
+    (`cache_read_input_tokens`)을 모두 봅니다. 쓴 토큰도 LiteLLM 식(`prompt_tokens_details.cache_write_tokens`)과
+    Anthropic 식(`cache_creation_input_tokens`)을 모두 봅니다.
     """
     raw = _read(response, "usage")
     if raw is None:
         return Usage()
-    cached = _count(_read(_read(raw, "prompt_tokens_details"), "cached_tokens")) or _count(
-        _read(raw, "cache_read_input_tokens")
-    )
+    details = _read(raw, "prompt_tokens_details")
     return Usage(
         prompt_tokens=_count(_read(raw, "prompt_tokens")),
         completion_tokens=_count(_read(raw, "completion_tokens")),
-        cached_tokens=cached,
+        cached_tokens=_count(_read(details, "cached_tokens")) or _count(_read(raw, "cache_read_input_tokens")),
+        cache_write_tokens=_count(_read(details, "cache_write_tokens")) or _count(
+            _read(raw, "cache_creation_input_tokens")
+        ),
         reasoning_tokens=_count(_read(_read(raw, "completion_tokens_details"), "reasoning_tokens")),
     )
 
@@ -162,8 +167,13 @@ def usage_line(usage: Any) -> str:
     parts = []
     if value.total_tokens:
         parts.append(f"입력 {format_tokens(value.prompt_tokens)}")
+        cache = []
         if value.cached_tokens:
-            parts[-1] += f" (캐시 {format_tokens(value.cached_tokens)})"
+            cache.append(f"캐시 {format_tokens(value.cached_tokens)}")
+        if value.cache_write_tokens:
+            cache.append(f"캐시 쓰기 {format_tokens(value.cache_write_tokens)}")
+        if cache:
+            parts[-1] += f" ({' · '.join(cache)})"
         parts.append(f"출력 {format_tokens(value.completion_tokens)}")
     if value.llm_seconds:
         parts.append(f"LLM {value.llm_seconds:.1f}초")

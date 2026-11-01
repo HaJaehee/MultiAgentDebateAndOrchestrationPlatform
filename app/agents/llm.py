@@ -27,6 +27,7 @@ from app.agents.llm_context import context_budget, fit_context_window, merge_con
 from app.agents.llm_fingerprint import request_fingerprint
 from app.agents.llm_gate import get_llm_gate
 from app.agents.llm_loop import ToolLoopMixin
+from app.agents.llm_prompt_cache import mark_goal
 from app.agents.llm_recovery import AnswerRecoveryMixin
 from app.agents.llm_request import RequestBuilderMixin
 from app.agents.llm_tool_calls import ToolCallMixin
@@ -325,13 +326,14 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
             )
 
             # 순서 주의: 먼저 한도에 맞춰 자르고, 그 다음 role 을 합칩니다. 생략 안내가
-            # user 로 들어가므로 합치기를 나중에 해야 교대가 보장됩니다.
+            # user 로 들어가므로 합치기를 나중에 해야 교대가 보장됩니다. 목표의 캐시 표시는
+            # 합치기 전에 답니다. 합치고 나면 목표의 경계를 찾을 수 없습니다.
             formatted_messages, trimmed = fit_context_window(
                 agent, formatted_messages, memory_search_tool(tools), tools=tools,
             )
             if trimmed and on_context_trim:
                 on_context_trim(trimmed)
-            formatted_messages = merge_consecutive_roles(formatted_messages)
+            formatted_messages = merge_consecutive_roles(mark_goal(agent, formatted_messages))
 
         # Real endpoint if an API URL, an API key, or a keyless local runtime is configured
         if not agent.is_live:

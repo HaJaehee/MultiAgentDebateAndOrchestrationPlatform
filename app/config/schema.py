@@ -190,6 +190,7 @@ INHERITABLE_LLM_FIELDS = (
     "timeout",
     "num_retries",
     "drop_params",
+    "prompt_cache",
     "extra_headers",
     "extra_body",
     "max_tool_iterations",
@@ -405,6 +406,9 @@ class LLMConfig(BaseModel):
     drop_params: Optional[bool] = Field(
         default=None, description="Silently drop parameters the endpoint does not support"
     )
+    prompt_cache: Optional[Literal["off", "5m", "1h"]] = Field(
+        default=None, description="Claude prompt cache lifetime ('off' = no cache_control markers)"
+    )
     extra_headers: Optional[Dict[str, str]] = Field(default=None, description="Extra HTTP headers")
     extra_body: Optional[Dict[str, Any]] = Field(default=None, description="Extra JSON body fields")
     max_tool_iterations: Optional[int] = Field(default=None, ge=1, le=TOOL_ITERATION_CEILING)
@@ -476,6 +480,9 @@ class AgentConfig(BaseModel):
     num_retries: int = Field(default=0, ge=0, description="LiteLLM retry count")
     drop_params: bool = Field(
         default=True, description="Silently drop parameters the endpoint does not support"
+    )
+    prompt_cache: Literal["off", "5m", "1h"] = Field(
+        default="5m", description="Claude prompt cache lifetime ('off' = no cache_control markers)"
     )
     extra_headers: Dict[str, str] = Field(default_factory=dict, description="Extra HTTP headers")
     extra_body: Dict[str, Any] = Field(default_factory=dict, description="Extra JSON body fields")

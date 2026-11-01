@@ -38,11 +38,15 @@ def test_usage_is_read_from_openai_and_anthropic_shapes():
         completion_tokens_details=SimpleNamespace(reasoning_tokens=12),
     ))
     assert usage_of(openai).model_dump() == {
-        "prompt_tokens": 120, "completion_tokens": 30, "cached_tokens": 100, "reasoning_tokens": 12,
-        "calls": 0, "llm_seconds": 0.0,
+        "prompt_tokens": 120, "completion_tokens": 30, "cached_tokens": 100, "cache_write_tokens": 0,
+        "reasoning_tokens": 12, "calls": 0, "llm_seconds": 0.0,
     }
-    anthropic = {"usage": {"prompt_tokens": 50, "completion_tokens": 5, "cache_read_input_tokens": 40}}
+    anthropic = {"usage": {"prompt_tokens": 50, "completion_tokens": 5, "cache_read_input_tokens": 40,
+                           "cache_creation_input_tokens": 7}}
     assert usage_of(anthropic).cached_tokens == 40
+    assert usage_of(anthropic).cache_write_tokens == 7
+    litellm_shape = {"usage": {"prompt_tokens": 50, "prompt_tokens_details": {"cache_write_tokens": 9}}}
+    assert usage_of(litellm_shape).cache_write_tokens == 9
     assert usage_of(SimpleNamespace()).empty
     assert usage_of({"usage": {"prompt_tokens": "x", "completion_tokens": None}}).empty
 
@@ -116,6 +120,12 @@ async def test_an_overridden_completion_counts_calls_and_time_but_no_tokens():
     assert meter.calls == 1 and meter.total_tokens == 0
     # 토큰을 모르면 시간만 적습니다.
     assert usage_line(Usage(calls=1, llm_seconds=2.0)) == "LLM 2.0초"
+    assert usage_line(Usage(prompt_tokens=2_000, completion_tokens=10, cached_tokens=1_500, cache_write_tokens=300)) == (
+        "입력 2.0k (캐시 1.5k · 캐시 쓰기 300) · 출력 10"
+    )
+    assert usage_line(Usage(prompt_tokens=2_000, completion_tokens=10, cache_write_tokens=300)) == (
+        "입력 2.0k (캐시 쓰기 300) · 출력 10"
+    )
 
 
 async def _session(db_url: str) -> str:

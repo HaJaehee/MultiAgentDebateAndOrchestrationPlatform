@@ -27,6 +27,7 @@ flowchart LR
 - `api_base`: Base endpoint URL.
 - `api_key`: API token. For keyless local endpoints (Ollama, vLLM, LM Studio) that expect a non-empty string, a dummy token (`sk-no-key-required`) is provided automatically.
 - `drop_params = True`: Automatically filters out unsupported flags when communicating with local models that do not accept standard OpenAI parameters.
+- `prompt_cache`: Lifetime of the `cache_control` markers on Claude connections, or `"off"` ([§7](#7-claude-prompt-cache-markers-adr-045)).
 - `timeout` and `num_retries`: Ensures network resilience.
 - `extra_headers` and `extra_body`: Injects organization IDs, telemetry tags, or custom headers for corporate proxies.
 
@@ -579,7 +580,7 @@ connection-class error, the non-streaming retry on the same connection is skippe
 error: an endpoint that does not accept streaming may answer 5xx, so that one is asked once more first.
 
 **What changes.** `substitute_for()` copies the agent with the *current* global connection and that model's
-capacity (`max_tokens`, `max_context_window`, `timeout`, `num_retries`, `drop_params`). Persona, tools, skills,
+capacity (`max_tokens`, `max_context_window`, `timeout`, `num_retries`, `drop_params`, `prompt_cache`). Persona, tools, skills,
 temperature and the tool-loop limit stay. Provider-bound thinking options (`native`) follow the global setting.
 Because the speech restarts, the system prompt and context trimming are redone for the substitute's window.
 A locked conversation's snapshot holds only the intended model, so the model that actually answered is
@@ -826,8 +827,10 @@ the [bench](../operations/bench.md)) can be measured.
 * **Where it is measured.** Every call goes through `_complete_once`: it times `_complete_unthrottled`
   (after the concurrency slot is acquired — waiting for a slot is not LLM time) and counts the call, also
   when it fails. The default `_complete_unthrottled` adds the response's `usage` (input, output, cached
-  input — OpenAI `prompt_tokens_details.cached_tokens` or Anthropic `cache_read_input_tokens` — and
-  reasoning tokens). The override point's signature and return value are unchanged; a replacement
+  input — OpenAI `prompt_tokens_details.cached_tokens` or Anthropic `cache_read_input_tokens` — input
+  written to the cache — `prompt_tokens_details.cache_write_tokens` or Anthropic
+  `cache_creation_input_tokens` — and reasoning tokens). Cached and written tokens are part of the input
+  count. The override point's signature and return value are unchanged; a replacement
   (test doubles, MADOWarGame) reports calls and time but no tokens.
 * **Nested meters in a context variable.** The engine opens a turn meter (`measuring()`) around the whole
   turn; `SpeechRunner.speak` opens one per speech inside it. A call adds to every open meter, so speech
@@ -845,3 +848,49 @@ the [bench](../operations/bench.md)) can be measured.
   reaches it ([Conversation Memory §2.6](../orchestration/context-memory.md)).
 
 Tests: `tests/test_llm_usage.py`.
+
+## 7. Claude Prompt Cache Markers (ADR-045)
+
+[app/agents/llm_prompt_cache.py](file:///d:/MultiAgentDebateOrchestration/app/agents/llm_prompt_cache.py)
+adds `cache_control` markers to requests on Claude connections. LiteLLM turns them into Anthropic blocks
+or Bedrock `cachePoint`s. Where they go and why is in
+[Conversation Memory §2.5](../orchestration/context-memory.md#25-prompt-caching).
+
+* **Which connections.** `anthropic`, `bedrock`, `vertex_ai` and `azure_ai` routes whose model name contains
+  `claude` (any model name on `anthropic`). A model LiteLLM's table lists without caching (Claude Opus 3 on
+  Bedrock) is skipped; a model missing from the table is marked. `openai/claude-…` through a gateway is
+  not marked: LiteLLM removes the markers on that route. A Bedrock ARN without `claude` in it cannot be
+  recognized and stays unmarked. On every other connection the request is exactly what it was.
+* **Setting.** `prompt_cache` in `llm` or `agents.<key>`: `"5m"` (default), `"1h"` or `"off"`. `"5m"` sends
+  `{"type": "ephemeral"}`. The cache lasts as long as requests keep reading it, so `"1h"` pays off when an
+  agent's next speech often starts more than 5 minutes after its last request (many speakers, long tool
+  loops). It costs 2× instead of 1.25× to write. A gateway that rejects the field needs `"off"`.
+* **Two steps.** `build_completion_kwargs()` marks a copy of the request through `with_cache_marks()`, since
+  the tool loop keeps appending to its own list. The goal marker is the exception: `mark_goal()` sets it in
+  `_call_agent_once` before `merge_consecutive_roles`, which would otherwise glue the goal and the speeches
+  behind it into one string. The goal then stays its own block through merging and trimming, and survives
+  a resumed speech.
+* **At most four.** Claude allows four markers per request. Goal, tool-loop tail, last own speech and system
+  prompt come first; the tool-definition marker is dropped when all five apply, because the system marker
+  also covers the tools.
+* **What breaks it.** Loading a deferred tool changes the definitions at the head of the request
+  ([ADR-039](../../lectures/05-adr/ADR-039-lazy-tool-schemas.md)), so that speech rewrites the cache once.
+  Compacting old file reads and trimming also rewrite what follows them.
+* **Checking it.** Hits and writes appear on the speech card tooltip as `캐시` and `캐시 쓰기`.
+
+Simulated input cost, relative to the same requests without markers (real engine, three specialists,
+reads at 0.1×, writes at 1.25×, no cache expiry, no API call):
+
+| Debate | Specialists | All calls |
+| :--- | ---: | ---: |
+| 1 round, no tools | 1.07 | 0.94 |
+| 3 rounds, no tools | 0.72 | 0.76 |
+| 5 rounds, no tools | 0.60 | 0.67 |
+| 3 rounds, 4 tool calls per speech | 0.40 | 0.43 |
+| 3 rounds, 8 tool calls per speech | 0.29 | 0.30 |
+
+Most of the saving comes from tool loops, where nearly the whole request repeats. Between rounds it is
+smaller because new speeches go at full price once, and old ones are already reduced to digests.
+
+Tests: `tests/test_prompt_cache.py` passes the real engine's requests through LiteLLM's transformation and a
+model of the cache's prefix rules. Change the prompt assembly and it fails if a marked place stops being stable.

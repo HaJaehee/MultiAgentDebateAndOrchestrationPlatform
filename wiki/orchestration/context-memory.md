@@ -170,8 +170,8 @@ speeches verbatim would cost. Four of them arrive as digests; code is sent for t
 
 ### 2.5. Prompt caching
 
-OpenAI, Gemini, vLLM and similar serve a request cheaper and faster when its **prefix** matches an
-earlier one. What changes often therefore goes last:
+Providers serve a request cheaper and faster when its **prefix** matches an earlier one. What changes
+often therefore goes last:
 
 - The system prompt (persona, file-writing rule, custom instructions) is constant within a session.
 - `[Debate Progress]: Round n of N` moved from the goal message to the start of the last message. In the
@@ -181,7 +181,23 @@ earlier one. What changes often therefore goes last:
   or a fold. The transcript is appended to; the only rewrite is a new speech turning old (full → digest)
   for this agent, which leaves everything before it cached.
 
-Anthropic needs explicit `cache_control` markers, which MADO does not send yet.
+OpenAI, Gemini and vLLM cache such a prefix on their own. Claude caches only up to an explicit
+`cache_control` marker, so MADO marks the places that stay the same on the next request
+([LLM Integration §7](../agents/llm-integration.md#7-claude-prompt-cache-markers-adr-045)):
+
+| Marker | Read again by |
+| :--- | :--- |
+| Last tool definition | other agents with the same model and tools |
+| System prompt | every call of this agent |
+| End of the goal message | later rounds, even after the transcript behind it changes |
+| The agent's last own speech | the next round. What came before it stays as it is; what came after is still "new" and turns into digests once this agent has spoken again (§2.4) |
+| Last message of the tool loop | the next call of the same speech |
+
+The turn instruction (ledger, round number) is not marked on the first call of a speech. If the speech
+ends without a tool call, nothing would read it again. If it calls a tool, the next call's marker covers it.
+
+A new user turn changes the goal message, so the transcript behind it is written to the cache once more.
+Only the tools and the system prompt survive that.
 
 ### 2.6. Convergence: ending early (v1.5)
 

@@ -264,8 +264,23 @@ messages with role 'tool' must be a response to a preceding message with 'tool_c
 | `temperature`, `top_p`, `max_tokens` | 동일 | 표준 텍스트 생성 파라미터 |
 | `timeout`, `num_retries` | 동일 | 네트워크 타임아웃 및 실패 시 재시도 횟수 |
 | `drop_params` | `drop_params` | 공급자가 지원하지 않는 파라미터 자동 무시 여부 |
+| `prompt_cache` | 메시지·도구의 `cache_control` | Claude 연결의 프롬프트 캐시 수명 (아래 설명 참조) |
 | `extra_headers`, `extra_body` | 동일 | 사설 AI 게이트웨이 인증 및 라우팅용 추가 페이로드 |
 | `sequential_thinking` (native) | `reasoning_effort` / `thinking` | 모델 추론 모드에 따른 네이티브 파라미터 |
+
+**Claude 프롬프트 캐시 (ADR-045).** OpenAI·Gemini·vLLM은 요청의 앞부분이 같으면 알아서 캐시하지만, Claude는 `cache_control` 표시를 단 자리까지만 캐시합니다. MADO는 Anthropic·Bedrock·Vertex·Azure의 Claude 연결에서 다음 요청에도 그대로일 자리에 표시를 답니다.
+
+| 표시 자리 | 어디서 다시 읽히는가 |
+| :--- | :--- |
+| 마지막 도구 정의 | 같은 모델과 같은 도구를 쓰는 다른 에이전트 |
+| 시스템 프롬프트 | 이 에이전트의 모든 호출 |
+| 목표 메시지의 끝 | 뒤따르는 기록이 바뀌어도 이후 라운드에서 |
+| 마지막 자기 발언 | 다음 라운드 |
+| 도구 루프의 마지막 메시지 | 같은 발언의 다음 호출 |
+
+표시는 요청당 4개까지이므로 다섯 자리가 모두 있으면 도구 정의의 표시를 뺍니다. 시스템 프롬프트의 표시가 앞선 도구 정의까지 함께 덮기 때문입니다. `openai/claude-…`처럼 게이트웨이를 거치는 연결은 LiteLLM이 표시를 지우므로 대상이 아니고, 그 밖의 연결은 요청 모양이 전과 같습니다.
+
+`prompt_cache`의 기본값은 `"5m"`입니다. 에이전트의 다음 발언이 마지막 요청 후 5분 넘게 지나서 시작되는 일이 잦으면 `"1h"`가 유리하지만, 쓰기 단가가 입력 단가의 1.25배에서 2배로 오릅니다. 게이트웨이가 이 필드를 거절하면 `"off"`로 두십시오. 적중한 양은 발언 카드 툴팁의 `캐시`와 `캐시 쓰기`로 확인합니다.
 
 **인증 키가 불필요한 로컬 엔드포인트 처리**: vLLM이나 LM Studio 등 로컬 LLM 서버는 별도의 API 키를 요구하지 않지만, LiteLLM 내부 파이프라인은 `api_key` 필드가 비어 있으면 유효성 검사에서 예외를 발생시킵니다. 따라서 키가 설정되지 않은 로컬 환경의 경우 시스템에서 더미 자리표시자 키(`sk-no-key-required`)를 자동으로 주입하여 정상 호출을 보장합니다.
 
@@ -376,7 +391,7 @@ LLM call failed for System Architect
 
 "출력 개시 이전" 상태는 `_SpeechProgress`(컨텍스트 변수)로 판별합니다. `_complete_once()`가 단일 라운드 응답 수신을 완료할 때마다 `rounds`를 증가시키고, 스트리밍 청크를 발행할 때 `streamed` 플래그를 설정하며, LLM 호출 단계에서 실패한 경우 `llm_failed`를 설정합니다 (도구 루프의 타 단계에서 발생한 예외는 폴백 대상에서 제외). 연결 장애로 최초 요청이 실패한 경우에는 동일 엔드포인트로의 비스트리밍 재시도 단계도 생략합니다 (`_will_fall_back`). 단, 서버 오류(5xx)의 경우 스트리밍 미지원 엔드포인트일 가능성을 고려하여 기존과 같이 1회 비스트리밍 재시도 후 폴백을 수행합니다.
 
-**대체 에이전트.** `substitute_for()`는 연결(`model`, `api_base`, `api_key`, `api_version`, `provider`, `extra_headers`, `extra_body`)과 그 모델의 용량·전송 설정(`max_tokens`, `max_context_window`, `timeout`, `num_retries`, `drop_params`)만 **현재의** 전역 값으로 바꾼 사본을 만듭니다. 페르소나·도구·스킬·온도·도구 루프 상한은 그대로이고, Provider 고유의 사고 옵션(`native`)을 쓰던 에이전트는 전역의 단계적 사고 설정을 따릅니다. 처음부터 다시 부르므로 시스템 프롬프트와 컨텍스트 자르기도 대체 모델의 한도로 다시 계산됩니다.
+**대체 에이전트.** `substitute_for()`는 연결(`model`, `api_base`, `api_key`, `api_version`, `provider`, `extra_headers`, `extra_body`)과 그 모델의 용량·전송 설정(`max_tokens`, `max_context_window`, `timeout`, `num_retries`, `drop_params`, `prompt_cache`)만 **현재의** 전역 값으로 바꾼 사본을 만듭니다. 페르소나·도구·스킬·온도·도구 루프 상한은 그대로이고, Provider 고유의 사고 옵션(`native`)을 쓰던 에이전트는 전역의 단계적 사고 설정을 따릅니다. 처음부터 다시 부르므로 시스템 프롬프트와 컨텍스트 자르기도 대체 모델의 한도로 다시 계산됩니다.
 
 **차단기.** 죽은 연결을 발언마다 다시 기다리면 그때마다 `timeout × (num_retries + 1)`을 치릅니다. `FallbackBreaker`는 실패한 연결(`connection_id`)을 `retry_after`초 동안 건너뛰게 하고, 지나면 다음 호출이 원래 모델을 한 번 다시 부릅니다. `모델 연결 상태` 창에서 그 연결이 응답하는 것을 확인하면 즉시 닫히고, 건너뛰는 동안에는 그 창의 해당 줄에 남은 시간이 표시됩니다.
 

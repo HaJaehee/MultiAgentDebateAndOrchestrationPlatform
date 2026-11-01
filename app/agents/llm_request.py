@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from app.agents.base import Agent
 from app.agents.host_tools import host_tool_guidance, host_tool_switches
 from app.agents.llm_context import effective_max_tokens
+from app.agents.llm_prompt_cache import with_cache_marks
 from app.agents.llm_tools import binary_file_guidance, file_editing_guidance, file_writing_guidance
 from app.agents.reasoning import strip_reasoning_trace
 
@@ -97,7 +98,10 @@ class RequestBuilderMixin:
 
         `tool_choice` 는 도구를 넘기되 **부르지는 못하게** 해야 하는 자리를 위해
         열어 둡니다 (`"none"`). 자세한 사연은 `_wrap_up_without_tools` 에 있습니다.
+
+        Claude 연결이면 프롬프트 캐시 표시를 답니다 (`with_cache_marks`).
         """
+        messages, tools = with_cache_marks(agent, messages, tools)
         kwargs: Dict[str, Any] = {
             "model": agent.model,
             "messages": messages,
