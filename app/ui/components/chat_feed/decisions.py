@@ -57,8 +57,8 @@ class UnfinishedTurnBar:
                               on_click=lambda: self.handle_resume("continue"))
                     .props("unelevated dense no-caps color=violet-7 size=12px")
                     .tooltip(
-                        "기록에서 어디까지 진행되었는지 다시 계산하여 남은 발언부터 이어 갑니다. "
-                        "코드는 다시 실행하지 않으므로, 서버가 다시 시작됐다면 커널의 변수는 비어 있습니다."
+                        "대화 기록을 분석하여 미완료 발언 지점부터 토론을 재개합니다. "
+                        "이전에 실행된 코드는 재실행하지 않으므로, 서버가 재시작된 경우 커널 변수는 소멸된 상태입니다."
                     )
                 )
                 self.replay_button = (
@@ -66,9 +66,9 @@ class UnfinishedTurnBar:
                               on_click=lambda: self.handle_resume("replay"))
                     .props("flat dense no-caps color=violet-3 size=12px")
                     .tooltip(
-                        "커널을 비우고 이번 턴에서 끝까지 실행된 코드 셀을 순서대로 다시 실행해 변수를 되살린 뒤 "
-                        "이어 갑니다. 셀마다 지금의 도구 보안 판정을 받습니다. 재실행이 바꾼 작업 공간 파일은 "
-                        "되돌리지만, 네트워크 호출처럼 작업 공간 밖으로 나간 일은 되돌릴 수 없습니다."
+                        "커널을 초기화한 후 이번 턴에서 정상 완료된 코드 셀들을 순서대로 재실행하여 변수 상태를 복원하고 "
+                        "토론을 재개합니다. 셀마다 현재의 도구 보안 정책 판정을 거치며, 재실행으로 변경된 작업 공간 파일은 "
+                        "자동 롤백되지만 외부 네트워크 호출 등 부수 효과는 되돌릴 수 없습니다."
                     )
                 )
                 self.finish_button = (

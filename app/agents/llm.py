@@ -326,8 +326,8 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
             )
 
             # 순서 주의: 먼저 한도에 맞춰 자르고, 그 다음 role 을 합칩니다. 생략 안내가
-            # user 로 들어가므로 합치기를 나중에 해야 교대가 보장됩니다. 목표의 캐시 표시는
-            # 합치기 전에 답니다. 합치고 나면 목표의 경계를 찾을 수 없습니다.
+            # user 로 들어가므로 합치기를 나중에 해야 교대가 보장됩니다. 목표(Goal) 메시지의 캐시 마커는
+            # 메시지 병합 전에 주입합니다. 병합된 이후에는 목표 메시지의 경계를 식별할 수 없기 때문입니다.
             formatted_messages, trimmed = fit_context_window(
                 agent, formatted_messages, memory_search_tool(tools), tools=tools,
             )

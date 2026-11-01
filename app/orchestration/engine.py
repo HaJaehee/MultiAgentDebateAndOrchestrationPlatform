@@ -214,7 +214,7 @@ class OrchestratorEngine:
         * `finish` — 기록된 발언만으로 합성합니다. 정지와 같은 의미라 합의로 적지 않고, 합성
           지시와 보고서에 서버 중단으로 덜 논의되었다고 적습니다.
         * `continue` — 기록에서 어디까지 돌았는지 다시 계산해 남은 발언부터 이어 갑니다.
-        * `replay` — `continue` 와 같되, 이어 가기 전에 이번 턴의 커널 셀을 다시 실행합니다 (ADR-046).
+        * `replay` — `continue`와 동일하되, 세션 재개에 앞서 이번 턴에서 정상 완료된 커널 코드 셀들을 선별 재실행합니다 (ADR-046).
 
         참여자·전략·라운드 수·지침·작업 공간은 **그 턴이 시작될 때의 구성**(`TurnModel.config`)을
         따릅니다. 끊긴 사이에 로스터를 바꿨더라도 그 턴은 시작할 때의 모습으로 마칩니다.
@@ -638,10 +638,11 @@ class OrchestratorEngine:
         control: Optional[TurnControl],
         on_event: Optional[EventCallback],
     ) -> None:
-        """커널을 어떻게 이어 갈지 정하고, 초안에서 이어 가는 발언에게 알립니다 (ADR-046).
+        """커널 복구 전략을 수립하고, 초안을 통해 재개되는 발언 프롬프트에 커널 상태를 전달합니다 (ADR-046).
 
-        초안의 대화에는 사라진 변수를 만든 기록이 그대로 있어, 알리지 않으면 모델이 있다고 믿습니다. 엔진 오류로
-        멈춘 턴은 커널이 살아 있으므로 `continue` 면 할 말이 없습니다.
+        발언 초안의 대화 기록에는 소멸된 변수를 정의한 코드가 그대로 남아 있어, 사전에 안내하지 않으면 모델이
+        해당 변수가 메모리에 존재한다고 오판하기 때문입니다. 단, 런타임 예외로 중단된 턴은 프로세스 커널이 살아있으므로
+        `continue` 모드 시 추가 경고를 생략합니다.
         """
         if mode == "replay":
             notes = await self.kernel_replayer.replay(db, state, setup, workspace, control=control, on_event=on_event)

@@ -30,9 +30,9 @@
 
 ## 무엇을 바꾸는가
 
-연결(모델·주소·키·버전·Provider·추가 머리말과 본문)과 그 모델의 용량·전송 설정(`max_tokens`,
-`max_context_window`, `timeout`, `num_retries`, `drop_params`, `prompt_cache`)은 전역 것을 씁니다. 페르소나·도구·스킬·
-온도·도구 루프 상한은 에이전트 것 그대로입니다. Provider 고유의 사고 옵션(`native`)을 쓰던 에이전트는
+연결 정보(모델명, API 주소, 키, 버전, 프로바이더, 추가 헤더 및 본문)와 해당 모델의 처리 한도 및 통신 제어 설정(`max_tokens`,
+`max_context_window`, `timeout`, `num_retries`, `drop_params`, `prompt_cache`)은 전역 기본값을 적용합니다. 페르소나, 도구, 스킬,
+온도(temperature), 도구 루프 상한은 기존 에이전트 설정을 유지합니다. 프로바이더 고유의 사고 옵션(`native`)을 사용하던 에이전트는
 전역의 단계적 사고 설정을 따릅니다.
 
 전역은 **지금의** 설정(`get_config().llm`)입니다. 잠긴 대화의 스냅샷에는 전역 값이 따로 없고, 키를 바꾼

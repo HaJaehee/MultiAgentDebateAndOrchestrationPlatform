@@ -419,22 +419,22 @@ def resume_notice(calls: Sequence[Mapping[str, Any]], output_chars: int = 300) -
 
 # ---------------------------------------------------------------- 커널 셀 (ADR-046)
 
-# 커널에서 코드를 실행하는 도구와 커널을 비우는 도구 (이름 꼬리).
+# 커널 내 코드 실행 도구 및 커널 초기화 도구 접미사 목록.
 KERNEL_RUN_TOOLS = ("execute_python_code", "run_python_file")
 KERNEL_RESET_TOOL = "reset_kernel_state"
-# 실행 결과의 첫 줄. 샌드박스는 `FAILED`·`TIMEOUT` 이 아니면 `RAN_` 으로 시작하는 판정을 줍니다.
+# 코드 정상 실행 결과 접두사. 내장 샌드박스는 예외/타임아웃이 아닐 경우 `RAN_` 접두사로 판정을 반환합니다.
 _CELL_RAN_PREFIX = "execution_status: RAN_"
-# 코드가 시간을 넘겨 커널을 다시 띄웠다는 글. 그때까지의 변수는 그 자리에서 사라졌습니다.
+# 실행 시간 초과로 인한 커널 프로세스 재시작 판별 문구 (기존 변수 소멸).
 _KERNEL_LOST_MARKS = ("The kernel had to be restarted", "Kernel was unresponsive")
 
 
 def cell_ran(status: Any, output: Any) -> bool:
-    """이 호출의 코드가 끝까지 실행됐는가. 서버는 코드가 실패해도 도구 호출은 성공으로 돌려줍니다."""
+    """해당 도구 호출의 코드가 정상 완료되었는지 판별합니다. 샌드박스 서버는 코드 예외 발생 시에도 도구 호출 자체는 성공으로 반환합니다."""
     return status == "success" and str(output or "").startswith(_CELL_RAN_PREFIX)
 
 
 def kernel_namespace(tool_name: str, session_id: str, agent_key: str) -> str:
-    """이 호출이 쓰는 커널의 이름. 호스트가 메타데이터로 보내는 값과 같습니다 (`compose_scope`)."""
+    """해당 도구 호출이 바인딩되는 커널 네임스페이스를 반환합니다 (`compose_scope` 반환값과 동일)."""
     server = tool_name.split("__", 1)[0] if "__" in tool_name else ""
     return compose_scope(server, session_id, agent_key) or ""
 
@@ -442,10 +442,10 @@ def kernel_namespace(tool_name: str, session_id: str, agent_key: str) -> str:
 def kernel_cells(
     rows: Iterable[Any], session_id: str, replay_notes: Iterable[str] = (),
 ) -> Dict[str, List[Any]]:
-    """커널을 되살리려면 다시 실행할 셀 — {네임스페이스: 도구 기록들}. `rows` 는 시간순입니다.
+    """커널 변수 복구를 위해 선별된 재실행 대상 코드 셀 맵 {네임스페이스: [도구 기록 목록]}을 반환합니다 (`rows`는 시간순 정렬).
 
-    끝까지 실행된 호출만 고릅니다. 커널이 비워진 뒤의 것만 남기고, 앞서 다시 실행한 기록
-    (`replay_notes` 에 이어진 행)은 원본과 겹치므로 뺍니다.
+    정상 완료된 호출만 선별하며, 커널 초기화 이후의 호출만 포함합니다. 이전 재실행 기록
+    (`replay_notes` 연결 행)은 중복 방지를 위해 제외합니다.
     """
     skipped = set(replay_notes)
     cells: Dict[str, List[Any]] = {}
@@ -468,7 +468,7 @@ def kernel_cells(
 
 
 async def turn_kernel_cells(db, session_id: str, turn_id: str, messages: Iterable[Any]) -> Dict[str, List[Any]]:
-    """이 턴의 기록에서 고른 셀 (`kernel_cells`). 도구는 실행 즉시 기록되므로 끊겨도 빠지지 않습니다."""
+    """해당 턴의 영속화된 도구 실행 이력에서 재실행 대상 코드 셀들을 조회합니다 (`kernel_cells`). 도구는 실행 즉시 영속화되므로 중단 시점의 호출도 누락되지 않습니다."""
     tails = (*KERNEL_RUN_TOOLS, KERNEL_RESET_TOOL)
     rows = (await db.execute(
         select(ToolCallRecordModel)
@@ -575,7 +575,7 @@ class UnfinishedTurn:
     resumable_speeches: int
     can_continue: bool
     can_finish: bool
-    # 이어 가기 전에 다시 실행할 수 있는 커널 셀 수 (ADR-046). 0 이면 그 버튼이 보이지 않습니다.
+    # 세션 재개 전 선별 재실행 가능한 커널 코드 셀 수 (ADR-046). 0일 경우 재실행 버튼이 비활성화됩니다.
     replayable_cells: int = 0
 
     def to_dict(self) -> Dict[str, Any]:

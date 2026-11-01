@@ -1,22 +1,23 @@
-"""Claude 의 명시적 프롬프트 캐싱: 요청의 어느 자리에 `cache_control` 표시를 달지 정합니다 (ADR-045).
+"""Claude 명시적 프롬프트 캐싱: 요청 페이로드 내 cache_control 마커 주입 위치를 정의합니다 (ADR-045).
 
-OpenAI·Gemini·vLLM 은 같은 접두를 알아서 캐시합니다. Claude 는 표시를 단 자리까지만 캐시하고, 표시는 한 요청에
-4개까지입니다. 캐시는 도구 → 시스템 → 메시지 순서의 접두를 바이트 단위로 비교하므로, **다음 요청에서도 그대로일 자리**에
-달아야 합니다. 바뀌는 글 뒤에 달면 쓰기 할증만 내고 한 번도 읽히지 않습니다.
+공통 접두사를 자동 캐시하는 OpenAI·Gemini·vLLM과 달리, Claude는 명시적으로 마커가 지정된 지점까지만
+캐시를 생성하며, 마커는 단일 요청당 최대 4개로 제한됩니다. 캐시는 도구 정의 → 시스템 프롬프트 → 메시지
+순서의 접두사를 바이트 단위로 비교하므로, **후속 요청에서도 불변으로 유지되는 지점**에 마커를 배치해야 합니다.
+가변 텍스트 뒤에 마커를 배치하면 캐시 생성 할증만 발생하고 캐시 적중(Hit)이 전혀 발생하지 않습니다.
 
-| 자리 | 어디서 다시 읽히는가 |
+| 마커 위치 | 캐시 재사용 대상 (Hit 대상) |
 | :--- | :--- |
-| 마지막 도구 정의 | 같은 모델과 같은 도구를 쓰는 다른 에이전트 |
-| 시스템 프롬프트 | 이 에이전트의 모든 호출 |
-| 목표 메시지의 끝 | 뒤따르는 기록이 바뀌어도 (긴 발언이 요지로 줄거나 창에 맞춰 잘릴 때) |
-| 마지막 자기 발언 | 다음 라운드 |
-| 도구 루프의 마지막 메시지 | 같은 발언의 다음 판 |
+| 마지막 도구 정의 | 동일 모델 및 동일 도구를 공유하는 타 에이전트 호출 |
+| 시스템 프롬프트 | 해당 에이전트의 모든 호출 |
+| 목표(Goal) 메시지 끝 | 대화 이력이 갱신되더라도 이후 라운드에서 재사용 (발언 요약 축약 및 컨텍스트 자르기 발생 시) |
+| 마지막 자체 발언 | 다음 라운드 발언 호출 |
+| 도구 루프의 마지막 메시지 | 동일 발언 내 후속 도구 호출 루프 반복 |
 
-마지막 자기 발언이 라운드의 경계인 이유: 그 앞의 기록은 다음 라운드에도 그대로입니다. 그 뒤의 발언은 아직 답하지 않은
-새 발언이라 원문으로 실리고, 이 발언자가 다시 말하고 나면 요지로 바뀝니다 (`build_context_for_agent` 의 `body_for`).
+마지막 자체 발언이 라운드 경계가 되는 이유: 해당 발언 이전의 대화 이력은 다음 라운드에서도 불변으로 유지됩니다.
+그 이후 발언들은 아직 응답하지 않은 신규 발언이므로 전문으로 제공되며, 해당 에이전트가 후속 발언을 마치면 요약문으로 축약됩니다 (`build_context_for_agent`의 `body_for`).
 
-발언을 시작하는 판의 마지막 메시지(장부와 라운드 번호가 든 이번 차례 지시)에는 달지 않습니다. 도구를 부르지 않고 끝나는
-발언이면 다시 읽히지 않기 때문입니다. 도구를 불렀으면 다음 판의 표시가 그 지시까지 함께 덮습니다.
+발언 시작 호출의 마지막 메시지(결정 장부와 라운드 정보가 포함된 턴 지시문)에는 마커를 지정하지 않습니다. 도구를 호출하지 않고
+종료되는 단일 턴 발언의 경우 후속 재사용이 발생하지 않기 때문입니다. 도구를 호출한 경우에는 후속 루프 호출 시의 마커가 해당 지시문까지 포함하여 캐시합니다.
 """
 
 from functools import lru_cache
@@ -28,19 +29,19 @@ from app.agents.base import Agent
 
 MAX_CACHE_MARKS = 4
 
-# LiteLLM 이 표시를 Claude 형식으로 옮겨 보내는 연결. 사내 게이트웨이 경로(`openai/claude-…`)는 LiteLLM 이 표시를
-# 지우고 보내므로 달아 봐야 소용이 없고, 메시지 모양만 바뀌어 엄격한 서버에 거절될 수 있어 넣지 않습니다.
+# LiteLLM이 마커를 Claude 캐시 규격으로 변환 전달하는 엔드포인트 목록. 사내 게이트웨이 경로(`openai/claude-…`)는 LiteLLM이 마커를
+# 제거하고 전달하므로 실효성이 없고, 페이로드 구조만 변경되어 엄격한 프록시 서버에서 거절될 수 있어 제외합니다.
 CLAUDE_ROUTES = frozenset({"anthropic", "bedrock", "bedrock_converse", "vertex_ai", "azure_ai"})
 
 
 @lru_cache(maxsize=256)
 def route_takes_cache_marks(model: str, provider: Optional[str] = None) -> bool:
-    """이 연결에 표시를 달아도 되는지.
+    """해당 연결 엔드포인트가 프롬프트 캐시 마커 주입 대상인지 판별합니다.
 
-    Anthropic 경로가 아니면 이름에 `claude` 가 있어야 합니다. Bedrock 에는 Llama·Nova 같은 다른 모델도 있습니다.
+    Anthropic 경로가 아닐 경우 모델명에 `claude`가 포함되어야 합니다. Bedrock 등에는 Llama, Nova 등 타 공급자 모델도 공존하기 때문입니다.
 
-    LiteLLM 의 모델 표에 있으면 표를 따릅니다. 캐싱이 없는 옛 모델(Bedrock 의 Claude Opus 3 등)이 요청을 거절하지 않게
-    하기 위해서입니다. 표에 없으면 답니다. 표는 새 모델보다 늦고, 옛 이름은 표에서 빠지기도 합니다.
+    LiteLLM의 모델 정보 테이블에 등록되어 있다면 해당 테이블을 따릅니다. 프롬프트 캐싱을 지원하지 않는 구형 모델(Bedrock의 Claude Opus 3 등)에서
+    요청이 거절되는 문제를 방지하기 위함입니다. 테이블에 미등록된 경우 주입을 허용합니다. 모델 테이블 갱신이 신규 모델 출시보다 지연될 수 있기 때문입니다.
     """
     name = model.lower()
     prefix, slash, _ = name.partition("/")
@@ -55,17 +56,17 @@ def route_takes_cache_marks(model: str, provider: Optional[str] = None) -> bool:
 
 
 def cache_mark(agent: Agent) -> Optional[Dict[str, str]]:
-    """이 에이전트의 요청에 달 표시. 달지 않는 연결이면 None."""
+    """해당 에이전트의 요청에 주입할 캐시 마커 딕셔너리를 반환합니다. 비활성화 대상이면 None."""
     if agent.prompt_cache == "off" or not route_takes_cache_marks(agent.model, agent.provider):
         return None
     return {"type": "ephemeral", "ttl": "1h"} if agent.prompt_cache == "1h" else {"type": "ephemeral"}
 
 
 def _marked(msg: Dict[str, Any], mark: Dict[str, str]) -> Optional[Dict[str, Any]]:
-    """`msg` 의 끝에 표시를 단 사본. 달 글이 없으면 None 입니다 (빈 글에 달면 Anthropic 이 400 으로 거절합니다)."""
+    """`msg`의 마지막 텍스트 블록에 캐시 마커를 주입한 사본을 반환합니다. 주입 대상 텍스트가 없으면 None을 반환합니다 (빈 콘텐츠 블록에 지정 시 Anthropic API에서 400 Bad Request가 발생합니다)."""
     content = msg.get("content")
     if msg.get("role") == "tool":
-        # 도구 결과는 글 하나입니다. LiteLLM 이 메시지의 표시를 tool_result 와 Bedrock 의 cachePoint 로 옮깁니다.
+        # 도구 실행 결과는 단일 문자열입니다. LiteLLM이 메시지의 마커를 Anthropic의 tool_result 및 Bedrock의 cachePoint로 변환합니다.
         return {**msg, "cache_control": mark} if str(content or "").strip() else None
     if isinstance(content, str):
         if not content.strip():
@@ -80,15 +81,15 @@ def _marked(msg: Dict[str, Any], mark: Dict[str, str]) -> Optional[Dict[str, Any
 
 
 def mark_goal(agent: Agent, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """목표 메시지(시스템 바로 다음)의 끝에 표시를 답니다. `merge_consecutive_roles` **전에** 불러야 합니다.
+    """목표(Goal) 메시지(시스템 프롬프트 직후 사용자 메시지) 끝에 캐시 마커를 주입합니다. `merge_consecutive_roles` 실행 전에 호출해야 합니다.
 
-    합치고 나면 목표와 뒤따르는 남의 발언이 한 글이 되어 경계를 찾을 수 없습니다. 먼저 블록으로 바꿔 두면 합칠 때도 경계가
-    남고, 창에 맞추다 덧붙는 생략 안내도 목표 글을 바꾸지 않습니다.
+    메시지를 병합한 후에는 목표 메시지와 후속 발언이 단일 텍스트로 합쳐져 경계를 식별할 수 없습니다. 사전에 블록 구조로 변환해 두면
+    병합 시에도 블록 경계가 유지되며, 컨텍스트 윈도우 조절을 위한 생략 안내문이 추가되더라도 목표 텍스트 자체는 변동되지 않습니다.
 
-    다른 표시와 달리 이 표시는 메시지에 남습니다. 두 자르기 모두 이 자리를 남기므로 발언 동안 그대로이고, 끊긴 발언을
-    이어 갈 때도 같은 모양으로 돌아옵니다.
+    타 마커와 달리 이 마커는 메시지 구조 내에 보존됩니다. 두 가지 컨텍스트 자르기 로직 모두 이 위치를 보존하므로 발언 진행 중에도 불변으로 유지되며,
+    중단된 발언을 재개할 때도 동일한 구조로 복원됩니다.
 
-    뒤따르는 메시지가 없으면 한 번으로 끝나는 프롬프트(장부 갱신·요약)이므로 달지 않습니다.
+    후속 메시지가 없는 단일 턴 프롬프트(장부 갱신, 요약 등)는 재사용되지 않으므로 마커를 주입하지 않습니다.
     """
     mark = cache_mark(agent)
     if mark is None or len(messages) < 3 or messages[0].get("role") != "system" or messages[1].get("role") != "user":
@@ -115,12 +116,12 @@ def with_cache_marks(
     messages: List[Dict[str, Any]],
     tools: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
-    """표시를 단 요청용 사본 `(messages, tools)`. 표시를 달지 않는 연결이면 받은 그대로입니다.
+    """캐시 마커가 주입된 요청 페이로드 사본 `(messages, tools)`를 생성합니다. 마커 주입 대상이 아니면 원본을 그대로 반환합니다.
 
-    원본은 건드리지 않습니다. 도구 루프가 같은 목록에 판을 쌓으므로 원본에 달면 표시가 판마다 늘어납니다.
+    원본 메시지 목록은 수정하지 않습니다. 도구 실행 루프가 동일 메시지 목록에 호출 단계를 누적하므로 원본을 수정하면 루프마다 마커가 중복 누적됩니다.
 
-    자리가 모자라면 뒤쪽이 먼저입니다. 시스템의 표시가 앞선 도구까지 함께 덮으므로, 다섯 자리가 다 있을 때 빠지는
-    도구의 표시는 다른 에이전트와 나눠 쓰는 몫만 잃습니다.
+    마커 개수 한도(최대 4개) 초과 시 후속 컨텍스트 위치를 우선시합니다. 시스템 프롬프트의 마커가 선행 도구 정의까지 포함하여 캐시하므로,
+    5개 위치가 모두 존재할 때 도구 정의 마커가 제외되더라도 타 에이전트 간 도구 정의 공유 캐시만 제한되고 에이전트 내부 캐시 효율은 온전히 유지됩니다.
     """
     mark = cache_mark(agent)
     if mark is None:

@@ -550,7 +550,7 @@ class MCPRuntimePool:
         }
 
     def shared_with(self, workspace: Optional[str | Path], holder: str) -> List[str]:
-        """이 작업 공간의 런타임을 함께 쓰고 있는 다른 턴 (대화 id)."""
+        """동일 작업 공간의 MCP 런타임을 공유 중인 타 세션 목록 (세션 ID)."""
         runtime = self._runtimes.get(self.key_for(workspace))
         return sorted(runtime.holders - {holder}) if runtime else []
 

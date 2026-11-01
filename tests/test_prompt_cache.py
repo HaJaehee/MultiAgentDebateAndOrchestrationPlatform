@@ -1,10 +1,10 @@
-"""Claude 프롬프트 캐시 표시 (app/agents/llm_prompt_cache.py, ADR-045).
+"""Claude 프롬프트 캐시 제어 마커 주입 및 캐시 효율 검증 (app/agents/llm_prompt_cache.py, ADR-045).
 
-1. **어떤 연결에 다는가** — Anthropic·Bedrock·Vertex·Azure 의 Claude 만. 다른 연결은 요청 모양이 그대로입니다.
-2. **어느 자리에 다는가** — 시스템·도구·목표·마지막 자기 발언·도구 루프의 끝. 한 요청에 4개를 넘지 않습니다.
-3. **실제로 나가는 모양** — LiteLLM 의 변환을 거친 Anthropic·Bedrock 본문, 가짜 서버까지 가는 스트리밍과 사용량 계측.
-4. **달아서 읽히는가** — 실제 엔진이 만든 요청을 Anthropic 의 규칙(접두 일치, 20칸 되짚기)을 흉내 낸 캐시에 통과시킵니다.
-   표시 자리가 다음 요청에서 바뀌면 여기서 드러납니다. 프롬프트를 조립하는 코드를 고칠 때 깨지라고 있는 시험입니다.
+1. **마커 주입 대상 엔드포인트 판별** — Anthropic·Bedrock·Vertex·Azure 경로의 Claude 모델만 대상. 타 공급자 요청은 페이로드 불변 유지.
+2. **후보 위치 및 한도 검증** — 시스템 프롬프트, 도구 정의, 목표 메시지, 마지막 자체 발언, 도구 루프 끝. 단일 요청당 4개 상한 엄수.
+3. **실제 전송 페이로드 변환 검증** — LiteLLM 변환을 거친 Anthropic·Bedrock 페이로드 구조, 모의 서버 스트리밍 및 토큰 사용량 계측.
+4. **캐시 적중 시뮬레이션 검증** — 실제 오케스트레이션 엔진이 생성한 요청에 대해 Anthropic 캐시 규칙(접두사 일치, 20토큰 역추적 정렬)을 시뮬레이션하여 캐시 히트율 측정.
+   프롬프트 조립 로직 변경 시 마커 위치가 흔들리면 해당 테스트에서 회귀가 검출됩니다.
 """
 
 import hashlib
@@ -57,7 +57,7 @@ def _tool(name: str = "srv__read") -> Dict[str, Any]:
 
 
 def _conversation() -> List[Dict[str, Any]]:
-    """오케스트레이션이 넘기는 모양: 시스템, 목표, 남의 발언들, 이번 차례 지시."""
+    """오케스트레이션 엔진이 전달하는 메시지 구조: 시스템 프롬프트, 목표 메시지, 타 에이전트 발언 이력, 턴 지시문."""
     return [
         {"role": "system", "content": "페르소나"},
         {"role": "user", "content": "[목표]"},
@@ -76,11 +76,11 @@ def _marks_in(messages: List[Dict[str, Any]], tools: Any = None) -> int:
     return json.dumps(messages, ensure_ascii=False).count("cache_control") + json.dumps(tools or []).count("cache_control")
 
 
-# ================================================================ 1. 어떤 연결에
+# ================================================================ 1. 캐시 마커 적용 대상 엔드포인트 판별
 
 
 @pytest.mark.parametrize("model, provider, expected", [
-    ("anthropic/claude-3-5-sonnet-20241022", None, True),      # 모델 표에서 빠진 옛 이름 (conf.json 의 기본값)
+    ("anthropic/claude-3-5-sonnet-20241022", None, True),      # 모델 테이블에서 누락된 구형 모델명 (conf.json 기본값)
     ("anthropic/claude-sonnet-4-5", None, True),
     ("claude-opus-5-5", None, True),
     ("my-alias", "anthropic", True),
@@ -89,10 +89,10 @@ def _marks_in(messages: List[Dict[str, Any]], tools: Any = None) -> int:
     ("bedrock/invoke/anthropic.claude-3-5-sonnet-20241022-v2:0", None, True),
     ("vertex_ai/claude-sonnet-4-5", None, True),
     ("azure_ai/claude-sonnet-4-5", None, True),
-    ("bedrock/anthropic.claude-3-opus-20240229-v1:0", None, False),  # 표가 캐싱이 없다고 합니다
+    ("bedrock/anthropic.claude-3-opus-20240229-v1:0", None, False),  # 캐싱 미지원 모델
     ("bedrock/meta.llama3-70b-instruct-v1:0", None, False),
     ("bedrock/amazon.nova-pro-v1:0", None, False),
-    ("openai/claude-sonnet-4-5", None, False),                 # 사내 게이트웨이 경로
+    ("openai/claude-sonnet-4-5", None, False),                 # 사내 게이트웨이 프록시 경로
     ("claude-sonnet-4-5", "openai", False),
     ("openai/gpt-4o", None, False),
     ("gemini/gemini-1.5-pro", None, False),
@@ -148,7 +148,7 @@ def test_the_setting_is_inherited_and_the_fallback_uses_the_global_one():
     assert substitute is not None and substitute.prompt_cache == "1h"
 
 
-# ================================================================ 2. 어느 자리에
+# ================================================================ 2. 캐시 마커 주입 위치 및 상한 검증
 
 
 def test_the_goal_stays_its_own_block_when_the_roles_are_merged():
@@ -230,7 +230,7 @@ def test_marking_does_not_touch_what_the_loop_keeps():
 
 
 def test_empty_text_is_never_marked():
-    """빈 글에 표시를 달면 Anthropic 이 400 으로 거절합니다."""
+    """빈 텍스트 블록에 마커를 주입하면 Anthropic API에서 400 Bad Request가 발생합니다."""
     agent = _agent()
     messages, _ = with_cache_marks(agent, [
         {"role": "system", "content": ""},
@@ -259,7 +259,7 @@ def test_the_last_text_block_carries_the_mark_when_attachments_follow_it():
     assert messages[1]["content"][2] == attachment
 
 
-# ================================================================ 3. 실제로 나가는 모양
+# ================================================================ 3. 실제 아웃바운드 페이로드 변환 검증
 
 
 def _loop_request() -> Dict[str, Any]:
@@ -324,7 +324,7 @@ class _NoTools:
 
 @pytest.fixture
 def anthropic_stub():
-    """스트리밍으로 답하는 가짜 Anthropic 서버. 받은 본문을 모읍니다."""
+    """스트리밍 응답을 모의하는 가짜 Anthropic 서버. 수신된 페이로드를 수집합니다."""
     bodies: List[Dict[str, Any]] = []
     events = [
         ("message_start", {"type": "message_start", "message": {
@@ -383,11 +383,11 @@ async def test_a_real_streamed_call_sends_the_marks_and_meters_cache_tokens(anth
     assert (meter.prompt_tokens, meter.cached_tokens, meter.cache_write_tokens) == (1350, 1000, 300)
 
 
-# ================================================================ 4. 달아서 읽히는가
+# ================================================================ 4. 캐시 적중률 및 토큰 절감 검증
 
 
 class PrefixCache:
-    """Anthropic 캐시의 규칙만 흉내 냅니다. 표시 자리까지의 접두를 저장하고, 표시마다 20칸까지 되짚어 찾습니다."""
+    """Anthropic 프롬프트 캐시 동작 규격을 시뮬레이션합니다. 마커 위치까지의 바이트 접두사를 저장하고 최대 20토큰 역추적 정렬을 수행합니다."""
 
     LOOKBACK = 20
 
@@ -405,7 +405,7 @@ class PrefixCache:
         return blocks
 
     def serve(self, body: Dict[str, Any]) -> Tuple[int, int, int]:
-        """이 요청의 `(읽은, 쓴, 그냥 처리한)` 글자 수."""
+        """해당 요청의 `(캐시 적중, 캐시 생성, 기본 처리)` 문자 수."""
         digest = hashlib.sha256()
         keys: List[str] = []
         sizes: List[int] = []
@@ -435,7 +435,7 @@ SPEECH = "캐시 계층은 읽기 경로에 둡니다. " * 60 + "\n## 요지\n- 
 
 
 def _debate_endpoint(tool_rounds: int = 0):
-    """전문가는 한 발언마다 `tool_rounds` 번 도구를 부르고, 나머지는 곧바로 답합니다. 나간 요청을 모읍니다."""
+    """전문가는 발언마다 `tool_rounds` 회 도구를 호출하고, 나머지는 즉시 응답합니다. 아웃바운드 요청을 수집합니다."""
     sent: List[Dict[str, Any]] = []
 
     async def fake_acompletion(**kwargs):
@@ -472,7 +472,7 @@ class _SharedTools:
 
 
 async def _run_debate(tool_rounds: int = 0, rounds: int = 3) -> List[Tuple[str, Tuple[int, int, int]]]:
-    """실제 엔진으로 토론을 돌리고, 나간 요청을 흉내 낸 캐시에 통과시킵니다. `(에이전트, (읽음, 씀, 그냥))`."""
+    """실제 오케스트레이션 엔진으로 토론을 구동하고 발생한 요청을 캐시 시뮬레이터에 통과시킵니다. `(에이전트, (캐시 읽기, 캐시 쓰기, 일반))`."""
     await init_db(DB_URL)
     sid = f"cache-{uuid.uuid4().hex[:8]}"
     keys = ("orchestrator", "architect", "coder", "critic")
@@ -507,7 +507,7 @@ async def _run_debate(tool_rounds: int = 0, rounds: int = 3) -> List[Tuple[str, 
 
 
 def _cost(served: List[Tuple[int, int, int]]) -> float:
-    """표시 없이 보냈을 때의 입력 비용을 1 로 친 값 (읽기 0.1배, 쓰기 1.25배)."""
+    """캐시 마커 미적용 대비 상대 비용 비율 산출 (읽기 0.1배, 쓰기 1.25배 가중치 적용)."""
     total = sum(read + written + plain for read, written, plain in served)
     return sum(read * 0.1 + written * 1.25 + plain for read, written, plain in served) / total
 

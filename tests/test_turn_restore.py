@@ -1,13 +1,13 @@
-"""끊긴 쓰기의 디스크 확인과 커널 셀 재실행 (ADR-046).
+"""중단된 파일 쓰기 작업의 디스크 반영 여부 검증 및 커널 코드 셀 선별 재실행 테스트 (ADR-046).
 
-지키려는 것.
+설계 불변식(Design Invariants) 및 검증 목표:
 
-1. **쓰기 확인** — 쓰기 도구가 도는 도중에 끊기면, 이어 갈 때 파일을 직접 비교해 반영 여부를 모델에게 알린다.
-   확인할 수 없는 호출은 예전처럼 "결과 모름" 이고, 작업 공간 밖이나 원격 서버의 경로는 읽지 않는다.
-2. **셀 고르기** — 다시 실행할 셀은 도구 기록에서 고른다. 끝까지 실행된 것만, 커널이 비워진 뒤의 것만.
-3. **재실행은 사람이 고른다** — `continue` 는 코드를 돌리지 않고 커널이 비었다고 알린다. `replay` 는 커널을 비우고
-   셀을 순서대로 돌린다. 첫 실패에서 멈추고, 지금의 보안 판정을 받고, 작업 공간 파일은 재실행 전으로 돌린다.
-4. **겹치지 않는다** — 다시 실행한 기록은 다음 재실행의 셀에 들어가지 않는다.
+1. **쓰기 작업 디스크 검증** — 파일 쓰기 도구 실행 중 중단 시, 세션 재개 시점에 디스크 파일을 직접 대조하여 반영 여부를 모델에 전달.
+   검증 불가능한 호출은 기존대로 [결과 모름]을 유지하며, 작업 공간 외부나 원격 서버 파일은 접근하지 않음.
+2. **재실행 대상 코드 셀 선별** — 도구 호출 영속화 이력에서 정상 완료된 코드 셀만 추출하며 커널 초기화 이후 실행분만 포함.
+3. **사용자 명시적 승인 기반 재실행** — `continue` 모드는 코드 재실행 없이 커널 변수 소멸을 고지. `replay` 모드는 커널 초기화 후
+   코드 셀을 순서대로 재실행하되, 최초 실패 시 즉시 중단하고 최신 보안 판정을 적용하며 작업 공간 변경 사항을 자동 롤백.
+4. **재실행 이력 중복 누적 방지** — 이미 재실행된 셀은 후속 재실행 선별 목록에서 제외.
 """
 
 import asyncio
@@ -64,7 +64,7 @@ def _meta(tool: str, **kwargs: Any) -> ToolMeta:
     return ToolMeta(server="filesystem", tool=tool, **kwargs)
 
 
-# =============================================================== 1. 쓰기 확인: 값 만들기
+# =============================================================== 1. 쓰기 확인: 검증 계획 수립
 
 
 def test_a_new_file_is_absent_before_and_has_a_known_hash_after(tmp_path):
@@ -110,7 +110,7 @@ def test_only_regular_files_of_a_reasonable_size_are_read(tmp_path, monkeypatch)
     assert write_probe.plan_write(_meta("write_file"), {"path": "big.bin", "content": "x"}, tmp_path) is None
 
 
-# =============================================================== 1. 쓰기 확인: 도구 루프
+# =============================================================== 1. 쓰기 확인: 도구 루프 연동
 
 
 class _Message(SimpleNamespace):
@@ -119,7 +119,7 @@ class _Message(SimpleNamespace):
 
 
 def _install(monkeypatch, replies: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
-    """`replies` 를 차례로 돌려주는 가짜 엔드포인트. 각 요청이 보낸 메시지를 모아 돌려줍니다."""
+    """replies를 순차 반환하는 모의 엔드포인트. 각 요청이 전달한 메시지를 수집합니다."""
     remaining = list(replies)
     sent: List[List[Dict[str, Any]]] = []
 
@@ -150,7 +150,7 @@ def _install(monkeypatch, replies: List[Dict[str, Any]]) -> List[List[Dict[str, 
 
 
 class _DiskMCP:
-    """쓰기를 정말 디스크에 합니다. `cut` 은 서버가 내려가는 자리입니다 (쓰기 전·일부만·쓴 뒤)."""
+    """실제 디스크 파일 쓰기를 수행하는 모의 MCP. cut은 비정상 중단 시점입니다 (쓰기 전 / 부분 반영 / 쓰기 완료)."""
 
     def __init__(self, workspace: Path, cut: Optional[str] = None):
         self.workspace = workspace
@@ -184,7 +184,7 @@ def _coder() -> Agent:
 
 
 async def _cut_write(monkeypatch, workspace: Path, name: str, args: Dict[str, Any], cut: str) -> Dict[str, Any]:
-    """도구 하나를 부르다 끊긴 발언의 마지막 초안."""
+    """단일 도구 호출 도중 중단된 발언의 최종 초안 상태를 생성합니다."""
     _install(monkeypatch, [{"content": "씁니다", "calls": [(name, args)]}])
     saved: List[Dict[str, Any]] = []
 
@@ -199,7 +199,7 @@ async def _cut_write(monkeypatch, workspace: Path, name: str, args: Dict[str, An
 
 
 async def _resume(monkeypatch, workspace: Path, draft: Dict[str, Any]) -> Tuple[str, str]:
-    """이어 간 첫 요청의 (끊긴 호출의 도구 결과, 재개 안내)."""
+    """세션 재개 후 최초 요청의 (중단된 호출의 도구 결과, 재개 안내문)."""
     sent = _install(monkeypatch, [{"content": "이어서 마무리"}])
     mcp = _DiskMCP(workspace)
     await LLMCaller(mcp_manager=mcp).call_agent(
@@ -245,7 +245,7 @@ async def test_a_partial_write_asks_the_model_to_look(monkeypatch, tmp_path):
     ("before", write_probe.NOT_APPLIED_RESULT.format(path="a.py", absent="")),
 ])
 async def test_an_append_is_never_mistaken_for_one_that_must_be_repeated(monkeypatch, tmp_path, cut, expected):
-    """다시 부르면 같은 조각이 두 번 들어가는 호출입니다. 이 확인이 가장 값진 자리입니다."""
+    """재호출 시 동일한 내용이 중복 추가되는 도구 호출입니다. 디스크 검증이 가장 필수적인 대상입니다."""
     (tmp_path / "a.py").write_text("첫 조각\n", encoding="utf-8", newline="\n")
     draft = await _cut_write(monkeypatch, tmp_path, *APPEND, cut=cut)
     result, _notice = await _resume(monkeypatch, tmp_path, draft)
@@ -371,7 +371,7 @@ async def test_the_engines_kernel_note_reaches_the_model(monkeypatch, tmp_path):
     assert notice.endswith("[커널] 비었습니다.")
 
 
-# =============================================================== 2. 셀 고르기
+# =============================================================== 2. 재실행 대상 셀 선별
 
 
 def _row(code: str = "x = 1", *, agent: str = "coder", tool: str = "sandbox__execute_python_code",
@@ -444,7 +444,7 @@ def test_agents_with_similar_keys_keep_their_own_cells():
 
 
 def test_a_server_without_agent_scope_runs_one_kernel_for_everyone():
-    """샌드박스를 다른 키로 등록하면 대화 단위 커널 하나입니다. 셀도 한 줄로 묶어 기록 순서대로 돌립니다."""
+    """샌드박스를 단일 키로 등록한 경우 세션 단위의 단일 커널이 생성됩니다. 셀 역시 단일 큐로 정렬되어 실행됩니다."""
     tool = "python__execute_python_code"
     found = turns.kernel_cells([_row("a", agent="coder", tool=tool), _row("b", agent="critic", tool=tool)], "s1")
     assert _codes(found, "s1") == ["a", "b"]
@@ -455,11 +455,11 @@ def test_replayed_rows_do_not_count_again():
     assert _codes(found) == ["a", "b"]
 
 
-# =============================================================== 3·4. 재실행
+# =============================================================== 3·4. 커널 셀 재실행 및 파일 롤백
 
 
 class _Sandbox:
-    """커널을 흉내 내는 도구 서버. 코드를 정말 실행하므로 변수와 파일이 남습니다."""
+    """커널을 모의하는 도구 서버. 코드를 실제로 실행하므로 변수와 파일 변경이 발생합니다."""
 
     def __init__(self, workspace: Path):
         self.workspace = Path(workspace)
@@ -494,7 +494,7 @@ class _Sandbox:
 
 
 class _CellLLM(FakeLLMCaller):
-    """coder 의 첫 발언이 `cells` 를 실행하고 판을 남긴 뒤 끊깁니다. 이어 간 발언은 `resumed` 에 남습니다."""
+    """coder의 첫 발언이 cells를 실행하고 초안을 남긴 뒤 중단됩니다. 재개된 발언은 resumed에 수집됩니다."""
 
     def __init__(self, sandbox: Optional[_Sandbox] = None, cells: Tuple[str, ...] = (), cut_again: bool = False):
         super().__init__()
@@ -581,7 +581,7 @@ async def _session(workspace: Path) -> str:
 
 
 async def _cut(monkeypatch, workspace: Path, cells: Tuple[str, ...]) -> Tuple[str, str]:
-    """`cells` 를 돌리다 서버가 내려가고 다시 뜬 대화. (대화 id, 턴 id). 커널은 함께 사라집니다."""
+    """cells를 실행하던 도중 서버가 비정상 종료된 후 재시작된 대화 세션. (세션 ID, 턴 ID). 커널은 함께 소멸합니다."""
     sid = await _session(workspace)
     sandbox = _Sandbox(workspace)
     with pytest.raises(asyncio.CancelledError):
@@ -742,7 +742,7 @@ async def test_replay_does_not_call_a_tool_that_is_gone(monkeypatch, repo):
 @git_required
 @pytest.mark.asyncio
 async def test_replay_keeps_to_the_tools_this_conversations_agent_may_use(monkeypatch, repo):
-    """에이전트 설정은 대화에 고정됩니다 (`frozen_agents`). 재실행도 일반 발언과 같은 값을 봅니다."""
+    """에이전트 구성 스냅샷은 세션에 고정됩니다 (`frozen_agents`). 코드 셀 재실행 역시 동일한 스냅샷 설정을 참조합니다."""
     sid, turn_id = await _cut(monkeypatch, repo, ("x = 1",))
     async with get_session_factory(DB_URL)() as db:
         (coder,) = (await db.execute(select(SessionAgentModel).where(
@@ -771,7 +771,7 @@ async def test_a_stop_request_ends_the_replay(monkeypatch, repo):
 @git_required
 @pytest.mark.asyncio
 async def test_files_touched_by_the_replay_go_back_to_what_they_were(monkeypatch, repo):
-    """옛 셀이 파일을 쓰면, 그 뒤에 고친 내용이 옛 내용으로 돌아갑니다. 변수만 되살려야 합니다."""
+    """재실행된 셀에 파일 쓰기가 포함된 경우 최신 파일 내용이 과거 내용으로 덮어써지지 않도록, 변수 복원 후 파일 변경 사항을 롤백합니다."""
     cells = (
         "open(WS / 'out.txt', 'w', encoding='utf-8').write('셀이 쓴 내용')",
         "open(WS / 'chart.txt', 'w', encoding='utf-8').write('셀이 만든 파일')",
@@ -793,7 +793,7 @@ async def test_files_touched_by_the_replay_go_back_to_what_they_were(monkeypatch
 
 @pytest.mark.asyncio
 async def test_no_snapshot_means_no_replay(monkeypatch, tmp_path):
-    """스냅샷이 없으면 파일을 지킬 수 없습니다. 이 시험은 체크포인트가 꺼진 기본 환경에서 돕니다."""
+    """작업 공간 스냅샷 생성이 불가능한 경우 파일 무결성을 보장할 수 없으므로 재실행을 거부합니다. 본 테스트는 체크포인트 비활성화 환경을 검증합니다."""
     sid, turn_id = await _cut(monkeypatch, tmp_path, ("x = 1",))
     sandbox, llm = _Sandbox(tmp_path), _CellLLM()
     await _engine(monkeypatch, llm, sandbox).resume_turn(sid, turn_id, "replay")

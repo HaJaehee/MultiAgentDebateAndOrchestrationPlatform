@@ -471,7 +471,7 @@ python docs/render_user_manual.py
   "num_retries": 2,
   "// drop_params": "엔드포인트가 모르는 파라미터 자동 제거 (로컬 모델 호환성)",
   "drop_params": true,
-  "// prompt_cache": "Claude 연결의 프롬프트 캐시 수명: 5m | 1h | off (다른 연결에는 영향 없음)",
+  "// prompt_cache": "Claude 연동 프롬프트 캐시 수명: 5m | 1h | off (타 공급자 연결에는 영향 없음)",
   "prompt_cache": "5m",
   "// max_tool_iterations": "한 턴에서 허용할 MCP 도구 루프 횟수 (1~100)",
   "max_tool_iterations": 30,

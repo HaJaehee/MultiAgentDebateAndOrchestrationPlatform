@@ -82,24 +82,24 @@ UNKNOWN_TOOL_RESULT = (
     "정하세요."
 )
 
-# 끊긴 쓰기를 디스크에서 확인했을 때 재개 안내에 덧붙이는 글 (ADR-046).
+# 중단된 파일 쓰기를 디스크에서 확인했을 때 재개 안내에 덧붙이는 문구 (ADR-046).
 WRITES_CHECKED_NOTICE = " 파일 쓰기 호출은 앱이 디스크를 확인해 그 결과를 도구 결과에 적었습니다."
 FILES_DRIFTED_NOTICE = (
-    " 이 발언이 마지막으로 쓴 뒤 내용이 달라진 파일: {paths}. 다른 도구나 사람이 고쳤을 수 있으니 기억에 "
-    "기대지 말고 다시 읽으세요."
+    " 이 발언이 마지막으로 쓴 뒤 내용이 달라진 파일: {paths}. 외부 도구나 사용자에 의해 수정되었을 수 있으니 "
+    "메모리 캐시에 의존하지 말고 파일 내용을 다시 조회하십시오."
 )
 
 
 def close_open_tool_calls(
     messages: List[Dict[str, Any]], checked: Optional[Mapping[str, str]] = None,
 ) -> List[str]:
-    """마지막 assistant 발언이 부른 도구 중 결과가 없는 것에 결과를 채웁니다. 채운 도구 이름.
+    """마지막 assistant 발언이 호출한 도구 중 결과가 없는 것에 실행 결과를 채웁니다. 채워진 도구 이름 목록 반환.
 
-    도구를 부른 발언과 그 결과는 짝이 맞아야 합니다 (`_assistant_turn`). 서버가 도구를 실행하는
-    도중에 내려가면 부른 기록만 있고 결과가 없는 호출이 남습니다. 그 자리를 비워 두면 요청이
-    거절되고, 지어낸 결과를 넣으면 모델이 그것을 사실로 읽습니다. 모른다고 적습니다.
+    도구를 호출한 발언과 그 결과는 반드시 쌍을 이루어야 합니다 (`_assistant_turn`). 서버가 도구를 실행하는
+    도중에 비정상 종료되면 호출 기록만 남고 결과가 누락됩니다. 해당 위치를 비워 두면 LLM API 요청이
+    거절되며, 임의로 결과를 지어내면 모델이 허위 관찰 결과를 사실로 인식합니다.
 
-    `checked` 는 디스크에서 확인한 쓰기의 결과입니다 (호출 id → 글, `write_probe.reconcile`).
+    `checked`는 디스크에서 검증된 쓰기 작업 결과 맵입니다 (호출 ID → 도구 결과 문자열, `write_probe.reconcile`).
     """
     for index in range(len(messages) - 1, -1, -1):
         msg = messages[index]
@@ -194,9 +194,9 @@ class ToolLoop:
     announced_bands: Set[Any] = field(default_factory=set)
     # 현재 루프에서 도구가 반환한 미디어 파일 목록. 해당 라운드 종료 후 사용자 메시지로 주입됩니다 (`_flush_tool_media`).
     tool_media: List[Dict[str, Any]] = field(default_factory=list)
-    # 실행 중인 쓰기 호출의 호출 전 상태 (호출 id → `write_probe.plan_write`). 끊기면 이것으로 결과를 확인합니다.
+    # 실행 중인 쓰기 도구 호출의 사전 상태 (호출 ID → `write_probe.plan_write`). 중단 시 디스크 검증에 활용합니다.
     open_writes: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    # 이 발언이 마지막으로 쓴 파일의 해시 (절대 경로 → {path, sha256}). 이어 갈 때 그 뒤에 달라졌는지 봅니다.
+    # 해당 발언이 마지막으로 작성한 파일의 SHA-256 해시 (절대 경로 → {path, sha256}). 세션 재개 시 사후 변경 여부를 판별합니다.
     known_files: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     # --- 도구 목록에서 한 번 구해 두는 것
@@ -388,10 +388,10 @@ class ToolLoopMixin:
 
     @staticmethod
     async def _close_cut_speech(loop: ToolLoop, resume_state: Dict[str, Any]) -> str:
-        """끊긴 호출의 결과를 채우고, 모델에게 줄 재개 안내를 만듭니다.
+        """중단된 도구 호출의 결과를 채우고, 모델에게 전달할 세션 재개 안내문을 조립합니다.
 
-        쓰기 호출은 디스크에서 확인한 결과를, 나머지는 "결과 모름" 을 채웁니다 (ADR-046). 커널 상태는
-        엔진이 초안에 넣어 준 말을 그대로 덧붙입니다 (`kernel_replay`).
+        파일 쓰기 호출은 디스크에서 직접 검증한 결과를, 그 외 도구는 [결과 모름]을 채웁니다 (ADR-046). 커널 변수 상태는
+        오케스트레이션 엔진이 전달한 복구 상태 안내문을 결합합니다 (`kernel_replay`).
         """
         checked, drifted = await asyncio.to_thread(write_probe.reconcile, loop.open_writes, loop.known_files)
         loop.open_writes = {}
@@ -740,10 +740,10 @@ class ToolLoopMixin:
     async def _note_write_start(
         self, loop: ToolLoop, fn_name: str, fn_args: Dict[str, Any], call_id: str,
     ) -> None:
-        """쓰기 도구를 실행하기 직전의 파일 상태를 초안에 남깁니다 (ADR-046).
+        """파일 쓰기 도구 실행 직전의 파일 해시 상태를 발언 초안에 영속화합니다 (ADR-046).
 
-        보안 판정을 통과한 뒤에 읽습니다. 사람의 승인을 기다리는 동안 파일이 바뀔 수 있고, 거부된 호출의
-        경로는 읽을 이유가 없습니다. 초안을 남기지 않는 발언은 이어 갈 일이 없어 건너뜁니다.
+        도구 보안 정책 판정을 통과한 직후에 측정합니다. 사용자 승인 대기 중 파일이 변경될 수 있으며 거부된 호출의
+        경로는 검증할 필요가 없기 때문입니다. 초안 체크포인트를 사용하지 않는 발언은 재개 대상이 아니므로 건너뜁니다.
         """
         if loop.checkpoint is None:
             return
@@ -760,7 +760,7 @@ class ToolLoopMixin:
 
     @staticmethod
     async def _note_write_end(loop: ToolLoop, call_id: str, status: str) -> None:
-        """쓰기 호출이 돌아왔습니다. 성공했으면 그 뒤의 해시를 기억합니다 (다음 판의 초안에 함께 남습니다)."""
+        """파일 쓰기 도구 호출이 완료되었을 때 최종 파일 해시를 기록합니다 (후속 루프 초안에 보존)."""
         plan = loop.open_writes.pop(call_id, None)
         if plan is None or status != "success":
             return

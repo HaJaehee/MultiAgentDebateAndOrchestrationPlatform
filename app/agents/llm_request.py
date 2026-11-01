@@ -99,7 +99,7 @@ class RequestBuilderMixin:
         `tool_choice` 는 도구를 넘기되 **부르지는 못하게** 해야 하는 자리를 위해
         열어 둡니다 (`"none"`). 자세한 사연은 `_wrap_up_without_tools` 에 있습니다.
 
-        Claude 연결이면 프롬프트 캐시 표시를 답니다 (`with_cache_marks`).
+        Claude 연동 대상인 경우 프롬프트 캐시 제어 마커를 주입합니다 (`with_cache_marks`).
         """
         messages, tools = with_cache_marks(agent, messages, tools)
         kwargs: Dict[str, Any] = {

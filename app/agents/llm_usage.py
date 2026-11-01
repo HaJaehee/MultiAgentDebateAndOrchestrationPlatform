@@ -39,7 +39,7 @@ class Usage(BaseModel):
     completion_tokens: int = 0
     # 프롬프트 캐시 적중 토큰 수 (prompt_tokens에 포함)
     cached_tokens: int = 0
-    # 프롬프트 캐시에 새로 쓴 토큰 수 (prompt_tokens에 포함). Claude 는 이 몫에 쓰기 할증을 매깁니다.
+    # 프롬프트 캐시에 새로 기록된 토큰 수 (prompt_tokens에 포함). Claude는 해당 토큰에 캐시 생성 할증을 적용합니다.
     cache_write_tokens: int = 0
     # 추론/사고(Reasoning) 토큰 수 (completion_tokens에 포함)
     reasoning_tokens: int = 0
@@ -114,9 +114,9 @@ def _count(value: Any) -> int:
 def usage_of(response: Any) -> Usage:
     """LiteLLM 응답의 `usage` 를 읽습니다. 없으면 빈 값입니다.
 
-    캐시 토큰은 OpenAI 식(`prompt_tokens_details.cached_tokens`)과 Anthropic 식
-    (`cache_read_input_tokens`)을 모두 봅니다. 쓴 토큰도 LiteLLM 식(`prompt_tokens_details.cache_write_tokens`)과
-    Anthropic 식(`cache_creation_input_tokens`)을 모두 봅니다.
+    캐시 적중(Read) 토큰은 OpenAI 규격(`prompt_tokens_details.cached_tokens`)과 Anthropic 규격
+    (`cache_read_input_tokens`)을 모두 지원하며, 캐시 생성(Write) 토큰 역시 LiteLLM 규격(`prompt_tokens_details.cache_write_tokens`)과
+    Anthropic 규격(`cache_creation_input_tokens`)을 모두 판별합니다.
     """
     raw = _read(response, "usage")
     if raw is None:

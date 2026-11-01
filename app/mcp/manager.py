@@ -349,19 +349,20 @@ def carry_over_memory_graph(
 #                      아티팩트 뷰어에 남아서 검증할 수 있습니다.
 AGENT_SCOPED_SERVERS = frozenset({"sandbox"})
 
-# 샌드박스는 네임스페이스에서 이 글자만 남기고 이 길이로 자릅니다 (`mcp_sandbox/server.py` 의 `_sanitize_ns`).
+# 샌드박스 서버는 네임스페이스에서 유효 문자만 필터링한 후 최대 길이로 절삭합니다 (`mcp_sandbox/server.py`의 `_sanitize_ns`).
 AGENT_SCOPE_CHARS = 40
 _AGENT_SCOPE_SAFE = re.compile(r"[A-Za-z0-9_-]+")
-# 줄인 스코프에서 대화와 발언자를 가르는 해시의 길이 (16진수).
+# 압축된 스코프에서 세션과 발언자 키를 고유 식별하는 해시 다이제스트 길이 (16진수).
 _AGENT_SCOPE_DIGEST_CHARS = 12
 
 
 def compose_scope(server_name: str, scope: Optional[str], actor: Optional[str]) -> Optional[str]:
-    """이 서버에 보낼 스코프를 만듭니다 (`AGENT_SCOPED_SERVERS` 는 발언자까지 포함).
+    """해당 MCP 서버에 전달할 격리 스코프 문자열을 생성합니다 (`AGENT_SCOPED_SERVERS`는 발언자 단위로 격리).
 
-    발언자를 붙인 값이 샌드박스의 제한 안에 들지 않으면 대화 id 앞부분과 해시로 줄입니다. 대화 id 가 36자라 그대로
-    보내면 발언자 키는 앞 세 글자만 남아 `critic` 과 `critic2` 가 커널을 함께 쓰고, 한글 키는 통째로 지워져 그
-    대화의 발언자가 모두 한 커널에 모입니다. 커널은 저장되지 않으므로 이름이 바뀌어도 잃는 것이 없습니다.
+    세션 ID와 발언자 키를 결합한 문자열이 샌드박스 네임스페이스 한도를 초과하면 세션 ID 접두사와 해시로 압축합니다.
+    세션 UUID가 36자를 차지하므로 단순 결합 시 발언자 키가 3자리만 남아 `critic`과 `critic2`가 동일 커널을 공유하거나,
+    한글 키가 전량 제거되어 세션 내 모든 발언자가 단일 커널로 수렴하는 문제가 발생하기 때문입니다.
+    커널 인스턴스는 디스크에 영속화되지 않으므로 네임스페이스 명명 규칙이 변경되어도 데이터 유실은 없습니다.
     """
     if not scope:
         return None

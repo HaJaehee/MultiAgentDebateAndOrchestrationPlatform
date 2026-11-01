@@ -418,7 +418,7 @@ def test_scope_policy_splits_the_kernel_but_not_the_graph():
 
 
 def _sandbox_namespace(raw: str) -> str:
-    """샌드박스가 받은 값을 다루는 그대로 (`mcp_sandbox/server.py` 의 `_sanitize_ns`). 복사본은 저장소에 없습니다."""
+    """내장 샌드박스 서버의 네임스페이스 정제 규칙을 재현합니다 (`mcp_sandbox/server.py`의 `_sanitize_ns`)."""
     return re.sub(r"[^A-Za-z0-9_-]", "", raw.strip())[:40]
 
 
@@ -426,10 +426,10 @@ SESSION_UUID = "0f3c2b1a-1111-2222-3333-444455556666"
 
 
 @pytest.mark.parametrize("first, second", [
-    ("critic", "critic2"),          # 앞 세 글자가 같습니다
+    ("critic", "critic2"),          # 접두사 3자가 동일한 경우
     ("code_reviewer", "coder"),
-    ("평론가", "검토자"),            # 샌드박스가 글자를 통째로 지웁니다
-    ("a.b", "ab"),                  # 지우고 나면 같아집니다
+    ("평론가", "검토자"),            # 비ASCII 한글 문자가 전량 필터링되는 경우
+    ("a.b", "ab"),                  # 특수문자 제거 후 동일해지는 경우
 ])
 def test_agents_the_sandbox_would_merge_still_get_their_own_kernels(first, second):
     from app.mcp.manager import compose_scope

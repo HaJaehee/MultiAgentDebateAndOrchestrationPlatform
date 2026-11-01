@@ -100,9 +100,9 @@ app/
 │   ├── media.py                     454   입력 모달리티 처리: LLM 요청 직전 멀티모달 파일 주입 및 도구 반환 미디어 처리 (ADR-035)
 │   ├── llm.py                       469   LLMCaller: 호출, 폴백 판단, 한 판 호출
 │   ├── llm_loop.py                  630   도구 루프 (ToolLoop 상태 + 단계별 함수)
-│   ├── write_probe.py               159   끊긴 파일 쓰기의 반영 여부를 해시로 확인 (ADR-046)
+│   ├── write_probe.py               159   중단된 파일 쓰기의 디스크 반영 여부 해시 검증 (ADR-046)
 │   ├── llm_request.py               170   시스템 프롬프트·LiteLLM 인자
-│   ├── llm_prompt_cache.py          147   Claude 프롬프트 캐시 표시 (ADR-045)
+│   ├── llm_prompt_cache.py          147   Claude 프롬프트 캐시 마커 주입 (ADR-045)
 │   ├── llm_tool_calls.py            281   도구 호출 한 번: 읽기·판정·실행·기록
 │   ├── llm_recovery.py              568   잘린 답·빈 답·새어 나온 도구 호출 되살리기
 │   ├── llm_context.py               464   토큰 어림, 컨텍스트 창 맞춤
@@ -160,7 +160,7 @@ app/
 │   ├── tool_gate.py                 453   도구 보안 판정을 토론에 붙임
 │   ├── control.py                   693   정지·개입·한도·승인 제어 채널
 │   ├── turns.py                     589   턴 기록, 끊긴 턴 (ADR-024)
-│   ├── kernel_replay.py             283   끊긴 턴을 이어 가기 전 커널 셀 재실행 (ADR-046)
+│   ├── kernel_replay.py             283   중단된 턴 재개 전 커널 코드 셀 선별 재실행 (ADR-046)
 │   ├── state.py                     148   DebateState · DebateMessage · ArtifactItem
 │   ├── runner.py                    449   DebateRunner — 백그라운드 턴 시작·끝
 │   ├── turn_run.py                  725   TurnRun — 턴 스냅샷 (이벤트별 리듀서)
@@ -229,7 +229,7 @@ app/
 | 새 토론 이벤트 | `events.py` 에 이름 → 스냅샷은 `orchestration/turn_run.py`, 전문가 화면은 `ui/expert/events.py` |
 | 사용자 승인 대기 상태 정의 | `orchestration/turn_run.py`의 `waiting_requests`, `events.py`의 `WAITING_EVENTS`, 알림 메시지는 `ui/attention.py` |
 | LLM 호출 파라미터 | `agents/llm_request.py` (`build_completion_kwargs`) |
-| Claude 프롬프트 캐시 표시 자리 | `agents/llm_prompt_cache.py` |
+| Claude 프롬프트 캐시 마커 위치 정의 | `agents/llm_prompt_cache.py` |
 | 도구 루프 | `agents/llm_loop.py` (`_run_litellm_loop` 와 단계 함수) · 도구 호출 한 번은 `agents/llm_tool_calls.py` |
 | MCP 서버 다루는 방식 | `mcp/manager.py` · 작업 공간별 런타임은 `mcp/pool.py` |
 | 도구 보안 규칙 | 문법은 `tool_rules.py`, 판정은 `mcp/policy.py` |
