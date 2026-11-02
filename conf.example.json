@@ -287,7 +287,17 @@
       "뜨므로(MCP_MAX_RUNTIMES, 기본 4), 앱은 이 값을 런타임 수로 나눠 각 샌드박스에",
       "넘깁니다 — 그러지 않으면 커널이 곱으로 붙습니다. 16 이고 런타임 상한이 4 면 런타임",
       "하나당 4 개, 즉 기본 구성(coder·critic)에서 그 작업 공간의 동시 토론 2건까지입니다.",
-      "넘으면 가장 오래 안 쓴 커널부터 조용히 정리되어 그 변수들이 사라집니다."
+      "넘으면 가장 오래 안 쓴 커널부터 조용히 정리되어 그 변수들이 사라집니다.",
+      "",
+      "SANDBOX_ISOLATION 을 \"limits\" 로 두면 커널마다 OS 자원 상한을 겁니다 (샌드박스 v0.10.0+,",
+      "관리자 권한 불필요). 메모리 폭주·자식 프로세스 대량 생성·스레드 안의 무한 루프가",
+      "그 커널 안에서 멈추고, 이 앱과 다른 대화는 계속 응답합니다.",
+      "- Windows: 커널마다 Job Object — 메모리, 프로세스 수, 낮은 CPU 우선순위, 그리고",
+      "  커널을 내리거나 앱이 죽을 때 커널이 띄운 자식까지 함께 정리합니다.",
+      "- Linux: 커널에 RLIMIT_DATA 와 nice 10. 프로세스 수 상한은 없습니다.",
+      "SANDBOX_KERNEL_MEMORY_LIMIT 는 커널 하나의 상한입니다 (MB 또는 물리 메모리 %, 비율은",
+      "numpy 가 import 될 수 있는 하한 아래로 내려가지 않음). 커널 수만큼 곱해지므로",
+      "SANDBOX_MAX_NAMESPACES 와 함께 정하세요. 파일·네트워크 접근은 막지 않습니다."
     ],
     "sandbox": {
       "command": "${PYTHON_BIN:-python}",
@@ -299,6 +309,8 @@
         "SANDBOX_KERNEL_PYTHON": "${SANDBOX_KERNEL_PYTHON:-${PYTHON_BIN:-python}}",
         "SANDBOX_EXEC_TIMEOUT": "${SANDBOX_EXEC_TIMEOUT:-60}",
         "SANDBOX_MAX_NAMESPACES": "${SANDBOX_MAX_NAMESPACES:-16}",
+        "SANDBOX_ISOLATION": "${SANDBOX_ISOLATION:-off}",
+        "SANDBOX_KERNEL_MEMORY_LIMIT": "${SANDBOX_KERNEL_MEMORY_LIMIT:-25%}",
         "PYTHONIOENCODING": "utf-8",
         "PYTHONUTF8": "1"
       },

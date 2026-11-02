@@ -135,7 +135,10 @@ become `net`. **Uncertainty is flagged, not guessed:** a parse failure (shell es
 `eval`/`exec`/`__import__`, `subprocess`/`os.system`, `ctypes` and friends make the call *flagged
 execution*, which asks in `default`. `run_python_file` reads the file from the workspace and scans it;
 if it cannot, the call is flagged. **This is a net for mistakes and ordinary injected code, not a
-security boundary** — Python can hide anything. The boundary is OS isolation (§10).
+security boundary** — Python can hide anything. Since sandbox v0.10.0 the OS can hold each kernel to
+resource limits (`SANDBOX_ISOLATION=limits`: memory, CPU priority, process count, cleanup of its
+children), so runaway code cannot take the host down; what the code may read, write or reach on the
+network is still decided only here (§10).
 
 ---
 
@@ -445,8 +448,13 @@ validated when the config loads; a bad line fails the load with every problem li
 ## 10. Not in This Release
 
 - An append-only security log that outlives its conversation (the audit tab reads `tool_calls` — §8).
-- OS-level isolation of the sandbox kernel (Windows Job Object / AppContainer, bubblewrap on Linux) —
-  the real boundary for code execution.
+- OS-level confinement of the sandbox kernel's files and network (bubblewrap on Linux; AppContainer or a
+  separate account on Windows) — the real boundary for code execution. Resource limits are there since
+  sandbox v0.10.0 ([Bundled Servers §2.4](bundled-servers.md#24-python-code-execution-sandbox-sandbox)). Confinement was
+  left out on purpose: on Windows, blocking reads needs administrator rights (a sandbox account and firewall
+  rules) or an AppContainer, which also cuts the kernel's loopback link to the server. Without administrator
+  rights, a Low integrity level only blocks writes, and only after the workspace has been relabelled for good.
+  On a single-user PC that is more than the threat calls for.
 - Taint that crosses speeches (§6-b). A tainted speech's text reaches the next speakers unmarked, and so does what it
   wrote to a file or the memory graph, so a later clean speech can run code on its word. A speech restarted from
   the resume or retry notices also starts clean, with the old output only wrapped. Workspace writes and memory stay

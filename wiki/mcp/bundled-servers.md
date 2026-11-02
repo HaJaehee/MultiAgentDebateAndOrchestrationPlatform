@@ -11,7 +11,7 @@ The platform comes pre-configured with a suite of official and open-source MCP s
 | `filesystem` | Node.js | `@modelcontextprotocol/server-filesystem` | 14 | **Enabled** | File read/write/search within `./workspace`. |
 | `memory` | Node.js | fork of `@modelcontextprotocol/server-memory` ([`mcp_servers/memory_scoped/`](file:///d:/MultiAgentDebateOrchestration/mcp_servers/memory_scoped/index.mjs)) | 9 | **Enabled** | Knowledge graph persistence, one graph per conversation. |
 | `git` | Python | `mcp-server-git` (pip package) | 12 | **Enabled** | Repository version control & diff tracking. |
-| `sandbox` | Python | [AirgappedPySandbox](https://github.com/HaJaehee/AirgappedPySandbox) v0.8.0 | 7 | **Enabled** | Stateful IPython kernel code execution, one namespace per conversation and speaker. |
+| `sandbox` | Python | [AirgappedPySandbox](https://github.com/HaJaehee/AirgappedPySandbox) v0.10.0 | 7 | **Enabled** | Stateful IPython kernel code execution, one namespace per conversation and speaker. |
 | `sequential_thinking` | Node.js | `@modelcontextprotocol/server-sequential-thinking`| 1 | *Disabled* | Step-by-step reasoning (used only when `mode = "mcp"`). |
 | `fetch` | Python | `mcp-server-fetch` (pip package) | 1 | *Disabled* | Web URL to Markdown extractor. **Keep disabled in air-gaps.** |
 | `kb` | Python | this repository ([`mcp_servers/anythingllm_kb/`](file:///d:/MultiAgentDebateOrchestration/mcp_servers/anythingllm_kb/server.py)) | 2 | *Disabled* | Document search in an AnythingLLM workspace: source chunks with title, source and score. |
@@ -57,7 +57,16 @@ The platform comes pre-configured with a suite of official and open-source MCP s
 ### 2.4. Python Code Execution Sandbox (`sandbox`)
 - **Repository**: [HaJaehee/AirgappedPySandbox](https://github.com/HaJaehee/AirgappedPySandbox)
 - **Execution**: Embedded stateful IPython execution daemon.
-- **Bundled version**: v0.8.0. Vendored into `mcp_sandbox/`; the app does not fork it.
+- **Bundled version**: v0.10.0. Vendored into `mcp_sandbox/`; the app does not fork it.
+- **OS resource limits** (v0.10.0, `SANDBOX_ISOLATION=limits`, off by default): each kernel gets a memory ceiling
+  (`SANDBOX_KERNEL_MEMORY_LIMIT`, 25% of RAM by default), a lower CPU priority and, on Windows, a process count and
+  a Job Object that ends the kernel's child processes when the kernel restarts or the sandbox server dies. A
+  memory bomb, a fork bomb or a busy loop in a thread stops inside that kernel, so the app and other debates keep
+  answering. Over the ceiling a cell gets `MemoryError` and keeps its earlier variables; a kernel that dies
+  mid-cell is reported at once with "The kernel had to be restarted", which turn recovery reads as lost
+  variables ([Interrupted Turns §5.2](../orchestration/turn-recovery.md)). The ceiling is per kernel, so the total
+  is that times the kernels alive (`SANDBOX_MAX_NAMESPACES`). Files and network are **not** confined — see
+  [Tool Security §10](tool-security.md#10-not-in-this-release). Sandbox ADR-023 has the reasoning.
 - **Namespace binding**: Every tool takes a `namespace` argument, but the host overrides it with the scope it sends in `_meta` — one namespace per conversation *and speaker* (see [Per-conversation tool scope](#per-conversation-tool-scope-_meta)). The argument only decides the namespace for clients that send no metadata.
 - **Offline Kernel Requirements**: Core data science libraries (`requirements-kernel.txt`: `ipykernel`, `pandas`, `numpy`, `matplotlib`, `seaborn`, `scipy`, `sympy`) are pre-packaged into offline bundle wheels.
 - **Why It Matters**: Prevents hallucination by allowing the Coder to verify implementations and empowering the Critic to test hypotheses and security boundaries with real code executions.
