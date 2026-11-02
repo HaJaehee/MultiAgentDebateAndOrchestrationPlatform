@@ -111,7 +111,7 @@ class ExpertEventView:
     @_handles(EventType.MESSAGE_ADDED)
     async def _on_message_added(self, event: Event) -> None:
         self.page.chat_feed.append_message(event.get("message", {}))
-        # 펼쳐 둔 토큰·시간 차트는 발언이 끝날 때마다 따라갑니다.
+        # 열려 있는 토큰·시간 차트 뷰는 발언이 추가될 때마다 최신 상태로 동기화합니다.
         await self.page.refresh_usage_views()
 
     @_handles(EventType.SPEECH_COMMENTS_DELIVERED)

@@ -298,7 +298,7 @@ async def test_a_cut_speech_continues_from_its_draft():
 
 
 class _MeteredStepLLM(StepLLM):
-    """호출마다 LLM 시간을 재는 `StepLLM`. 사용량이 있어야 발언 기록에 `llm_meta` 가 남습니다."""
+    """호출마다 LLM 시간을 계측하는 `StepLLM`. 사용량이 기록되어야 메시지에 `llm_meta`가 보존됩니다."""
 
     async def call_agent(self, agent, messages, *args, **kwargs):
         llm_usage.note_call(1.0)
@@ -307,12 +307,12 @@ class _MeteredStepLLM(StepLLM):
 
 @pytest.mark.asyncio
 async def test_the_usage_report_does_not_count_the_time_a_speech_was_cut():
-    """이어 간 발언은 시작 시각을 물려받지만, 끊겨 있던 시간은 그 발언이 쓴 시간이 아닙니다 (ADR-048)."""
+    """중단 후 재개된 발언은 최초 시작 시각을 유지하지만, 중단되어 있던 유휴 시간은 해당 발언의 소요 시간에 포함되지 않아야 합니다 (ADR-048)."""
     sid = await _session(max_rounds=1)
     turn_id = await _cut(sid)
     async with get_session_factory(DB_URL)() as db:
         draft = (await db.execute(select(SpeechDraftModel).where(SpeechDraftModel.turn_id == turn_id))).scalar_one()
-        draft.started_at = draft.started_at - timedelta(hours=8)   # 서버가 밤새 꺼져 있었습니다
+        draft.started_at = draft.started_at - timedelta(hours=8)   # 서버가 장시간 중단되어 있던 상황 시뮬레이션
         overnight = draft.started_at
         await db.commit()
 
@@ -320,10 +320,10 @@ async def test_the_usage_report_does_not_count_the_time_a_speech_was_cut():
 
     messages, _tools = await _rows(sid)
     coder = next(m for m in messages if m.sender_key == "coder")
-    assert coder.started_at == overnight, "카드는 처음 시작한 시각부터 셉니다"
+    assert coder.started_at == overnight, "카드는 최초 시작 시각부터 표시합니다"
     assert coder.llm_meta["resumed_at"]
     fresh = [m for m in messages if m.llm_meta and m.sender_key != "coder"]
-    assert fresh and not any("resumed_at" in m.llm_meta for m in fresh), "끊긴 적 없는 발언에는 없습니다"
+    assert fresh and not any("resumed_at" in m.llm_meta for m in fresh), "중단된 적 없는 정상 발언에는 resumed_at이 없어야 합니다"
 
     async with get_session_factory(DB_URL)() as db:
         report = await load_usage_report(db, sid, turn_id)

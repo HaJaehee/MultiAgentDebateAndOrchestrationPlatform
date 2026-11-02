@@ -1,12 +1,10 @@
-"""토큰·시간 분석 (app/orchestration/usage_report.py, app/ui/components/usage_chart.py, ADR-048).
+"""토큰·시간 분석 테스트 (app/orchestration/usage_report.py, app/ui/components/usage_chart.py, ADR-048).
 
-지키려는 것.
-
-1. **토큰** — 차트의 네 조각을 더하면 합계이고, 줄을 더하면 턴 합계입니다. 다시 실행한 지난 버전도 셉니다. 발언이 아닌
-   호출은 "보조 호출" 한 줄로 남아 사라지지 않습니다.
-2. **시간** — 병렬 발언의 겹친 구간은 한 번만 셉니다. 이어 간 발언은 끊겨 있던 시간을 세지 않습니다.
-3. **범위** — 턴 하나를 보면 라운드별, 턴이 여럿이면 턴별입니다.
-4. **화면** — 접힌 패널은 기록을 읽지 않고, 결론 카드에는 패널이 하나만 그려집니다.
+검증 목표:
+1. **토큰** — 차트 세그먼트 4개의 합산이 전체 합계와 일치하고, 행들의 합은 턴 전체 합계와 일치해야 합니다. 재실행된 이전 버전도 합산에 포함되며, 발언에 속하지 않는 호출은 "보조 호출" 행으로 보존되어 누락되지 않습니다.
+2. **시간** — 병렬 발언의 중복 시간 구간은 한 번만 계산(합집합)합니다. 중단 후 재개된 발언은 중단되어 있던 유휴 시간을 계산에서 제외합니다.
+3. **조회 범위** — 단일 턴 조회 시에는 라운드별로, 복수 턴 조회 시에는 턴별로 집계됩니다.
+4. **UI 동작** — 접힌 패널은 불필요한 데이터를 조회하지 않으며, 결론 카드 내 패널은 중복 렌더링되지 않고 1회만 생성됩니다.
 """
 
 import uuid
@@ -86,7 +84,7 @@ def _labels(rows: List[Any]) -> List[str]:
 
 def test_the_four_parts_add_up_to_the_total_even_when_a_provider_overcounts():
     assert token_parts(Usage(prompt_tokens=100, completion_tokens=40, cached_tokens=30, reasoning_tokens=10)) == (70, 30, 30, 10)
-    # 캐시·추론을 합계에 넣지 않는 프로바이더가 있어도 막대가 합계보다 길어지지 않습니다.
+    # 일부 LLM 제공자가 캐시·추론 토큰을 합계에 별도로 포함하지 않더라도 막대 길이가 전체 합계를 초과하지 않도록 보정합니다.
     odd = Usage(prompt_tokens=10, completion_tokens=5, cached_tokens=50, reasoning_tokens=9)
     assert token_parts(odd) == (0, 10, 0, 5) and sum(token_parts(odd)) == odd.total_tokens
 
@@ -100,14 +98,14 @@ def test_calls_outside_speeches_stay_as_one_row_and_the_rows_add_up_to_the_turn(
     other = report.by_agent[-1]
     assert other.label == OTHER_LABEL and other.other
     assert (other.usage.prompt_tokens, other.usage.calls, other.elapsed) == (500, 2, 4)
-    assert report.by_step[-1].other, "라운드별에도 같은 한 줄이 있습니다"
+    assert report.by_step[-1].other, "라운드별 집계에도 보조 호출 행이 동일하게 포함되어야 합니다"
     for rows in (report.by_agent, report.by_step):
         assert sum(r.usage.total_tokens for r in rows) == 1100 == report.total.total_tokens
     assert report.total.calls == 4
 
 
 def test_a_running_turn_is_not_undercounted_by_its_stale_total():
-    # 턴 합계는 단계가 바뀔 때만 저장됩니다. 그 사이에 끝난 발언이 합계보다 클 수 있습니다.
+    # 턴 사용량 합계는 단계 전환 시점에 저장되므로, 진행 중인 턴에서는 완료된 개별 발언들의 사용량 합계가 더 클 수 있습니다.
     report = build_report(
         [_turn(usage=_usage(prompt=100, completion=0, seconds=1))],
         [_msg("coder", usage=_usage(prompt=300, completion=30, seconds=3))],
@@ -124,7 +122,7 @@ def test_retried_versions_count_because_the_turn_paid_for_them():
         [_turn(usage=_usage(prompt=170, completion=17, seconds=5, calls=2))],
         [_msg("coder", start=100, finish=102, revisions=past)],
     )
-    assert _labels(report.by_agent) == ["Coder"], "지난 버전을 세지 않으면 보조 호출로 잘못 보입니다"
+    assert _labels(report.by_agent) == ["Coder"], "이전 버전을 합산하지 않으면 보조 호출로 잘못 분류될 수 있습니다"
     row = report.by_agent[0]
     assert (row.usage.total_tokens, row.speeches, row.elapsed) == (187, 2, 7)
 
@@ -137,8 +135,8 @@ def test_records_without_usage_are_skipped_and_turn_numbers_stay_stable():
         [silent, _msg("coder")],
     )
     assert _labels(report.by_agent) == ["Coder"]
-    assert [choice.id for choice in report.turns] == ["t1"], "기록이 없는 턴은 고를 수 없습니다"
-    assert report.turns[0].label.startswith("턴 2 · "), "번호는 대화의 몇 번째 턴인지 그대로입니다"
+    assert [choice.id for choice in report.turns] == ["t1"], "사용량 기록이 없는 턴은 선택 목록에서 제외되어야 합니다"
+    assert report.turns[0].label.startswith("턴 2 · "), "턴 번호는 대화 세션 내 원래의 턴 인덱스를 그대로 반영해야 합니다"
     assert build_report([_turn("legacy", None)], []).empty
 
 
@@ -153,13 +151,13 @@ def test_parallel_speeches_overlap_in_a_round_but_not_for_their_agents():
          _msg("orchestrator", start=20, finish=21, usage=_usage(prompt=0, completion=0, seconds=1), kind=KIND_MERGE, round_number=2)],
     )
     round_one, round_two = report.by_step
-    assert (round_one.label, round_one.elapsed) == ("라운드 1", 10), "겹친 구간은 한 번만 셉니다"
-    assert round_one.usage.llm_seconds == 14, "LLM 합계는 경과보다 길 수 있습니다"
+    assert (round_one.label, round_one.elapsed) == ("라운드 1", 10), "중복되는 시간 구간은 한 번만 계산해야 합니다"
+    assert round_one.usage.llm_seconds == 14, "병렬 실행 시 LLM 소요 시간 합계가 총 경과 시간보다 길 수 있습니다"
     assert round_two.elapsed == 1
 
     coder = next(r for r in report.by_agent if r.key == "coder")
-    assert (coder.elapsed, coder.usage.llm_seconds, coder.rest_seconds) == (10, 8, 2), "나머지가 도구·대기입니다"
-    assert report.by_agent[0].key == "coder", "오래 걸린 에이전트가 위로 옵니다"
+    assert (coder.elapsed, coder.usage.llm_seconds, coder.rest_seconds) == (10, 8, 2), "경과 시간에서 LLM 시간을 제외한 나머지가 도구·대기 시간이어야 합니다"
+    assert report.by_agent[0].key == "coder", "소요 시간이 더 긴 에이전트가 상단에 정렬되어야 합니다"
     assert report.elapsed == 11
 
 
@@ -170,7 +168,7 @@ def test_a_resumed_speech_does_not_count_the_time_the_server_was_down():
     )
     report = build_report([_turn(usage=_usage(seconds=3))], [overnight, _msg("critic", start=10, finish=30, usage=_usage(seconds=3))])
     assert next(r for r in report.by_agent if r.key == "coder").elapsed == 5
-    assert report.by_agent[0].key == "critic", "끊겨 있던 시간이 병목으로 보이면 안 됩니다"
+    assert report.by_agent[0].key == "critic", "서버 중단으로 인한 유휴 시간이 에이전트의 병목 시간으로 잘못 측정되어서는 안 됩니다"
 
 
 def test_a_speech_without_clock_values_still_shows_its_llm_time():
@@ -209,14 +207,14 @@ def test_a_conversation_is_split_by_turn_and_a_turn_by_round():
     whole = build_report(turns, messages)
     assert whole.step_word == "턴별" and _labels(whole.by_step) == ["턴 1", "턴 2"]
     first = whole.by_step[0]
-    assert first.usage.prompt_tokens == 500, "턴 줄에는 보조 호출까지 들어 있습니다"
-    assert first.elapsed == 7, "구간 4초 + 보조 호출 3초"
+    assert first.usage.prompt_tokens == 500, "턴 행에는 보조 호출 사용량까지 포함되어야 합니다"
+    assert first.elapsed == 7, "발언 구간 4초 + 보조 호출 3초"
     assert whole.total.total_tokens == 720 and whole.elapsed == 10
 
     one = build_report(turns, messages, "t2")
     assert one.step_word == "라운드별" and _labels(one.by_step) == ["라운드 1"]
     assert one.total.total_tokens == 220
-    assert [c.id for c in one.turns] == ["t1", "t2"], "범위와 상관없이 고를 수 있는 턴은 전부입니다"
+    assert [c.id for c in one.turns] == ["t1", "t2"], "조회 범위 필터와 무관하게 선택 가능한 턴 목록은 전체를 포함해야 합니다"
 
 
 def test_a_conversation_with_one_turn_shows_rounds_not_a_single_bar():
@@ -243,7 +241,7 @@ def test_there_is_no_bottleneck_to_name_with_one_row_or_only_helper_calls():
         [_msg("coder", usage=_usage(prompt=10, completion=0, seconds=1), finish=1),
          _msg("critic", usage=_usage(prompt=5, completion=0, seconds=1), start=1, finish=2)],
     )
-    assert not any("보조 호출" in line for line in bottleneck_lines(helper_heavy.by_agent)), "보조 호출은 에이전트가 아닙니다"
+    assert not any("보조 호출" in line for line in bottleneck_lines(helper_heavy.by_agent)), "보조 호출은 에이전트가 아니므로 병목 분석 대상에서 제외되어야 합니다"
 
 
 def test_the_panel_summary_is_short_and_empty_without_records():
@@ -286,7 +284,7 @@ async def test_a_real_turn_adds_up_to_what_the_turn_recorded():
 
     labels = _labels(report.by_step)
     assert labels[0] == "계획" and "라운드 1" in labels and "결론 합성" in labels
-    # 합성과 계획은 오케스트레이터의 발언입니다. 전문가 줄과 함께 나옵니다 (장부 갱신 등은 보조 호출로).
+    # 결론 합성과 계획 수립은 오케스트레이터의 발언이므로 전문가 목록에 포함됩니다 (장부 갱신 등은 보조 호출로 분류).
     assert {"orchestrator", "architect", "coder", "critic"} <= {r.key for r in report.by_agent}
     assert report.by_agent[-1].label == OTHER_LABEL
     assert whole.total.total_tokens == recorded.total_tokens and whole.step_word == "라운드별"
@@ -306,10 +304,10 @@ def test_a_conclusion_card_draws_its_panel_once():
     timeline.build_area()
     timeline.append_message({"id": "m1", "sender_key": "orchestrator", "sender_name": "Orch", "content": "결론"})
     info = timeline._cards_by_id["m1"]
-    assert not info["usage_box"].visible, "결론이 아닌 카드에는 보이지 않습니다"
+    assert not info["usage_box"].visible, "결론 카드가 아닌 일반 발언 카드에는 패널이 표시되지 않아야 합니다"
 
     timeline.set_turn_actions("m1", "t1")
-    timeline.set_turn_actions("m1", "t1", changed=3)   # 턴 완료 뒤 체크포인트 알림이 또 옵니다
+    timeline.set_turn_actions("m1", "t1", changed=3)   # 턴 완료 후 체크포인트 알림이 추가로 발생하는 상황
     assert drawn == ["t1"] and info["usage_box"].visible
 
 
@@ -323,7 +321,7 @@ def test_without_the_callback_cards_have_no_panel():
 
 
 class _CountingFactory:
-    """읽은 횟수를 세는 세션 팩토리."""
+    """DB 세션 생성 횟수를 계측하는 테스트용 팩토리."""
 
     def __init__(self, inner: Any) -> None:
         self.inner, self.reads = inner, 0
@@ -344,14 +342,14 @@ async def test_a_closed_panel_reads_nothing_and_opening_it_draws_the_rounds(ui_p
         panel.build()
 
     await panel.refresh()
-    assert factory.reads == 0, "접혀 있으면 기록을 읽지 않습니다"
+    assert factory.reads == 0, "패널이 접혀 있는 상태에서는 DB 조회를 수행하지 않아야 합니다"
 
     with ui_page:
         panel.expansion.set_value(True)
         await panel.refresh()
     texts = _texts(panel.body)
     assert "토큰" in texts and "소요 시간" in texts and any("시간 병목" in t for t in texts)
-    assert panel.summary.text, "펼치면 머리에 합계가 적힙니다"
+    assert panel.summary.text, "패널을 펼치면 헤더에 사용량 요약이 표시되어야 합니다"
 
     with ui_page:
         panel._set_view(SimpleNamespace(value="step"))
@@ -367,7 +365,7 @@ async def test_show_only_reads_the_total_while_closed(ui_page):
         panel = UsagePanel(get_session_factory(), UsageDialog(get_session_factory()), title="이 대화의 토큰·시간")
         panel.build()
         await panel.show(sid)
-    assert panel.summary.text and panel.report is None, "차트 재료는 펼칠 때 읽습니다"
+    assert panel.summary.text and panel.report is None, "차트 데이터는 패널을 펼치는 시점에 로드되어야 합니다"
     with ui_page:
         await panel.show("없는-대화")
     assert panel.summary.text == ""
@@ -397,9 +395,9 @@ async def test_the_dialog_switches_scope_between_the_conversation_and_a_turn(ui_
     assert dialog.dialog.value and dialog.scope_select.value == turn_id
     assert set(dialog.scope_select.options) == {"", turn_id}
     assert "라운드별" in _texts(dialog.body) and "에이전트별" in _texts(dialog.body)
-    assert any(isinstance(e, ui.table) for e in dialog.body.descendants()), "툴팁 말고 표로도 값을 읽습니다"
+    assert any(isinstance(e, ui.table) for e in dialog.body.descendants()), "툴팁 외에도 상세 수치 표가 렌더링되어야 합니다"
 
-    # 토론 중 다시 그려도 펼쳐 둔 수치 표는 접히지 않습니다.
+    # 토론 진행 중 차트가 다시 렌더링되어도 사용자가 펼쳐둔 수치 표의 상태가 유지되어야 합니다.
     dialog._remember_table(SimpleNamespace(value=True))
     with ui_page:
         await dialog.refresh()
@@ -410,7 +408,7 @@ async def test_the_dialog_switches_scope_between_the_conversation_and_a_turn(ui_
         await dialog._on_scope_change(SimpleNamespace(value=""))
     assert dialog.turn_id is None and dialog.scope_select.value == ""
 
-    # 기록이 없는 턴에서 열면 고를 수 있는 범위로 돌아옵니다.
+    # 기록이 없는 턴을 열었을 경우 유효한 범위(대화 전체)로 안전하게 되돌아옵니다.
     with ui_page:
         await dialog.open(sid, "기록-없는-턴")
     assert dialog.turn_id is None and dialog.scope_select.value == ""
@@ -438,7 +436,7 @@ async def test_the_sidebar_panel_follows_the_current_conversation():
     sidebar.container = SimpleNamespace(is_deleted=False, clear=lambda: None)
     sidebar.usage_panel = SimpleNamespace(show=AsyncMock())
     sidebar.current_session_id = "지금-대화"
-    sidebar.search_query = "검색어"   # 검색 중에도 따라갑니다
+    sidebar.search_query = "검색어"   # 검색 모드 중에도 현재 대화 세션을 정상 추적해야 합니다
     sidebar._render_search = AsyncMock()
     await sidebar.refresh_list()
     sidebar.usage_panel.show.assert_awaited_once_with("지금-대화")
@@ -446,7 +444,7 @@ async def test_the_sidebar_panel_follows_the_current_conversation():
 
 @pytest.mark.asyncio
 async def test_a_new_message_and_a_revised_speech_refresh_open_views():
-    """이벤트 소비자가 열린 패널을 따라가게 하는지. 패널·창이 닫혀 있으면 위 시험대로 읽지 않습니다."""
+    """이벤트 발생 시 열려 있는 패널이 최신 상태로 갱신되는지 검증합니다. 패널/다이얼로그가 닫혀 있는 경우에는 불필요한 조회를 수행하지 않습니다."""
     page = SimpleNamespace(
         chat_feed=MagicMock(), roster_control=MagicMock(), sidebar=SimpleNamespace(refresh_list=AsyncMock()),
         runner=SimpleNamespace(get=lambda _sid: None), current_session_id="s",

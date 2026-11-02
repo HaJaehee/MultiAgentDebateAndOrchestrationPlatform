@@ -93,7 +93,7 @@ class ExpertPage:
             f"<script>{ATTENTION_JS}</script>"
         )
 
-        # 토큰·시간 분석의 크게 보기 창. 사이드바와 결론 카드가 함께 씁니다 (ADR-048).
+        # 토큰·시간 분석의 크게 보기 다이얼로그. 사이드바와 결론 카드가 공유하여 사용합니다 (ADR-048).
         self.usage_dialog = UsageDialog(self.session_factory)
         self.usage_dialog.build()
 
@@ -211,14 +211,14 @@ class ExpertPage:
     # ------------------------------------------------------------ 대화 선택·설정
 
     def render_turn_usage(self, turn_id: str) -> None:
-        """결론 카드 안에 그 턴의 토큰·시간 패널을 그립니다."""
+        """결론 카드 내부에 해당 턴의 토큰·시간 패널을 렌더링합니다."""
         UsagePanel(
             self.session_factory, self.usage_dialog, title="이 턴의 토큰·시간",
             session_id=self.current_session_id, turn_id=turn_id,
         ).build()
 
     async def refresh_usage_views(self) -> None:
-        """펼쳐 둔 토큰·시간 패널과 열어 둔 창을 최신 기록으로 맞춥니다. 닫혀 있으면 읽지 않습니다."""
+        """펼쳐진 토큰·시간 패널 및 열려 있는 다이얼로그를 최신 데이터로 동기화합니다. 닫혀 있는 상태에서는 조회를 생략합니다."""
         if self.sidebar.usage_panel is not None:
             await self.sidebar.usage_panel.refresh()
         await self.usage_dialog.refresh()

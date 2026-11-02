@@ -1,15 +1,17 @@
-"""대화·턴이 쓴 토큰과 시간을 에이전트별·라운드별로 나눕니다 (ADR-048).
+"""대화·턴이 소모한 토큰과 소요 시간을 에이전트별·라운드별로 집계합니다 (ADR-048).
 
-새로 재는 것은 없습니다. 재료는 발언 기록의 `llm_meta.usage` · 시작·종료 시각과 턴 기록의 `turns.usage` 입니다.
+별도로 새로 측정하는 값 없이, 발언 기록의 `llm_meta.usage` · 시작/종료 시각과 턴 기록의 `turns.usage`를 바탕으로 집계합니다.
 
-* **토큰** — 발언 하나의 값을 그대로 더합니다. 다시 실행한 발언(ADR-036)의 지난 버전도 그 턴이 실제로 쓴 토큰이므로
-  함께 셉니다. 턴 합계에서 발언 합을 뺀 나머지가 **보조 호출**입니다: 결정 장부·중간 요약·라우팅처럼 발언이 아닌
-  호출과, 끊겨서 기록되지 못한 발언의 호출입니다.
-* **시간** — LLM 시간(`llm_seconds`)은 모델 응답만 잽니다. 발언의 경과 시간에는 도구 실행, LLM 게이트 순번, 사람의 승인
-  대기가 더 들어 있어, 둘의 차이가 곧 "도구·대기" 입니다. 병렬 라운드는 발언 구간이 겹치므로 경과는 합이 아니라
-  **구간의 합집합**입니다. 그래서 라운드의 경과에는 LLM 합계를 나눠 그리지 않습니다 (경과보다 길 수 있습니다).
-* **이어 간 발언** — 끊긴 발언은 시작 시각을 끊기기 전 그대로 이어받습니다. 그대로 재면 서버가 꺼져 있던 시간이 병목으로
-  보이므로 이어 간 시각(`llm_meta.resumed_at`)부터 잽니다. 토큰도 이어 간 뒤의 호출만 재므로 둘의 범위가 같습니다.
+* **토큰** — 각 발언의 토큰 사용량을 합산합니다. 재실행된 발언(ADR-036)의 이전 버전 역시 해당 턴에서 실제로 소모된 토큰이므로
+  합산에 포함합니다. 턴 합계에서 발언들의 합을 뺀 나머지는 **보조 호출**로 분류됩니다: 의사결정 장부 기록·중간 요약·라우팅처럼
+  발언에 속하지 않는 호출과, 중단되어 기록되지 못한 발언의 호출이 여기에 해당합니다.
+* **시간** — LLM 소요 시간(`llm_seconds`)은 모델의 순수 응답 시간만을 측정합니다. 발언의 전체 경과 시간에는 도구 실행,
+  LLM 게이트 대기 순번, 사용자 승인 대기 시간 등이 추가로 포함되므로, 둘의 차이가 곧 "도구·대기" 시간이 됩니다. 병렬 라운드는
+  발언 시간대가 겹치므로 전체 경과는 단순 합산이 아닌 **시간 구간들의 합집합**으로 계산합니다. 따라서 라운드별 경과 시간 막대에서는
+  LLM 소요 시간을 분할하여 표시하지 않습니다 (병렬 실행 시 LLM 시간의 단순 합계가 실제 경과 시간보다 길 수 있기 때문입니다).
+* **중단 후 재개된 발언** — 중단되었던 발언은 중단 전의 시작 시각을 그대로 유지합니다. 이를 그대로 소요 시간 계산에 사용하면
+  서버가 꺼져 있던 유휴 시간까지 병목 시간으로 잘못 표시되므로, 실제 재개된 시각(`llm_meta.resumed_at`)부터 측정합니다.
+  토큰 역시 재개 이후의 호출분만 반영되므로 시간과 토큰의 집계 범위가 일치합니다.
 """
 
 from __future__ import annotations
@@ -35,13 +37,13 @@ OTHER_LABEL = "보조 호출"
 OTHER_KEY = "__other__"
 
 _Span = Tuple[datetime, datetime]
-# 라운드 표의 줄 순서: 계획 → 라운드(서브 토론은 그 라운드 바로 뒤) → 합성.
+# 라운드 표 표시 순서: 계획 → 라운드(서브 토론은 해당 라운드 바로 뒤) → 결론 합성.
 _FIRST_SLOT = (0, 0)
 _LAST_SLOT = (10 ** 9, 0)
 
 
 def token_parts(usage: Usage) -> Tuple[int, int, int, int]:
-    """겹치지 않는 네 조각: 캐시를 뺀 입력, 캐시, 추론을 뺀 출력, 추론. 합은 늘 `total_tokens` 입니다."""
+    """중복되지 않는 4가지 세부 구성: 캐시 제외 입력, 캐시, 추론 제외 출력, 추론 토큰. 4가지의 합은 항상 `total_tokens`와 같습니다."""
     cached = min(usage.cached_tokens, usage.prompt_tokens)
     reasoning = min(usage.reasoning_tokens, usage.completion_tokens)
     return usage.prompt_tokens - cached, cached, usage.completion_tokens - reasoning, reasoning
@@ -49,19 +51,19 @@ def token_parts(usage: Usage) -> Tuple[int, int, int, int]:
 
 @dataclass
 class UsageRow:
-    """차트의 한 줄 (에이전트 하나, 라운드 하나, 턴 하나)."""
+    """차트의 한 행 (개별 에이전트, 라운드, 또는 턴)."""
 
     key: str
     label: str
     usage: Usage = field(default_factory=Usage)
     speeches: int = 0
-    # 초. 발언 구간의 합집합 길이입니다. 보조 호출은 구간이 없어 LLM 시간을 그대로 씁니다.
+    # 초 단위. 발언 구간들의 합집합 총 시간입니다. 보조 호출은 시간 구간이 없으므로 LLM 소요 시간을 그대로 사용합니다.
     elapsed: float = 0.0
     other: bool = False
 
     @property
     def rest_seconds(self) -> float:
-        """경과 중 LLM 응답을 기다린 시간이 아닌 나머지 (도구 실행, 순번, 승인 대기)."""
+        """전체 경과 시간 중 LLM 응답 시간을 제외한 나머지 시간 (도구 실행, 순번 대기, 승인 대기 등)."""
         return max(0.0, self.elapsed - self.usage.llm_seconds)
 
     @property
@@ -71,7 +73,7 @@ class UsageRow:
 
 @dataclass(frozen=True)
 class TurnChoice:
-    """보기 범위로 고를 수 있는 턴 하나."""
+    """조회 범위로 선택 가능한 개별 턴."""
 
     id: str
     label: str
@@ -82,11 +84,11 @@ class UsageReport:
     total: Usage
     elapsed: float
     by_agent: List[UsageRow]
-    # 턴 하나를 보면 라운드별, 턴이 여럿인 대화를 보면 턴별입니다 (`step_word`). 턴을 넘나들며 같은 번호의 라운드를
-    # 더한 값은 뜻이 없습니다. 턴별에서 라운드를 보려면 범위를 그 턴으로 좁힙니다.
+    # 단일 턴 조회 시에는 라운드별, 복수 턴 대화 조회 시에는 턴별로 집계됩니다 (`step_word`). 여러 턴에 걸쳐
+    # 동일 라운드 번호를 단순 합산하는 것은 의미가 없기 때문입니다. 턴별 조회 중 세부 라운드를 확인하려면 범위를 특정 턴으로 지정합니다.
     by_step: List[UsageRow]
     step_word: str
-    # 사용량이 기록된 이 대화의 모든 턴. 지금 범위와 상관없이 전부 담습니다.
+    # 사용량이 기록된 해당 대화의 모든 턴 목록입니다. 현재 선택된 조회 범위와 무관하게 전체를 포함합니다.
     turns: List[TurnChoice]
 
     @property
@@ -96,7 +98,7 @@ class UsageReport:
 
 @dataclass(frozen=True)
 class _Attempt:
-    """발언의 한 버전이 쓴 양. 다시 실행한 적 없는 발언은 하나, 다시 실행한 발언은 시도마다 하나입니다."""
+    """개별 발언(또는 특정 수정 버전)의 사용량입니다. 재실행된 적 없는 발언은 1개, 재실행된 발언은 시도 횟수마다 1개씩 생성됩니다."""
 
     agent_key: str
     agent_name: str
@@ -113,7 +115,7 @@ def _step_of(kind: Optional[str], round_number: int, graph_node_id: Optional[str
         return _FIRST_SLOT, "계획"
     if kind in (KIND_SUBDEBATE_SPEECH, KIND_SUBDEBATE_CONCLUSION):
         return (round_number, 1), f"서브 토론 {round_number}"
-    # 그래프 토론의 라운드는 단계입니다 (발언 카드의 "Step N" 과 같은 수).
+    # 그래프 토론에서의 라운드는 단계를 의미합니다 (발언 카드의 "Step N"과 동일).
     return (round_number, 0), f"단계 {round_number}" if graph_node_id else f"라운드 {round_number}"
 
 
@@ -133,7 +135,7 @@ def _attempts(row: Any) -> Iterator[_Attempt]:
 
 
 def _union_seconds(spans: Iterable[_Span]) -> float:
-    """구간들이 차지한 시간. 겹친 부분은 한 번만 셉니다."""
+    """여러 시간 구간의 합집합 총 시간입니다. 겹치는 구간은 한 번만 계산합니다."""
     total = 0.0
     reached: Optional[datetime] = None
     for start, finish in sorted(spans):
@@ -166,15 +168,15 @@ def _other_row(usage: Usage) -> UsageRow:
 
 
 def build_report(turns: Sequence[Any], messages: Iterable[Any], turn_id: Optional[str] = None) -> UsageReport:
-    """`turns` 는 시작 순서대로 (`id`, `usage`, `started_at`), `messages` 는 그 대화의 기록입니다."""
+    """`turns`는 시작 순서대로 정렬된 턴 목록(`id`, `usage`, `started_at`)이며, `messages`는 해당 대화의 메시지 기록입니다."""
     numbers = {turn.id: number for number, turn in enumerate(turns, 1)}
     attempts_by_turn: Dict[str, List[_Attempt]] = {}
     for message in messages:
         if message.turn_id in numbers:
             attempts_by_turn.setdefault(message.turn_id, []).extend(_attempts(message))
 
-    # 턴 합계는 단계가 바뀔 때만 저장되므로 진행 중인 턴은 발언 합보다 작을 수 있습니다. 그래서 합계를 턴 기록에서
-    # 그대로 가져오지 않고 "발언 합 + 나머지" 로 셉니다. 빼는 쪽이 0 에서 멈추므로 늘 맞습니다.
+    # 턴 사용량 합계는 단계가 전환될 때 갱신되므로, 현재 진행 중인 턴은 턴 합계가 개별 발언들의 합보다 작을 수 있습니다.
+    # 따라서 턴 기록의 합계를 그대로 쓰지 않고 '발언 합계 + 나머지(보조 호출)' 방식으로 집계합니다. 차감 시 음수가 되지 않도록 보정하므로 항상 정확합니다.
     others: Dict[str, Usage] = {}
     for turn in turns:
         spoken = Usage()
@@ -196,7 +198,7 @@ def build_report(turns: Sequence[Any], messages: Iterable[Any], turn_id: Optiona
         _row_of(key, group[-1].agent_name, group)
         for key, group in _group(attempts, lambda a: a.agent_key).items()
     ]
-    # 호출이 겹친 발언(동료 자문)은 LLM 합계가 구간보다 길 수 있습니다. 막대가 합계를 담도록 맞춥니다.
+    # 병렬 호출이 발생한 발언(예: 동료 자문)은 LLM 소요 시간 합계가 실제 구간보다 길 수 있습니다. 막대 그래프가 전체 LLM 시간을 수용할 수 있도록 맞춥니다.
     for row in by_agent:
         row.elapsed = max(row.elapsed, row.usage.llm_seconds)
     by_agent.sort(key=lambda r: (-r.elapsed, -r.usage.total_tokens, r.label))
@@ -237,7 +239,7 @@ def build_report(turns: Sequence[Any], messages: Iterable[Any], turn_id: Optiona
 
 
 async def load_usage_report(db: Any, session_id: str, turn_id: Optional[str] = None) -> UsageReport:
-    """이 대화(`turn_id` 를 주면 그 턴)의 사용량 분석. 본문은 읽지 않습니다."""
+    """해당 대화(`turn_id` 지정 시 특정 턴)의 사용량 보고서를 조회합니다. 메시지 본문은 조회하지 않습니다."""
     turns = (await db.execute(
         select(TurnModel.id, TurnModel.usage, TurnModel.started_at)
         .where(TurnModel.session_id == session_id)
@@ -256,7 +258,7 @@ async def load_usage_report(db: Any, session_id: str, turn_id: Optional[str] = N
 
 
 def _leader(rows: Sequence[UsageRow], value: Callable[[UsageRow], float]) -> Optional[Tuple[UsageRow, float]]:
-    """값이 가장 큰 줄과 전체에서 차지하는 비중. 비교할 줄이 둘 이상일 때만. 보조 호출은 뽑지 않습니다."""
+    """가장 큰 값을 가진 행과 전체 대비 비율을 계산합니다. 비교 대상 행이 2개 이상일 때만 산출하며, 보조 호출은 제외합니다."""
     named = [row for row in rows if not row.other]
     whole = sum(value(row) for row in rows)
     if len(named) < 2 or whole <= 0:
@@ -266,7 +268,7 @@ def _leader(rows: Sequence[UsageRow], value: Callable[[UsageRow], float]) -> Opt
 
 
 def bottleneck_lines(rows: Sequence[UsageRow]) -> List[str]:
-    """`시간 병목: Coder 1분 12초 (61%)` 와 `토큰 최다: Architect 13.4k (48%)`. 비교할 것이 없으면 그 줄은 없습니다."""
+    """'시간 병목: Coder 1분 12초 (61%)', '토큰 최다: Architect 13.4k (48%)' 등의 병목 요약 문구를 생성합니다. 비교 대상이 부족하면 해당 항목을 생략합니다."""
     lines: List[str] = []
     slowest = _leader(rows, lambda row: row.elapsed)
     if slowest:

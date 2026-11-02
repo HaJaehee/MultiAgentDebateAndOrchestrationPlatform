@@ -42,7 +42,7 @@ class CardTimeline:
         on_delete_comment: Optional[Callable[[str], Coroutine[None, None, bool]]] = None,
         render_turn_usage: Optional[Callable[[str], None]] = None,
     ):
-        # 결론 카드에 그 턴의 토큰·시간 패널을 그리는 함수 (턴 ID, ADR-048). 미지정 시 패널이 없습니다.
+        # 결론 카드에 해당 턴의 토큰·시간 패널을 렌더링하는 콜백 (턴 ID 전달, ADR-048). 미지정 시 패널이 표시되지 않습니다.
         self.render_turn_usage = render_turn_usage
         # 이 발언만 다시 실행하는 창을 여는 콜백 (발언 ID, ADR-036). 미지정 시 카드에 버튼이 없습니다.
         self.on_retry_speech = on_retry_speech
@@ -644,7 +644,7 @@ class CardTimeline:
                     for tc in tool_calls:
                         self._render_tool_accordion(tc)
 
-            # 이 턴의 토큰·시간 분석 (결론 카드에만, `set_turn_actions` 가 채웁니다). 접힌 카드에서도 한 줄로 보입니다.
+            # 해당 턴의 토큰·소요 시간 분석 패널 컨테이너 (결론 카드에만 표시되며, `set_turn_actions`에서 렌더링). 접힌 카드에서도 요약 정보가 표시됩니다.
             usage_box = ui.column().classes("w-full mt-2 gap-0")
             usage_box.set_visibility(False)
 
@@ -866,7 +866,7 @@ class CardTimeline:
         if not info:
             return
         info["turn_id"] = turn_id
-        # 턴 완료와 체크포인트 알림이 모두 여기로 옵니다. 패널은 한 번만 그립니다.
+        # 턴 완료 및 체크포인트 알림이 모두 이 경로로 전달되므로, 중복 렌더링을 방지하기 위해 패널은 1회만 그립니다.
         usage_box = info.get("usage_box")
         if self.render_turn_usage is not None and usage_box is not None and not usage_box.is_deleted \
                 and not info.get("usage_drawn"):

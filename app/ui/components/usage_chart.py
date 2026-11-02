@@ -1,13 +1,13 @@
-"""토큰·시간 분석 미니 차트와 크게 보기 창 (ADR-048).
+"""토큰·시간 분석 미니 차트와 크게 보기 다이얼로그 (ADR-048).
 
-결론 카드에는 그 턴의 패널이, 사이드바 하단에는 지금 대화의 패널이 놓입니다. 둘 다 접힌 채로 시작하고 펼칠 때
-기록을 읽으므로, 긴 대화를 그릴 때 턴마다 조회가 늘지 않습니다. 집계는 `app/orchestration/usage_report.py` 가 합니다.
+결론 카드에는 해당 턴의 패널이, 사이드바 하단에는 현재 대화의 패널이 배치됩니다. 두 패널 모두 기본적으로 접힌 상태로 시작하며 펼칠 때
+데이터를 조회하므로, 대화가 길어져도 턴마다 불필요한 쿼리가 발생하지 않습니다. 데이터 집계는 `app/orchestration/usage_report.py`에서 담당합니다.
 
-막대는 Canvas 차트 라이브러리 대신 평범한 HTML 입니다. 값이 몇 줄뿐이라 라이브러리 자바스크립트를 실을 이유가 없고,
-접힌 칸 안에서 크기를 다시 재는 문제도 생기지 않습니다.
+차트 막대는 무거운 Canvas/차트 라이브러리 대신 순수 HTML/CSS로 구현되었습니다. 데이터가 몇 행 수준이어서 무거운 자바스크립트 라이브러리를 로드할 필요가 없으며,
+접힌 영역 안에서 크기를 다시 계산해야 하는 레이아웃 문제도 방지합니다.
 
-색은 어두운 표면(`#0f172a`)에서 색각 검사를 통과한 값입니다. 토큰 네 조각은 범주색이고, 시간은 강조형입니다: LLM 만
-색을 쓰고 나머지는 회색입니다. 글자는 시리즈 색을 입지 않고, 색은 옆의 표식이 나릅니다.
+색상은 다크 테마 배경(`#0f172a`)에서 색각 이상 접근성 검사를 통과한 팔레트를 적용했습니다. 토큰 4종은 범주형 색상이며, 시간은 LLM 소요 시간만 강조하고
+나머지는 중립적인 회색을 사용합니다. 텍스트에는 계열 색상을 입히지 않고 좌측 심볼 마크로 구분합니다.
 """
 
 from __future__ import annotations
@@ -32,16 +32,16 @@ TOKEN_SERIES = (("입력", "#3987e5"), ("캐시", "#d95926"), ("출력", "#199e7
 LLM_COLOR = "#9085e9"
 REST_COLOR = "#64748b"
 TIME_SERIES = (("LLM", LLM_COLOR), ("도구·대기", REST_COLOR))
-# 라운드·턴의 경과에는 LLM 과 그 밖의 시간이 섞여 있습니다. LLM 색을 쓰면 전부 LLM 시간으로 읽힙니다.
+# 라운드·턴의 경과 시간(elapsed)에는 LLM 소요 시간과 기타 대기 시간이 혼재되어 있습니다. LLM 강조 색상을 사용하면 전체가 LLM 시간으로 오인될 수 있으므로 중립 색상을 사용합니다.
 ELAPSED_COLOR = "#94a3b8"
 
-OTHER_TIP = "결정 장부·중간 요약·라우팅처럼 발언이 아닌 호출과, 끊겨서 기록되지 못한 발언의 호출입니다."
-REST_TIP = "도구 실행, 동시 실행 순번, 사람의 승인 대기처럼 모델 응답을 기다린 시간이 아닌 나머지입니다."
+OTHER_TIP = "의사결정 장부 기록·중간 요약·라우팅처럼 발언에 속하지 않는 호출과, 중단되어 기록되지 못한 발언의 호출입니다."
+REST_TIP = "도구 실행, 동시 실행 순번 대기, 사용자 승인 대기처럼 모델 응답 대기를 제외한 나머지 소요 시간입니다."
 
 
 @dataclass(frozen=True)
 class _Size:
-    """미니 차트와 크게 보기 창의 치수."""
+    """미니 차트와 크게 보기 다이얼로그의 레이아웃 규격."""
 
     thickness: int
     label: str
@@ -55,7 +55,7 @@ _LARGE = _Size(16, "w-40", "w-20", "text-xs", "gap-1.5")
 
 
 def _bar(segments: Sequence[Tuple[float, str]], ratio: float, size: _Size, tip: str) -> None:
-    """가로 막대 하나. 조각 사이는 표면색 2px 틈으로 가르고, 끝만 둥급니다."""
+    """단일 가로 막대 그래프 컴포넌트. 세그먼트 간격은 2px이며 우측 모서리만 둥글게 처리합니다."""
     with ui.element("div").classes("flex no-wrap").style(
         f"gap: 2px; width: {ratio * 100:.2f}%; min-width: 2px; height: {size.thickness}px; "
         "border-radius: 0 4px 4px 0; overflow: hidden"
@@ -68,7 +68,7 @@ def _bar(segments: Sequence[Tuple[float, str]], ratio: float, size: _Size, tip: 
 
 
 def _plot_row(row: UsageRow, value_text: str, segments: Sequence[Tuple[float, str]], ratio: float, size: _Size, tip: str) -> None:
-    # 툴팁은 막대가 아니라 줄 전체에 답니다. 작은 조각을 겨냥하지 않아도 값을 읽을 수 있습니다.
+    # 작은 세그먼트를 정밀하게 호버하지 않아도 내용을 확인할 수 있도록 툴팁을 행 전체에 바인딩합니다.
     with ui.row().classes(f"w-full items-center no-wrap gap-2 {size.text}"):
         ui.label(row.label).classes(f"{size.label} flex-shrink-0 truncate text-slate-300")
         with ui.element("div").classes("flex-grow min-w-0"):
@@ -132,14 +132,14 @@ def _step_time_tip(row: UsageRow) -> str:
         f"LLM 합계 {format_duration(row.usage.llm_seconds)} ({_calls_text(row)})",
     ]
     if row.speeches:
-        lines.append(f"발언 {row.speeches}건. 병렬로 돌면 LLM 합계가 경과보다 길 수 있습니다.")
+        lines.append(f"발언 {row.speeches}건. 병렬 실행 시 LLM 시간 합계가 실제 경과 시간보다 길 수 있습니다.")
     if row.other:
         lines.append(OTHER_TIP)
     return "\n".join(lines)
 
 
 def _by_value(rows: Sequence[UsageRow], value: Callable[[UsageRow], float]) -> List[UsageRow]:
-    """큰 값이 위로. 보조 호출은 에이전트가 아니므로 늘 맨 아래입니다."""
+    """사용량이 큰 순서대로 내림차순 정렬합니다. 보조 호출은 에이전트가 아니므로 항상 맨 아래에 배치합니다."""
     return sorted(rows, key=lambda row: (row.other, -value(row)))
 
 
@@ -161,7 +161,7 @@ def _agent_time_plot(rows: Sequence[UsageRow], title: str, size: _Size) -> None:
 
 
 def _step_time_plot(rows: Sequence[UsageRow], title: str, size: _Size) -> None:
-    # 병렬이면 LLM 합계가 경과보다 길어 나눠 그릴 수 없습니다. 한 색의 경과 막대이므로 범례도 없습니다.
+    # 병렬 실행 환경에서는 개별 LLM 소요 시간의 합이 총 경과 시간보다 길어질 수 있어 분할 표시하지 않고, 단일 색상의 경과 시간 막대로 표시합니다 (범례 생략).
     _plot_title(title)
     scale = max((row.elapsed for row in rows), default=0.0) or 1.0
     for row in rows:
@@ -179,7 +179,7 @@ def _bottleneck(rows: Sequence[UsageRow], size: _Size) -> None:
 
 
 def _agent_plots(rows: Sequence[UsageRow], size: _Size) -> Tuple[Callable[[], None], Callable[[], None]]:
-    """에이전트 줄은 큰 값이 위로 옵니다. 그래야 맨 윗줄이 곧 병목입니다."""
+    """에이전트 목록은 소요량이 큰 순으로 정렬하여 상단에서 병목 요소를 바로 파악할 수 있도록 합니다."""
     return (
         lambda: _token_plot(_by_value(rows, lambda row: row.usage.total_tokens), "토큰", size),
         lambda: _agent_time_plot(_by_value(rows, lambda row: row.elapsed), "소요 시간", size),
@@ -187,7 +187,7 @@ def _agent_plots(rows: Sequence[UsageRow], size: _Size) -> Tuple[Callable[[], No
 
 
 def _step_plots(rows: Sequence[UsageRow], size: _Size) -> Tuple[Callable[[], None], Callable[[], None]]:
-    """라운드와 턴은 일어난 순서대로 둡니다."""
+    """라운드와 턴은 진행 순서대로 표시합니다."""
     return lambda: _token_plot(rows, "토큰", size), lambda: _step_time_plot(rows, "경과 시간", size)
 
 
@@ -196,7 +196,7 @@ def _empty_note() -> None:
 
 
 def summary_text(usage: Optional[Usage]) -> str:
-    """패널 머리의 한 줄: `34.2k · 18초`. 기록이 없으면 빈 문자열."""
+    """패널 상단 요약 문구 (예: `34.2k · 18초`). 사용량 기록이 없으면 빈 문자열을 반환합니다."""
     if usage is None or usage.empty:
         return ""
     parts = [format_tokens(usage.total_tokens)] if usage.total_tokens else []
@@ -206,7 +206,7 @@ def summary_text(usage: Optional[Usage]) -> str:
 
 
 class UsageDialog:
-    """크게 보기 창. 페이지마다 하나를 두고 내용만 바꿔 그립니다."""
+    """크게 보기(상세 분석) 다이얼로그. 페이지당 단일 인스턴스를 유지하며 내용만 동적으로 갱신합니다."""
 
     def __init__(self, session_factory: Callable[[], Any]) -> None:
         self.session_factory = session_factory
@@ -238,13 +238,13 @@ class UsageDialog:
         self.dialog.open()
 
     async def refresh(self) -> None:
-        """열려 있으면 최신 기록으로 다시 그립니다."""
+        """다이얼로그가 열려 있는 상태인 경우 최신 기록으로 다시 렌더링합니다."""
         if self.dialog is not None and self.dialog.value and self.session_id:
             await self._load()
 
     async def _on_scope_change(self, event: Any) -> None:
         turn_id = event.value or None
-        # 범위 상자를 코드가 맞춘 경우입니다.
+        # 셀렉트 박스의 값이 코드로 인해 이미 맞춰진 경우 불필요한 재조회를 건너뜁니다.
         if turn_id == self.turn_id:
             return
         self.turn_id = turn_id
@@ -254,7 +254,7 @@ class UsageDialog:
         async with self.session_factory() as db:
             report = await load_usage_report(db, self.session_id, self.turn_id)
             options: Dict[str, str] = {"": "대화 전체", **{t.id: t.label for t in report.turns}}
-            # 기록이 없는 턴에서 열면 고를 항목이 없으므로 대화 전체를 보여 줍니다.
+            # 기록이 없는 턴에서 다이얼로그를 연 경우 선택 가능한 옵션이 없으므로 대화 전체 보기로 전환합니다.
             if self.turn_id and self.turn_id not in options:
                 self.turn_id = None
                 report = await load_usage_report(db, self.session_id)
@@ -281,7 +281,7 @@ class UsageDialog:
                     for draw in plots:
                         with ui.column().classes(f"w-full min-w-0 flex-nowrap {_LARGE.gap}"):
                             draw()
-        # 툴팁만으로 값을 읽게 두지 않습니다. 정확한 수는 이 표에 있습니다. 토론 중 다시 그려도 펼친 채로 둡니다.
+        # 툴팁 외에도 정확한 수치를 확인할 수 있도록 상세 표를 제공합니다. 토론 진행 중 차트가 다시 렌더링되어도 펼침 상태를 유지합니다.
         with ui.expansion(
             "수치 표", icon="table_chart", value=self.table_open, on_value_change=self._remember_table,
         ).props("dense dark").classes(
@@ -337,7 +337,7 @@ def _value_table(rows: Sequence[UsageRow], first_column: str) -> None:
 
 
 class UsagePanel:
-    """접고 펴는 미니 차트. `turn_id` 가 있으면 그 턴, 없으면 지금 대화를 봅니다."""
+    """접이식(Expansion) 미니 차트 패널. `turn_id`가 지정되면 해당 턴을, 없으면 현재 대화 전체를 조회합니다."""
 
     def __init__(
         self,
@@ -374,7 +374,7 @@ class UsagePanel:
                     ui.icon("bar_chart", size="xs").classes("text-indigo-300 flex-shrink-0")
                     ui.label(self.title).classes("text-xs font-semibold text-slate-200 whitespace-nowrap flex-shrink-0")
                     self.summary = ui.label("").classes("text-[11px] font-mono text-slate-400 truncate min-w-0 flex-grow")
-                    # 머리를 눌러도 패널이 접히고 펴지므로 이 단추의 클릭은 위로 올리지 않습니다.
+                    # 패널 헤더 클릭 시 접힘/펼침 동작과 겹치지 않도록 버튼 클릭 이벤트의 상위 전파를 방지합니다.
                     open_btn = ui.button(icon="open_in_full").props("flat dense round size=9px color=slate-4")
                     open_btn.classes("flex-shrink-0").on("click.stop", self._open_dialog)
                     open_btn.tooltip("크게 보기")
@@ -388,7 +388,7 @@ class UsagePanel:
         if not event.value:
             return
         await self.refresh()
-        # 피드 맨 아래의 결론 카드에서 펼치면 차트가 화면 밖에 그려집니다. 펼치는 전환이 끝난 뒤에 맞춥니다.
+        # 피드 하단 결론 카드에서 패널을 펼칠 때 차트가 화면 밖으로 밀려나지 않도록, 펼침 애니메이션 완료 후 스크롤 위치를 자동 조정합니다.
         if self.alive:
             ui.run_javascript(
                 f"setTimeout(() => getHtmlElement({self.expansion.id})"
@@ -399,7 +399,7 @@ class UsagePanel:
         await self.dialog.open(self.session_id, self.turn_id)
 
     async def show(self, session_id: Optional[str]) -> None:
-        """볼 대화를 바꿉니다. 접혀 있으면 머리의 합계만 읽습니다."""
+        """조회 대상 대화 세션을 변경합니다. 패널이 접혀 있는 상태에서는 헤더 요약 합계만 조회합니다."""
         self.session_id = session_id
         if self.is_open:
             await self.refresh()
@@ -412,7 +412,7 @@ class UsagePanel:
             self.summary.set_text(summary_text(used))
 
     async def refresh(self) -> None:
-        """펼쳐 둔 패널을 최신 기록으로 다시 그립니다. 접혀 있으면 할 일이 없습니다."""
+        """펼쳐진 패널을 최신 사용량 기록으로 갱신합니다. 접힌 상태에서는 조회를 생략합니다."""
         if not self.is_open or not self.session_id:
             return
         async with self.session_factory() as db:

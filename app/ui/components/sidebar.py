@@ -250,7 +250,7 @@ class SessionSidebar:
         self.search_input: Optional[ui.input] = None
         # 검색 결과 발언 선택 콜백 (세션 ID, 발언 ID). 해당 대화 세션을 열고 대상 발언 카드로 이동합니다.
         self.on_open_message: Optional[Callable[[str, str], Coroutine[None, None, None]]] = None
-        # 지금 대화의 토큰·시간 패널 (ADR-048). 크게 보기 창을 받아야 그립니다.
+        # 현재 대화의 토큰·시간 패널 (ADR-048). 크게 보기(상세 분석) 다이얼로그가 주입되어야 렌더링합니다.
         self.usage_dialog: Optional[UsageDialog] = None
         self.usage_panel: Optional[UsagePanel] = None
 
@@ -284,7 +284,7 @@ class SessionSidebar:
         ).props("width=360")
 
         with self.drawer:
-            # 아래의 토큰·시간 패널을 펼치면 세션 목록이 그만큼 줄어듭니다.
+            # 하단의 토큰·시간 패널을 펼칠 경우 세션 목록 영역이 유동적으로 줄어듭니다.
             with ui.column().classes("w-full flex-grow min-h-0 overflow-hidden flex-nowrap"):
                 # 새 세션을 만드는 길은 아래 버튼 하나로 충분합니다. 머리에 있던
                 # 작은 + 버튼은 같은 일을 하면서 자리만 차지했습니다.
@@ -421,7 +421,7 @@ class SessionSidebar:
         """
         if not self.alive:
             return
-        # 대화를 고르거나 턴이 끝나면 이 메서드로 옵니다. 패널도 지금 대화를 따라갑니다. 검색 중에도 마찬가지입니다.
+        # 대화를 선택하거나 턴이 종료되면 이 메서드가 호출됩니다. 패널 역시 현재 대화 세션을 따라 갱신되며, 검색 중일 때도 동일하게 유지됩니다.
         if self.usage_panel is not None:
             await self.usage_panel.show(self.current_session_id)
             if not self.alive:
