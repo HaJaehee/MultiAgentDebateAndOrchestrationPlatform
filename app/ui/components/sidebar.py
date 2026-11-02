@@ -32,6 +32,7 @@ from app.orchestration.turns import usage_by_session
 from app.session_ops import continue_session, forget_checkpoints
 from app.routes import compare_url
 from app.ui.attention import waiting_text
+from app.ui.components.usage_chart import UsageDialog, UsagePanel
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +250,9 @@ class SessionSidebar:
         self.search_input: Optional[ui.input] = None
         # 검색 결과 발언 선택 콜백 (세션 ID, 발언 ID). 해당 대화 세션을 열고 대상 발언 카드로 이동합니다.
         self.on_open_message: Optional[Callable[[str, str], Coroutine[None, None, None]]] = None
+        # 지금 대화의 토큰·시간 패널 (ADR-048). 크게 보기 창을 받아야 그립니다.
+        self.usage_dialog: Optional[UsageDialog] = None
+        self.usage_panel: Optional[UsagePanel] = None
 
     # ------------------------------------------------------------------ 수명
 
@@ -280,7 +284,8 @@ class SessionSidebar:
         ).props("width=360")
 
         with self.drawer:
-            with ui.column().classes("w-full flex-grow overflow-hidden"):
+            # 아래의 토큰·시간 패널을 펼치면 세션 목록이 그만큼 줄어듭니다.
+            with ui.column().classes("w-full flex-grow min-h-0 overflow-hidden flex-nowrap"):
                 # 새 세션을 만드는 길은 아래 버튼 하나로 충분합니다. 머리에 있던
                 # 작은 + 버튼은 같은 일을 하면서 자리만 차지했습니다.
                 with ui.row().classes("w-full items-center gap-2 mb-3 px-1"):
@@ -328,9 +333,16 @@ class SessionSidebar:
                 # session-list: Quasar 스크롤 영역의 내용 상자가 카드를 서랍보다
                 # 넓게 그리는 것을 막습니다 (theme.py 참고).
                 with ui.scroll_area().classes(
-                    "session-list w-full flex-grow h-[calc(100vh-220px)] pr-2 py-1"
+                    "session-list w-full flex-grow h-0 min-h-0 pr-2 py-1"
                 ):
                     self.container = ui.column().classes("w-full gap-2.5 p-0.5")
+
+            if self.usage_dialog is not None:
+                self.usage_panel = UsagePanel(
+                    self.session_factory, self.usage_dialog, title="이 대화의 토큰·시간",
+                    body_classes="max-h-[45vh] overflow-y-auto",
+                )
+                self.usage_panel.build()
 
         self._restore_sort_later()
         return self.drawer
@@ -409,6 +421,11 @@ class SessionSidebar:
         """
         if not self.alive:
             return
+        # 대화를 고르거나 턴이 끝나면 이 메서드로 옵니다. 패널도 지금 대화를 따라갑니다. 검색 중에도 마찬가지입니다.
+        if self.usage_panel is not None:
+            await self.usage_panel.show(self.current_session_id)
+            if not self.alive:
+                return
         # 검색 중이면 목록 대신 결과를 다시 찾습니다. 토론 이벤트가 목록을 새로 그려도 검색이 풀리지 않게.
         if self.search_query:
             await self._render_search()

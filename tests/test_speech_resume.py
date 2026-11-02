@@ -14,6 +14,7 @@
 import asyncio
 import json
 import uuid
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +22,7 @@ import pytest
 from sqlalchemy import select
 
 import app.agents.llm as llm_module
+from app.agents import llm_usage
 from app.agents.base import Agent
 from app.agents.llm import LLMCaller
 from app.agents.llm_loop import (
@@ -40,6 +42,7 @@ from app.database.models import (
 from app.database.session import get_session_factory, init_db
 from app.orchestration import turns
 from app.orchestration.control import TurnControl
+from app.orchestration.usage_report import load_usage_report
 from app.session_ops import discard_turn
 from tests.fake_llm import FakeLLMCaller
 from tests.test_turn_resume import DB_URL, REQUEST, _engine, _session
@@ -292,6 +295,39 @@ async def test_a_cut_speech_continues_from_its_draft():
     assert not any(turns.kind_of(m) == turns.KIND_INTERRUPTED for m in messages), \
         "초안에서 이어 간 발언에는 끊김 안내가 필요 없습니다"
     assert await _drafts(turn_id) == []
+
+
+class _MeteredStepLLM(StepLLM):
+    """호출마다 LLM 시간을 재는 `StepLLM`. 사용량이 있어야 발언 기록에 `llm_meta` 가 남습니다."""
+
+    async def call_agent(self, agent, messages, *args, **kwargs):
+        llm_usage.note_call(1.0)
+        return await super().call_agent(agent, messages, *args, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_the_usage_report_does_not_count_the_time_a_speech_was_cut():
+    """이어 간 발언은 시작 시각을 물려받지만, 끊겨 있던 시간은 그 발언이 쓴 시간이 아닙니다 (ADR-048)."""
+    sid = await _session(max_rounds=1)
+    turn_id = await _cut(sid)
+    async with get_session_factory(DB_URL)() as db:
+        draft = (await db.execute(select(SpeechDraftModel).where(SpeechDraftModel.turn_id == turn_id))).scalar_one()
+        draft.started_at = draft.started_at - timedelta(hours=8)   # 서버가 밤새 꺼져 있었습니다
+        overnight = draft.started_at
+        await db.commit()
+
+    await _engine(_MeteredStepLLM()).resume_turn(session_id=sid, turn_id=turn_id, mode="continue")
+
+    messages, _tools = await _rows(sid)
+    coder = next(m for m in messages if m.sender_key == "coder")
+    assert coder.started_at == overnight, "카드는 처음 시작한 시각부터 셉니다"
+    assert coder.llm_meta["resumed_at"]
+    fresh = [m for m in messages if m.llm_meta and m.sender_key != "coder"]
+    assert fresh and not any("resumed_at" in m.llm_meta for m in fresh), "끊긴 적 없는 발언에는 없습니다"
+
+    async with get_session_factory(DB_URL)() as db:
+        report = await load_usage_report(db, sid, turn_id)
+    assert next(r for r in report.by_agent if r.key == "coder").elapsed < 60
 
 
 @pytest.mark.asyncio

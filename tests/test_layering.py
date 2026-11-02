@@ -33,7 +33,7 @@ EXPERT_UI = (
     "app.ui.components.roster", "app.ui.components.sidebar", "app.ui.components.artifact_viewer",
     "app.ui.components.workspace_download", "app.ui.components.access_token", "app.ui.components.graph_canvas",
     "app.ui.components.turn_changes", "app.ui.compare_page", "app.ui.components.skill_draft_dialog",
-    "app.ui.components.diff_viewer", "app.ui.components.code_compare",
+    "app.ui.components.diff_viewer", "app.ui.components.code_compare", "app.ui.components.usage_chart",
 )
 SHARED_UI = (
     "app.ui.shared", "app.ui.run_binding", "app.ui.attention", "app.ui.components.chat_feed",

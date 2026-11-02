@@ -160,6 +160,7 @@ app/
 │   ├── tool_gate.py                 453   도구 보안 판정을 토론에 붙임
 │   ├── control.py                   693   정지·개입·한도·승인 제어 채널
 │   ├── turns.py                     589   턴 기록, 끊긴 턴 (ADR-024)
+│   ├── usage_report.py              277   토큰·시간을 에이전트별·라운드별·턴별로 집계 (ADR-048)
 │   ├── kernel_replay.py             283   중단된 턴 재개 전 커널 코드 셀 선별 재실행 (ADR-046)
 │   ├── state.py                     148   DebateState · DebateMessage · ArtifactItem
 │   ├── runner.py                    449   DebateRunner — 백그라운드 턴 시작·끝
@@ -201,6 +202,7 @@ app/
     ├── components/access_token.py   352   원격 접속 토큰 버튼
     ├── components/workspace_download.py   224   작업 공간 파일 다운로드 창
     ├── components/turn_changes.py   221   턴 파일 변경 내역(Diff) 및 롤백 다이얼로그
+    ├── components/usage_chart.py   444   토큰·시간 미니 차트와 크게 보기 창 (ADR-048)
     ├── components/diff_viewer.py   199   코드 변경점 뷰어 (Unified / Split 뷰 지원)
     ├── components/code_compare.py   155   산출물 코드 탭 버전 간 Diff 비교 컴포넌트
     ├── components/skill_draft_dialog.py   97   스킬 초안 생성 및 편집 창
@@ -244,7 +246,7 @@ app/
 | 내보내기 형식 | `export.py` |
 | 발언·보고서 시각 표기 | `timestamps.py` (화면·저장 문서·보고서가 모두 여기를 거칩니다) |
 | API 엔드포인트 | `api.py` · 헤드리스 토론 실행은 `headless.py`, 내장 MCP 서버 도구는 `mcp_server.py` |
-| 토큰 및 LLM 실행 시간 계측 | `agents/llm_usage.py` |
+| 토큰 및 LLM 실행 시간 계측 | `agents/llm_usage.py` · 집계는 `orchestration/usage_report.py`, 차트는 `ui/components/usage_chart.py` |
 | 합의 판정 및 조기 종료 | 판정은 `orchestration/context_memory.py` (`ledger_converged`), 라운드 마감은 `orchestration/phases/debate.py` (`_close_round`) |
 | 턴 체크포인트 및 롤백 | `workspace_checkpoint.py` · 화면은 `ui/components/turn_changes.py` |
 | 코드 변경점 Diff 비교 | 연산 코어는 `code_diff.py`, 비교 추천은 `code_versions.py` · UI는 `ui/components/diff_viewer.py`, `ui/components/code_compare.py` |

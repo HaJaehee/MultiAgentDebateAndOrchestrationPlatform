@@ -164,6 +164,7 @@ flowchart TD
 | `app/orchestration/speech_comments.py` | Inline comments delivered to one agent's next speech ([Retrying One Speech §6](../orchestration/speech-revisions.md#6-inline-comments)) |
 | `app/orchestration/ledger_edit.py` | A person's direct edit of the decision ledger ([Conversation Memory §4.1](../orchestration/context-memory.md#41-editing-it-directly)) |
 | `app/bench.py` | Strategy comparison harness ([Bench](../operations/bench.md)) |
+| `app/orchestration/usage_report.py`, `app/ui/components/usage_chart.py` | Token and time per agent, round and turn, and the charts ([UI Components §1.3.12](../ui/components.md#1312-token-and-time-charts-adr-048)) |
 | `app/ui/compare_page.py`, `app/ui/components/turn_changes.py`, `app/ui/components/skill_draft_dialog.py` | Compare page and the conclusion card's dialogs |
 | `app/code_diff.py`, `app/code_versions.py`, `app/ui/components/diff_viewer.py`, `app/ui/components/code_compare.py` | Code diffs in the turn dialog and on code tabs ([UI Components §1.4.1](../ui/components.md#141-code-diff-viewer-adr-043)) |
 

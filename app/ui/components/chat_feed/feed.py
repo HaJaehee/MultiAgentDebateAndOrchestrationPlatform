@@ -61,6 +61,7 @@ class ChatFeed:
         on_restore_version: Optional[Callable[[str, int], Coroutine[None, None, None]]] = None,
         on_add_comment: Optional[CommentHandler] = None,
         on_delete_comment: Optional[Callable[[str], Coroutine[None, None, bool]]] = None,
+        render_turn_usage: Optional[Callable[[str], None]] = None,
     ):
         self.on_send_message = on_send_message
         # 토론 실행 도중 전달된 개입 입력 및 정지 요청 핸들러. 미지정 시
@@ -101,6 +102,7 @@ class ChatFeed:
             ),
             on_restore_version=on_restore_version,
             on_delete_comment=on_delete_comment,
+            render_turn_usage=render_turn_usage,
         )
         self.speech_actions = SpeechActions(
             alive=lambda: self.alive,

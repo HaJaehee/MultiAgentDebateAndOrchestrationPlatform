@@ -40,7 +40,10 @@ class CardTimeline:
         on_retry_speech: Optional[Callable[[str], Coroutine[None, None, None]]] = None,
         on_restore_version: Optional[Callable[[str, int], Coroutine[None, None, None]]] = None,
         on_delete_comment: Optional[Callable[[str], Coroutine[None, None, bool]]] = None,
+        render_turn_usage: Optional[Callable[[str], None]] = None,
     ):
+        # 결론 카드에 그 턴의 토큰·시간 패널을 그리는 함수 (턴 ID, ADR-048). 미지정 시 패널이 없습니다.
+        self.render_turn_usage = render_turn_usage
         # 이 발언만 다시 실행하는 창을 여는 콜백 (발언 ID, ADR-036). 미지정 시 카드에 버튼이 없습니다.
         self.on_retry_speech = on_retry_speech
         # 지난 버전으로 되돌리는 콜백 (발언 ID, 버전 번호).
@@ -641,6 +644,10 @@ class CardTimeline:
                     for tc in tool_calls:
                         self._render_tool_accordion(tc)
 
+            # 이 턴의 토큰·시간 분석 (결론 카드에만, `set_turn_actions` 가 채웁니다). 접힌 카드에서도 한 줄로 보입니다.
+            usage_box = ui.column().classes("w-full mt-2 gap-0")
+            usage_box.set_visibility(False)
+
             # 이 발언에 달린 인라인 코멘트 (ADR-036). 접힌 카드에서도 보입니다 — 전달을 기다리는 말이 있다는 표시입니다.
             comment_box = ui.column().classes("w-full mt-1 gap-1")
             for comment in msg.get("comments") or []:
@@ -672,6 +679,7 @@ class CardTimeline:
             "expand_btn": expand_btn,
             "expand_tip": expand_tip,
             "tool_container": tool_container,
+            "usage_box": usage_box,
             "footer": footer,
             "failed_badge": failed_badge,
             "fallback_badge": fallback_badge,
@@ -851,13 +859,21 @@ class CardTimeline:
         return True
 
     def set_turn_actions(self, message_id: Optional[str], turn_id: str, changed: Optional[int] = None) -> None:
-        """결론 카드에 해당 턴의 액션 버튼을 연결합니다 (세션 분기, 스킬 생성, 작업 공간 변경 파일 칩)."""
+        """결론 카드에 해당 턴의 액션을 연결합니다 (세션 분기, 스킬 생성, 작업 공간 변경 파일 칩, 토큰·시간 패널)."""
         if not self.alive or not message_id or not turn_id:
             return
         info = self._cards_by_id.get(message_id) or self._active_streams.get(message_id)
         if not info:
             return
         info["turn_id"] = turn_id
+        # 턴 완료와 체크포인트 알림이 모두 여기로 옵니다. 패널은 한 번만 그립니다.
+        usage_box = info.get("usage_box")
+        if self.render_turn_usage is not None and usage_box is not None and not usage_box.is_deleted \
+                and not info.get("usage_drawn"):
+            info["usage_drawn"] = True
+            usage_box.set_visibility(True)
+            with usage_box:
+                self.render_turn_usage(turn_id)
         fork = info.get("fork_btn")
         if fork is not None and not fork.is_deleted:
             fork.set_visibility(self.on_fork_turn is not None)

@@ -43,6 +43,7 @@ The web application workspace is organized into four primary UI components in [a
 
 ### 1.1. Session Sidebar ([app/ui/components/sidebar.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/sidebar.py))
 - **`+ New Chat` Button**: Instantiates a fresh debate session and clears the workspace.
+- **Token and time panel** (bottom of the sidebar, ADR-048): the open conversation's usage. Expanding it shortens the session list. See [§1.3.12](#1312-token-and-time-charts-adr-048).
 - **Session List**: Displays historical sessions, by default ordered by `updated_at` descending.
 - **Sorting** (v0.8.3): a selector next to `세션 목록` — `최근 변경` (the old order, default), `이름순`,
   `시작 시간순` (first user message, the time the card shows), `완료 시간순` — plus a direction
@@ -834,7 +835,8 @@ so each one flips from `확인 중` as its answer arrives; the timer stops when 
   `auto_stories` drafts a skill from it ([Skills §10](../agents/skills.md)); `📁 N` (only when files
   changed) opens the turn's changed files with [diffs](#141-code-diff-viewer-adr-043), by whole turn or round,
   and `이 턴 되돌리기` ([Workspace Checkpoints](../orchestration/workspace-checkpoints.md)). Live, they appear on
-  `turn_completed` (`synthesis_id`) and `workspace_checkpointed`; on reload, from the turn rows.
+  `turn_completed` (`synthesis_id`) and `workspace_checkpointed`; on reload, from the turn rows. The same call
+  adds the card's [token and time panel](#1312-token-and-time-charts-adr-048).
 - **Question cards** (violet, in the approval column): a specialist's question with option buttons, a
   free-text box (Enter sends), `건너뛰기` and a countdown `N초 후 답 없이 진행`. Answered elsewhere or
   timed out → the card is removed on `user_question_resolved`; restored from the snapshot
@@ -869,6 +871,25 @@ The rules live in [Retrying One Speech and Inline Comments](../orchestration/spe
 - **Trial and beginner pages** show only the title (`WaitingTabTitle`), for their one conversation, driven by the `RunBinding` events they already receive. The brand there is `trial.title`.
 
 **Verified in a browser** (the pane's own permission is `denied`, so `window.Notification` was replaced with a recorder; a real operating-system notification was not seen): the plan card in one conversation set the title and badge and created a notification with `requireInteraction` and no arguments; a second conversation raised the count; clicking the notification opened its conversation; answering closed it in both tabs and restored the title; a second tab on another conversation got the toast, badge, title and notification; a reload kept the title and rang nothing; `off` and a focused tab created no notification; the real pane reported `denied` on the bell, and overriding `isSecureContext` reported `insecure`; a beginner page read `(1) 승인 대기 — MADO 체험` and restored its title after approval. Only plan approval ran end to end; the other kinds share the path and are covered in `tests/test_attention.py`.
+
+### 1.3.12. Token and time charts (ADR-048)
+
+[app/ui/components/usage_chart.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/usage_chart.py) draws what [app/orchestration/usage_report.py](file:///d:/MultiAgentDebateOrchestration/app/orchestration/usage_report.py) adds up. Nothing new is measured except `llm_meta.resumed_at`. Design record: [ADR-048](../../lectures/05-adr/ADR-048-token-and-time-mini-charts.md).
+
+| Place | Scope | Rows |
+| :--- | :--- | :--- |
+| Conclusion card, `이 턴의 토큰·시간` | That turn | `에이전트별` / `라운드별` |
+| Bottom of the sidebar, `이 대화의 토큰·시간` | The open conversation | `에이전트별` / `턴별` (`라운드별` when it has one turn) |
+| `open_in_full` on either | Selectable: `대화 전체` or one turn | Both, plus a table of exact values |
+
+- **Reading the bars.** Token bars stack `입력`, `캐시`, `출력`, `추론`; cached is part of input and reasoning part of output, so the four add up to the total. Cache writes stay inside `입력` and are listed in the tooltip and table. Agent time bars stack `LLM` and `도구·대기`, the rest of the speech. Round and turn bars show elapsed time as one neutral color, because parallel speeches overlap and their LLM time can exceed it. Agent rows sort largest first; rounds and turns stay in order.
+- **`시간 병목` and `토큰 최다`** name the largest row and its share. They need two named rows to compare and never pick `보조 호출`.
+- **`보조 호출`** is the turn total minus its speeches: ledger updates, summaries and routing, plus calls of speeches cut before they were recorded.
+- **When it reads.** Panels start collapsed and read only when opened, so a long conversation does not query per turn. While collapsed, the sidebar panel reads only the conversation total for its header. `ExpertEventView` calls `refresh_usage_views()` on `message_added` and `speech_revised`; this redraws the sidebar panel and the dialog if they are open. A conclusion card's panel refreshes when it is reopened.
+- **Wiring.** `ChatFeed(render_turn_usage=...)` fills the card's `usage_box` from `set_turn_actions`, once per card. Trial and beginner pages do not pass it, so they show no panel. `SessionSidebar.refresh_list()` points the sidebar panel at the current conversation, also during a search. One `UsageDialog` per page is redrawn on each open.
+- **Colors.** Checked with the data-visualization palette validator against `#0f172a`: the four token colors pass as categorical. Time is emphasis on purpose, so `도구·대기` is gray and fails the validator's chroma floor by design. Text stays in slate, and color sits on the marks and legend swatches only.
+
+**Verified in a browser** with a scripted LLM and a scratch database: an expanded sidebar panel went from 259.6k to 389.4k across ten updates during a turn started on the page; a new conclusion card got its panel; the header's `open_in_full` opened the dialog without toggling the panel; the range selector and table worked; in a `parallel_dispatch` turn, a round whose speeches added up to 9.4 s showed 6.2 s elapsed. Real provider responses were not used.
 
 ### 1.4. Artifact Viewer ([app/ui/components/artifact_viewer.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/artifact_viewer.py))
 - **Tabs accumulate across turns.** `add_artifacts()` appends a finished turn's artifacts (skipping ids

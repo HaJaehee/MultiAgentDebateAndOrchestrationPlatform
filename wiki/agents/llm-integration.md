@@ -841,13 +841,16 @@ the [bench](../operations/bench.md)) can be measured.
   check by `fallback`). Turn: `turns.usage`, rewritten at every phase change so failed or interrupted
   turns keep what they used; a resumed turn continues from it. Events: `turn_completed.usage`. Screens:
   card time line and tooltip, the end-of-turn status line, the sidebar tooltip, the export, the compare
-  page and bench report. Nothing is written when nothing was reported.
+  page and bench report, and the [token and time charts](../ui/components.md#1312-token-and-time-charts-adr-048)
+  (`app/orchestration/usage_report.py`). Nothing is written when nothing was reported. A speech resumed from
+  a draft measures only the calls after the resume and records `llm_meta.resumed_at`, so the charts count its
+  time from there too; the calls before the cut stay in the turn total.
 * **Accuracy.** Tokens are what the provider reports. When a streaming provider does not send usage,
   LiteLLM's `stream_chunk_builder` counts with a tokenizer, which can differ slightly from the server.
 * **Turn token budget.** `sessions.token_budget` ends the debate at a round boundary once the turn total
   reaches it ([Conversation Memory §2.6](../orchestration/context-memory.md)).
 
-Tests: `tests/test_llm_usage.py`.
+Tests: `tests/test_llm_usage.py`, `tests/test_usage_report.py`.
 
 ## 7. Claude Prompt Cache Markers (ADR-045)
 

@@ -136,6 +136,8 @@ class _Speech:
         # 벽시계 시작 시각. `created_at` 과 따로 둡니다 — 그쪽은 발언이 끝난 뒤에
         # 들어가는 정렬 키라서, 병렬 라운드에서는 실제 시각이 아닙니다.
         self.started_at = (draft.get("started_at") if draft else None) or utc_now()
+        # 이어 간 발언의 시작 시각에는 끊겨 있던 시간이 들어 있습니다. 사용량 분석은 여기서부터 잽니다 (ADR-048).
+        self.resumed_at = utc_now() if draft else None
         # 끊기기 전에 이미 화면에 흘렀던 글과, 이미 기록된 도구 호출.
         self.prior_text = "\n\n".join((self.draft_state or {}).get("segments") or [])
         self.prior_record_ids: List[str] = list((self.draft_state or {}).get("tool_record_ids") or [])
@@ -271,6 +273,8 @@ class _Speech:
         meta = dict(self.fallback_meta(final_type) or {})
         if not self.usage.empty:
             meta["usage"] = self.usage.as_meta()
+            if self.resumed_at is not None:
+                meta["resumed_at"] = self.resumed_at.isoformat()
         return meta or None
 
     def message_rows(

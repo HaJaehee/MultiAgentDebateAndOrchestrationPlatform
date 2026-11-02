@@ -41,6 +41,7 @@ from app.ui.components.roster.control import AgentRosterControl
 from app.ui.components.sidebar import SessionSidebar, active_agent_count
 from app.ui.components.skill_draft_dialog import SkillDraftDialog
 from app.ui.components.turn_changes import TurnChangesDialog
+from app.ui.components.usage_chart import UsageDialog, UsagePanel
 from app.ui.components.workspace_download import WorkspaceDownloadDialog
 from app.ui.diagnostics_script import CLIENT_DIAGNOSTICS_JS
 from app.ui.expert.chrome import build_about_dialog, build_header
@@ -92,8 +93,13 @@ class ExpertPage:
             f"<script>{ATTENTION_JS}</script>"
         )
 
+        # 토큰·시간 분석의 크게 보기 창. 사이드바와 결론 카드가 함께 씁니다 (ADR-048).
+        self.usage_dialog = UsageDialog(self.session_factory)
+        self.usage_dialog.build()
+
         self.sidebar = SessionSidebar(self.on_session_selected, self.on_new_session)
         self.sidebar.on_open_message = self.open_search_hit
+        self.sidebar.usage_dialog = self.usage_dialog
         drawer = self.sidebar.build_ui()
 
         self.roster_control = AgentRosterControl(self.on_config_changed, self.on_resync_agents)
@@ -117,6 +123,7 @@ class ExpertPage:
             on_restore_version=self.on_restore_version,
             on_add_comment=self.on_add_comment,
             on_delete_comment=self.on_delete_comment,
+            render_turn_usage=self.render_turn_usage,
         )
         # 결론으로 스킬 초안을 만드는 창. 초안은 토론과 같은 호출기로 씁니다 (바꿔 끼운 호출기도 그대로).
         self.skill_draft = SkillDraftDialog(
@@ -202,6 +209,19 @@ class ExpertPage:
         self.waiting.start()
 
     # ------------------------------------------------------------ 대화 선택·설정
+
+    def render_turn_usage(self, turn_id: str) -> None:
+        """결론 카드 안에 그 턴의 토큰·시간 패널을 그립니다."""
+        UsagePanel(
+            self.session_factory, self.usage_dialog, title="이 턴의 토큰·시간",
+            session_id=self.current_session_id, turn_id=turn_id,
+        ).build()
+
+    async def refresh_usage_views(self) -> None:
+        """펼쳐 둔 토큰·시간 패널과 열어 둔 창을 최신 기록으로 맞춥니다. 닫혀 있으면 읽지 않습니다."""
+        if self.sidebar.usage_panel is not None:
+            await self.sidebar.usage_panel.refresh()
+        await self.usage_dialog.refresh()
 
     async def on_session_selected(self, sid: str) -> None:
         self.current_session_id = sid

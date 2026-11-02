@@ -282,7 +282,8 @@ request; every message and tool call of the turn points to it.
 
 Sessions gained `converge_early` (default on), `token_budget` (0 = none), `ask_user` (default off; the
 expert page creates conversations with it on) and `forked_from` (v1.5). `messages.llm_meta` now also
-carries the speech's `usage`.
+carries the speech's `usage` and, for a speech resumed from a draft, `resumed_at`
+([ADR-048](../../lectures/05-adr/ADR-048-token-and-time-mini-charts.md)).
 
 ### 2.7. `speech_drafts` Table ([SpeechDraftModel](file:///d:/MultiAgentDebateOrchestration/app/database/models.py))
 The in-progress state of a speech that uses tools, so an interrupted speech continues after its last

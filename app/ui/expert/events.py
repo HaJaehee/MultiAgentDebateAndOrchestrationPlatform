@@ -111,6 +111,8 @@ class ExpertEventView:
     @_handles(EventType.MESSAGE_ADDED)
     async def _on_message_added(self, event: Event) -> None:
         self.page.chat_feed.append_message(event.get("message", {}))
+        # 펼쳐 둔 토큰·시간 차트는 발언이 끝날 때마다 따라갑니다.
+        await self.page.refresh_usage_views()
 
     @_handles(EventType.SPEECH_COMMENTS_DELIVERED)
     async def _on_speech_comments_delivered(self, event: Event) -> None:
@@ -132,6 +134,7 @@ class ExpertEventView:
                 f"{who} 의 다시 실행이 실패해 기존 발언을 그대로 두었습니다. 원인은 카드의 버전 넘기기에서 볼 수 있습니다.",
                 type="warning", position="bottom-right", multi_line=True,
             )
+        await self.page.refresh_usage_views()
 
     @_handles(EventType.MERMAID_REPAIR_STARTED)
     async def _on_mermaid_repair_started(self, event: Event) -> None:
