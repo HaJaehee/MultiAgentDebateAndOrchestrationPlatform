@@ -118,6 +118,13 @@ async def list_agents():
             "temperature": a.temperature,
             "max_tokens": a.max_tokens,
             "sequential_thinking": a.sequential_thinking.model_dump(exclude={"prompt_template"}),
+            "decision_llm": {
+                **a.decision_llm.model_dump(exclude={"api_key"}),
+                "effective_model": a.decision_llm.effective_model,
+                "effective_api_base": a.decision_llm.effective_api_base,
+                "has_api_key": bool(a.decision_llm.effective_api_key),
+                "has_conf_api_key": a.decision_llm.has_conf_api_key,
+            },
             "allowed_mcp_servers": a.allowed_mcp_servers,
             "allowed_skills": a.allowed_skills,
             "allowed_modalities": a.allowed_modalities,

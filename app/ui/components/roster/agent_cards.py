@@ -42,6 +42,7 @@ class AgentCardsComponent:
         disable_agent: Callable[[str], Any],
         on_selection_changed: Callable[[], None],
         refresh_disabled: Callable[[], None],
+        open_model: Optional[Callable[[str], None]] = None,
     ):
         self.state = state
         self.service = service
@@ -53,6 +54,7 @@ class AgentCardsComponent:
         self.disable_agent = disable_agent
         self.on_selection_changed = on_selection_changed
         self.refresh_disabled = refresh_disabled
+        self.open_model = open_model
         self.cards_row: Optional[ui.row] = None
         self.order_preview: Optional[ui.row] = None
         # 참여 체크박스를 한꺼번에 켜고 끄는 버튼. 체크박스가 잠길 때 함께 잠깁니다 (`fill`).
@@ -276,6 +278,11 @@ class AgentCardsComponent:
                                         "text-[13px] " + ("text-indigo-300" if chosen else "")
                                     )
                                 ui.separator().classes("bg-slate-700")
+                                if self.open_model is not None:
+                                    ui.menu_item(
+                                        "모델 설정 전환 (S2 ↔ S1)...",
+                                        on_click=lambda k=agent.key: self.open_model(k),
+                                    ).classes("text-[13px] text-cyan-300")
                                 ui.menu_item(
                                     "비활성화 (설정 유지)",
                                     on_click=lambda k=agent.key: self.disable_agent(k),
@@ -285,11 +292,35 @@ class AgentCardsComponent:
                                     on_click=lambda k=agent.key: self.open_delete(k),
                                 ).classes("text-[13px] text-rose-300")
 
-            # Model / endpoint / sequential-thinking summary (from conf.json)
+            # Model / endpoint / decision-llm / sequential-thinking summary (from conf.json)
             with ui.row().classes("w-full items-center gap-1 mt-1 no-wrap"):
-                ui.icon("smart_toy", size="11px").classes("text-slate-500")
-                ui.label(agent.model).classes("text-[12px] text-slate-400 truncate max-w-[120px]")
-                if agent.sequential_thinking.enabled:
+                model_reason = self.state.admin_lock_reason()
+                if self.open_model is not None:
+                    model_button = ui.button(
+                        "모델",
+                        icon="swap_horiz",
+                        on_click=lambda _, k=agent.key: self.open_model(k),
+                    ).props("flat dense no-caps size=sm color=amber-4").classes(
+                        "flex-shrink-0 px-1"
+                    ).style("font-size: 11px")
+                    if model_reason:
+                        model_button.disable()
+                        model_button.tooltip(model_reason)
+                    else:
+                        model_button.tooltip(
+                            "System 2 생성형 LLM ↔ System 1 결정 LLM(Jev/Laya) 스위칭 및 모델 설정 (conf.json 저장)"
+                        )
+                else:
+                    ui.icon("smart_toy", size="11px").classes("text-slate-500")
+                ui.label(agent.display_model).classes("text-[12px] text-slate-400 truncate max-w-[120px]")
+                if agent.decision_llm.enabled:
+                    ui.badge(
+                        f"S1·{agent.decision_llm.backend.upper()}",
+                        color="cyan-8" if agent.decision_llm.backend == "jev" else "deep-orange-8",
+                    ).props("dense").classes("text-[11px] flex-shrink-0").tooltip(
+                        f"System 1 결정 LLM ({agent.decision_llm.backend}/{agent.decision_llm.effective_model})"
+                    )
+                if agent.sequential_thinking.enabled and (not agent.decision_llm.enabled or is_orchestrator):
                     ui.badge(f"ST·{agent.sequential_thinking.mode}", color="teal-9").props("dense").classes("text-[12px]")
                 if not agent.is_live:
                     # 엔드포인트가 없으면 발언 차례에 "연결 끊김" 으로 기록됩니다.
@@ -363,6 +394,8 @@ class AgentCardsComponent:
 
             ui.tooltip(
                 f"model: {agent.model}\r\n"
+                f"decision llm: "
+                f"{f'{agent.decision_llm.backend}/{agent.decision_llm.effective_model} (threshold {agent.decision_llm.threshold:.2f})' if agent.decision_llm.enabled else 'disabled (System 2)'}\r\n"
                 f"endpoint: {agent.endpoint_label}\r\n"
                 f"temperature: {agent.temperature} / max_tokens: {agent.max_tokens}\r\n"
                 f"sequential thinking: "

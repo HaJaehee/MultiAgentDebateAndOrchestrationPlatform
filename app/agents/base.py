@@ -5,8 +5,10 @@ from urllib.parse import quote
 from pydantic import BaseModel, Field
 from app.config import (
     DEFAULT_DEBATE_PRIORITY,
+    ORCHESTRATOR_KEY,
     PROJECT_ROOT,
     AgentConfig,
+    DecisionLLMConfig,
     PeerConsultationConfig,
     SequentialThinkingConfig,
     resolve_agent_icon,
@@ -176,6 +178,7 @@ class Agent(BaseModel):
     debate_priority: int = DEFAULT_DEBATE_PRIORITY
     debate_stance: Literal["proponent", "critic", "neutral"] = "neutral"
     sequential_thinking: SequentialThinkingConfig = Field(default_factory=SequentialThinkingConfig)
+    decision_llm: DecisionLLMConfig = Field(default_factory=DecisionLLMConfig)
     # 자기 연결이 실패했을 때 전역 기본 모델이 대신 답해도 되는지 (`llm.fallback`, ADR-030).
     allow_fallback: bool = True
     system_prompt: str = ""
@@ -195,11 +198,20 @@ class Agent(BaseModel):
         return bool((self.card_color or "").strip() or (self.icon or "").strip())
 
     @property
-    def is_live(self) -> bool:
-        """True when the agent has enough connection info to reach a real LLM endpoint.
+    def uses_decision_llm(self) -> bool:
+        """System 1 결정 LLM(Jev/Laya) 옵션이 켜져 있는지 여부."""
+        return bool(self.decision_llm.enabled)
 
-        False 면 발언 차례에 `LLMUnavailableError` 가 올라옵니다. 대체 응답은 없습니다.
-        """
+    @property
+    def display_model(self) -> str:
+        """카드·폴백 안내에 표기할 활성 모델 식별자."""
+        if self.decision_llm.enabled and self.key != ORCHESTRATOR_KEY:
+            return f"{self.decision_llm.backend}/{self.decision_llm.effective_model}"
+        return self.model
+
+    @property
+    def system2_is_live(self) -> bool:
+        """System 2 생성형 LLM 엔드포인트에 연결 정보가 있는지 여부."""
         if self.api_base:
             return True
         if self.api_key and self.api_key.strip():
@@ -207,11 +219,25 @@ class Agent(BaseModel):
         return self.model.split("/", 1)[0] in {"ollama", "ollama_chat", "lm_studio"}
 
     @property
+    def is_live(self) -> bool:
+        """True when the agent has enough connection info to reach a real LLM endpoint.
+
+        False 면 발언 차례에 `LLMUnavailableError` 가 올라옵니다. 대체 응답은 없습니다.
+        """
+        if not self.decision_llm.enabled:
+            return self.system2_is_live
+        if self.key == ORCHESTRATOR_KEY:
+            return self.system2_is_live and self.decision_llm.is_live
+        return self.decision_llm.is_live
+
+    @property
     def endpoint_label(self) -> str:
         """Short human-readable endpoint description for the UI."""
+        if self.decision_llm.enabled and self.key != ORCHESTRATOR_KEY:
+            return self.decision_llm.endpoint_label
         if self.api_base:
             return self.api_base
-        return "provider default endpoint" if self.is_live else "no endpoint configured"
+        return "provider default endpoint" if self.system2_is_live else "no endpoint configured"
 
     @classmethod
     def from_config(cls, key: str, cfg: AgentConfig) -> "Agent":

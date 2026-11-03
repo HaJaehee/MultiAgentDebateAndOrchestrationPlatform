@@ -8,12 +8,23 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from app.config.loader import get_config, read_conf_file, reload_config_if_active, write_conf_file
+from app.config.env import resolve_env_vars
+from app.config.loader import (
+    get_config,
+    is_comment_key,
+    read_conf_file,
+    reload_config_if_active,
+    strip_comment_keys,
+    write_conf_file,
+)
 from app.config.paths import DEFAULT_CONFIG_PATH
 from app.config.schema import (
     BARE_KEY_PATTERN,
     DEBATE_PRIORITY_STEP,
     DEBATE_STANCES,
+    DECISION_BACKENDS,
+    DEFAULT_DECISION_THRESHOLD,
+    DEFAULT_DECISION_TIMEOUT,
     INPUT_MODALITIES,
     DEFAULT_PEER_TOOL_ITERATIONS,
     DEFAULT_TOOL_DENY_RULES,
@@ -21,6 +32,7 @@ from app.config.schema import (
     RESERVED_SERVER_NAMES,
     TOOL_ITERATION_CEILING,
     AgentConfig,
+    DecisionLLMConfig,
     LLMConfig,
     is_blank,
     validate_rule_list,
@@ -538,6 +550,19 @@ AGENT_OVERRIDE_FIELDS = (
 
 SEQUENTIAL_THINKING_FIELDS = ("enabled", "mode", "max_steps", "show_steps")
 
+DECISION_LLM_FIELDS = (
+    "enabled",
+    "backend",
+    "model",
+    "api_base",
+    "api_key",
+    "model_path",
+    "threshold",
+    "timeout",
+)
+
+SYSTEM2_SWITCHABLE_FIELDS = ("model", "provider", "api_base", "api_version", "api_key")
+
 # 겉모습은 llm 에서 상속되지 않습니다 (에이전트마다 달라야 의미가 있습니다).
 # 그래서 `AGENT_OVERRIDE_FIELDS` 와 섞지 않고 따로 둡니다.
 AGENT_APPEARANCE_FIELDS = ("card_color", "icon")
@@ -587,6 +612,48 @@ def prune_agent_overrides(
         pruned[field] = value
     return pruned
 
+def _normalize_decision_llm_dict(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """`decision_llm` 입력 사전을 검증하고 정규화합니다 (빈 문자열은 제외)."""
+    if not raw:
+        return {}
+    unknown = [k for k in raw if k not in DECISION_LLM_FIELDS]
+    if unknown:
+        raise ValueError(f"모르는 결정 LLM 항목입니다: {', '.join(sorted(unknown))}")
+    cleaned: Dict[str, Any] = {}
+    for field in DECISION_LLM_FIELDS:
+        if field not in raw:
+            continue
+        value = raw[field]
+        if field == "enabled":
+            if value is not None:
+                cleaned["enabled"] = bool(value)
+        elif field == "backend":
+            if not is_blank(value):
+                backend = str(value).strip().lower()
+                if backend not in DECISION_BACKENDS:
+                    raise ValueError(
+                        f"'{value}' 는 쓸 수 없는 결정 LLM 백엔드입니다. "
+                        f"{' | '.join(DECISION_BACKENDS)} 중에서 고르세요."
+                    )
+                cleaned["backend"] = backend
+        elif field == "threshold":
+            if not is_blank(value):
+                threshold = float(value)
+                if not 0.0 <= threshold <= 1.0:
+                    raise ValueError("결정 LLM threshold 는 0.0~1.0 사이여야 합니다.")
+                cleaned["threshold"] = threshold
+        elif field == "timeout":
+            if not is_blank(value):
+                timeout = float(value)
+                if timeout <= 0:
+                    raise ValueError("결정 LLM timeout 은 0보다 커야 합니다.")
+                cleaned["timeout"] = int(timeout) if timeout.is_integer() else timeout
+        else:
+            if not is_blank(value):
+                cleaned[field] = str(value).strip()
+    return cleaned
+
+
 def add_agent_to_conf_file(
     agent_key: str,
     name: str,
@@ -601,6 +668,7 @@ def add_agent_to_conf_file(
     enabled: bool = True,
     config_path: str | Path = DEFAULT_CONFIG_PATH,
     allowed_skills: Optional[List[str]] = None,
+    decision_llm: Optional[Dict[str, Any]] = None,
 ) -> None:
     """`agents`에 새 에이전트를 추가합니다.
 
@@ -636,6 +704,8 @@ def add_agent_to_conf_file(
     if unknown_st:
         raise ValueError(f"모르는 단계적 사고 항목입니다: {', '.join(sorted(unknown_st))}")
 
+    decision = _normalize_decision_llm_dict(decision_llm)
+
     if debate_stance not in DEBATE_STANCES:
         raise ValueError(
             f"'{debate_stance}' 는 쓸 수 없는 진영입니다. "
@@ -669,6 +739,12 @@ def add_agent_to_conf_file(
             field: _scalar_value(field, thinking[field])
             for field in SEQUENTIAL_THINKING_FIELDS
             if field in thinking
+        }
+    if decision:
+        block["decision_llm"] = {
+            field: decision[field]
+            for field in DECISION_LLM_FIELDS
+            if field in decision
         }
 
     agents[key] = block
@@ -767,6 +843,151 @@ def set_agent_debate_stance_in_conf_file(
     data = read_conf_file(path)
     agent = _entry(data, "agents", key, path)
     agent["debate_stance"] = stance
+
+    write_conf_file(path, data)
+    reload_config_if_active(path)
+
+
+def read_raw_agent_entry(
+    agent_key: str,
+    config_path: str | Path = DEFAULT_CONFIG_PATH,
+) -> Dict[str, Any]:
+    """`conf.json` 원문에서 `agents.<key>` 블록을 환경변수 치환 없이 읽습니다 (`//` 주석 키 제외).
+
+    화면이 `.env` 로 풀린 평문 비밀키를 되쓰지 않고, `conf.json` 에 적힌 원문(`${VAR}` 또는
+    오버라이드 유무)만 판단할 수 있게 합니다.
+    """
+    key = _require_key(agent_key, "에이전트 키")
+    path = Path(config_path)
+    if not path.exists():
+        return {}
+    data = read_conf_file(path)
+    agents = data.get("agents")
+    raw = agents.get(key) if isinstance(agents, dict) else None
+    if not isinstance(raw, dict):
+        return {}
+    return strip_comment_keys(raw)
+
+
+def _global_decision_enabled(data: Dict[str, Any]) -> bool:
+    llm_raw = data.get("llm")
+    dl_raw = llm_raw.get("decision_llm") if isinstance(llm_raw, dict) else None
+    if not isinstance(dl_raw, dict):
+        return False
+    try:
+        resolved = resolve_env_vars(strip_comment_keys(dl_raw))
+        return DecisionLLMConfig.model_validate(resolved).enabled
+    except Exception:  # noqa: BLE001
+        return bool(dl_raw.get("enabled"))
+
+
+def set_agent_model_settings_in_conf_file(
+    agent_key: str,
+    *,
+    decision_llm: Optional[Dict[str, Any]] = None,
+    clear_decision_api_key: bool = False,
+    system2_overrides: Optional[Dict[str, Any]] = None,
+    clear_system2_fields: Optional[List[str]] = None,
+    config_path: str | Path = DEFAULT_CONFIG_PATH,
+) -> None:
+    """`agents.<key>` 의 System 2 모델/연결 오버라이드와 System 1 `decision_llm` 설정을 갱신합니다.
+
+    - 건드리지 않은 `${VAR}` 참조나 `//` 주석 키는 원형 그대로 보존합니다.
+    - API 키는 사용자가 새 오버라이드 값을 명시적으로 입력했을 때만 기록하며, `.env` 의 풀린 키가
+      평문으로 박히는 일을 원천 방지합니다 (`clear_decision_api_key` 또는 `clear_system2_fields` 로
+      기존 `conf.json` 오버라이드만 제거하여 `.env` 상속으로 되돌릴 수 있습니다).
+    """
+    key = _require_key(agent_key, "에이전트 키")
+    path = Path(config_path)
+
+    overrides = dict(system2_overrides or {})
+    unknown_s2 = [k for k in overrides if k not in SYSTEM2_SWITCHABLE_FIELDS]
+    if unknown_s2:
+        raise ValueError(f"모르는 LLM 설정 항목입니다: {', '.join(sorted(unknown_s2))}")
+
+    clears_s2 = list(clear_system2_fields or [])
+    unknown_clear = [k for k in clears_s2 if k not in SYSTEM2_SWITCHABLE_FIELDS]
+    if unknown_clear:
+        raise ValueError(f"모르는 LLM 초기화 항목입니다: {', '.join(sorted(unknown_clear))}")
+
+    raw_dl_input = dict(decision_llm) if decision_llm is not None else None
+    normalized_dl = _normalize_decision_llm_dict(raw_dl_input)
+
+    data = read_conf_file(path)
+    agent = _entry(data, "agents", key, path)
+
+    for field in clears_s2:
+        agent.pop(field, None)
+        if field == "api_base":
+            agent.pop("api_url", None)
+            agent.pop("base_url", None)
+        elif field == "provider":
+            agent.pop("custom_llm_provider", None)
+
+    for field in SYSTEM2_SWITCHABLE_FIELDS:
+        if field in overrides and not is_blank(overrides[field]):
+            agent[field] = str(overrides[field]).strip()
+
+    if raw_dl_input is not None or clear_decision_api_key:
+        current_raw = agent.get("decision_llm")
+        existing: Dict[str, Any] = dict(current_raw) if isinstance(current_raw, dict) else {}
+        comments = {k: v for k, v in existing.items() if is_comment_key(k)}
+        values = {k: v for k, v in existing.items() if not is_comment_key(k)}
+
+        if clear_decision_api_key:
+            values.pop("api_key", None)
+
+        if raw_dl_input is not None:
+            for clearable in ("model", "api_base", "model_path"):
+                if clearable in raw_dl_input and is_blank(raw_dl_input[clearable]):
+                    values.pop(clearable, None)
+            values.update(normalized_dl)
+
+        dl_enabled = bool(values.get("enabled", False))
+        global_dl_on = _global_decision_enabled(data)
+
+        # 기본값과 동일한 보조 수치는 덜어내어 설정 파일을 간결하게 유지합니다.
+        if "threshold" in values and _same_value(values["threshold"], DEFAULT_DECISION_THRESHOLD):
+            if "threshold" not in (current_raw or {}):
+                values.pop("threshold", None)
+        if "timeout" in values and _same_value(values["timeout"], DEFAULT_DECISION_TIMEOUT):
+            if "timeout" not in (current_raw or {}):
+                values.pop("timeout", None)
+
+        if not dl_enabled and not global_dl_on:
+            # 전역도 꺼져 있고 에이전트도 껐을 때, 사용자 정의 오버라이드(모델·주소·키·비기본 백엔드)가
+            # 전혀 없다면 블록 자체를 지워 처음 상태로 되돌립니다.
+            meaningful = {
+                k: v for k, v in values.items()
+                if k != "enabled"
+                and not (k == "backend" and str(v).strip().lower() == "jev")
+                and not (k == "threshold" and _same_value(v, DEFAULT_DECISION_THRESHOLD))
+                and not (k == "timeout" and _same_value(v, DEFAULT_DECISION_TIMEOUT))
+            }
+            if meaningful or comments:
+                ordered = dict(comments)
+                ordered["enabled"] = False
+                for field in DECISION_LLM_FIELDS:
+                    if field != "enabled" and field in values:
+                        ordered[field] = values[field]
+                agent["decision_llm"] = ordered
+            else:
+                agent.pop("decision_llm", None)
+        else:
+            ordered = dict(comments)
+            ordered["enabled"] = dl_enabled
+            if dl_enabled:
+                values.setdefault("backend", "jev")
+            for field in DECISION_LLM_FIELDS:
+                if field != "enabled" and field in values:
+                    ordered[field] = values[field]
+            agent["decision_llm"] = ordered
+
+    # 디스크에 쓰기 전에 이 에이전트 블록이 스키마 검증을 통과하는지 확인합니다.
+    probe = resolve_env_vars(strip_comment_keys(agent))
+    probe.setdefault("name", key)
+    probe.setdefault("role", key)
+    AgentConfig.model_validate(probe)
 
     write_conf_file(path, data)
     reload_config_if_active(path)

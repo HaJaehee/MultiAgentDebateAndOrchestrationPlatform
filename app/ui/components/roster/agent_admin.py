@@ -295,6 +295,7 @@ class AgentAdminComponent:
 
         defaults = agent_defaults_from_llm(cfg.llm)
         st_default = cfg.llm.sequential_thinking
+        dl_default = cfg.llm.decision_llm
         existing_keys = set(cfg.agents.keys())
         servers = cfg.mcp_servers
         skills, root = self.service.skills_view()
@@ -435,6 +436,58 @@ class AgentAdminComponent:
                                 "사고 과정 노출", value=bool(st_default.show_steps)
                             ).props("dense dark color=teal-4").classes("text-xs")
 
+                with ui.expansion("결정 LLM (System 1: Jev / Laya)", icon="bolt",
+                                  value=False).classes(
+                    "w-full bg-slate-800/40 rounded-lg border border-slate-800"
+                ):
+                    with ui.column().classes("w-full gap-2 p-2"):
+                        ui.label(
+                            "켜면 이 에이전트는 발언 차례에 System 1 결정 모델(Jev / Laya) 단일 패스 평가를 사용합니다. "
+                            "API 키는 .env(JEV_API_KEY, LAYA_API_KEY)에서 1차로 읽고, 아래 입력 시 conf.json 에만 오버라이드합니다."
+                        ).classes("text-[11px] text-slate-400 leading-snug")
+                        dl_enabled = ui.checkbox(
+                            "System 1 결정 LLM 사용 (기본값은 System 2 생성형 LLM)",
+                            value=bool(dl_default.enabled),
+                        ).props("dense dark color=cyan-4").classes("text-xs")
+                        with ui.row().classes("w-full gap-2 items-center flex-wrap"):
+                            dl_backend = ui.select(
+                                {
+                                    "jev": "Jev (TypeSafe AI)",
+                                    "laya": "Laya (Convai Open-Weight)",
+                                },
+                                value=dl_default.backend,
+                                label="백엔드",
+                            ).props("outlined dense dark options-dense").classes("w-52 text-xs")
+                            dl_model = ui.input(
+                                "결정 모델 이름",
+                                value=dl_default.model or "",
+                                placeholder="비우면 백엔드 기본값",
+                            ).props("outlined dense dark").classes("flex-grow min-w-[160px] text-xs")
+                            dl_threshold = ui.number(
+                                "임계치",
+                                value=float(dl_default.threshold),
+                                min=0.0,
+                                max=1.0,
+                                step=0.05,
+                                format="%.2f",
+                            ).props("outlined dense dark").classes("w-28 text-xs")
+                        with ui.row().classes("w-full gap-2 flex-wrap"):
+                            dl_api_base = ui.input(
+                                "결정 API URL (선택)",
+                                value=dl_default.api_base or "",
+                                placeholder="비우면 .env / 기본 엔드포인트",
+                            ).props("outlined dense dark").classes("flex-grow min-w-[180px] text-xs")
+                            dl_model_path = ui.input(
+                                "Laya 로컬 경로 (선택)",
+                                value=dl_default.model_path or "",
+                                placeholder="비우면 .env LAYA_MODEL_PATH",
+                            ).props("outlined dense dark").classes("flex-grow min-w-[160px] text-xs")
+                        dl_api_key = ui.input(
+                            "결정 API 키 오버라이드 (선택)",
+                            value="",
+                            placeholder="비워 두면 .env 의 JEV_API_KEY / LAYA_API_KEY 사용",
+                        ).props("outlined dense dark type=password").classes("w-full text-xs")
+
                 ui.label("사용할 MCP 서버").classes(
                     "text-[11px] font-semibold text-slate-400 mt-1"
                 )
@@ -554,9 +607,35 @@ class AgentAdminComponent:
                     thinking.setdefault("mode", st_mode.value)
                     thinking.setdefault("max_steps", steps)
 
+                dl_thresh_val = float(
+                    dl_threshold.value if dl_threshold.value is not None else dl_default.threshold
+                )
+                decision_cfg: Dict[str, Any] = {}
+                if bool(dl_enabled.value) != bool(dl_default.enabled):
+                    decision_cfg["enabled"] = bool(dl_enabled.value)
+                if (dl_backend.value or "jev") != dl_default.backend:
+                    decision_cfg["backend"] = dl_backend.value or "jev"
+                if (dl_model.value or "").strip() != (dl_default.model or "").strip():
+                    if (dl_model.value or "").strip():
+                        decision_cfg["model"] = (dl_model.value or "").strip()
+                if abs(dl_thresh_val - float(dl_default.threshold)) > 1e-6:
+                    decision_cfg["threshold"] = dl_thresh_val
+                if (dl_api_base.value or "").strip() != (dl_default.api_base or "").strip():
+                    if (dl_api_base.value or "").strip():
+                        decision_cfg["api_base"] = (dl_api_base.value or "").strip()
+                if (dl_model_path.value or "").strip() != (dl_default.model_path or "").strip():
+                    if (dl_model_path.value or "").strip():
+                        decision_cfg["model_path"] = (dl_model_path.value or "").strip()
+                if (dl_api_key.value or "").strip():
+                    decision_cfg["api_key"] = (dl_api_key.value or "").strip()
+                if decision_cfg and bool(dl_enabled.value):
+                    decision_cfg.setdefault("enabled", True)
+                    decision_cfg.setdefault("backend", dl_backend.value or "jev")
+
                 chosen = [n for n, box in boxes.items() if box.value]
                 chosen_skills = [n for n, box in skill_boxes.items() if box.value]
                 prompt = prompt_in.value or ""
+                extra_kwargs = {"decision_llm": decision_cfg} if decision_cfg else {}
 
                 dialog.close()
                 await self.changes.apply_agent_change(
@@ -572,6 +651,7 @@ class AgentAdminComponent:
                         card_color=appearance.card_color,
                         icon=appearance.icon,
                         allowed_skills=chosen_skills,
+                        **extra_kwargs,
                     ),
                     f"'{name}' 에이전트를 추가하였습니다."
                     + (f" (도구 {len(chosen)}개" if chosen else " (도구 없음")

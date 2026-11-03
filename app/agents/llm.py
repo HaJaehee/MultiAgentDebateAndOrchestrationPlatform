@@ -22,6 +22,7 @@ import litellm
 from app.agents import llm_fallback, llm_usage
 from app.agents.base import Agent
 from app.agents.connection import SERVER_ERROR, classify
+from app.agents.decision import DecisionCaller
 from app.agents.host_tools import host_tools_for
 from app.agents.llm_context import context_budget, fit_context_window, merge_consecutive_roles, place_ledger_last
 from app.agents.llm_fingerprint import request_fingerprint
@@ -35,6 +36,7 @@ from app.agents.llm_tools import memory_search_tool
 from app.agents.llm_types import BudgetArbiter, ContextArbiter, LLMUnavailableError, SpeechCheckpoint
 from app.agents.media import fit_attachments, materialize_attachments, with_attachments, without_attachments
 from app.agents.tool_loading import plan_shelf
+from app.config import ORCHESTRATOR_KEY
 from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
 
@@ -77,6 +79,7 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         # 런타임을 `call_agent(mcp=...)` 로 받아 씁니다. 이 값은 그것이 주어지지
         # 않았을 때의 폴백입니다.
         self.mcp_manager = mcp_manager or get_runtime_pool().default_runtime()
+        self.decision_caller = DecisionCaller()
 
 
 
@@ -284,6 +287,16 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         attachments: Sequence[Dict[str, Any]] = (),
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """`agent` 의 연결 그대로 한 번 부릅니다 (`call_agent` 가 물러설지 말지를 정합니다)."""
+        # System 1 결정 LLM(Jev / Laya) 옵션이 켜진 전문가 에이전트는 도구 루프 없이
+        # `/v1/systemone` 단일 패스 평가로 구조화된 판정 발언을 생성합니다.
+        # (오케스트레이터의 계획·합성·장부 산문 호출은 System 2 생성형 LLM을 유지합니다.)
+        if agent.decision_llm.enabled and agent.key != ORCHESTRATOR_KEY:
+            return await self._call_decision_specialist_once(
+                agent, messages, custom_instructions,
+                on_chunk=on_chunk, on_context_trim=on_context_trim,
+                ledger=ledger, resume_state=resume_state,
+            )
+
         # Retrieve available tools for this agent
         #
         # 시스템 프롬프트보다 먼저 구합니다. 파일 쓰기 지침이 이 에이전트가 실제로
@@ -336,7 +349,7 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
             formatted_messages = merge_consecutive_roles(mark_goal(agent, formatted_messages))
 
         # Real endpoint if an API URL, an API key, or a keyless local runtime is configured
-        if not agent.is_live:
+        if not agent.system2_is_live:
             raise LLMUnavailableError(
                 agent,
                 "api_base 도 api_key 도 설정되어 있지 않습니다. conf.json 의 llm 또는 "
@@ -362,6 +375,64 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
             raise LLMUnavailableError(agent, f"{type(e).__name__}: {e}") from e
 
         return self._apply_show_steps(agent, content), logs
+
+    async def _call_decision_specialist_once(
+        self,
+        agent: Agent,
+        messages: List[Dict[str, Any]],
+        custom_instructions: str = "",
+        *,
+        on_chunk: Optional[Callable[[str], Any]] = None,
+        on_context_trim: Optional[Callable[[int], Any]] = None,
+        ledger: str = "",
+        resume_state: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        """System 1 결정 LLM(Jev/Laya)을 사용하는 전문가 에이전트의 한 턴 호출."""
+        if resume_state is not None:
+            formatted_messages = [dict(m) for m in resume_state.get("messages") or []]
+        else:
+            formatted_messages = [
+                {"role": "system", "content": self.build_system_prompt(agent, custom_instructions, [])}
+            ]
+            prompt = place_ledger_last(messages, ledger)
+            formatted_messages.extend(prompt)
+            formatted_messages, trimmed = fit_context_window(
+                agent, formatted_messages, None, tools=[],
+            )
+            if trimmed and on_context_trim:
+                on_context_trim(trimmed)
+            formatted_messages = merge_consecutive_roles(formatted_messages)
+
+        if not agent.decision_llm.is_live:
+            cfg = agent.decision_llm
+            raise LLMUnavailableError(
+                agent,
+                f"결정 LLM({cfg.backend.upper()}) 연결 정보가 설정되어 있지 않습니다. "
+                f".env 의 {'JEV_API_KEY' if cfg.backend == 'jev' else 'LAYA_API_KEY / LAYA_API_BASE'} "
+                f"또는 conf.json 의 agents.{agent.key}.decision_llm 설정을 확인하세요.",
+            )
+
+        progress = _SPEECH_PROGRESS.get()
+        if progress is not None:
+            progress.llm_failed = False
+        try:
+            content, logs = await self.decision_caller.evaluate_specialist_turn(
+                agent, formatted_messages, on_chunk=on_chunk,
+            )
+        except LLMUnavailableError:
+            if progress is not None:
+                progress.llm_failed = True
+            raise
+        except Exception as e:
+            if progress is not None:
+                progress.llm_failed = True
+            raise LLMUnavailableError(agent, f"{type(e).__name__}: {e}") from e
+
+        if progress is not None:
+            progress.rounds += 1
+            if on_chunk is not None and content:
+                progress.streamed = True
+        return content, logs
 
 
 

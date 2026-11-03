@@ -197,7 +197,7 @@ class FallbackRoute:
     def notice(self, state: str, *, skipped: bool) -> FallbackNotice:
         return FallbackNotice(
             agent_key=self.primary.key, agent_name=self.primary.name,
-            intended_model=self.primary.model, model=self.substitute.model,
+            intended_model=self.primary.display_model, model=self.substitute.display_model,
             state=state, skipped=skipped,
         )
 
@@ -212,6 +212,8 @@ def substitute_for(agent: Agent, llm: LLMConfig) -> Optional[Agent]:
     update: Dict[str, Any] = {
         name: getattr(target, name) for name in (*CONNECTION_FIELDS, *_CAPACITY_FIELDS)
     }
+    if agent.decision_llm.enabled != llm.decision_llm.enabled or llm.decision_llm.enabled:
+        update["decision_llm"] = llm.decision_llm.model_copy(deep=True)
     if agent.sequential_thinking.enabled and agent.sequential_thinking.mode == "native":
         # Provider 고유의 사고 옵션은 그 모델에 묶인 값입니다. 전역 모델에는 전역의 설정을 씁니다.
         update["sequential_thinking"] = llm.sequential_thinking.model_copy(deep=True)

@@ -25,7 +25,8 @@ class AgentPool:
             self._agents[key] = agent
             logger.info(
                 f"Agent '{key}' -> model={agent.model}, endpoint={agent.endpoint_label}, "
-                f"sequential_thinking={'on:' + agent.sequential_thinking.mode if agent.sequential_thinking.enabled else 'off'}"
+                f"sequential_thinking={'on:' + agent.sequential_thinking.mode if agent.sequential_thinking.enabled else 'off'}, "
+                f"decision_llm={'on:' + agent.decision_llm.backend + '/' + agent.decision_llm.effective_model if agent.decision_llm.enabled else 'off'}"
             )
         logger.info(f"AgentPool loaded {len(self._agents)} agents: {list(self._agents.keys())}")
 

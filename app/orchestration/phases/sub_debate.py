@@ -95,13 +95,36 @@ class SubDebateRunner(PhaseExecutor):
         ):
             return None
 
+        decision_caller = getattr(self.ctx.llm_caller, "decision_caller", None)
         try:
-            content = await self.ask_orchestrator(state, setup, candidates)
+            if setup.orchestrator.decision_llm.enabled and decision_caller is not None:
+                selector = self.conversation.tool_less(setup.orchestrator)
+                issues = memory.ledger_items(state.decision_ledger, "미해결 쟁점") or []
+                recent = [
+                    f"{m.speaker}: {self.conversation.snippet(m, 300)}"
+                    for m in state.messages if m.msg_type != "error" and turns.in_main_record(m)
+                ][-8:]
+                state_parts = [
+                    f"[목표]\n{state.user_prompt}",
+                    self.conversation.routing_record(state, selector).strip(),
+                    "[미해결 쟁점]\n" + "\n".join(f"- {item}" for item in issues),
+                    "[지금까지의 토론]\n" + ("\n".join(recent) or "(아직 없음)"),
+                ]
+                if state.decision_ledger:
+                    state_parts.append(f"[결정 장부]\n{state.decision_ledger}")
+                decision = await decision_caller.evaluate_sub_debate(
+                    setup.orchestrator,
+                    "\n\n".join(part for part in state_parts if part),
+                    issues,
+                    candidates,
+                )
+            else:
+                content = await self.ask_orchestrator(state, setup, candidates)
+                decision = parse_sub_debate(content, candidates)
         except LLMUnavailableError as exc:
             # 묻지 못하면 그냥 다음 라운드로 갑니다. 토론의 필수 단계가 아닙니다.
             logger.warning(f"Could not ask whether to open a sub-debate: {exc}")
             return None
-        decision = parse_sub_debate(content, candidates)
         if decision is None:
             return None
         pair, issue, reason = decision

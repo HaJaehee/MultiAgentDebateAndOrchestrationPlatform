@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, List, Optional
 
 from nicegui import ui
 
 from app.agents.base import Agent
 from app.agents.host_tools import assignable_plugin_tools
 from app.agents.media import MAX_ATTACHMENT_BYTES, MODALITY_LABELS, extensions_of
-from app.config import DEFAULT_PEER_TOOL_ITERATIONS, INPUT_MODALITIES, PEERS_TOOL_PREFIX, TOOL_ITERATION_CEILING
+from app.config import (
+    DEFAULT_DECISION_THRESHOLD,
+    DEFAULT_DECISION_TIMEOUT,
+    DEFAULT_PEER_TOOL_ITERATIONS,
+    INPUT_MODALITIES,
+    ORCHESTRATOR_KEY,
+    PEERS_TOOL_PREFIX,
+    TOOL_ITERATION_CEILING,
+)
 from app.orchestration.roster_service import RosterService
 from app.ui.components.roster.changes import RosterChanges
 from app.ui.components.roster.common import peer_candidates, peer_selection_summary, unknown_tool_servers
@@ -360,6 +368,282 @@ class AgentDialogs:
                     if chosen else f"'{agent.name}' 에이전트는 글과 파일 경로만 받도록 저장하였습니다.",
                     # 서버 구성은 그대로입니다. 다시 띄울 이유가 없습니다.
                     restart_servers=False,
+                )
+
+            with ui.row().classes("w-full justify-end gap-2 mt-3"):
+                ui.button("취소", on_click=dialog.close).props("flat color=grey")
+                ui.button("저장", on_click=do_save).props("unelevated color=indigo-6")
+
+        dialog.open()
+
+    def open_model_settings(self, agent_key: str) -> None:
+        """에이전트 풀에서 System 2 생성형 LLM ↔ System 1 결정 LLM(Jev/Laya)을 전환하고 모델 설정을 저장합니다."""
+        if self.changes.blocked_for_agent_admin():
+            return
+
+        agent = self.state.find_agent(agent_key)
+        if agent is None:
+            ui.notify(f"'{agent_key}' 에이전트를 찾을 수 없습니다.", type="warning", position="bottom-right")
+            return
+
+        raw_entry = self.service.raw_agent_entry(agent_key) or {}
+        raw_dl = raw_entry.get("decision_llm")
+        raw_dl = dict(raw_dl) if isinstance(raw_dl, dict) else {}
+        try:
+            cfg = self.service.config()
+        except Exception:  # noqa: BLE001
+            cfg = None
+        global_llm = getattr(cfg, "llm", None)
+
+        is_orchestrator = agent.key == ORCHESTRATOR_KEY
+        dcfg = agent.decision_llm
+
+        s2_init_model = str(raw_entry.get("model") or "")
+        s2_init_provider = str(raw_entry.get("provider") or raw_entry.get("custom_llm_provider") or "")
+        s2_init_base = str(raw_entry.get("api_base") or raw_entry.get("api_url") or raw_entry.get("base_url") or "")
+        has_s2_conf_key = bool(str(raw_entry.get("api_key") or "").strip())
+
+        dl_init_model = str(raw_dl.get("model") or "")
+        dl_init_base = str(raw_dl.get("api_base") or raw_dl.get("api_url") or raw_dl.get("base_url") or "")
+        dl_init_path = str(raw_dl.get("model_path") or "")
+        has_dl_conf_key = bool(str(raw_dl.get("api_key") or "").strip())
+
+        with ui.dialog() as dialog, ui.card().classes(
+            "p-4 w-[620px] max-w-full bg-slate-900 text-white border border-slate-700"
+        ):
+            with ui.row().classes("w-full items-center justify-between gap-2"):
+                ui.label(f"{agent.name} · 모델 스위칭 & 설정").classes("text-lg font-bold")
+                ui.badge(
+                    f"현재: System 1 ({dcfg.backend.upper()})" if dcfg.enabled else "현재: System 2 (기본)",
+                    color="cyan-8" if dcfg.enabled else "indigo-8",
+                ).props("dense").classes("text-xs")
+            ui.label(
+                "conf.json 에 저장되어 아직 시작하지 않은 세션과 향후 생성할 세션에 적용됩니다. "
+                "API 키는 1차적으로 .env(JEV_API_KEY, LAYA_API_KEY 등)에서 읽고, 아래에서 입력한 값만 conf.json 오버라이드로 기록됩니다."
+            ).classes("text-[12px] text-amber-400 mb-1 leading-snug")
+
+            with ui.column().classes("w-full gap-2.5 max-h-[64vh] overflow-y-auto pr-1"):
+                mode_radio = ui.radio(
+                    {
+                        "system2": "System 2 — 생성형 LLM (기본값 · 산문 추론 및 도구 루프)",
+                        "system1": "System 1 — 결정 LLM (Jev / Laya · 단일 패스 확률·척도·선택 판정)",
+                    },
+                    value="system1" if dcfg.enabled else "system2",
+                ).props("dense dark color=cyan-4").classes("text-[13px] font-semibold")
+
+                ui.label(
+                    (
+                        "오케스트레이터에서 System 1을 켜면 그래프 게이트 분기·발언자 지명·서브 토론 개시 판단을 "
+                        "Jev/Laya 단일 패스로 수행하고, 계획 수립·결정 장부·최종 결론 합성은 아래 System 2 모델을 유지합니다."
+                    )
+                    if is_orchestrator
+                    else (
+                        "전문가 에이전트에서 System 1을 켜면 발언 차례에 도구 루프 대신 Jev/Laya(/v1/systemone) "
+                        "단일 패스로 타당성 확률(noul)·품질 척도(score)·권고 조치(choice)를 평가합니다."
+                    )
+                ).classes("text-[11px] text-slate-400 -mt-1 leading-snug")
+
+                with ui.column().classes(
+                    "w-full gap-2 p-2.5 rounded-lg bg-slate-800/60 border border-cyan-900/60"
+                ) as s1_box:
+                    with ui.row().classes("w-full items-center justify-between"):
+                        ui.label("⚡ System 1 결정 LLM 설정 (Jev / Laya)").classes(
+                            "text-xs font-bold text-cyan-300"
+                        )
+                        if has_dl_conf_key:
+                            ui.badge("conf.json 키 오버라이드 중", color="amber-8").props("dense").classes("text-[11px]")
+                        elif dcfg.has_env_api_key:
+                            ui.badge(".env 1차 키 연결됨", color="teal-8").props("dense").classes("text-[11px]")
+                        else:
+                            ui.badge("API 키 미설정 (.env 권장)", color="grey-8").props("dense").classes("text-[11px]")
+
+                    with ui.row().classes("w-full gap-2 flex-wrap"):
+                        dl_backend = ui.select(
+                            {
+                                "jev": "Jev (TypeSafe AI · 호스팅 API)",
+                                "laya": "Laya (Convai · 오픈웨이트 로컬/HTTP)",
+                            },
+                            value=dcfg.backend,
+                            label="결정 모델 백엔드",
+                        ).props("outlined dense dark options-dense").classes("w-64 text-xs")
+                        dl_model_in = ui.input(
+                            "결정 모델 이름 (선택)",
+                            value=dl_init_model,
+                            placeholder=f"비우면 기본값 ({dcfg.effective_model})",
+                        ).props("outlined dense dark").classes("flex-grow min-w-[180px] text-xs")
+
+                    with ui.row().classes("w-full gap-2 flex-wrap"):
+                        dl_base_in = ui.input(
+                            "결정 API URL 오버라이드 (선택)",
+                            value=dl_init_base,
+                            placeholder="비우면 .env 또는 백엔드 기본 엔드포인트",
+                        ).props("outlined dense dark").classes("flex-grow min-w-[200px] text-xs")
+                        dl_path_in = ui.input(
+                            "Laya 로컬 모델 경로 (선택)",
+                            value=dl_init_path,
+                            placeholder="비우면 .env LAYA_MODEL_PATH",
+                        ).props("outlined dense dark").classes("flex-grow min-w-[180px] text-xs")
+
+                    with ui.row().classes("w-full gap-2 items-center flex-wrap"):
+                        dl_threshold_in = ui.number(
+                            "판정 임계치 (threshold)",
+                            value=float(dcfg.threshold),
+                            min=0.0,
+                            max=1.0,
+                            step=0.05,
+                            format="%.2f",
+                        ).props("outlined dense dark").classes("w-44 text-xs")
+                        dl_timeout_in = ui.number(
+                            "타임아웃(초)",
+                            value=float(dcfg.timeout),
+                            min=1.0,
+                            max=300.0,
+                            step=1.0,
+                            format="%.0f",
+                        ).props("outlined dense dark").classes("w-36 text-xs")
+
+                    dl_key_in = ui.input(
+                        "결정 API 키 오버라이드 (conf.json)",
+                        value="",
+                        placeholder="비워 두면 .env(JEV_API_KEY / LAYA_API_KEY / DECISION_API_KEY)를 그대로 사용",
+                    ).props("outlined dense dark type=password").classes("w-full text-xs")
+                    clear_dl_key_cb: Optional[ui.checkbox] = None
+                    if has_dl_conf_key:
+                        clear_dl_key_cb = ui.checkbox(
+                            "conf.json 결정 API 키 오버라이드 제거 (.env 1차 키로 복귀)",
+                            value=False,
+                        ).props("dense dark color=amber-5").classes("text-xs text-amber-300")
+
+                with ui.column().classes(
+                    "w-full gap-2 p-2.5 rounded-lg bg-slate-800/40 border border-slate-700/80"
+                ):
+                    with ui.row().classes("w-full items-center justify-between"):
+                        ui.label("🤖 System 2 생성형 LLM 오버라이드").classes(
+                            "text-xs font-bold text-indigo-300"
+                        )
+                        if has_s2_conf_key:
+                            ui.badge("conf.json 키 오버라이드 중", color="amber-8").props("dense").classes("text-[11px]")
+                        else:
+                            ui.badge("전역 llm / .env 상속", color="indigo-9").props("dense").classes("text-[11px]")
+
+                    inherited_model = getattr(global_llm, "model", None) or agent.model
+                    inherited_base = getattr(global_llm, "api_base", None) or "Provider 기본 주소"
+                    with ui.row().classes("w-full gap-2 flex-wrap"):
+                        s2_model_in = ui.input(
+                            "System 2 모델 (비우면 전역 llm 상속)",
+                            value=s2_init_model,
+                            placeholder=f"전역 기본값: {inherited_model}",
+                        ).props("outlined dense dark").classes("flex-grow min-w-[200px] text-xs")
+                        s2_provider_in = ui.input(
+                            "Provider (선택)",
+                            value=s2_init_provider,
+                            placeholder=getattr(global_llm, "provider", None) or "자동 판별",
+                        ).props("outlined dense dark").classes("w-44 text-xs")
+
+                    s2_base_in = ui.input(
+                        "System 2 API URL (비우면 전역 llm 상속)",
+                        value=s2_init_base,
+                        placeholder=f"전역 기본값: {inherited_base}",
+                    ).props("outlined dense dark").classes("w-full text-xs")
+                    s2_key_in = ui.input(
+                        "System 2 API 키 오버라이드 (conf.json)",
+                        value="",
+                        placeholder="비워 두면 전역 llm / .env 의 API 키를 그대로 상속",
+                    ).props("outlined dense dark type=password").classes("w-full text-xs")
+                    clear_s2_key_cb: Optional[ui.checkbox] = None
+                    if has_s2_conf_key:
+                        clear_s2_key_cb = ui.checkbox(
+                            "conf.json System 2 API 키 오버라이드 제거 (전역 llm / .env 로 복귀)",
+                            value=False,
+                        ).props("dense dark color=amber-5").classes("text-xs text-amber-300")
+
+                def _sync_s1_emphasis() -> None:
+                    if s1_box.is_deleted:
+                        return
+                    if mode_radio.value == "system1":
+                        s1_box.classes(remove="opacity-70", add="border-cyan-500/70")
+                    else:
+                        s1_box.classes(remove="border-cyan-500/70", add="opacity-70")
+
+                mode_radio.on_value_change(lambda _: _sync_s1_emphasis())
+                _sync_s1_emphasis()
+
+            async def do_save() -> None:
+                enable_s1 = mode_radio.value == "system1"
+                backend_val = str(dl_backend.value or "jev").strip().lower()
+                try:
+                    threshold_val = float(
+                        dl_threshold_in.value if dl_threshold_in.value is not None else DEFAULT_DECISION_THRESHOLD
+                    )
+                except (TypeError, ValueError):
+                    threshold_val = DEFAULT_DECISION_THRESHOLD
+                threshold_val = max(0.0, min(1.0, threshold_val))
+
+                try:
+                    timeout_val = float(
+                        dl_timeout_in.value if dl_timeout_in.value is not None else DEFAULT_DECISION_TIMEOUT
+                    )
+                except (TypeError, ValueError):
+                    timeout_val = DEFAULT_DECISION_TIMEOUT
+                timeout_val = max(1.0, min(300.0, timeout_val))
+
+                dl_payload: Dict[str, Any] = {
+                    "enabled": enable_s1,
+                    "backend": backend_val,
+                    "threshold": threshold_val,
+                    "timeout": timeout_val,
+                }
+                for field_name, widget, init_val in (
+                    ("model", dl_model_in, dl_init_model),
+                    ("api_base", dl_base_in, dl_init_base),
+                    ("model_path", dl_path_in, dl_init_path),
+                ):
+                    cur_val = (widget.value or "").strip()
+                    if cur_val != init_val.strip():
+                        dl_payload[field_name] = cur_val
+
+                new_dl_key = (dl_key_in.value or "").strip()
+                if new_dl_key:
+                    dl_payload["api_key"] = new_dl_key
+                    clear_dl_key = False
+                else:
+                    clear_dl_key = bool(clear_dl_key_cb is not None and clear_dl_key_cb.value)
+
+                s2_overrides: Dict[str, Any] = {}
+                s2_clears: List[str] = []
+                for field_name, widget, init_val in (
+                    ("model", s2_model_in, s2_init_model),
+                    ("provider", s2_provider_in, s2_init_provider),
+                    ("api_base", s2_base_in, s2_init_base),
+                ):
+                    cur_val = (widget.value or "").strip()
+                    if cur_val != init_val.strip():
+                        if cur_val:
+                            s2_overrides[field_name] = cur_val
+                        elif init_val.strip():
+                            s2_clears.append(field_name)
+
+                new_s2_key = (s2_key_in.value or "").strip()
+                if new_s2_key:
+                    s2_overrides["api_key"] = new_s2_key
+                elif clear_s2_key_cb is not None and clear_s2_key_cb.value:
+                    s2_clears.append("api_key")
+
+                dialog.close()
+                summary_mode = (
+                    f"System 1 결정 LLM ({backend_val.upper()})"
+                    if enable_s1
+                    else f"System 2 생성형 LLM ({s2_overrides.get('model') or agent.model})"
+                )
+                await self.changes.apply_agent_change(
+                    lambda: self.service.set_agent_model_settings(
+                        agent_key,
+                        dl_payload,
+                        clear_decision_api_key=clear_dl_key,
+                        system2_overrides=s2_overrides or None,
+                        clear_system2_fields=s2_clears or None,
+                    ),
+                    f"'{agent.name}' 에이전트의 모델 모드를 {summary_mode}(으)로 저장하였습니다.",
                 )
 
             with ui.row().classes("w-full justify-end gap-2 mt-3"):

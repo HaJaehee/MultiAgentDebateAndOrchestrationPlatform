@@ -406,6 +406,25 @@ class DebatePhaseExecutor(PhaseExecutor):
             for m in state.messages if m.msg_type != "error" and turns.in_main_record(m)
         ][-8:]
 
+        decision_caller = getattr(self.ctx.llm_caller, "decision_caller", None)
+        if orchestrator.decision_llm.enabled and decision_caller is not None:
+            state_parts = [
+                f"[목표]\n{state.user_prompt}",
+                self.conversation.routing_record(state, selector).strip(),
+                "[지금까지의 토론]\n" + ("\n".join(recent) or "(아직 없음)"),
+            ]
+            if state.decision_ledger:
+                state_parts.append(f"[결정 장부]\n{state.decision_ledger}")
+            if custom_instructions and custom_instructions.strip():
+                state_parts.append(f"[추가 지시]\n{custom_instructions.strip()}")
+            return await decision_caller.select_speakers(
+                orchestrator,
+                "\n\n".join(part for part in state_parts if part),
+                candidates,
+                round_num,
+                state.max_rounds,
+            )
+
         prompt = [{"role": "user", "content": (
             f"[목표]\n{state.user_prompt}\n\n"
             + self.conversation.routing_record(state, selector) +

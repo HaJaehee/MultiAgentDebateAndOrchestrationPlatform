@@ -2,7 +2,10 @@
 """
 
 import copy
+import importlib.util
+import os
 import re
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Mapping, Optional
 
@@ -172,6 +175,169 @@ class SequentialThinkingConfig(BaseModel):
             return self.prompt_template.format(max_steps=self.max_steps)
         except (KeyError, IndexError, ValueError):
             return self.prompt_template
+
+
+DECISION_BACKENDS = ("jev", "laya")
+DEFAULT_JEV_MODEL = "jev-latest"
+DEFAULT_LAYA_MODEL = "laya-latest"
+DEFAULT_JEV_API_BASE = "https://api.typesafe.ai/v1"
+DEFAULT_DECISION_THRESHOLD = 0.5
+DEFAULT_DECISION_TIMEOUT = 15.0
+
+
+def _first_env(*names: str) -> Optional[str]:
+    """주어진 환경변수 이름 중 값이 채워진 첫 번째 값을 돌려줍니다."""
+    for name in names:
+        raw = os.environ.get(name)
+        if raw is not None and raw.strip():
+            return raw.strip()
+    return None
+
+
+class DecisionLLMConfig(BaseModel):
+    """System 1 결정 LLM 설정 (`llm.decision_llm` 및 `agents.<key>.decision_llm`).
+
+    기본값은 비활성화(`enabled: false`)되어 기존 생성형 LLM(System 2)을 사용합니다.
+    켜면 Jev(TypeSafe AI) 또는 Laya(Convai Innovations)의 `/v1/systemone` 단일 패스
+    확률·선택지·점수 판정 모델을 사용합니다.
+
+    API 키는 `.env`(`JEV_API_KEY`, `LAYA_API_KEY`, `DECISION_API_KEY`)에서 1차적으로 관리하며,
+    `conf.json`에 `api_key`가 적혀 있을 때만 오버라이드로 우선 적용합니다.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool = Field(default=False, description="Enable System 1 Decision LLM (Jev or Laya)")
+    backend: Literal["jev", "laya"] = Field(
+        default="jev", description="Decision LLM engine ('jev' | 'laya')"
+    )
+    model: Optional[str] = Field(
+        default=None, description="Decision LLM model identifier (e.g. 'jev-latest', 'laya-latest')"
+    )
+    api_base: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("api_base", "api_url", "base_url"),
+        description="Decision LLM HTTP API base URL",
+    )
+    api_key: Optional[str] = Field(
+        default=None,
+        description="Optional API key override in conf.json (defaults to .env JEV_API_KEY / LAYA_API_KEY / DECISION_API_KEY)",
+    )
+    model_path: Optional[str] = Field(
+        default=None,
+        description="Local weight or HuggingFace repo path for in-process Laya Router",
+    )
+    threshold: float = Field(
+        default=DEFAULT_DECISION_THRESHOLD,
+        ge=0.0,
+        le=1.0,
+        description="Probability threshold for noul binary judgements",
+    )
+    timeout: float = Field(
+        default=DEFAULT_DECISION_TIMEOUT,
+        gt=0.0,
+        description="HTTP request timeout in seconds for Decision LLM calls",
+    )
+
+    @field_validator("backend", mode="before")
+    @classmethod
+    def _normalize_backend(cls, v: Any) -> Any:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return (_first_env("DECISION_BACKEND") or "jev").lower()
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
+    @field_validator("model", "api_base", "api_key", "model_path", mode="before")
+    @classmethod
+    def _blank_to_none(cls, v: Any) -> Any:
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    @field_validator("api_base")
+    @classmethod
+    def _strip_trailing_slash(cls, v: Optional[str]) -> Optional[str]:
+        return v.rstrip("/") if isinstance(v, str) else v
+
+    @property
+    def env_api_key(self) -> Optional[str]:
+        """`.env` (`os.environ`) 에 설정된 결정 LLM 1차 API 키."""
+        if self.backend == "jev":
+            return _first_env("JEV_API_KEY", "DECISION_API_KEY")
+        return _first_env("LAYA_API_KEY", "DECISION_API_KEY")
+
+    @property
+    def has_conf_api_key(self) -> bool:
+        """`conf.json` 에서 API 키를 명시적으로 오버라이드했는지 여부."""
+        return bool(self.api_key and self.api_key.strip())
+
+    @property
+    def has_env_api_key(self) -> bool:
+        """`.env` 에 현재 백엔드의 API 키가 설정되어 있는지 여부."""
+        return bool(self.env_api_key)
+
+    @property
+    def effective_api_key(self) -> Optional[str]:
+        """실제 호출에 사용할 API 키 (`conf.json` 오버라이드 우선, 없으면 `.env` 1차 키)."""
+        if self.api_key and self.api_key.strip():
+            return self.api_key.strip()
+        return self.env_api_key
+
+    @property
+    def explicit_api_base(self) -> Optional[str]:
+        """`conf.json` 또는 `.env` 에 명시적으로 지정된 엔드포인트 URL."""
+        if self.api_base and self.api_base.strip():
+            return self.api_base.strip().rstrip("/")
+        env_url = (
+            _first_env("JEV_API_BASE", "DECISION_API_BASE")
+            if self.backend == "jev"
+            else _first_env("LAYA_API_BASE", "DECISION_API_BASE")
+        )
+        return env_url.rstrip("/") if env_url else None
+
+    @property
+    def effective_api_base(self) -> Optional[str]:
+        """실제 호출에 사용할 HTTP 엔드포인트 URL (Laya 로컬 파이썬 모드면 None)."""
+        if self.explicit_api_base:
+            return self.explicit_api_base
+        if self.backend == "jev":
+            return DEFAULT_JEV_API_BASE
+        return None
+
+    @property
+    def effective_model(self) -> str:
+        """실제 호출에 사용할 결정 LLM 모델 이름."""
+        if self.model and self.model.strip():
+            return self.model.strip()
+        if self.backend == "jev":
+            return _first_env("JEV_MODEL", "DECISION_MODEL") or DEFAULT_JEV_MODEL
+        return _first_env("LAYA_MODEL", "DECISION_MODEL") or DEFAULT_LAYA_MODEL
+
+    @property
+    def effective_model_path(self) -> Optional[str]:
+        """Laya 인프로세스 실행 시 사용할 로컬 가중치 또는 HuggingFace 경로."""
+        if self.model_path and self.model_path.strip():
+            return self.model_path.strip()
+        return _first_env("LAYA_MODEL_PATH")
+
+    @property
+    def is_live(self) -> bool:
+        """결정 LLM 호출에 필요한 연결 정보(키·URL·로컬 패키지)가 준비되어 있는지."""
+        if self.backend == "jev":
+            return bool(self.effective_api_key or self.explicit_api_base)
+        if self.effective_api_base or self.effective_model_path or self.effective_api_key:
+            return True
+        return "laya" in sys.modules or importlib.util.find_spec("laya") is not None
+
+    @property
+    def endpoint_label(self) -> str:
+        """UI 툴팁 및 로그용 결정 LLM 엔드포인트 설명."""
+        if self.effective_api_base:
+            return self.effective_api_base if self.is_live else "no endpoint configured"
+        if self.backend == "laya" and self.is_live:
+            return f"local laya ({self.effective_model_path or 'default'})"
+        return "no endpoint configured"
 
 # Fields an agent inherits from the global "llm" object when it does not set them itself.
 INHERITABLE_LLM_FIELDS = (
@@ -429,6 +595,7 @@ class LLMConfig(BaseModel):
     max_tool_iterations: Optional[int] = Field(default=None, ge=1, le=TOOL_ITERATION_CEILING)
     max_continuations: Optional[int] = Field(default=None, ge=0, le=CONTINUATION_CEILING)
     sequential_thinking: SequentialThinkingConfig = Field(default_factory=SequentialThinkingConfig)
+    decision_llm: DecisionLLMConfig = Field(default_factory=DecisionLLMConfig)
     # 에이전트가 물려받는 값이 아닙니다 (`INHERITABLE_LLM_FIELDS` 에 없습니다). 전역 연결 그 자체에 딸린 설정입니다.
     fallback: LLMFallbackConfig = Field(default_factory=LLMFallbackConfig)
 
@@ -542,6 +709,7 @@ class AgentConfig(BaseModel):
         ),
     )
     sequential_thinking: SequentialThinkingConfig = Field(default_factory=SequentialThinkingConfig)
+    decision_llm: DecisionLLMConfig = Field(default_factory=DecisionLLMConfig)
     # `llm.fallback` 이 켜져 있어도 이 에이전트만은 전역 기본 모델로 물러서지 않게 합니다. 이 에이전트의
     # 프롬프트는 정해 둔 모델로만 보내야 할 때 씁니다 (사내 모델 전용 자료, 미세조정 모델의 역할 등).
     allow_fallback: bool = Field(
@@ -583,14 +751,21 @@ class AgentConfig(BaseModel):
         return v.rstrip("/") if isinstance(v, str) else v
 
     @property
-    def is_live(self) -> bool:
-        """True when the agent has enough connection info to reach a real LLM endpoint."""
+    def system2_is_live(self) -> bool:
+        """True when the System 2 generative LLM has enough connection info to reach a real endpoint."""
         if self.api_base:
             return True
         if self.api_key and self.api_key.strip():
             return True
         # Local runtimes that need neither an API key nor an explicit URL
         return self.model.split("/", 1)[0] in {"ollama", "ollama_chat", "lm_studio"}
+
+    @property
+    def is_live(self) -> bool:
+        """True when the agent has enough connection info to reach a real LLM endpoint."""
+        if self.decision_llm.enabled:
+            return self.decision_llm.is_live
+        return self.system2_is_live
 
 class TrialConfig(BaseModel):
     """체험 서버 (`trial`). 켜면 원격 방문자가 `/trial` 에서 템플릿으로 토론을 돌려 봅니다.
@@ -816,6 +991,16 @@ class RootConfig(BaseModel):
                 if isinstance(st_agent, dict):
                     merged.update(st_agent)
                 agent_raw["sequential_thinking"] = merged
+
+            dl_default = llm_raw.get("decision_llm")
+            if isinstance(dl_default, dict):
+                merged_dl = {k: v for k, v in dl_default.items() if not is_blank(v)}
+                dl_agent = agent_raw.get("decision_llm")
+                if isinstance(dl_agent, dict):
+                    for k, v in dl_agent.items():
+                        if not is_blank(v):
+                            merged_dl[k] = v
+                agent_raw["decision_llm"] = merged_dl
 
         return data
 

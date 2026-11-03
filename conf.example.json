@@ -172,6 +172,25 @@
       ],
       "// mcp 모드 추가 항목": "\"mcp_server\": \"sequential_thinking\"  — 사용할 MCP 서버 키",
       "// prompt_template": "직접 작성한 단계적 사고 지침. {max_steps} 치환자를 쓸 수 있습니다 (문자열 배열 가능)"
+    },
+    "// decision_llm": [
+      "결정 LLM (System 1 Decision LLM — Jev / Laya) 전역 기본값 (기본 비활성화).",
+      "각 에이전트는 기본값으로 기존 생성형 LLM(System 2)을 사용하며, enabled 를 true 로 켜면",
+      "단일 패스 확률 판정 모델(Jev 또는 Laya, /v1/systemone 규격)을 사용합니다.",
+      "  - 오케스트레이터에서 켠 경우 : 발언자 지명·그래프 분기(gate)·서브 토론 개시 판정에 System 1 사용 (계획·합성·장부는 System 2 유지)",
+      "  - 전문가 에이전트에서 켠 경우 : 해당 에이전트가 System 1 확률/점수/선택지 평가 심판관으로 발언",
+      "API 키는 .env (JEV_API_KEY / LAYA_API_KEY / DECISION_API_KEY) 에서 1차적으로 관리하며,",
+      "필요한 경우에만 아래 api_key 또는 agents.<키>.decision_llm.api_key 에 덮어씁니다."
+    ],
+    "decision_llm": {
+      "enabled": false,
+      "backend": "${DECISION_BACKEND:-jev}",
+      "model": "${DECISION_MODEL}",
+      "api_base": "${DECISION_API_BASE}",
+      "api_key": "${DECISION_API_KEY}",
+      "model_path": "${LAYA_MODEL_PATH}",
+      "threshold": 0.5,
+      "timeout": 15
     }
   },
   "// mcp_servers": [
@@ -584,7 +603,7 @@
     "  allowed_mcp_servers / allowed_skills / system_prompt / enabled",
     "  allowed_modalities (@언급된 파일 및 도구 반환 미디어 중 내용을 BASE64로 직접 주입할 형식 목록: image, audio, video, document. 비워 둘 경우 텍스트 및 파일 경로만 전달됩니다)",
     "  debate_priority (발언 순서, 낮을수록 먼저) / debate_stance (proponent|critic|neutral)",
-    "  sequential_thinking (하위 객체)"
+    "  sequential_thinking (하위 객체) / decision_llm (System 1 결정 LLM 하위 객체: Jev·Laya)"
   ],
   "agents": {
     "// orchestrator": "1. 필수 오케스트레이터 에이전트 (지우거나 끌 수 없습니다)",
@@ -735,6 +754,14 @@
     "    \"mode\": \"native\",",
     "    \"reasoning_effort\": \"high\",",
     "    \"thinking_budget_tokens\": 8192",
+    "  }",
+    "",
+    "⑥ System 1 결정 LLM (Jev 또는 Laya, 단일 패스 /v1/systemone 평가)",
+    "  \"decision_llm\": {",
+    "    \"enabled\": true,",
+    "    \"backend\": \"jev\",",
+    "    \"model\": \"jev-latest\",",
+    "    \"threshold\": 0.5",
     "  }"
   ]
 }

@@ -58,11 +58,13 @@ from app.agents.connection import (
     classify,
     connection_id,
     connection_signature,
+    decision_connection_signature,
     global_entry,
 )
+from app.agents.decision import DecisionCaller
 from app.agents.llm_gate import get_llm_gate
 from app.agents.llm_request import LOCAL_API_KEY_PLACEHOLDER
-from app.config import AgentConfig, RootConfig, get_config
+from app.config import ORCHESTRATOR_KEY, AgentConfig, DecisionLLMConfig, RootConfig, get_config
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +99,12 @@ class ModelTarget:
     extra_body: str = field(repr=False)
     users: Tuple[str, ...]
     is_live: bool
+    decision_cfg: Optional[DecisionLLMConfig] = field(default=None, repr=False)
 
     @property
     def endpoint(self) -> str:
+        if self.decision_cfg is not None:
+            return self.decision_cfg.endpoint_label
         return self.api_base or DEFAULT_ENDPOINT
 
 
@@ -133,8 +138,26 @@ class ModelRow:
 def collect_targets(config: Optional[RootConfig] = None) -> List[ModelTarget]:
     """확인할 연결 목록. 전역 기본값이 맨 앞이고, 그 뒤는 설정에 적힌 에이전트 순서입니다."""
     config = config or get_config()
-    entries: List[Tuple[str, AgentConfig]] = [(GLOBAL_USER, global_entry(config.llm))]
-    entries += [(cfg.name or key, cfg) for key, cfg in config.agents.items() if cfg.enabled]
+    global_s2 = global_entry(config.llm)
+    if global_s2.decision_llm.enabled:
+        global_s2 = global_s2.model_copy(update={"decision_llm": DecisionLLMConfig()})
+    entries: List[Tuple[str, AgentConfig]] = [(GLOBAL_USER, global_s2)]
+    s1_entries: List[Tuple[str, DecisionLLMConfig]] = []
+    if config.llm.decision_llm.enabled:
+        s1_entries.append((f"{GLOBAL_USER} (결정 LLM)", config.llm.decision_llm))
+
+    for key, cfg in config.agents.items():
+        if not cfg.enabled:
+            continue
+        label = cfg.name or key
+        if not cfg.decision_llm.enabled:
+            entries.append((label, cfg))
+        elif key == ORCHESTRATOR_KEY:
+            s2_cfg = cfg.model_copy(update={"decision_llm": DecisionLLMConfig()})
+            entries.append((label, s2_cfg))
+            s1_entries.append((f"{label} (결정 LLM)", cfg.decision_llm))
+        else:
+            s1_entries.append((label, cfg.decision_llm))
 
     grouped: Dict[Tuple[Any, ...], Tuple[AgentConfig, List[str]]] = {}
     for user, cfg in entries:
@@ -147,6 +170,25 @@ def collect_targets(config: Optional[RootConfig] = None) -> List[ModelTarget]:
             model=cfg.model, api_base=cfg.api_base, api_key=cfg.api_key, api_version=cfg.api_version,
             provider=cfg.provider, extra_headers=signature[5], extra_body=signature[6],
             users=tuple(users), is_live=cfg.is_live,
+        ))
+
+    s1_grouped: Dict[Tuple[Any, ...], Tuple[DecisionLLMConfig, List[str]]] = {}
+    for user, dcfg in s1_entries:
+        s1_grouped.setdefault(decision_connection_signature(dcfg), (dcfg, []))[1].append(user)
+
+    for _sig, (dcfg, users) in s1_grouped.items():
+        targets.append(ModelTarget(
+            id=connection_id(dcfg),
+            model=f"{dcfg.backend}/{dcfg.effective_model}",
+            api_base=dcfg.effective_api_base,
+            api_key=dcfg.effective_api_key,
+            api_version=None,
+            provider=dcfg.backend,
+            extra_headers=(),
+            extra_body="{}",
+            users=tuple(users),
+            is_live=dcfg.is_live,
+            decision_cfg=dcfg,
         ))
     return targets
 
@@ -217,10 +259,16 @@ async def probe(
 
     started = time.monotonic()
     try:
-        await asyncio.wait_for(
-            llm_module.litellm.acompletion(**probe_kwargs(target, timeout_seconds)),
-            timeout_seconds + 2.0,
-        )
+        if target.decision_cfg is not None:
+            await asyncio.wait_for(
+                DecisionCaller().probe(target.decision_cfg, timeout_seconds),
+                timeout_seconds + 2.0,
+            )
+        else:
+            await asyncio.wait_for(
+                llm_module.litellm.acompletion(**probe_kwargs(target, timeout_seconds)),
+                timeout_seconds + 2.0,
+            )
     except Exception as exc:  # noqa: BLE001 - 어떤 실패든 한 줄의 상태가 됩니다
         state = classify(exc)
         logger.info("Model status probe failed for %s (%s): %s", target.model, state, type(exc).__name__)

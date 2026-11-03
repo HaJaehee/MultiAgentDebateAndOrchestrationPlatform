@@ -676,22 +676,37 @@ class GraphRunner(PhaseExecutor):
         )}]
 
         decision, reason, understood = node.default, "", False
+        decision_caller = getattr(self.ctx.llm_caller, "decision_caller", None)
         try:
-            content, _ = await self.ctx.llm_caller.call_agent(
-                judge,
-                prompt,
-                state.custom_instructions,
-                session_id=state.session_id,
-                mcp=self.ctx.mcp_for(state),
-                tool_gate=self.ctx.gate_for(state),
-                ledger=state.decision_ledger,
-            )
-            parsed = parse_gate_decision(content)
-            if parsed is not None:
-                decision, reason = parsed
+            if orchestrator.decision_llm.enabled and decision_caller is not None:
+                state_parts = [f"[목표]\n{state.user_prompt}"]
+                if record.text:
+                    state_parts.append(record.text)
+                state_parts.append("[판정할 내용]\n" + ("\n\n".join(blocks) or "(들어온 발언이 없습니다)"))
+                if conclusions:
+                    state_parts.append(conclusions)
+                if state.decision_ledger:
+                    state_parts.append(f"[결정 장부]\n{state.decision_ledger}")
+                decision, reason = await decision_caller.evaluate_gate(
+                    orchestrator, "\n\n".join(state_parts), node.question,
+                )
                 understood = True
             else:
-                reason = "판정 응답을 읽지 못했습니다"
+                content, _ = await self.ctx.llm_caller.call_agent(
+                    judge,
+                    prompt,
+                    state.custom_instructions,
+                    session_id=state.session_id,
+                    mcp=self.ctx.mcp_for(state),
+                    tool_gate=self.ctx.gate_for(state),
+                    ledger=state.decision_ledger,
+                )
+                parsed = parse_gate_decision(content)
+                if parsed is not None:
+                    decision, reason = parsed
+                    understood = True
+                else:
+                    reason = "판정 응답을 읽지 못했습니다"
         except LLMUnavailableError as exc:
             reason = f"판정 호출에 실패했습니다 ({exc.reason})"
 

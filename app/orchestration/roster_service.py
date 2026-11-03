@@ -26,6 +26,7 @@ from app.config import (
     add_mcp_server_to_conf_file,
     add_tool_security_rules_to_conf_file,
     get_config,
+    read_raw_agent_entry,
     remove_agent_from_conf_file,
     remove_mcp_server_from_conf_file,
     remove_tool_security_rule_from_conf_file,
@@ -36,6 +37,7 @@ from app.config import (
     set_agent_debate_order_in_conf_file,
     set_agent_debate_stance_in_conf_file,
     set_agent_enabled_in_conf_file,
+    set_agent_model_settings_in_conf_file,
     set_agent_peer_consultation_in_conf_file,
     set_mcp_server_enabled_in_conf_file,
     set_skill_enabled_in_conf_file,
@@ -120,6 +122,14 @@ class RosterService:
             return dict(get_config().agents)
         except Exception as e:  # noqa: BLE001 - 화면은 설정 오류로 죽지 않아야 합니다
             logger.warning(f"Could not read agents from conf.json: {e}")
+            return {}
+
+    def raw_agent_entry(self, agent_key: str) -> Dict[str, Any]:
+        """conf.json 의 `agents.<key>` 원본(환경변수 치환 전, 주석 키 제외)을 조회합니다."""
+        try:
+            return read_raw_agent_entry(agent_key, self.conf_path())
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Could not read raw agent entry '{agent_key}' from conf.json: {e}")
             return {}
 
     @staticmethod
@@ -253,6 +263,24 @@ class RosterService:
 
     def set_agent_modalities(self, agent_key: str, modalities: List[str]) -> None:
         set_agent_allowed_modalities_in_conf_file(agent_key, modalities, self.conf_path())
+
+    def set_agent_model_settings(
+        self,
+        agent_key: str,
+        decision_llm: Optional[Dict[str, Any]] = None,
+        *,
+        clear_decision_api_key: bool = False,
+        system2_overrides: Optional[Dict[str, Any]] = None,
+        clear_system2_fields: Optional[List[str]] = None,
+    ) -> None:
+        set_agent_model_settings_in_conf_file(
+            agent_key,
+            decision_llm=decision_llm,
+            clear_decision_api_key=clear_decision_api_key,
+            system2_overrides=system2_overrides,
+            clear_system2_fields=clear_system2_fields,
+            config_path=self.conf_path(),
+        )
 
     def set_mcp_enabled(self, server_name: str, enabled: bool) -> None:
         set_mcp_server_enabled_in_conf_file(server_name, enabled, self.conf_path())

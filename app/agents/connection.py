@@ -10,7 +10,7 @@ import hashlib
 import json
 from typing import Any, Dict, Optional, Sequence, Tuple
 
-from app.config import AgentConfig, LLMConfig
+from app.config import ORCHESTRATOR_KEY, AgentConfig, DecisionLLMConfig, LLMConfig
 
 # 상태: (화면 표기, 색조, 사람이 할 일)
 GLOBAL_USER = "전역 기본값"
@@ -89,12 +89,31 @@ def global_entry(llm: LLMConfig, extra_fields: Sequence[str] = ()) -> AgentConfi
     전역에 비어 있는 값은 `AgentConfig` 의 기본값이 됩니다.
     """
     names = (*CONNECTION_FIELDS, *extra_fields)
-    values = {name: getattr(llm, name) for name in names if not _blank(getattr(llm, name))}
+    values: Dict[str, Any] = {name: getattr(llm, name) for name in names if not _blank(getattr(llm, name))}
+    if llm.decision_llm.enabled:
+        values["decision_llm"] = llm.decision_llm.model_copy(deep=True)
     return AgentConfig(name=GLOBAL_USER, role="", **values)
 
 
+def decision_connection_signature(dcfg: DecisionLLMConfig) -> Tuple[Any, ...]:
+    """System 1 결정 LLM(Jev / Laya) 연결을 가르는 값 전부."""
+    return (
+        "decision_llm",
+        dcfg.backend,
+        dcfg.effective_model,
+        dcfg.effective_api_base or "",
+        dcfg.effective_api_key or "",
+        dcfg.effective_model_path or "",
+    )
+
+
 def connection_signature(cfg: Any) -> Tuple[Any, ...]:
-    """연결을 가르는 값 전부. `AgentConfig` 와 `Agent` 어느 쪽을 넣어도 같은 값이 나옵니다."""
+    """연결을 가르는 값 전부. `AgentConfig`, `Agent`, `DecisionLLMConfig` 어느 쪽을 넣어도 같은 값이 나옵니다."""
+    if isinstance(cfg, DecisionLLMConfig):
+        return decision_connection_signature(cfg)
+    dcfg = getattr(cfg, "decision_llm", None)
+    if isinstance(dcfg, DecisionLLMConfig) and dcfg.enabled and getattr(cfg, "key", None) != ORCHESTRATOR_KEY:
+        return decision_connection_signature(dcfg)
     return (
         cfg.model, cfg.api_base or "", cfg.api_key or "", cfg.api_version or "", cfg.provider or "",
         tuple(sorted((str(k), str(v)) for k, v in (cfg.extra_headers or {}).items())),

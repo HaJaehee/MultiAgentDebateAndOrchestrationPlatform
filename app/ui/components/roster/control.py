@@ -88,6 +88,7 @@ class AgentRosterControl:
             disable_agent=self.admin.disable_agent,
             on_selection_changed=self.update_summary_badge,
             refresh_disabled=self.admin.refresh_disabled,
+            open_model=self.dialogs.open_model_settings,
         )
         self.workspace = WorkspaceRowComponent(
             self.state, self.service, self.changes,
