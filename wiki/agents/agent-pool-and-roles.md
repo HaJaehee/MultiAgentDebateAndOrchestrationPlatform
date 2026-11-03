@@ -15,11 +15,12 @@ produces them in two steps.
 
 ```python
 AGENT_STYLE_MAP = {
-    "orchestrator": {"avatar": "forum",        "color": "indigo-8",      "badge_color": "#3f51b5"},
-    "architect":    {"avatar": "account_tree", "color": "teal-8",        "badge_color": "#009688"},
-    "coder":        {"avatar": "code",         "color": "deep-purple-8", "badge_color": "#673ab7"},
-    "critic":       {"avatar": "security",     "color": "amber-9",       "badge_color": "#ff8f00"},
-    "user":         {"avatar": "chat_bubble",  "color": "blue-grey-8",   "badge_color": "#607d8b"},
+    "orchestrator":  {"avatar": "forum",        "color": "indigo-8",      "badge_color": "#3f51b5"},
+    "architect":     {"avatar": "account_tree", "color": "teal-8",        "badge_color": "#009688"},
+    "coder":         {"avatar": "code",         "color": "deep-purple-8", "badge_color": "#673ab7"},
+    "critic":        {"avatar": "security",     "color": "amber-9",       "badge_color": "#ff8f00"},
+    "diagnostician": {"avatar": "biotech",      "color": "cyan-8",        "badge_color": "#0097a7"},
+    "user":          {"avatar": "chat_bubble",  "color": "blue-grey-8",   "badge_color": "#607d8b"},
 }
 ```
 
@@ -76,7 +77,7 @@ tests.
 | Field | Default | Meaning |
 | :--- | :--- | :--- |
 | `debate_priority` | `100` | Speaking order within a round; lower speaks first. Equal values keep `conf.json` order, so an unconfigured file speaks in file order. |
-| `debate_stance` | `"neutral"` | `proponent` / `critic` / `neutral`; read only by the adversarial strategy. |
+| `debate_stance` | `"neutral"` | `proponent` / `critic` / `diagnostician` / `neutral`; drives diagnostic verification and adversarial/sequential turn instructions. |
 
 Both are edited from the roster (drag to reorder, ⋮ menu for stance — see
 [roster-editing.md](roster-editing.md)) and both are captured in the session snapshot.
@@ -137,6 +138,16 @@ graph LR
   - Identifies vulnerabilities (OWASP Top 10, path traversal, injection, unhandled race conditions).
   - Actively writes stress-test and edge-case code, running it in the `sandbox` to substantiate critiques with empirical evidence.
   - Challenges optimistic assumptions made by the Architect or Coder.
+
+### 2.5. Root-Cause Diagnostician (`diagnostician`)
+- **Key**: `diagnostician`
+- **Role**: Reproduction & Execution-Grounded Root-Cause Verification (`debate_stance: "diagnostician"`, `debate_priority: 50`)
+- **Allowed MCP Tools**: `filesystem` (read-only), `sandbox` (execution-only; workspace writes denied via `tool_security`), `git` (read-only)
+- **Default Temperature**: `0.1` · **Model Env**: `${DIAGNOSTICIAN_MODEL}` (recommended to differ from `coder`/`critic` to avoid shared model bias)
+- **Responsibilities**:
+  - Converts critic hypotheses into **execution-grounded evidence**: minimal reproduction scripts, compiler/sandbox tracebacks, and exact `file:line` / symbol root-cause locations.
+  - Enforced by `SpeechRunner._enforce_diagnostic_evidence`: if execution tools are available and skipped, 1 verification retry is issued; unverified speeches are explicitly badged with `[실행 검증 미수행]`.
+  - Pairs with `[시도·검증 이력]` accumulation and the external stagnation observer (`app/orchestration/diagnostic_loop.py`) to break symptom-patching loops ([ADR-049](../../lectures/05-adr/ADR-049-execution-grounded-diagnostician-and-stagnation-observer.md)).
 
 ---
 

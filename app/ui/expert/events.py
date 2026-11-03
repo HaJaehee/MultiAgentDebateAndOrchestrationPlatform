@@ -96,6 +96,15 @@ class ExpertEventView:
                 type="positive", position="bottom-right",
             )
 
+    @_handles(EventType.STAGNATION_DETECTED)
+    async def _on_stagnation_detected(self, event: Event) -> None:
+        r = event.get("round", 0)
+        streak = event.get("streak", 2)
+        ui.notify(
+            f"Round {r}까지 {streak}회 연속 동일 실패가 감지되어 오케스트레이터 재설계 단계로 에스컬레이션합니다.",
+            type="warning", position="bottom-right",
+        )
+
     @_handles(EventType.MESSAGE_STREAM_START)
     async def _on_message_stream_start(self, event: Event) -> None:
         self.page.chat_feed.start_streaming_message(event.get("message", {}))

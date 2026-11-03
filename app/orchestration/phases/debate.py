@@ -14,10 +14,11 @@ import logging
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from app.agents.base import Agent
+from app.agents.llm_context import context_budget
 from app.agents.llm_types import LLMUnavailableError
+from app.agents.reasoning import strip_reasoning_trace
 from app.events import EventCallback, EventType
-from app.orchestration import context_memory as memory
-from app.orchestration import turns
+from app.orchestration import context_memory as memory, diagnostic_loop, turns
 from app.orchestration.artifacts import format_roster
 from app.orchestration.control import TurnControl
 from app.orchestration.phases.base import PhaseExecutor
@@ -130,6 +131,15 @@ class DebatePhaseExecutor(PhaseExecutor):
 
         # 직전 라운드 종료 시 갱신된 결정 장부. 수렴 판정은 두 라운드의 장부를 비교합니다.
         round_ledger: Optional[str] = None
+        round_ledgers: Dict[int, str] = (
+            diagnostic_loop.round_ledgers_from_messages(
+                state.messages[state.turn_message_start:],
+                fallback_round=start_round - 1,
+                fallback_ledger=state.decision_ledger,
+            )
+            if resume
+            else {}
+        )
 
         for round_num in range(start_round, max_rounds + 1):
             resuming_round = resume and round_num == start_round
@@ -167,7 +177,14 @@ class DebatePhaseExecutor(PhaseExecutor):
                     break
                 if round_num < max_rounds and not (control is not None and control.stop_requested):
                     ending, round_ledger = await self._close_round(
-                        db, state, setup, round_num, on_event=on_event, previous=round_ledger,
+                        db,
+                        state,
+                        setup,
+                        round_num,
+                        on_event=on_event,
+                        previous=round_ledger,
+                        round_ledgers=round_ledgers,
+                        control=control,
                     )
                     if ending is not None:
                         stopped_early = ending == turns.EARLY_END_BUDGET
@@ -240,7 +257,14 @@ class DebatePhaseExecutor(PhaseExecutor):
 
             if round_num < max_rounds and not (control is not None and control.stop_requested):
                 ending, round_ledger = await self._close_round(
-                    db, state, setup, round_num, on_event=on_event, previous=round_ledger,
+                    db,
+                    state,
+                    setup,
+                    round_num,
+                    on_event=on_event,
+                    previous=round_ledger,
+                    round_ledgers=round_ledgers,
+                    control=control,
                 )
                 if ending is not None:
                     stopped_early = ending == turns.EARLY_END_BUDGET
@@ -257,6 +281,8 @@ class DebatePhaseExecutor(PhaseExecutor):
         *,
         on_event: Optional[EventCallback],
         previous: Optional[str],
+        round_ledgers: Optional[Dict[int, str]] = None,
+        control: Optional[TurnControl] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """라운드를 종료하고 결정 장부를 갱신한 뒤, 조기 종료 조건을 검사합니다.
 
@@ -271,6 +297,8 @@ class DebatePhaseExecutor(PhaseExecutor):
             state=state, orchestrator=setup.orchestrator, on_event=on_event, reason=f"Round {round_num}",
         )
         current = state.decision_ledger if updated else None
+        if current is not None and round_ledgers is not None:
+            round_ledgers[round_num] = current
         remaining = setup.max_rounds - round_num
         used = state.usage.total_tokens
         if setup.token_budget and used >= setup.token_budget:
@@ -291,6 +319,26 @@ class DebatePhaseExecutor(PhaseExecutor):
                 f"추가되지 않았습니다. 남은 {remaining}라운드를 건너뛰고 결론 합성으로 진행합니다."
             )
         else:
+            if not (control is not None and control.stop_requested):
+                stances = {a.key: a.debate_stance for a in setup.active_agents}
+                report = diagnostic_loop.observe_stagnation(
+                    state.messages[state.turn_message_start:],
+                    round_num=round_num,
+                    ledger_by_round=round_ledgers,
+                    stances_by_key=stances,
+                )
+                if report is not None:
+                    await self._escalate_stagnation(
+                        db,
+                        state,
+                        setup,
+                        report,
+                        remaining_rounds=remaining,
+                        current_ledger=current,
+                        stances=stances,
+                        on_event=on_event,
+                        control=control,
+                    )
             return None, current
 
         logger.info(f"Session {state.session_id}: ending the debate after round {round_num} ({reason})")
@@ -313,6 +361,118 @@ class DebatePhaseExecutor(PhaseExecutor):
                 "max_rounds": setup.max_rounds,
             })
         return reason, current
+
+    async def _escalate_stagnation(
+        self,
+        db: Any,
+        state: DebateState,
+        setup: "TurnSetup",
+        report: diagnostic_loop.StagnationReport,
+        *,
+        remaining_rounds: int,
+        current_ledger: Optional[str],
+        stances: Dict[str, str],
+        on_event: Optional[EventCallback],
+        control: Optional[TurnControl],
+    ) -> None:
+        """외부 관찰자가 정체를 감지했을 때 오케스트레이터 재설계 단계로 에스컬레이션합니다 (ADR-049).
+
+        참여 에이전트들의 설득형 발언 원문은 프롬프트에서 격리하고, 원래 요구사항·실행 실패 증거·시도 이력만
+        오케스트레이터에 넘겨 기존 계획을 대체(`state.plan_index` 갱신)합니다.
+        """
+        logger.info(
+            f"Session {state.session_id}: escalating to redesign after round {report.round_number} "
+            f"(streak={report.streak}, signatures={list(report.signatures)})"
+        )
+        meta = report.as_meta()
+        if current_ledger:
+            meta["ledger"] = current_ledger
+        await self.recorder.record_note(
+            db=db,
+            state=state,
+            on_event=on_event,
+            agent=setup.orchestrator,
+            round_number=report.round_number,
+            msg_type="orchestrator",
+            content=diagnostic_loop.format_stagnation_note(report, remaining_rounds),
+            kind=turns.KIND_STAGNATION,
+            data=meta,
+        )
+        if on_event:
+            await on_event({
+                "type": EventType.STAGNATION_DETECTED,
+                **report.as_meta(),
+                "max_rounds": setup.max_rounds,
+            })
+
+        planner = self.conversation.tool_less(setup.orchestrator)
+        state.status = "planning"
+        state.current_speaker = planner.name
+        if on_event:
+            await on_event({
+                "type": EventType.STATUS_CHANGED,
+                "status": "planning",
+                "speaker": planner.name,
+                "round": report.round_number,
+            })
+
+        user_record = memory.build_user_record(
+            state,
+            model=planner.model,
+            token_cap=int(context_budget(planner) * memory.USER_RECORD_SHARE),
+        ).text
+        previous_plan = (
+            strip_reasoning_trace(state.messages[state.plan_index].content).strip()
+            if state.plan_index is not None and 0 <= state.plan_index < len(state.messages)
+            else ""
+        )
+        turn_messages = state.messages[state.turn_message_start:]
+        ledgers = diagnostic_loop.round_ledgers_from_messages(
+            turn_messages,
+            fallback_round=report.round_number,
+            fallback_ledger=current_ledger or state.decision_ledger,
+        )
+        attempts = diagnostic_loop.collect_round_attempts(
+            turn_messages,
+            up_to_round=report.round_number,
+            ledger_by_round=ledgers,
+            stances_by_key=stances,
+        )
+        attempt_cap = memory.memory_cap(
+            diagnostic_loop.ATTEMPT_HISTORY_SHARE,
+            diagnostic_loop.ATTEMPT_HISTORY_MAX_CHARS,
+            state.memory_budget or context_budget(planner),
+        )
+        attempt_history = diagnostic_loop.format_attempt_history(attempts, max_chars=attempt_cap)
+        specialists = [a for a in setup.active_agents if a.key != "orchestrator"]
+        roster_block = format_roster(specialists) if specialists else "(전문가 없음)"
+
+        redesigned = await self.speech.speak(
+            db=db,
+            state=state,
+            agent=planner,
+            prompt_messages=diagnostic_loop.redesign_prompt(
+                user_prompt=state.user_prompt,
+                user_record=user_record,
+                previous_plan=previous_plan,
+                report=report,
+                attempt_history=attempt_history,
+                ledger=current_ledger or state.decision_ledger,
+                roster_block=roster_block,
+                remaining_rounds=remaining_rounds,
+            ),
+            custom_instructions=setup.custom_instructions,
+            round_number=report.round_number,
+            msg_type="orchestrator",
+            on_event=on_event,
+            control=control,
+            kind=turns.KIND_PLAN,
+        )
+        state.status = "debating"
+        if redesigned.msg_type != "error":
+            state.plan_index = len(state.messages) - 1
+            state.plan_tasks = []
+            state.approval_index = None
 
     async def select_speakers(
         self,

@@ -22,6 +22,7 @@ AGENT_STYLE_MAP: Dict[str, Dict[str, str]] = {
     "architect": {"avatar": "account_tree", "color": "teal-8", "badge_color": "#009688"},
     "coder": {"avatar": "code", "color": "deep-purple-8", "badge_color": "#673ab7"},
     "critic": {"avatar": "security", "color": "amber-9", "badge_color": "#ff8f00"},
+    "diagnostician": {"avatar": "biotech", "color": "cyan-8", "badge_color": "#0097a7"},
     "user": {"avatar": "chat_bubble", "color": "blue-grey-8", "badge_color": "#607d8b"},
 }
 
@@ -176,7 +177,7 @@ class Agent(BaseModel):
     # 토론에서의 자리. 전략이 이 값으로 순서와 진영을 정합니다 (에이전트 키를
     # 문자열로 박아 두던 방식을 대신합니다).
     debate_priority: int = DEFAULT_DEBATE_PRIORITY
-    debate_stance: Literal["proponent", "critic", "neutral"] = "neutral"
+    debate_stance: Literal["proponent", "critic", "diagnostician", "neutral"] = "neutral"
     sequential_thinking: SequentialThinkingConfig = Field(default_factory=SequentialThinkingConfig)
     decision_llm: DecisionLLMConfig = Field(default_factory=DecisionLLMConfig)
     # 자기 연결이 실패했을 때 전역 기본 모델이 대신 답해도 되는지 (`llm.fallback`, ADR-030).

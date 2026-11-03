@@ -15,6 +15,7 @@ from app.config import ORCHESTRATOR_KEY, PEERS_TOOL_PREFIX
 STANCE_PREVIEW_CLASSES = {
     "proponent": "bg-emerald-500/15 text-emerald-300",
     "critic": "bg-rose-500/15 text-rose-300",
+    "diagnostician": "bg-cyan-500/15 text-cyan-300",
     "neutral": "bg-slate-700/60 text-slate-300",
 }
 
@@ -82,8 +83,8 @@ def dropped_after(event: Any) -> bool:
 
 
 # 디베이트 전략의 진영. conf.json 에는 영문 키가 들어가고 화면에는 이 이름이 뜹니다.
-STANCE_LABELS = {"proponent": "제안자", "critic": "비판자", "neutral": "중립"}
-STANCE_COLORS = {"proponent": "teal-8", "critic": "amber-9", "neutral": "slate-7"}
+STANCE_LABELS = {"proponent": "제안자", "critic": "비판자", "diagnostician": "진단자", "neutral": "중립"}
+STANCE_COLORS = {"proponent": "teal-8", "critic": "amber-9", "diagnostician": "cyan-8", "neutral": "slate-7"}
 FLOAT_AGENT_FIELDS = ("temperature", "top_p", "timeout")
 
 

@@ -17,13 +17,15 @@ from sqlalchemy import delete, update
 from app.agents import llm_fallback, llm_usage
 from app.agents.ask_user import QUESTION_WAIT_SECONDS, Asker, asking
 from app.agents.base import Agent
+from app.agents.host_tools import host_tools_for
 from app.agents.llm_types import LLMUnavailableError
 from app.agents.media import attachments_for
 from app.agents.skills import with_designated_skills
+from app.agents.tool_loading import plan_shelf
 from app.config import ORCHESTRATOR_KEY, TOOL_ITERATION_CEILING
 from app.database.models import MessageModel, SpeechDraftModel, ToolCallRecordModel, utc_now
 from app.events import EventCallback, EventType
-from app.orchestration import session_title, speech_comments, turns
+from app.orchestration import diagnostic_loop, session_title, speech_comments, turns
 from app.orchestration.context import EngineContext
 from app.orchestration.control import TurnControl, asks_human
 from app.orchestration.recording import TurnRecorder
@@ -130,7 +132,14 @@ class _Speech:
         # 끝난 발언을 다시 실행하는 중이면 그 발언의 자리입니다 (ADR-036). 새 행을 넣지 않고 그 행을 고칩니다.
         self.revision = revision
         self.id = revision.message_id if revision else (draft["id"] if draft else str(uuid.uuid4()))
-        self.turn_meta: Dict[str, Any] = revision.turn_meta if revision else turns.meta(kind)
+        extra_meta = (
+            {"stance": agent.debate_stance}
+            if kind == turns.KIND_SPEECH and agent.debate_stance != "neutral"
+            else {}
+        )
+        self.turn_meta: Dict[str, Any] = (
+            dict(revision.turn_meta) if revision else turns.meta(kind, **extra_meta)
+        )
         # 이 발언에 실린 인라인 코멘트. 발언이 기록되는 커밋에서 전달됨으로 적습니다.
         self.comment_ids: List[str] = []
         # 벽시계 시작 시각. `created_at` 과 따로 둡니다 — 그쪽은 발언이 끝난 뒤에
@@ -188,7 +197,7 @@ class _Speech:
         """이번 차례의 지시를 기록에 남깁니다. 이 발언만 다시 실행할 때 같은 지시로 답하게 합니다 (ADR-036)."""
         last = prompt_messages[-1].get("content") if prompt_messages else None
         if self.kind == turns.KIND_SPEECH and self.revision is None and isinstance(last, str):
-            self.turn_meta = turns.meta(self.kind, **{PROMPT_TAIL: last})
+            self.turn_meta = {**self.turn_meta, PROMPT_TAIL: last}
 
     async def on_tool_call(self, call_log: Dict[str, Any]) -> None:
         self.executed_tools.append(call_log)
@@ -724,6 +733,106 @@ class SpeechRunner:
 
         return ask
 
+    def _offered_tools_for(self, agent: Agent, state: DebateState) -> List[Dict[str, Any]]:
+        """이번 발언에 실제로 제공되는 도구 스키마 목록을 계산합니다 (실행 검증 가능 여부 판정용)."""
+        if agent.decision_llm.enabled and agent.key != ORCHESTRATOR_KEY:
+            return []
+        try:
+            mcp = self.ctx.mcp_for(state) or getattr(self.ctx.llm_caller, "mcp_manager", None)
+            resolve_fn = getattr(self.ctx.llm_caller, "resolve_tool_servers", None)
+            servers = resolve_fn(agent) if callable(resolve_fn) else list(agent.allowed_mcp_servers or [])
+            tools: List[Dict[str, Any]] = []
+            if mcp is not None and hasattr(mcp, "get_openai_tools_for_servers"):
+                tools = mcp.get_openai_tools_for_servers(servers) or []
+            caller_mcp = getattr(self.ctx.llm_caller, "mcp_manager", None)
+            if (
+                not tools
+                and caller_mcp is not None
+                and caller_mcp is not mcp
+                and hasattr(caller_mcp, "get_openai_tools_for_servers")
+            ):
+                tools = caller_mcp.get_openai_tools_for_servers(servers) or []
+                mcp = caller_mcp
+            host_tools = host_tools_for(agent)
+            gate = self.ctx.gate_for(state)
+            if gate is not None and mcp is not None:
+                tools = gate.filter_tools(agent.key, tools, mcp)
+                host_tools = gate.filter_tools(agent.key, host_tools, mcp)
+            return plan_shelf(agent, tools, host_tools, session_id=state.session_id).offered()
+        except Exception:  # noqa: BLE001 - 대역 호출기 등 도구 조회가 불가능한 환경에서도 발언은 진행합니다
+            return []
+
+    async def _enforce_diagnostic_evidence(
+        self,
+        speech: _Speech,
+        prompt_messages: List[Dict[str, Any]],
+        custom_instructions: str,
+        control: Optional[TurnControl],
+        content: str,
+        tool_logs: List[Dict[str, Any]],
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        """`diagnostician` 발언에 실제 실행 도구 검증이 있는지 확인하고, 필요 시 1회 보완 실행 또는 미검증 경고를 남깁니다."""
+        if (
+            speech.kind != turns.KIND_SPEECH
+            or speech.agent.debate_stance != diagnostic_loop.DIAGNOSTICIAN_STANCE
+            or speech.revision is not None
+        ):
+            return content, tool_logs
+
+        combined = list(tool_logs)
+        if diagnostic_loop.executed_verification_calls(combined or speech.executed_tools):
+            speech.turn_meta["verified"] = True
+            return content, combined
+
+        exec_tools = diagnostic_loop.available_execution_tools(
+            self._offered_tools_for(speech.agent, speech.state)
+        )
+        if (
+            exec_tools
+            and speech.draft_state is None
+            and not (control is not None and control.stop_requested)
+        ):
+            speech.turn_meta["verification_retried"] = True
+            retry_messages = list(prompt_messages) + [
+                {"role": "assistant", "content": content or "(발언 없음)"},
+                {"role": "user", "content": diagnostic_loop.diagnostic_retry_prompt(exec_tools)},
+            ]
+            try:
+                with llm_fallback.listening(speech.on_fallback):
+                    retry_content, retry_logs = await self.ctx.llm_caller.call_agent(
+                        speech.agent,
+                        retry_messages,
+                        custom_instructions,
+                        on_tool_call=speech.on_tool_call,
+                        on_chunk=None,
+                        session_id=speech.state.session_id,
+                        budget_arbiter=self.make_budget_arbiter(control, speech.on_event),
+                        context_arbiter=self.make_context_arbiter(
+                            speech.state, speech.agent, control, speech.on_event
+                        ),
+                        on_context_trim=speech.on_context_trim,
+                        mcp=self.ctx.mcp_for(speech.state),
+                        tool_gate=self.ctx.gate_for(speech.state),
+                        ledger=speech.state.decision_ledger,
+                    )
+                combined.extend(retry_logs or [])
+                if retry_content and retry_content.strip():
+                    content = retry_content
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001 - 재시도 실패로 초벌 진단 본문을 잃지 않습니다
+                logger.warning(
+                    f"Diagnostic verification retry failed for '{speech.agent.key}': "
+                    f"{type(exc).__name__}: {exc}"
+                )
+
+        if diagnostic_loop.executed_verification_calls(combined or speech.executed_tools):
+            speech.turn_meta["verified"] = True
+            return content, combined
+
+        speech.turn_meta["verified"] = False
+        return diagnostic_loop.stamp_unverified_diagnostic(content), combined
+
     async def _receive_speech(
         self,
         speech: _Speech,
@@ -766,6 +875,9 @@ class SpeechRunner:
             # 본문을 놓친 경우에 실제로 그렇게 됩니다).
             if not content.strip():
                 content = speech.stream.text
+            content, tool_logs = await self._enforce_diagnostic_evidence(
+                speech, prompt_messages, custom_instructions, control, content, tool_logs,
+            )
             final_type = speech.msg_type
             if post_process is not None:
                 # 기록과 화면에 남을 본문을 확정하기 **전에** 손봅니다. 스트리밍

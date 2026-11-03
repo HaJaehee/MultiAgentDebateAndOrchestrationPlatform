@@ -510,7 +510,29 @@
     "allow": [],
     "untrusted_sources": ["mcp(kb/search)"],
     "// agents 예": "비평가 에이전트를 읽기 전용으로 제한 — { \"critic\": { \"mode\": \"read_only\" } }",
-    "agents": {}
+    "// diagnostician": [
+      "진단(diagnostician) 에이전트는 샌드박스 재현·테스트 실행(exec)과 코드 읽기(read)는 수행하되,",
+      "작업 공간 파일 수정·삭제와 git 커밋은 차단해 원인 진단과 구현 패치 역할을 명확히 분리합니다."
+    ],
+    "agents": {
+      "diagnostician": {
+        "deny": [
+          "write(**)",
+          "mcp(filesystem/write_file)",
+          "mcp(filesystem/edit_file)",
+          "mcp(filesystem/create_directory)",
+          "mcp(filesystem/move_file)",
+          "mcp(sandbox/write_workspace_file)",
+          "mcp(sandbox/append_workspace_file)",
+          "mcp(git/git_add)",
+          "mcp(git/git_commit)",
+          "mcp(git/git_reset)",
+          "mcp(git/git_checkout)",
+          "mcp(git/git_create_branch)",
+          "mcp(git/git_init)"
+        ]
+      }
+    }
   },
   "// plan_approval": [
     "계획 승인 — 오케스트레이터의 계획(0라운드)이 나온 뒤, 본 토론을 시작하기 전에 사용자의 승인을 받습니다.",
@@ -604,7 +626,7 @@
     "  timeout / num_retries / drop_params / prompt_cache / max_tool_iterations",
     "  allowed_mcp_servers / allowed_skills / system_prompt / enabled",
     "  allowed_modalities (@멘션한 파일이나 도구가 반환한 미디어 중 원본을 BASE64로 프롬프트에 직접 첨부할 형식 목록: image, audio, video, document. 비워 두면 텍스트와 파일 경로만 전달됩니다)",
-    "  debate_priority (발언 순서, 값이 작을수록 먼저 발언) / debate_stance (proponent|critic|neutral)",
+    "  debate_priority (발언 순서, 값이 작을수록 먼저 발언) / debate_stance (proponent|critic|diagnostician|neutral)",
     "  sequential_thinking (하위 객체) / decision_llm (System 1 결정 LLM 하위 객체: Jev·Laya)"
   ],
   "agents": {
@@ -651,7 +673,7 @@
       "api_key": "${ANTHROPIC_API_KEY}",
       "temperature": 0.5,
       "debate_priority": 20,
-      "// debate_stance": "찬반 토론(Debate) 전략에서의 역할 진영 (proponent | critic | neutral)",
+      "// debate_stance": "토론 전략에서의 역할 진영 (proponent | critic | diagnostician | neutral)",
       "debate_stance": "proponent",
       "allowed_mcp_servers": [
         "filesystem",
@@ -722,6 +744,34 @@
       "system_prompt": [
         "당신은 보안 및 소프트웨어 품질 전문 리뷰어입니다.",
         "제안된 설계와 구현 코드의 보안 취약점(OWASP Top 10), 성능 병목, 동시성 문제, 엣지 케이스를 날카롭게 검토하고 구체적인 개선 방안을 제시하세요."
+      ]
+    },
+    "// diagnostician": [
+      "5. 재현·진단(Diagnostician) 에이전트 (ADR-049)",
+      "비평가의 지적을 의견이 아닌 실행 가능한 증거(샌드박스 재현 테스트, 실제 트레이스백·로그, 원인 파일:줄 위치)로",
+      "변환하여 다음 라운드 구현 에이전트에 인계합니다. 프로덕션 파일을 직접 패치하지 않도록 tool_security에서 쓰기가 차단됩니다."
+    ],
+    "diagnostician": {
+      "name": "Root-Cause Diagnostician",
+      "role": "Reproduction & Execution Diagnostics",
+      "card_color": "#0097a7",
+      "icon": "biotech",
+      "model": "${DIAGNOSTICIAN_MODEL:-${LLM_MODEL:-anthropic/claude-3-5-sonnet-20241022}}",
+      "api_base": "${DIAGNOSTICIAN_API_BASE}",
+      "api_key": "${ANTHROPIC_API_KEY}",
+      "temperature": 0.1,
+      "debate_priority": 50,
+      "debate_stance": "diagnostician",
+      "allowed_mcp_servers": [
+        "filesystem",
+        "sandbox",
+        "git"
+      ],
+      "system_prompt": [
+        "당신은 실행 기반 재현·근본 원인 진단 전담 엔지니어(Diagnostician)입니다.",
+        "앞선 비평가나 동료가 제기한 결함·엣지 케이스·성능 우려를 의견 수준으로 되풀이하지 말고, 반드시 sandbox(execute_python_code, run_python_file)와 읽기 도구(read_text_file, git_diff 등)를 직접 실행하여 검증 가능한 증거로 전환하세요.",
+        "발언에는 다음 세 가지를 구조화해 남기세요: ① 최소 재현 코드 및 실제 실행 결과(표준 출력·트레이스백·판정 상태), ② 증상이 아닌 근본 원인 위치(정확한 파일 경로, 줄 번호, 함수·클래스명), ③ 구현 에이전트가 증상 우회 없이 근본 원인을 고치기 위한 검증 기준.",
+        "프로덕션 소스 파일을 직접 수정하지 마세요. 문제 재현 시 예외나 assert 실패가 실제 도구 출력에 남도록 실행하세요."
       ]
     }
   },

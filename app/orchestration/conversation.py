@@ -18,7 +18,7 @@ from app.agents.skills import with_designated_skills
 from app.agents.tool_loading import plan_shelf
 from app.database.models import SessionModel, TurnModel
 from app.events import EventCallback, EventType
-from app.orchestration import context_memory as memory, plan_gate, turns
+from app.orchestration import context_memory as memory, diagnostic_loop, plan_gate, turns
 from app.orchestration.context import EngineContext
 from app.orchestration.state import DebateMessage, DebateState
 from app.workspace_files import mention_token
@@ -458,6 +458,20 @@ class ConversationMemory:
         own_task = plan_gate.own_task(state.plan_tasks, agent.key)
         if own_task:
             turn_prompt += f"\n\n{own_task}"
+        if state.current_round >= 2:
+            list_fn = getattr(self.ctx.agent_pool, "list_all", None)
+            stances = {a.key: a.debate_stance for a in list_fn()} if callable(list_fn) else {}
+            stances[agent.key] = agent.debate_stance
+            attempt_cap = memory.memory_cap(
+                diagnostic_loop.ATTEMPT_HISTORY_SHARE,
+                diagnostic_loop.ATTEMPT_HISTORY_MAX_CHARS,
+                state.memory_budget or budget,
+            )
+            attempt_history = diagnostic_loop.build_attempt_history(
+                state, stances_by_key=stances, max_chars=attempt_cap,
+            )
+            if attempt_history:
+                turn_prompt += f"\n\n{attempt_history}"
         turn_prompt += f"\n\n{memory.DIGEST_INSTRUCTION}"
 
         # 이 발언자가 마지막으로 말한 뒤에 나온 발언은 원문으로 (모듈 설명의 "발언을 얼마나

@@ -404,7 +404,7 @@ DEFAULT_DEBATE_PRIORITY = 100
 
 DEBATE_PRIORITY_STEP = 10
 
-DEBATE_STANCES = ("proponent", "critic", "neutral")
+DEBATE_STANCES = ("proponent", "critic", "diagnostician", "neutral")
 
 # 에이전트가 파일 내용을 직접 받을 수 있는 입력 형식 (`AgentConfig.allowed_modalities`, ADR-035).
 INPUT_MODALITIES = ("image", "audio", "video", "document")
@@ -701,11 +701,12 @@ class AgentConfig(BaseModel):
         le=999,
         description="Speaking order within a round; lower speaks earlier. Ties keep conf.json order.",
     )
-    debate_stance: Literal["proponent", "critic", "neutral"] = Field(
+    debate_stance: Literal["proponent", "critic", "diagnostician", "neutral"] = Field(
         default="neutral",
         description=(
-            "Role in the adversarial-debate strategy. "
-            "proponent: proposes and defends | critic: challenges | neutral: neither side"
+            "Role in debate strategies. "
+            "proponent: proposes and implements | critic: challenges | "
+            "diagnostician: reproduces with execution evidence | neutral: neither side"
         ),
     )
     sequential_thinking: SequentialThinkingConfig = Field(default_factory=SequentialThinkingConfig)

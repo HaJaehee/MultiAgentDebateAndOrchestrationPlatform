@@ -94,7 +94,7 @@ class TemplateParticipant(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     role: str = Field(default="", max_length=120)
     system_prompt: str = ""
-    stance: Optional[Literal["proponent", "critic", "neutral"]] = None
+    stance: Optional[Literal["proponent", "critic", "diagnostician", "neutral"]] = None
     color: str = Field(default="", max_length=40)
     # Material 아이콘 이름만 받습니다 (파일 경로는 주인 화면에서만).
     icon: str = Field(default="", pattern=r"^[a-z0-9_]{0,40}$")

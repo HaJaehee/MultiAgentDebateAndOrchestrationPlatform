@@ -1,6 +1,6 @@
 # ADR-048. 에이전트별·라운드별 토큰 소모량과 소요 시간 미니 차트 시각화 및 기존 기록 기반 집계
 
-> [ADR 목록](README.md) · 이전: [ADR-047](ADR-047-taint-speeches-that-read-outside-content.md)
+> [ADR 목록](README.md) · 이전: [ADR-047](ADR-047-taint-speeches-that-read-outside-content.md) · 다음: [ADR-049](ADR-049-execution-grounded-diagnostician-and-stagnation-observer.md)
 
 ## 상태 (Status)
 

@@ -126,28 +126,69 @@ class SequentialDebateStrategy(BaseDebateStrategy):
     def turn_instruction(
         self, agent: Agent, speakers: List[Agent], index: int, state: DebateState
     ) -> str:
+        round_num = int(getattr(state, "current_round", 1) or 1)
         if index == 0:
-            return (
-                "[순차 토론] 당신이 이번 라운드의 첫 순서입니다. 뒤 순서가 이어받아 검증할 수 "
-                "있도록, 결론과 그 근거·가정을 명확히 구분해 제시하세요."
+            prior_speaker = _last_round_closing_speaker(state, round_num - 1) if round_num >= 2 else None
+            if prior_speaker:
+                instruction = (
+                    f"[순차 토론] 당신이 이번 라운드의 첫 순서입니다. 직전 라운드 마지막 발언자인 "
+                    f"{prior_speaker}의 결론·진단 증거와 [시도·검증 이력]을 이어받아, 증상 덧대기 대신 "
+                    f"근본 원인을 반영한 해결 방향·근거·가정을 명확히 제시하세요."
+                )
+            else:
+                instruction = (
+                    "[순차 토론] 당신이 이번 라운드의 첫 순서입니다. 뒤 순서가 이어받아 검증할 수 "
+                    "있도록, 결론과 그 근거·가정을 명확히 구분해 제시하세요."
+                )
+        else:
+            previous = speakers[index - 1]
+            instruction = (
+                f"[순차 토론] 바로 앞 순서인 {previous.name}({previous.role})의 발언을 **입력으로** "
+                f"받아 이어가세요. 새 주제를 여는 대신, 그 결론이 옳은지 당신의 전문 영역에서 "
+                f"검증하고 필요한 부분을 보강하거나 반증하세요."
             )
-        previous = speakers[index - 1]
-        instruction = (
-            f"[순차 토론] 바로 앞 순서인 {previous.name}({previous.role})의 발언을 **입력으로** "
-            f"받아 이어가세요. 새 주제를 여는 대신, 그 결론이 옳은지 당신의 전문 영역에서 "
-            f"검증하고 필요한 부분을 보강하거나 반증하세요."
-        )
-        if index == len(speakers) - 1:
-            instruction += " 당신이 이번 라운드의 마지막 순서이므로, 라운드의 결론을 정리해 남기세요."
+            if index == len(speakers) - 1:
+                instruction += " 당신이 이번 라운드의 마지막 순서이므로, 라운드의 결론을 정리해 남기세요."
+
+        if agent.debate_stance == "diagnostician":
+            instruction += (
+                " [진단·재현 지침] 의견 수준의 추측이나 평가를 보태지 말고, 앞서 제기된 지적을 "
+                "**실행 가능한 증거**(최소 재현 코드·테스트 실행 결과, 실제 에러 로그·트레이스백, "
+                "정확한 근본 원인 `파일:줄`·심볼 위치)로 변환해 구현 담당자에게 넘기세요. "
+                "프로덕션 소스 파일은 직접 수정하지 마세요."
+            )
+        elif round_num >= 2 and agent.debate_stance == "proponent":
+            instruction += (
+                " 직전 라운드의 진단 증거와 [시도·검증 이력]이 있다면 증상만 우회하지 말고 "
+                "지목된 근본 원인을 수정한 뒤 실행으로 검증하세요."
+            )
         return instruction
+
+
+def _last_round_closing_speaker(state: Optional[DebateState], prev_round: int) -> Optional[str]:
+    """직전 라운드를 마무리한 전문가의 표시 이름을 반환합니다 (없으면 None)."""
+    if state is None or prev_round <= 0:
+        return None
+    start = max(0, int(getattr(state, "turn_message_start", 0) or 0))
+    messages = getattr(state, "messages", None) or []
+    for msg in reversed(messages[start:]):
+        if getattr(msg, "round_number", 0) != prev_round or getattr(msg, "msg_type", "") == "error":
+            continue
+        sender = getattr(msg, "sender_key", "")
+        if sender in ("user", ORCHESTRATOR_KEY):
+            continue
+        name = getattr(msg, "sender_name", "") or sender
+        role = getattr(msg, "sender_role", "")
+        return f"{name}({role})" if role else name
+    return None
 
 
 class AdversarialDebateStrategy(BaseDebateStrategy):
     """디베이트: 제안자와 비판자가 번갈아 발언합니다.
 
-    진영은 `debate_stance` 가 정합니다 (`proponent` / `critic` / `neutral`).
-    각 진영 안에서는 `debate_priority` 순입니다. 어느 쪽도 아닌 에이전트는 대립이
-    한 바퀴 돈 뒤에 발언합니다.
+    진영은 `debate_stance` 가 정합니다 (`proponent` / `critic` / `diagnostician` / `neutral`).
+    각 진영 안에서는 `debate_priority` 순입니다. 진단자는 양측 공방 직후에 실행 증거로 검증하고,
+    중립 에이전트는 맨 뒤에 발언합니다.
 
     양쪽 중 한쪽이 비어 있으면 대립 구도가 성립하지 않으므로, 그냥 우선순위 순의
     한 줄로 돌려줍니다. 진영을 지정하지 않은 설정에서 아무도 발언하지 못하는 일이
@@ -166,6 +207,7 @@ class AdversarialDebateStrategy(BaseDebateStrategy):
 
         proponents = [a for a in specialists if a.debate_stance == "proponent"]
         critics = [a for a in specialists if a.debate_stance == "critic"]
+        diagnosticians = [a for a in specialists if a.debate_stance == "diagnostician"]
         others = [a for a in specialists if a.debate_stance == "neutral"]
 
         if not proponents or not critics:
@@ -178,6 +220,7 @@ class AdversarialDebateStrategy(BaseDebateStrategy):
                 speakers.append(proponents[i])
             if i < len(critics):
                 speakers.append(critics[i])
+        speakers.extend(diagnosticians)
         speakers.extend(others)
         return speakers
 
@@ -193,6 +236,12 @@ class AdversarialDebateStrategy(BaseDebateStrategy):
             return (
                 "[디베이트·비판] 당신은 검증하는 쪽입니다. 직전 제안의 가정·빈틈·실패 조건을 "
                 "구체적으로 짚고, 막연한 우려 대신 재현 가능한 반례나 근거를 제시하세요."
+            )
+        if agent.debate_stance == "diagnostician":
+            return (
+                "[디베이트·진단] 당신은 양측 주장을 실행 가능한 증거로 판별하는 진단자입니다. "
+                "의견 대신 샌드박스·테스트·컴파일러를 직접 실행해 재현 결과, 에러 로그, 정확한 원인 "
+                "`파일:줄` 위치를 제시하되, 프로덕션 소스 파일은 직접 수정하지 마세요."
             )
         return ""
 

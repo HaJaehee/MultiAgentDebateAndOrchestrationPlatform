@@ -19,7 +19,7 @@ when a conversation starts.
 | Field | Meaning | Edited by |
 |-------|---------|-----------|
 | `debate_priority` | Speaking order inside a round; lower speaks earlier. Ties keep `conf.json` order. | Dragging agent cards in the roster |
-| `debate_stance` | `proponent` / `critic` / `neutral` — used by the adversarial strategy | The ⋮ menu on an agent card |
+| `debate_stance` | `proponent` / `critic` / `diagnostician` / `neutral` — used by sequential & adversarial strategies | The ⋮ menu on an agent card |
 
 > **Why not hardcode the order?** It used to be `{"architect": 0, "coder": 1, "critic": 2}`
 > inside the strategy. Once agents could be created from the UI, every key missing from that
@@ -98,8 +98,12 @@ graph TD
 - **Display Name**: 순차 토론 (Sequential Debate)
 - **Speaker Order**: every active specialist, ordered by `debate_priority`.
 - **Turn Instruction**: each speaker is told to take the **previous speaker's conclusion as
-  input** — naming them explicitly — and either build on it or challenge it. The first speaker
-  is asked to separate conclusions from assumptions; the last is asked to close the round.
+  input** — naming them explicitly — and either build on it or challenge it. From Round 2 onward,
+  the first speaker receives the baton from the previous round's closing speaker (e.g. a
+  `diagnostician` agent's reproduction report). `diagnostician` agents are instructed to convert
+  prior critiques into execution-grounded evidence (reproduction tests, tracebacks, `file:line`
+  root-cause locations) without modifying production files, and `proponent` agents in Round 2+ are
+  instructed to fix root causes rather than patching symptoms ([ADR-049](../../lectures/05-adr/ADR-049-execution-grounded-diagnostician-and-stagnation-observer.md)).
 - **Characteristics**: one pass per round with an explicit hand-off, so somebody always owns
   the previous conclusion.
 - **Ideal For**: feature development, skeleton projects, formal design workflows.
@@ -114,7 +118,8 @@ graph TD
 - **Key**: `adversarial_debate`
 - **Display Name**: 디베이트 (Debate & Critique)
 - **Speaker Order**: interleaves `proponent` agents with `critic` agents, each side internally
-  ordered by `debate_priority`; `neutral` agents speak after the clash.
+  ordered by `debate_priority`; `diagnostician` agents run immediately after the clash to verify
+  contested claims via sandbox/test execution; `neutral` agents speak last.
 - **Turn Instruction**: stance-specific — proponents propose and answer challenges head-on;
   critics must produce reproducible counter-examples rather than vague concerns.
 - **Fallback**: if either side is empty, there is nothing to alternate, so it degrades to a

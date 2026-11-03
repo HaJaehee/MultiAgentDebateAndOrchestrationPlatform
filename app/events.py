@@ -23,6 +23,7 @@ class EventType(StrEnum):
     RUNTIME_QUEUED = "runtime_queued"  # MCP 런타임 가용 슬롯 대기 중 (`ahead`: 선행 대기 턴 수, ADR-044)
     ROUND_STARTED = "round_started"
     DEBATE_ENDED_EARLY = "debate_ended_early"  # 결정 장부 수렴 또는 토큰 예산 초과로 인한 토론 조기 종료 (v1.5)
+    STAGNATION_DETECTED = "stagnation_detected"  # 외부 관찰자가 N회 연속 동일 실패를 감지해 오케스트레이터 재설계로 전환 (ADR-049)
     TURN_COMPLETED = "turn_completed"
     SESSION_TITLED = "session_titled"  # 새 대화의 세션 제목이 오케스트레이터의 첫 공식 발언을 기반으로 자동 확정됨
     WORKSPACE_CHECKPOINTED = "workspace_checkpointed"  # 턴 종료 후 워크스페이스 파일 변경 내역 체크포인트 기록 완료 (v1.5)

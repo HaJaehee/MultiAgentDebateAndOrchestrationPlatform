@@ -534,7 +534,9 @@ class AgentCardsComponent:
                 ).classes(
                     "text-[11px] px-1.5 py-0.5 rounded flex-shrink-0 "
                     + STANCE_PREVIEW_CLASSES.get(
-                        agent.debate_stance if strategy.name == "adversarial_debate" else "neutral",
+                        agent.debate_stance
+                        if (strategy.name == "adversarial_debate" or agent.debate_stance == "diagnostician")
+                        else "neutral",
                         STANCE_PREVIEW_CLASSES["neutral"],
                     )
                 )

@@ -72,6 +72,8 @@ KIND_INTERRUPTED = "interrupted"    # 서버 중단으로 발언이 끊겼다는
 KIND_SYNTHESIS = "synthesis"        # 턴을 마무리한 합성
 # 토론 조기 종료 및 결론 합성 전환 안내 메시지 유형 (v1.5). 값: reason (`converged` · `budget`), round
 KIND_EARLY_END = "early_end"
+# 외부 정체 관찰자가 N회 연속 동일 실패를 감지해 재설계로 에스컬레이션한 안내 (ADR-049). 값: round, streak, signatures
+KIND_STAGNATION = "stagnation"
 # 계획 승인 (ADR-028). 계획 발언 뒤, 토론이 시작되기 전에만 나옵니다.
 KIND_PLAN_REVISION = "plan_revision"  # 사용자의 계획 수정 요청. 후속 계획이 이전 계획을 대체합니다
 KIND_APPROVAL = "plan_approval"       # 사용자의 계획 승인. 값: plan_id, tasks, changes, approver
