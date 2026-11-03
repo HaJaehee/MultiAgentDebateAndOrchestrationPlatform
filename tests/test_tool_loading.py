@@ -506,7 +506,7 @@ def test_the_budget_for_the_transcript_counts_what_the_speech_will_send():
     mcp = _MCP()
     caller = SimpleNamespace(mcp_manager=mcp, resolve_tool_servers=lambda agent: [])
     context = EngineContext(agent_pool=None, llm_caller=caller, session_factory=lambda: None)
-    context.mcp_for = lambda state: mcp  # 턴이 빌린 런타임
+    context.mcp_for = lambda state: mcp  # 턴에 할당된 런타임
     memory = ConversationMemory.__new__(ConversationMemory)
     memory.ctx = context
     state = SimpleNamespace(session_id="s1", skill_designations={})

@@ -125,9 +125,9 @@ def is_execution_tool_name(tool_name: str) -> bool:
 
 
 def available_execution_tools(tools: Sequence[Mapping[str, Any]]) -> List[str]:
-    """주어진 도구 스키마 가운데 실행 도구의 이름 목록.
+    """주어진 도구 스키마 목록에서 실행 도구 이름 목록을 추출합니다.
 
-    지연 로딩으로 아직 불러오지 않은 도구까지 보려면 `ToolShelf.reachable()` 을 넘깁니다.
+    지연 로딩 대기 중인 도구까지 포함하려면 `ToolShelf.reachable()`의 결과를 전달합니다.
     """
     found: List[str] = []
     for item in tools or ():
@@ -161,12 +161,12 @@ def executed_verification_calls(tool_calls: Sequence[Mapping[str, Any]]) -> List
 def diagnostic_retry_prompt(exec_tools: Sequence[str], *, to_load: Sequence[str] = ()) -> str:
     """실행 도구가 있는데도 호출 없이 의견만 낸 `diagnostician` 에이전트에게 보내는 1회 보완 지시.
 
-    `to_load` 는 그중 아직 불러오지 않은 도구입니다 (지연 로딩). 먼저 불러오라고 덧붙입니다.
+    `to_load`는 이 중 아직 로드되지 않은 지연 로딩 도구 목록입니다. 프롬프트에 먼저 로드하도록 안내를 덧붙입니다.
     """
     names = ", ".join(f"`{t}`" for t in exec_tools[:4])
     pending = [t for t in to_load if t in exec_tools[:4]]
     load_hint = (
-        f"이 가운데 {', '.join(f'`{t}`' for t in pending)} 는 아직 불러오지 않았으니 "
+        f"이 중 {', '.join(f'`{t}`' for t in pending)}는 아직 불러오지 않았으니 "
         f"`{LOAD_TOOLS_TOOL}` 로 먼저 불러오세요. "
         if pending else ""
     )
@@ -441,7 +441,7 @@ def collect_round_attempts(
                 attempt.verifications.append((speaker, is_diag, obs))
 
             if is_diag:
-                # 검증 여부는 이 발언(지금 버전)의 실행 기록으로만 정합니다 — 다시 실행해도 어긋나지 않습니다.
+                # 검증 여부는 해당 발언 버전의 실제 도구 실행 기록으로만 판정합니다 — 재실행하더라도 기록이 왜곡되지 않습니다.
                 note = _short_diagnostic_note(str(_get(msg, "content") or ""))
                 if note:
                     attempt.diagnostic_notes.append((speaker, bool(exec_calls), note))
@@ -581,7 +581,7 @@ class StagnationReport:
 
     @classmethod
     def from_meta(cls, meta: Mapping[str, Any]) -> "StagnationReport":
-        """`turns.KIND_STAGNATION` 안내에 적어 둔 값(`as_meta`)에서 되살립니다."""
+        """`turns.KIND_STAGNATION` 안내 메시지의 메타데이터(`as_meta`)로부터 인스턴스를 복원합니다."""
         rounds = tuple(int(r) for r in meta.get("rounds") or ())
         return cls(
             round_number=int(meta.get("round") or 0),
@@ -604,10 +604,11 @@ def last_stagnation_round(turn_messages: Iterable[Any]) -> int:
 
 
 def pending_redesign(turn_messages: Sequence[Any], round_num: int) -> Optional[StagnationReport]:
-    """`round_num` 에서 정체 안내는 남았는데 재설계 계획이 끝나지 못했으면 그 판정. 아니면 None.
+    """`round_num`에서 정체 안내는 기록되었으나 재설계 계획 수립이 완료되지 않은 경우 해당 보고서를 반환합니다 (그 외에는 None).
 
-    재설계 계획을 쓰다가 서버가 끊긴 턴을 이어 갈 때 씁니다. 안내가 이미 있어 `observe_stagnation` 은
-    다시 판정하지 않으므로, 계획만 다시 씁니다. 안내 뒤에 성공한 계획(`turns.KIND_PLAN`)이 있으면 끝난 것입니다.
+    재설계 계획 작성 중 비정상 종료된 턴을 재개할 때 사용합니다. 정체 안내 메시지가 이미 존재하므로
+    `observe_stagnation`은 중복 판정하지 않으며, 미완료된 계획만 다시 작성합니다. 안내 이후 정상적인
+    계획(`turns.KIND_PLAN`) 메시지가 존재하면 재설계가 완료된 것으로 처리합니다.
     """
     note_at: Optional[int] = None
     for index, msg in enumerate(turn_messages):

@@ -290,7 +290,7 @@ def test_sequential_and_adversarial_strategies_route_diagnostician_without_hardc
 
 @pytest.fixture
 def caller_tools(monkeypatch):
-    """턴이 빌린 런타임 대신 호출기의 도구(`_StubMCP`)를 쓰게 합니다 (`EngineContext.mcp_for`)."""
+    """턴에 할당된 런타임 풀 대신 호출기 도구(`_StubMCP`)를 사용하도록 설정합니다 (`EngineContext.mcp_for`)."""
     monkeypatch.setattr(EngineContext, "mcp_for", staticmethod(lambda state: None))
 
 
@@ -382,7 +382,7 @@ async def test_diagnostician_opinion_triggers_one_execution_retry_and_verifies(c
 
     diag_msg = next(m for m in msgs if m.sender_key == "diagnostician")
     assert diag_msg.turn_meta["stance"] == "diagnostician"
-    # 검증 여부는 행에 적지 않고 실행 기록에서 셉니다 (다시 실행하면 행의 `turn_meta` 는 그대로입니다).
+    # 검증 여부는 DB 행의 turn_meta에 기록하지 않고 실제 실행 기록에서 집계합니다 (발언 재실행 시 행의 turn_meta는 유지됩니다).
     assert "verified" not in diag_msg.turn_meta
     assert diagnostic_loop.UNVERIFIED_DIAGNOSTIC_TAG not in diag_msg.content
     assert "src/cache.py:42" in diag_msg.content
@@ -448,7 +448,7 @@ async def test_diagnostician_stamps_warning_when_unverified_or_without_exec_tool
 
 @pytest.mark.asyncio
 async def test_retried_diagnostician_speech_goes_through_the_gate_and_history_follows_its_tools(caller_tools):
-    # Round 1 진단은 첫 시도에 실행해 검증됐습니다.
+    # Round 1 진단은 첫 시도에서 도구를 실행하여 검증되었습니다.
     caller = _DiagGateCaller(mcp_schemas=[EXEC_SCHEMA], run_exec_on_attempt=1)
     pool = _make_pool()
     db_url = "sqlite+aiosqlite:///:memory:"
@@ -473,7 +473,7 @@ async def test_retried_diagnostician_speech_goes_through_the_gate_and_history_fo
         )).scalar_one()
     assert diagnostic_loop.UNVERIFIED_DIAGNOSTIC_TAG not in target.content
 
-    # 다시 실행한 버전은 실행 없이 의견만 냅니다 -> 같은 게이트로 1회 보완 요구 후 미검증 배너가 붙어야 합니다.
+    # 재실행된 버전은 도구 실행 없이 의견만 제시함 -> 동일한 게이트를 통해 1회 보완 요구 후 미검증 배너가 부착되어야 합니다.
     await engine.retry_speech(sid, target.id)
     assert caller.diag_attempts == 3
     assert "[실행 기반 진단 필수]" in caller.diag_prompts[2]
@@ -481,7 +481,7 @@ async def test_retried_diagnostician_speech_goes_through_the_gate_and_history_fo
         revised = await db.get(MessageModel, target.id)
     assert diagnostic_loop.UNVERIFIED_DIAGNOSTIC_TAG in revised.content
 
-    # 행의 `turn_meta` 에 옛 값이 남아 있어도 시도 이력은 지금 버전의 실행 기록만 봅니다.
+    # 행의 turn_meta에 이전 값이 남아 있더라도 시도 이력은 현재 버전의 실행 기록만 참조합니다.
     stale = DebateMessage(
         sender_key="diagnostician",
         sender_name="Root-Cause Diagnostician",
@@ -497,7 +497,7 @@ async def test_retried_diagnostician_speech_goes_through_the_gate_and_history_fo
 
 def test_execution_tools_waiting_behind_the_loader_count_but_catalog_words_do_not():
     shelf = ToolShelf(waiting={"sandbox__execute_python_code": EXEC_SCHEMA})
-    # 요청에 실리는 것은 불러오기 도구뿐이지만, 불러오면 부를 수 있는 실행 도구도 셉니다.
+    # 요청에 실제로 전달되는 것은 지연 로딩 도구뿐이지만, 로드 후 호출 가능한 실행 도구도 집계 대상에 포함합니다.
     assert diagnostic_loop.available_execution_tools(shelf.offered()) == []
     names = diagnostic_loop.available_execution_tools(shelf.reachable())
     assert names == ["sandbox__execute_python_code"]
@@ -505,7 +505,7 @@ def test_execution_tools_waiting_behind_the_loader_count_but_catalog_words_do_no
     assert f"`{LOAD_TOOLS_TOOL}` 로 먼저 불러오세요" in prompt
     assert "먼저 불러오세요" not in diagnostic_loop.diagnostic_retry_prompt(names)
 
-    # 카탈로그 설명에 `lint`·`compile` 같은 낱말이 있어도 그 도구가 실행 도구가 되지는 않습니다.
+    # 카탈로그 설명에 `lint`·`compile` 같은 단어가 포함되어 있더라도 해당 도구가 실행 도구로 판정되지 않아야 합니다.
     docs = {
         "type": "function",
         "function": {"name": "docs__search", "description": "Search lint and compile guides", "parameters": {}},
@@ -932,7 +932,7 @@ async def test_resuming_a_turn_cut_while_writing_the_redesign_writes_only_the_pl
         ))
         await db.commit()
 
-    # Round 2 를 닫으며 정체 안내까지 남긴 뒤, 재설계 계획을 쓰는 도중에 끊깁니다.
+    # Round 2를 마무리하며 정체 안내까지 기록한 후, 재설계 계획 작성 도중에 중단됩니다.
     cut_caller = _StagnationScenarioCaller(crash_on_redesign=True)
     with pytest.raises(asyncio.CancelledError):
         await OrchestratorEngine(agent_pool=pool, llm_caller=cut_caller).run_turn(
@@ -946,7 +946,7 @@ async def test_resuming_a_turn_cut_while_writing_the_redesign_writes_only_the_pl
     assert sum(1 for m in rows if turns.kind_of(m) == turns.KIND_STAGNATION) == 1
     assert sum(1 for m in rows if turns.kind_of(m) == turns.KIND_PLAN) == 1
 
-    # 이어 가면 안내는 다시 남기지 않고 재설계 계획만 다시 써서, Round 3 을 새 계획으로 돕니다.
+    # 중단된 턴을 재개하면 안내 메시지는 다시 남기지 않고 재설계 계획만 새로 작성하여, Round 3을 새 계획으로 진행합니다.
     resuming_caller = _StagnationScenarioCaller()
     events: List[Dict[str, Any]] = []
 

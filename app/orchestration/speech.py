@@ -732,8 +732,8 @@ class SpeechRunner:
         return ask
 
     def _execution_tools_for(self, agent: Agent, state: DebateState) -> Tuple[List[str], List[str]]:
-        """이번 발언에서 부를 수 있는 실행 도구의 이름과, 그중 먼저 불러와야 하는 것 (실행 증거 판정용)."""
-        # System 1 결정 LLM 으로 답하는 전문가는 도구 없이 한 번에 답합니다 (`LLMCaller.call_agent`).
+        """이번 발언에서 호출 가능한 실행 도구 이름 목록과, 먼저 로드해야 하는 지연 로딩 도구 목록 (실행 증거 판정용)."""
+        # System 1 결정 LLM으로 응답하는 전문가는 도구 호출 없이 한 번에 응답합니다 (`LLMCaller.call_agent`).
         if agent.decision_llm.enabled and agent.key != ORCHESTRATOR_KEY:
             return [], []
         shelf = self.ctx.tool_shelf(agent, state)
@@ -753,8 +753,8 @@ class SpeechRunner:
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """`diagnostician` 발언에 실제 실행 도구 검증이 있는지 확인하고, 필요 시 1회 보완 실행 또는 미검증 경고를 남깁니다.
 
-        검증 여부는 `turn_meta` 에 적지 않습니다. 발언을 다시 실행하면 행의 `turn_meta` 는 그대로 두고 버전만
-        바뀌므로(ADR-036), 시도 이력은 매번 그 버전의 실행 기록에서 다시 셉니다 (`diagnostic_loop.collect_round_attempts`).
+        검증 여부는 `turn_meta`에 기록하지 않습니다. 발언을 재실행하면 행의 `turn_meta`는 유지된 채 버전만
+        변경되므로(ADR-036), 시도 이력은 매번 해당 버전의 실제 실행 기록에서 다시 집계합니다 (`diagnostic_loop.collect_round_attempts`).
         """
         if (
             speech.kind != turns.KIND_SPEECH

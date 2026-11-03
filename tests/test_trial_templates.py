@@ -210,7 +210,7 @@ def test_a_participant_borrows_the_base_model_but_loses_every_tool():
 
 
 def test_the_trial_has_no_diagnostician_stance():
-    # 도구가 없는 체험 대화에서 진단자는 발언마다 미검증 경고만 남깁니다 (ADR-049).
+    # 실행 도구가 없는 체험 대화에서 진단자 진영은 발언마다 미검증 경고만 남깁니다 (ADR-049).
     with pytest.raises(TemplateError):
         _template(participants=[
             {"key": "orchestrator", "name": "사회자"},
@@ -230,7 +230,7 @@ def test_the_trial_has_no_diagnostician_stance():
     ])
     snap = participant_snapshot(template.participants[1], pool, priority=20)
     assert snap["allowed_mcp_servers"] == []
-    assert snap["debate_stance"] == "neutral", "기반 에이전트의 진단자 진영은 물려받지 않습니다"
+    assert snap["debate_stance"] == "neutral", "기반 에이전트의 진단자 진영을 상속받지 않아야 합니다"
 
 
 # ------------------------------------------------------------------ 5. 엔진

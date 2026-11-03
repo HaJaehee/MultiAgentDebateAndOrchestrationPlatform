@@ -116,7 +116,7 @@ class ToolShelf:
         return [*self.core, *self.loaded, *self.host, *catalog]
 
     def reachable(self) -> List[Dict[str, Any]]:
-        """이번 발언에서 부를 수 있는 도구 전부. 불러오기를 기다리는 도구(`waiting`)도 넣습니다."""
+        """이번 발언에서 호출할 수 있는 모든 도구 목록. 지연 로딩 대기 중인 도구(`waiting`)도 포함합니다."""
         return [*self.core, *self.loaded, *self.host, *self.waiting.values()]
 
     def loaded_names(self) -> List[str]:

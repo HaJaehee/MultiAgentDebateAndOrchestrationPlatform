@@ -55,10 +55,10 @@ class EngineContext:
         return get_runtime_pool().get(state.workspace_dir)
 
     def tool_shelf(self, agent: "Agent", state: Optional[DebateState] = None) -> Optional[ToolShelf]:
-        """이 에이전트의 요청에 실릴 도구 묶음. `LLMCaller.call_agent` 와 같은 순서로 구합니다. 못 구하면 None.
+        """에이전트 요청에 포함될 도구 모음(`ToolShelf`). `LLMCaller.call_agent`와 동일한 방식으로 구성하며, 조회 실패 시 None을 반환합니다.
 
-        보안상 제외된 도구는 빼고 호스트 도구는 넣습니다. 대역 호출기처럼 도구를 모르는 경우에도
-        부르는 쪽(전사 크기 계산·실행 증거 판정)은 진행합니다.
+        보안 정책상 제외된 도구는 배제하고 호스트 도구는 포함합니다. Mock 호출기처럼 도구 정보를 알 수 없는 경우에도
+        호출 측(대화 기록 크기 계산·실행 증거 판정)의 처리는 정상 진행됩니다.
         """
         if state is not None:
             agent = with_designated_skills(agent, state.skill_designations.get(agent.key))
@@ -71,5 +71,5 @@ class EngineContext:
                 tools = gate.filter_tools(agent.key, tools, mcp)
                 host_tools = gate.filter_tools(agent.key, host_tools, mcp)
             return plan_shelf(agent, tools, host_tools, session_id=state.session_id if state else None)
-        except Exception:  # noqa: BLE001 - 도구 목록을 못 구해도 부르는 쪽은 진행합니다
+        except Exception:  # noqa: BLE001 - 도구 목록을 가져오지 못해도 호출 측 처리는 정상 진행합니다
             return None
