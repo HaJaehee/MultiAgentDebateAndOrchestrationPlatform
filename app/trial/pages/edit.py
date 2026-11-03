@@ -39,7 +39,7 @@ from app.ui.shared.page import (
     participant_color,
 )
 
-STANCES = {"neutral": "중립", "proponent": "찬성 편", "critic": "반대 편", "diagnostician": "진단자"}
+STANCES = {"neutral": "중립", "proponent": "찬성 편", "critic": "반대 편"}
 MAX_PARTICIPANTS = 6
 
 

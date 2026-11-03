@@ -17,6 +17,7 @@ from app.agents.base import Agent
 from app.agents.llm_context import context_budget
 from app.agents.llm_types import LLMUnavailableError
 from app.agents.reasoning import strip_reasoning_trace
+from app.config import ORCHESTRATOR_KEY
 from app.events import EventCallback, EventType
 from app.orchestration import context_memory as memory, diagnostic_loop, turns
 from app.orchestration.artifacts import format_roster
@@ -321,14 +322,23 @@ class DebatePhaseExecutor(PhaseExecutor):
         else:
             if not (control is not None and control.stop_requested):
                 stances = {a.key: a.debate_stance for a in setup.active_agents}
-                report = diagnostic_loop.observe_stagnation(
-                    state.messages[state.turn_message_start:],
-                    round_num=round_num,
-                    ledger_by_round=round_ledgers,
-                    stances_by_key=stances,
-                )
+                turn_messages = state.messages[state.turn_message_start:]
+                # 재설계 계획을 쓰다가 끊긴 턴을 이어 가는 중이면 안내는 이미 남았으니 계획만 다시 씁니다.
+                report = diagnostic_loop.pending_redesign(turn_messages, round_num)
+                if report is None:
+                    report = diagnostic_loop.observe_stagnation(
+                        turn_messages,
+                        round_num=round_num,
+                        ledger_by_round=round_ledgers,
+                        stances_by_key=stances,
+                    )
+                    if report is not None:
+                        await self._record_stagnation(
+                            db, state, setup, report,
+                            remaining_rounds=remaining, current_ledger=current, on_event=on_event,
+                        )
                 if report is not None:
-                    await self._escalate_stagnation(
+                    await self._redesign_plan(
                         db,
                         state,
                         setup,
@@ -362,7 +372,7 @@ class DebatePhaseExecutor(PhaseExecutor):
             })
         return reason, current
 
-    async def _escalate_stagnation(
+    async def _record_stagnation(
         self,
         db: Any,
         state: DebateState,
@@ -371,15 +381,9 @@ class DebatePhaseExecutor(PhaseExecutor):
         *,
         remaining_rounds: int,
         current_ledger: Optional[str],
-        stances: Dict[str, str],
         on_event: Optional[EventCallback],
-        control: Optional[TurnControl],
     ) -> None:
-        """외부 관찰자가 정체를 감지했을 때 오케스트레이터 재설계 단계로 에스컬레이션합니다 (ADR-049).
-
-        참여 에이전트들의 설득형 발언 원문은 프롬프트에서 격리하고, 원래 요구사항·실행 실패 증거·시도 이력만
-        오케스트레이터에 넘겨 기존 계획을 대체(`state.plan_index` 갱신)합니다.
-        """
+        """외부 관찰자가 감지한 정체를 안내로 남기고 알립니다 (ADR-049). 이 안내가 같은 라운드의 중복 판정을 막습니다."""
         logger.info(
             f"Session {state.session_id}: escalating to redesign after round {report.round_number} "
             f"(streak={report.streak}, signatures={list(report.signatures)})"
@@ -405,6 +409,25 @@ class DebatePhaseExecutor(PhaseExecutor):
                 "max_rounds": setup.max_rounds,
             })
 
+    async def _redesign_plan(
+        self,
+        db: Any,
+        state: DebateState,
+        setup: "TurnSetup",
+        report: diagnostic_loop.StagnationReport,
+        *,
+        remaining_rounds: int,
+        current_ledger: Optional[str],
+        stances: Dict[str, str],
+        on_event: Optional[EventCallback],
+        control: Optional[TurnControl],
+    ) -> None:
+        """오케스트레이터가 정체를 끊을 재설계 계획을 써서 기존 계획을 대체합니다 (ADR-049).
+
+        참여 에이전트들의 설득형 발언 원문은 프롬프트에서 격리하고, 원래 요구사항·실행 실패 증거·시도 이력만
+        넘깁니다. 계획 승인(ADR-028)은 토론 전의 관문이라 여기서는 다시 묻지 않습니다. 승인은 그것이 가리키던
+        계획에만 유효하므로 승인된 분담도 함께 내려놓습니다 (`turn_setup.restore_turn_state` 와 같은 기준).
+        """
         planner = self.conversation.tool_less(setup.orchestrator)
         state.status = "planning"
         state.current_speaker = planner.name
@@ -444,7 +467,7 @@ class DebatePhaseExecutor(PhaseExecutor):
             state.memory_budget or context_budget(planner),
         )
         attempt_history = diagnostic_loop.format_attempt_history(attempts, max_chars=attempt_cap)
-        specialists = [a for a in setup.active_agents if a.key != "orchestrator"]
+        specialists = [a for a in setup.active_agents if a.key != ORCHESTRATOR_KEY]
         roster_block = format_roster(specialists) if specialists else "(전문가 없음)"
 
         redesigned = await self.speech.speak(

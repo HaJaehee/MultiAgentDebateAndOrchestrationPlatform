@@ -10,12 +10,9 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import update
 
 from app.agents.base import Agent
-from app.agents.host_tools import host_tools_for
 from app.agents.llm_context import context_budget, estimate_tokens
 from app.agents.llm_tools import memory_search_tool
 from app.agents.reasoning import strip_reasoning_trace
-from app.agents.skills import with_designated_skills
-from app.agents.tool_loading import plan_shelf
 from app.database.models import SessionModel, TurnModel
 from app.events import EventCallback, EventType
 from app.orchestration import context_memory as memory, diagnostic_loop, plan_gate, turns
@@ -565,21 +562,5 @@ class ConversationMemory:
         """
         if agent is None:
             return []
-        if state is not None:
-            agent = with_designated_skills(agent, state.skill_designations.get(agent.key))
-        try:
-            mcp = (self.ctx.mcp_for(state) if state else None) or self.ctx.llm_caller.mcp_manager
-            tools = mcp.get_openai_tools_for_servers(
-                self.ctx.llm_caller.resolve_tool_servers(agent)
-            ) or []
-            # 발언 시 실제로 전달되는 도구 목록과 일치해야 합니다 (보안상 제외된 도구는 제외하고 호스트 도구는 포함합니다).
-            host_tools = host_tools_for(agent)
-            gate = self.ctx.gate_for(state) if state else None
-            if gate is not None:
-                tools = gate.filter_tools(agent.key, tools, mcp)
-                host_tools = gate.filter_tools(agent.key, host_tools, mcp)
-            return plan_shelf(
-                agent, tools, host_tools, session_id=state.session_id if state else None,
-            ).offered()
-        except Exception:  # noqa: BLE001 - 도구 목록을 못 구해도 합성은 진행합니다
-            return []
+        shelf = self.ctx.tool_shelf(agent, state)
+        return shelf.offered() if shelf is not None else []

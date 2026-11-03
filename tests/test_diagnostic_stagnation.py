@@ -22,7 +22,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import uuid
 from pathlib import Path
@@ -33,6 +32,7 @@ from sqlalchemy import select
 
 from app.agents.base import AGENT_STYLE_MAP, Agent
 from app.agents.pool import AgentPool
+from app.agents.tool_loading import LOAD_TOOLS_TOOL, ToolShelf
 from app.config import AgentConfig, load_config, read_conf_file
 from app.config.schema import DEBATE_STANCES
 from app.database.models import MessageModel, SessionModel, ToolCallRecordModel, TurnModel
@@ -55,6 +55,14 @@ from app.tool_rules import parse_rules
 from tests.fake_llm import LEDGER_REPLY, SYNTHESIS_REPLY, FakeLLMCaller
 
 CONF_EXAMPLE_PATH = Path(__file__).resolve().parents[1] / "conf.example.json"
+EXEC_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "sandbox__execute_python_code",
+        "description": "Execute Python code in sandbox",
+        "parameters": {"type": "object", "properties": {}},
+    },
+}
 WS = Path(os.path.abspath("mado-diag-workspace"))
 
 
@@ -256,7 +264,7 @@ def test_sequential_and_adversarial_strategies_route_diagnostician_without_hardc
         sender_role="Reproduction",
         content="재현 결과 KeyError 확인",
         round_number=1,
-        turn_meta=turns.meta(turns.KIND_SPEECH, stance="diagnostician", verified=True),
+        turn_meta=turns.meta(turns.KIND_SPEECH, stance="diagnostician"),
     ))
     state.current_round = 2
     first_r2_inst = instruction_for_turn(seq, r1_speakers[0], r1_speakers, 0, state)
@@ -278,6 +286,12 @@ def test_sequential_and_adversarial_strategies_route_diagnostician_without_hardc
 # ===========================================================================
 # 3. SpeechRunner 실행 증거 검증 게이트 (재시도 및 미검증 경고 스탬프)
 # ===========================================================================
+
+
+@pytest.fixture
+def caller_tools(monkeypatch):
+    """턴이 빌린 런타임 대신 호출기의 도구(`_StubMCP`)를 쓰게 합니다 (`EngineContext.mcp_for`)."""
+    monkeypatch.setattr(EngineContext, "mcp_for", staticmethod(lambda state: None))
 
 
 class _DiagGateCaller(FakeLLMCaller):
@@ -334,17 +348,8 @@ class _DiagGateCaller(FakeLLMCaller):
 
 
 @pytest.mark.asyncio
-async def test_diagnostician_opinion_triggers_one_execution_retry_and_verifies():
-    # 지연 로딩(`tools__load_tools`) 설명 안에 `execute_python_code` 가 안내되는 경우도 실행 도구 보유로 인식해야 합니다.
-    deferred_loader_schema = [{
-        "type": "function",
-        "function": {
-            "name": "tools__load_tools",
-            "description": "Load deferred MCP tools on demand: sandbox: execute_python_code, list_workspace_files",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    }]
-    caller = _DiagGateCaller(mcp_schemas=deferred_loader_schema, run_exec_on_attempt=2)
+async def test_diagnostician_opinion_triggers_one_execution_retry_and_verifies(caller_tools):
+    caller = _DiagGateCaller(mcp_schemas=[EXEC_SCHEMA], run_exec_on_attempt=2)
     pool = _make_pool()
 
     db_url = "sqlite+aiosqlite:///:memory:"
@@ -377,25 +382,17 @@ async def test_diagnostician_opinion_triggers_one_execution_retry_and_verifies()
 
     diag_msg = next(m for m in msgs if m.sender_key == "diagnostician")
     assert diag_msg.turn_meta["stance"] == "diagnostician"
-    assert diag_msg.turn_meta["verification_retried"] is True
-    assert diag_msg.turn_meta["verified"] is True
+    # 검증 여부는 행에 적지 않고 실행 기록에서 셉니다 (다시 실행하면 행의 `turn_meta` 는 그대로입니다).
+    assert "verified" not in diag_msg.turn_meta
     assert diagnostic_loop.UNVERIFIED_DIAGNOSTIC_TAG not in diag_msg.content
     assert "src/cache.py:42" in diag_msg.content
     assert any(t.message_id == diag_msg.id and t.tool_name == "sandbox__execute_python_code" for t in tool_rows)
 
 
 @pytest.mark.asyncio
-async def test_diagnostician_stamps_warning_when_unverified_or_without_exec_tools():
-    exec_schema = [{
-        "type": "function",
-        "function": {
-            "name": "sandbox__execute_python_code",
-            "description": "Execute Python code in sandbox",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    }]
+async def test_diagnostician_stamps_warning_when_unverified_or_without_exec_tools(caller_tools):
     # 1) 실행 도구가 있는데 재시도에서도 끝내 부르지 않은 경우 -> 재시도 1회 후 미검증 배너 부착
-    stubborn_caller = _DiagGateCaller(mcp_schemas=exec_schema, run_exec_on_attempt=None)
+    stubborn_caller = _DiagGateCaller(mcp_schemas=[EXEC_SCHEMA], run_exec_on_attempt=None)
     pool = _make_pool()
     db_url = "sqlite+aiosqlite:///:memory:"
     await init_db(db_url)
@@ -445,13 +442,75 @@ async def test_diagnostician_stamps_warning_when_unverified_or_without_exec_tool
             )
         )).scalar_one()
 
-    assert msg_retry.turn_meta["verified"] is False
-    assert msg_retry.turn_meta["verification_retried"] is True
     assert diagnostic_loop.UNVERIFIED_DIAGNOSTIC_TAG in msg_retry.content
-
-    assert msg_no_tool.turn_meta["verified"] is False
-    assert "verification_retried" not in msg_no_tool.turn_meta
     assert diagnostic_loop.UNVERIFIED_DIAGNOSTIC_TAG in msg_no_tool.content
+
+
+@pytest.mark.asyncio
+async def test_retried_diagnostician_speech_goes_through_the_gate_and_history_follows_its_tools(caller_tools):
+    # Round 1 진단은 첫 시도에 실행해 검증됐습니다.
+    caller = _DiagGateCaller(mcp_schemas=[EXEC_SCHEMA], run_exec_on_attempt=1)
+    pool = _make_pool()
+    db_url = "sqlite+aiosqlite:///:memory:"
+    await init_db(db_url)
+    sid = f"diag-revision-{uuid.uuid4().hex[:8]}"
+    async with get_session_factory(db_url)() as db:
+        db.add(SessionModel(
+            id=sid,
+            title="진단 다시 실행",
+            strategy="sequential_debate",
+            max_rounds=1,
+            active_agents=["orchestrator", "critic", "diagnostician"],
+        ))
+        await db.commit()
+    engine = OrchestratorEngine(agent_pool=pool, llm_caller=caller)
+    await engine.run_turn(session_id=sid, user_prompt="진단해 줘")
+    assert caller.diag_attempts == 1
+
+    async with get_session_factory(db_url)() as db:
+        target = (await db.execute(
+            select(MessageModel).where(MessageModel.session_id == sid, MessageModel.sender_key == "diagnostician")
+        )).scalar_one()
+    assert diagnostic_loop.UNVERIFIED_DIAGNOSTIC_TAG not in target.content
+
+    # 다시 실행한 버전은 실행 없이 의견만 냅니다 -> 같은 게이트로 1회 보완 요구 후 미검증 배너가 붙어야 합니다.
+    await engine.retry_speech(sid, target.id)
+    assert caller.diag_attempts == 3
+    assert "[실행 기반 진단 필수]" in caller.diag_prompts[2]
+    async with get_session_factory(db_url)() as db:
+        revised = await db.get(MessageModel, target.id)
+    assert diagnostic_loop.UNVERIFIED_DIAGNOSTIC_TAG in revised.content
+
+    # 행의 `turn_meta` 에 옛 값이 남아 있어도 시도 이력은 지금 버전의 실행 기록만 봅니다.
+    stale = DebateMessage(
+        sender_key="diagnostician",
+        sender_name="Root-Cause Diagnostician",
+        sender_role="Reproduction",
+        content="아마 캐시 만료 처리 문제로 보입니다.\n\n## 요지\n- 만료 처리 의심",
+        round_number=1,
+        tool_calls=[],
+        turn_meta=turns.meta(turns.KIND_SPEECH, stance="diagnostician", verified=True),
+    )
+    [attempt] = diagnostic_loop.collect_round_attempts([stale])
+    assert [verified for _, verified, _ in attempt.diagnostic_notes] == [False]
+
+
+def test_execution_tools_waiting_behind_the_loader_count_but_catalog_words_do_not():
+    shelf = ToolShelf(waiting={"sandbox__execute_python_code": EXEC_SCHEMA})
+    # 요청에 실리는 것은 불러오기 도구뿐이지만, 불러오면 부를 수 있는 실행 도구도 셉니다.
+    assert diagnostic_loop.available_execution_tools(shelf.offered()) == []
+    names = diagnostic_loop.available_execution_tools(shelf.reachable())
+    assert names == ["sandbox__execute_python_code"]
+    prompt = diagnostic_loop.diagnostic_retry_prompt(names, to_load=list(shelf.waiting))
+    assert f"`{LOAD_TOOLS_TOOL}` 로 먼저 불러오세요" in prompt
+    assert "먼저 불러오세요" not in diagnostic_loop.diagnostic_retry_prompt(names)
+
+    # 카탈로그 설명에 `lint`·`compile` 같은 낱말이 있어도 그 도구가 실행 도구가 되지는 않습니다.
+    docs = {
+        "type": "function",
+        "function": {"name": "docs__search", "description": "Search lint and compile guides", "parameters": {}},
+    }
+    assert diagnostic_loop.available_execution_tools(ToolShelf(waiting={"docs__search": docs}).reachable()) == []
 
 
 # ===========================================================================
@@ -528,7 +587,7 @@ def test_signature_normalization_survives_line_shifts_and_attempt_history_surviv
                     "status": "success",
                     "output": _sandbox_failure_output(line_no=42),
                 }],
-                turn_meta=turns.meta(turns.KIND_SPEECH, stance="diagnostician", verified=True),
+                turn_meta=turns.meta(turns.KIND_SPEECH, stance="diagnostician"),
             ),
             # coder 가 Round 2 에 발언한 기록이 있어 Round 1 기록은 fresh_start 이전으로 밀려 `## 요지` 로 압축됨
             DebateMessage(
@@ -633,7 +692,7 @@ REDESIGNED_PLAN_TEXT = (
 class _StagnationScenarioCaller(FakeLLMCaller):
     """Round 1·2 연속 동일 실행 실패 -> Round 2 종료 시 재설계 -> Round 3 해결 시나리오 대역."""
 
-    def __init__(self, *, crash_on_round3_start: bool = False) -> None:
+    def __init__(self, *, crash_on_round3_start: bool = False, crash_on_redesign: bool = False) -> None:
         super().__init__()
         self.mcp_manager = _StubMCP([{
             "type": "function",
@@ -644,6 +703,7 @@ class _StagnationScenarioCaller(FakeLLMCaller):
             },
         }])
         self.crash_on_round3_start = crash_on_round3_start
+        self.crash_on_redesign = crash_on_redesign
         self.redesign_prompts: List[str] = []
         self.round3_coder_messages: List[List[Dict[str, Any]]] = []
         self.diag_round_calls = 0
@@ -670,6 +730,8 @@ class _StagnationScenarioCaller(FakeLLMCaller):
 
         if diagnostic_loop.REDESIGN_PROMPT_MARKER in last:
             self.redesign_prompts.append(last)
+            if self.crash_on_redesign:
+                raise asyncio.CancelledError()
             return REDESIGNED_PLAN_TEXT, []
 
         if "최종 합의 보고서" in last:
@@ -854,6 +916,59 @@ async def test_resuming_turn_after_stagnation_escalation_keeps_redesigned_plan_w
     assert any(turns.kind_of(m) == turns.KIND_SYNTHESIS for m in rows)
 
 
+@pytest.mark.asyncio
+async def test_resuming_a_turn_cut_while_writing_the_redesign_writes_only_the_plan():
+    pool = _make_pool()
+    db_url = "sqlite+aiosqlite:///:memory:"
+    await init_db(db_url)
+    sid = f"stagnation-cut-redesign-{uuid.uuid4().hex[:8]}"
+    async with get_session_factory(db_url)() as db:
+        db.add(SessionModel(
+            id=sid,
+            title="재설계 도중 중단",
+            strategy="sequential_debate",
+            max_rounds=3,
+            active_agents=["orchestrator", "coder", "critic", "diagnostician"],
+        ))
+        await db.commit()
+
+    # Round 2 를 닫으며 정체 안내까지 남긴 뒤, 재설계 계획을 쓰는 도중에 끊깁니다.
+    cut_caller = _StagnationScenarioCaller(crash_on_redesign=True)
+    with pytest.raises(asyncio.CancelledError):
+        await OrchestratorEngine(agent_pool=pool, llm_caller=cut_caller).run_turn(
+            session_id=sid, user_prompt="멀티 워커 캐시 만료 시 KeyError 버그 수정",
+        )
+    async with get_session_factory(db_url)() as db:
+        turn = (await db.execute(select(TurnModel).where(TurnModel.session_id == sid))).scalar_one()
+        await turns.mark_interrupted_turns(db)
+        turn_id = turn.id
+        rows = (await db.execute(select(MessageModel).where(MessageModel.session_id == sid))).scalars().all()
+    assert sum(1 for m in rows if turns.kind_of(m) == turns.KIND_STAGNATION) == 1
+    assert sum(1 for m in rows if turns.kind_of(m) == turns.KIND_PLAN) == 1
+
+    # 이어 가면 안내는 다시 남기지 않고 재설계 계획만 다시 써서, Round 3 을 새 계획으로 돕니다.
+    resuming_caller = _StagnationScenarioCaller()
+    events: List[Dict[str, Any]] = []
+
+    async def on_event(ev: Dict[str, Any]) -> None:
+        events.append(ev)
+
+    state = await OrchestratorEngine(agent_pool=pool, llm_caller=resuming_caller).resume_turn(
+        session_id=sid, turn_id=turn_id, mode="continue", on_event=on_event,
+    )
+    assert len(resuming_caller.redesign_prompts) == 1
+    assert not [e for e in events if e["type"] == EventType.STAGNATION_DETECTED]
+    assert state.messages[state.plan_index].content == REDESIGNED_PLAN_TEXT
+    assert len(resuming_caller.round3_coder_messages) == 1
+    assert REDESIGNED_PLAN_TEXT in resuming_caller.round3_coder_messages[0][0]["content"]
+
+    async with get_session_factory(db_url)() as db:
+        rows = (await db.execute(select(MessageModel).where(MessageModel.session_id == sid))).scalars().all()
+    assert sum(1 for m in rows if turns.kind_of(m) == turns.KIND_STAGNATION) == 1
+    assert sum(1 for m in rows if turns.kind_of(m) == turns.KIND_PLAN) == 2
+    assert any(turns.kind_of(m) == turns.KIND_SYNTHESIS for m in rows)
+
+
 def test_blocked_execution_call_does_not_count_as_verified_and_post_escalation_window_resets():
     # 보안 게이트에서 차단(denied)된 실행 도구 호출은 검증 증거로 인정하면 안 됩니다.
     blocked_call = {
@@ -879,7 +994,7 @@ def test_blocked_execution_call_does_not_count_as_verified_and_post_escalation_w
                 "status": "success",
                 "output": _sandbox_failure_output(line_no=10 + r),
             }],
-            turn_meta=turns.meta(turns.KIND_SPEECH, stance="diagnostician", verified=True),
+            turn_meta=turns.meta(turns.KIND_SPEECH, stance="diagnostician"),
         )
 
     msgs = [

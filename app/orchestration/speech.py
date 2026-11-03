@@ -17,11 +17,9 @@ from sqlalchemy import delete, update
 from app.agents import llm_fallback, llm_usage
 from app.agents.ask_user import QUESTION_WAIT_SECONDS, Asker, asking
 from app.agents.base import Agent
-from app.agents.host_tools import host_tools_for
 from app.agents.llm_types import LLMUnavailableError
 from app.agents.media import attachments_for
 from app.agents.skills import with_designated_skills
-from app.agents.tool_loading import plan_shelf
 from app.config import ORCHESTRATOR_KEY, TOOL_ITERATION_CEILING
 from app.database.models import MessageModel, SpeechDraftModel, ToolCallRecordModel, utc_now
 from app.events import EventCallback, EventType
@@ -733,34 +731,16 @@ class SpeechRunner:
 
         return ask
 
-    def _offered_tools_for(self, agent: Agent, state: DebateState) -> List[Dict[str, Any]]:
-        """이번 발언에 실제로 제공되는 도구 스키마 목록을 계산합니다 (실행 검증 가능 여부 판정용)."""
+    def _execution_tools_for(self, agent: Agent, state: DebateState) -> Tuple[List[str], List[str]]:
+        """이번 발언에서 부를 수 있는 실행 도구의 이름과, 그중 먼저 불러와야 하는 것 (실행 증거 판정용)."""
+        # System 1 결정 LLM 으로 답하는 전문가는 도구 없이 한 번에 답합니다 (`LLMCaller.call_agent`).
         if agent.decision_llm.enabled and agent.key != ORCHESTRATOR_KEY:
-            return []
-        try:
-            mcp = self.ctx.mcp_for(state) or getattr(self.ctx.llm_caller, "mcp_manager", None)
-            resolve_fn = getattr(self.ctx.llm_caller, "resolve_tool_servers", None)
-            servers = resolve_fn(agent) if callable(resolve_fn) else list(agent.allowed_mcp_servers or [])
-            tools: List[Dict[str, Any]] = []
-            if mcp is not None and hasattr(mcp, "get_openai_tools_for_servers"):
-                tools = mcp.get_openai_tools_for_servers(servers) or []
-            caller_mcp = getattr(self.ctx.llm_caller, "mcp_manager", None)
-            if (
-                not tools
-                and caller_mcp is not None
-                and caller_mcp is not mcp
-                and hasattr(caller_mcp, "get_openai_tools_for_servers")
-            ):
-                tools = caller_mcp.get_openai_tools_for_servers(servers) or []
-                mcp = caller_mcp
-            host_tools = host_tools_for(agent)
-            gate = self.ctx.gate_for(state)
-            if gate is not None and mcp is not None:
-                tools = gate.filter_tools(agent.key, tools, mcp)
-                host_tools = gate.filter_tools(agent.key, host_tools, mcp)
-            return plan_shelf(agent, tools, host_tools, session_id=state.session_id).offered()
-        except Exception:  # noqa: BLE001 - 대역 호출기 등 도구 조회가 불가능한 환경에서도 발언은 진행합니다
-            return []
+            return [], []
+        shelf = self.ctx.tool_shelf(agent, state)
+        if shelf is None:
+            return [], []
+        names = diagnostic_loop.available_execution_tools(shelf.reachable())
+        return names, [name for name in names if name in shelf.waiting]
 
     async def _enforce_diagnostic_evidence(
         self,
@@ -771,31 +751,30 @@ class SpeechRunner:
         content: str,
         tool_logs: List[Dict[str, Any]],
     ) -> Tuple[str, List[Dict[str, Any]]]:
-        """`diagnostician` 발언에 실제 실행 도구 검증이 있는지 확인하고, 필요 시 1회 보완 실행 또는 미검증 경고를 남깁니다."""
+        """`diagnostician` 발언에 실제 실행 도구 검증이 있는지 확인하고, 필요 시 1회 보완 실행 또는 미검증 경고를 남깁니다.
+
+        검증 여부는 `turn_meta` 에 적지 않습니다. 발언을 다시 실행하면 행의 `turn_meta` 는 그대로 두고 버전만
+        바뀌므로(ADR-036), 시도 이력은 매번 그 버전의 실행 기록에서 다시 셉니다 (`diagnostic_loop.collect_round_attempts`).
+        """
         if (
             speech.kind != turns.KIND_SPEECH
             or speech.agent.debate_stance != diagnostic_loop.DIAGNOSTICIAN_STANCE
-            or speech.revision is not None
         ):
             return content, tool_logs
 
         combined = list(tool_logs)
         if diagnostic_loop.executed_verification_calls(combined or speech.executed_tools):
-            speech.turn_meta["verified"] = True
             return content, combined
 
-        exec_tools = diagnostic_loop.available_execution_tools(
-            self._offered_tools_for(speech.agent, speech.state)
-        )
+        exec_tools, to_load = self._execution_tools_for(speech.agent, speech.state)
         if (
             exec_tools
             and speech.draft_state is None
             and not (control is not None and control.stop_requested)
         ):
-            speech.turn_meta["verification_retried"] = True
             retry_messages = list(prompt_messages) + [
                 {"role": "assistant", "content": content or "(발언 없음)"},
-                {"role": "user", "content": diagnostic_loop.diagnostic_retry_prompt(exec_tools)},
+                {"role": "user", "content": diagnostic_loop.diagnostic_retry_prompt(exec_tools, to_load=to_load)},
             ]
             try:
                 with llm_fallback.listening(speech.on_fallback):
@@ -827,10 +806,7 @@ class SpeechRunner:
                 )
 
         if diagnostic_loop.executed_verification_calls(combined or speech.executed_tools):
-            speech.turn_meta["verified"] = True
             return content, combined
-
-        speech.turn_meta["verified"] = False
         return diagnostic_loop.stamp_unverified_diagnostic(content), combined
 
     async def _receive_speech(

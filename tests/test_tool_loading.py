@@ -33,6 +33,7 @@ from app.agents.tool_loading import (
     tool_loading_guidance,
 )
 from app.config import RootConfig, ToolLoadingConfig
+from app.orchestration.context import EngineContext
 from app.orchestration.conversation import ConversationMemory
 
 PADDING = "This parameter takes a value described at some length, as real MCP schemas do. " * 6
@@ -504,7 +505,8 @@ def test_the_budget_for_the_transcript_counts_what_the_speech_will_send():
     """전사 크기를 정하는 쪽(`tools_for`)과 발언이 보내는 쪽이 같은 목록을 봅니다."""
     mcp = _MCP()
     caller = SimpleNamespace(mcp_manager=mcp, resolve_tool_servers=lambda agent: [])
-    context = SimpleNamespace(llm_caller=caller, mcp_for=lambda state: mcp, gate_for=lambda state: None)
+    context = EngineContext(agent_pool=None, llm_caller=caller, session_factory=lambda: None)
+    context.mcp_for = lambda state: mcp  # 턴이 빌린 런타임
     memory = ConversationMemory.__new__(ConversationMemory)
     memory.ctx = context
     state = SimpleNamespace(session_id="s1", skill_designations={})

@@ -13,12 +13,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
+from app.agents.host_tools import host_tools_for
+from app.agents.skills import with_designated_skills
+from app.agents.tool_loading import ToolShelf, plan_shelf
 from app.mcp.manager import MCPManager
 from app.mcp.pool import get_runtime_pool
 from app.orchestration.state import DebateState
 from app.orchestration.tool_gate import ToolGate
 
 if TYPE_CHECKING:
+    from app.agents.base import Agent
     from app.agents.llm import LLMCaller
     from app.agents.pool import AgentPool
 
@@ -49,3 +53,23 @@ class EngineContext:
         거치지 않고 엔진을 직접 부르는 테스트가 그 경로를 씁니다.
         """
         return get_runtime_pool().get(state.workspace_dir)
+
+    def tool_shelf(self, agent: "Agent", state: Optional[DebateState] = None) -> Optional[ToolShelf]:
+        """이 에이전트의 요청에 실릴 도구 묶음. `LLMCaller.call_agent` 와 같은 순서로 구합니다. 못 구하면 None.
+
+        보안상 제외된 도구는 빼고 호스트 도구는 넣습니다. 대역 호출기처럼 도구를 모르는 경우에도
+        부르는 쪽(전사 크기 계산·실행 증거 판정)은 진행합니다.
+        """
+        if state is not None:
+            agent = with_designated_skills(agent, state.skill_designations.get(agent.key))
+        try:
+            mcp = (self.mcp_for(state) if state else None) or self.llm_caller.mcp_manager
+            tools = mcp.get_openai_tools_for_servers(self.llm_caller.resolve_tool_servers(agent)) or []
+            host_tools = host_tools_for(agent)
+            gate = self.gate_for(state) if state else None
+            if gate is not None:
+                tools = gate.filter_tools(agent.key, tools, mcp)
+                host_tools = gate.filter_tools(agent.key, host_tools, mcp)
+            return plan_shelf(agent, tools, host_tools, session_id=state.session_id if state else None)
+        except Exception:  # noqa: BLE001 - 도구 목록을 못 구해도 부르는 쪽은 진행합니다
+            return None

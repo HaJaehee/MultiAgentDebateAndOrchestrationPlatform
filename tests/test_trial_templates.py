@@ -209,6 +209,30 @@ def test_a_participant_borrows_the_base_model_but_loses_every_tool():
     assert snap["system_prompt"] == "비판하세요."
 
 
+def test_the_trial_has_no_diagnostician_stance():
+    # 도구가 없는 체험 대화에서 진단자는 발언마다 미검증 경고만 남깁니다 (ADR-049).
+    with pytest.raises(TemplateError):
+        _template(participants=[
+            {"key": "orchestrator", "name": "사회자"},
+            {"key": "critic", "name": "검토자", "stance": "diagnostician"},
+        ])
+
+    pool = AgentPool({
+        "orchestrator": AgentConfig(name="O", role="Moderator", model="openai/gpt-4o", api_key="sk-test"),
+        "diagnostician": AgentConfig(
+            name="Diagnostician", role="Repro", model="openai/gpt-4o", api_key="sk-test",
+            allowed_mcp_servers=["sandbox"], debate_stance="diagnostician",
+        ),
+    })
+    template = _template(participants=[
+        {"key": "orchestrator", "name": "사회자"},
+        {"key": "diagnostician", "name": "재현 담당"},
+    ])
+    snap = participant_snapshot(template.participants[1], pool, priority=20)
+    assert snap["allowed_mcp_servers"] == []
+    assert snap["debate_stance"] == "neutral", "기반 에이전트의 진단자 진영은 물려받지 않습니다"
+
+
 # ------------------------------------------------------------------ 5. 엔진
 
 

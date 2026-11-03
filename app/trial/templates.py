@@ -94,7 +94,8 @@ class TemplateParticipant(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     role: str = Field(default="", max_length=120)
     system_prompt: str = ""
-    stance: Optional[Literal["proponent", "critic", "diagnostician", "neutral"]] = None
+    # 진단자(`diagnostician`)는 받지 않습니다 — 체험 대화에는 실행 도구가 없어 발언마다 미검증 경고만 붙습니다.
+    stance: Optional[Literal["proponent", "critic", "neutral"]] = None
     color: str = Field(default="", max_length=40)
     # Material 아이콘 이름만 받습니다 (파일 경로는 주인 화면에서만).
     icon: str = Field(default="", pattern=r"^[a-z0-9_]{0,40}$")
@@ -355,6 +356,9 @@ def participant_snapshot(participant: TemplateParticipant, pool: AgentPool, prio
     )
     if participant.stance:
         snapshot["debate_stance"] = participant.stance
+    elif snapshot.get("debate_stance") == "diagnostician":
+        # 도구를 모두 뗐으니 기반 에이전트의 진단자 진영은 물려받지 않습니다 (`TemplateParticipant.stance`).
+        snapshot["debate_stance"] = "neutral"
     # 스냅샷은 엔진이 `AgentConfig` 로 되읽습니다. 여기서 한 번 검사해 두면 깨진 대화가 생기지 않습니다.
     return AgentConfig.model_validate(snapshot).model_dump(mode="json")
 

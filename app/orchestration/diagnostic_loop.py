@@ -30,6 +30,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from app.agents.llm_tools import is_file_writing_call
 from app.agents.reasoning import strip_reasoning_trace
+from app.agents.tool_loading import LOAD_TOOLS_TOOL
 from app.mcp.policy import EXEC, KNOWN_TOOLS, tool_outcome
 from app.orchestration import context_memory as memory
 from app.orchestration import turns
@@ -123,24 +124,19 @@ def is_execution_tool_name(tool_name: str) -> bool:
     return bool(known is not None and known.risk == EXEC)
 
 
-def available_execution_tools(offered_tools: Sequence[Mapping[str, Any]]) -> List[str]:
-    """해당 에이전트의 이번 발언에 실제로 제공된 실행 도구 이름 목록을 반환합니다.
+def available_execution_tools(tools: Sequence[Mapping[str, Any]]) -> List[str]:
+    """주어진 도구 스키마 가운데 실행 도구의 이름 목록.
 
-    지연 로딩(`tools__load_tools`) 뒤에 숨어 있는 실행 도구 설명도 함께 확인합니다.
+    지연 로딩으로 아직 불러오지 않은 도구까지 보려면 `ToolShelf.reachable()` 을 넘깁니다.
     """
     found: List[str] = []
-    for item in offered_tools or ():
+    for item in tools or ():
         fn = item.get("function") if isinstance(item, Mapping) else None
         if not isinstance(fn, Mapping):
             continue
         name = str(fn.get("name") or "").strip()
         if is_execution_tool_name(name) and name not in found:
             found.append(name)
-        elif name == "tools__load_tools":
-            desc = str(fn.get("description") or "")
-            for candidate in _EXECUTION_TOOL_NAMES:
-                if candidate in desc and candidate not in found:
-                    found.append(candidate)
     return found
 
 
@@ -162,15 +158,24 @@ def executed_verification_calls(tool_calls: Sequence[Mapping[str, Any]]) -> List
     return out
 
 
-def diagnostic_retry_prompt(exec_tools: Sequence[str]) -> str:
-    """실행 도구가 있는데도 호출 없이 의견만 낸 `diagnostician` 에이전트에게 보내는 1회 보완 지시."""
+def diagnostic_retry_prompt(exec_tools: Sequence[str], *, to_load: Sequence[str] = ()) -> str:
+    """실행 도구가 있는데도 호출 없이 의견만 낸 `diagnostician` 에이전트에게 보내는 1회 보완 지시.
+
+    `to_load` 는 그중 아직 불러오지 않은 도구입니다 (지연 로딩). 먼저 불러오라고 덧붙입니다.
+    """
     names = ", ".join(f"`{t}`" for t in exec_tools[:4])
+    pending = [t for t in to_load if t in exec_tools[:4]]
+    load_hint = (
+        f"이 가운데 {', '.join(f'`{t}`' for t in pending)} 는 아직 불러오지 않았으니 "
+        f"`{LOAD_TOOLS_TOOL}` 로 먼저 불러오세요. "
+        if pending else ""
+    )
     return (
         f"[실행 기반 진단 필수] 방금 작성한 진단에는 실제 실행 도구 호출이 없습니다. "
         f"진단(`{DIAGNOSTICIAN_STANCE}`) 에이전트는 의견 수준의 추측 대신 **실행 가능한 증거**를 산출해야 합니다.\n"
         f"지금 즉시 제공된 실행 도구({names})를 호출해 최소 재현 코드나 검증 테스트를 실제로 실행하고, "
         f"관찰된 표준 출력·트레이스백·판정 상태와 정확한 근본 원인 위치(`파일:줄`, 함수·심볼명)를 포함해 "
-        f"진단 보고를 다시 작성하세요. 프로덕션 소스 파일은 직접 수정하지 마세요."
+        f"진단 보고를 다시 작성하세요. {load_hint}프로덕션 소스 파일은 직접 수정하지 마세요."
     )
 
 
@@ -436,11 +441,10 @@ def collect_round_attempts(
                 attempt.verifications.append((speaker, is_diag, obs))
 
             if is_diag:
-                meta = _get(msg, "turn_meta") or {}
-                verified = bool(exec_calls) if "verified" not in meta else bool(meta.get("verified"))
+                # 검증 여부는 이 발언(지금 버전)의 실행 기록으로만 정합니다 — 다시 실행해도 어긋나지 않습니다.
                 note = _short_diagnostic_note(str(_get(msg, "content") or ""))
                 if note:
-                    attempt.diagnostic_notes.append((speaker, verified, note))
+                    attempt.diagnostic_notes.append((speaker, bool(exec_calls), note))
                 if speech_obs:
                     diag_ran = True
                     diag_failures.extend(obs for obs in speech_obs if obs.failed)
@@ -549,9 +553,6 @@ def round_ledgers_from_messages(
     return out
 
 
-_round_ledgers_from_messages = round_ledgers_from_messages
-
-
 # ---------------------------------------------------------------------------
 # 4. 외부 정체 관찰자 및 재설계 에스컬레이션 (External Stagnation Observer)
 # ---------------------------------------------------------------------------
@@ -578,6 +579,19 @@ class StagnationReport:
             "modified_files": list(self.modified_files),
         }
 
+    @classmethod
+    def from_meta(cls, meta: Mapping[str, Any]) -> "StagnationReport":
+        """`turns.KIND_STAGNATION` 안내에 적어 둔 값(`as_meta`)에서 되살립니다."""
+        rounds = tuple(int(r) for r in meta.get("rounds") or ())
+        return cls(
+            round_number=int(meta.get("round") or 0),
+            streak=int(meta.get("streak") or len(rounds)),
+            rounds=rounds,
+            signatures=tuple(str(x) for x in meta.get("signatures") or ()),
+            summaries=tuple(str(x) for x in meta.get("summaries") or ()),
+            modified_files=tuple(str(x) for x in meta.get("modified_files") or ()),
+        )
+
 
 def last_stagnation_round(turn_messages: Iterable[Any]) -> int:
     """이번 턴에서 마지막으로 정체 에스컬레이션이 기록된 라운드 번호 (없으면 0)."""
@@ -587,6 +601,27 @@ def last_stagnation_round(turn_messages: Iterable[Any]) -> int:
             r = int((_get(msg, "turn_meta") or {}).get("round") or _get(msg, "round_number") or 0)
             last = max(last, r)
     return last
+
+
+def pending_redesign(turn_messages: Sequence[Any], round_num: int) -> Optional[StagnationReport]:
+    """`round_num` 에서 정체 안내는 남았는데 재설계 계획이 끝나지 못했으면 그 판정. 아니면 None.
+
+    재설계 계획을 쓰다가 서버가 끊긴 턴을 이어 갈 때 씁니다. 안내가 이미 있어 `observe_stagnation` 은
+    다시 판정하지 않으므로, 계획만 다시 씁니다. 안내 뒤에 성공한 계획(`turns.KIND_PLAN`)이 있으면 끝난 것입니다.
+    """
+    note_at: Optional[int] = None
+    for index, msg in enumerate(turn_messages):
+        if turns.kind_of(msg) != turns.KIND_STAGNATION:
+            continue
+        meta = _get(msg, "turn_meta") or {}
+        if int(meta.get("round") or _get(msg, "round_number") or 0) == round_num:
+            note_at = index
+    if note_at is None:
+        return None
+    for msg in turn_messages[note_at + 1:]:
+        if turns.kind_of(msg) == turns.KIND_PLAN and _get(msg, "msg_type") != "error":
+            return None
+    return StagnationReport.from_meta(_get(turn_messages[note_at], "turn_meta") or {})
 
 
 def observe_stagnation(
@@ -612,7 +647,7 @@ def observe_stagnation(
     if round_num - window_start + 1 < limit:
         return None
 
-    ledgers = _round_ledgers_from_messages(turn_messages)
+    ledgers = round_ledgers_from_messages(turn_messages)
     if ledger_by_round:
         ledgers.update({k: v for k, v in ledger_by_round.items() if v})
 
