@@ -10,6 +10,10 @@
 유효성 검증은 런타임 엔진과 동일한 함수(`validate_graph`)를 사용합니다. 편집 중인 작업 내역의
 유실을 방지하기 위해 검증 오류가 있더라도 저장은 허용됩니다. 단, 오류가 잔류된 그래프로는 토론을
 시작할 수 없으며 로스터 패널과 본 편집기에서 동일한 오류 원인을 안내합니다.
+
+**AI로 고쳐 쓰기**(ADR-050)는 지금 캔버스(저장하지 않은 편집 포함)에서 대화를 시작하고, 결과를 캔버스에만
+적용합니다. 새 에이전트는 그때 conf.json 에 등록되지만, 그래프 파일은 이 페이지의 **저장** 이 씁니다 — 편집
+상태는 브라우저가 들고 있으므로 대화 창이 파일을 쓰면 저장하지 않은 편집과 엇갈립니다.
 """
 
 import logging
@@ -18,6 +22,8 @@ from typing import Any, Dict, Optional
 
 from nicegui import ui
 
+from app.agents.catalog import server_options, skill_options
+from app.agents.draft import SaveRefused
 from app.agents.pool import get_agent_pool
 from app.config import get_config
 from app.graph_store import free_graph_id, load_graph, save_graph
@@ -27,7 +33,10 @@ from app.orchestration.graph import (
     graph_from_card_order,
     validate_graph,
 )
+from app.orchestration.runner import get_debate_runner
 from app.orchestration.strategies import order_by_priority, specialists_of
+from app.orchestration.workflow_builder import builder_context, draft_from_graph, save_workflow
+from app.ui.components.graph_builder_dialog import EDIT_GREETING, GraphBuilderChat
 from app.ui.components.graph_canvas import (
     GraphCanvas,
     agent_infos,
@@ -108,6 +117,9 @@ def create_graph_page() -> None:
             with ui.row().classes("items-center gap-2 no-wrap"):
                 dirty_badge = ui.badge("저장 안 됨", color="amber-8").props("dense")
                 dirty_badge.set_visibility(False)
+                ui.button("AI로 고쳐 쓰기", icon="auto_awesome", on_click=lambda: open_builder()).props(
+                    "flat dense no-caps color=amber-4"
+                ).tooltip("도우미와 대화해 지금 캔버스의 그래프를 고칩니다. 결과는 캔버스에만 적용되고, 파일은 [저장] 으로 씁니다.")
                 ui.button("검증", icon="rule", on_click=lambda: validate()).props(
                     "flat dense no-caps color=grey-3"
                 )
@@ -143,22 +155,28 @@ def create_graph_page() -> None:
 
                 ui.separator().classes("bg-slate-800 my-1")
                 ui.label("에이전트").classes("text-[11px] font-semibold text-slate-400 tracking-wider")
-                if not agents:
-                    ui.label("활성화된 전문가 에이전트가 없습니다.").classes("text-xs text-amber-400")
-                for key, (name, role, color) in agents.items():
-                    with ui.button(
-                        on_click=lambda k=key: add_node({
-                            "type": "agent", "agent": k, "agentName": agents[k][0],
-                            "agentRole": agents[k][1], "color": agents[k][2],
-                        })
-                    ).props("flat dense no-caps align=left").classes("w-full"):
-                        with ui.row().classes("items-center gap-2 no-wrap w-full"):
-                            ui.element("span").classes("inline-block w-2.5 h-2.5 rounded-full flex-shrink-0").style(
-                                f"background: {color or '#6366f1'}"
-                            )
-                            with ui.column().classes("gap-0 items-start min-w-0"):
-                                ui.label(name).classes("text-xs text-slate-200 truncate")
-                                ui.label(key).classes("text-[12px] text-slate-500 font-mono")
+
+                # 대화로 고쳐 쓰며 새 에이전트를 등록하면 다시 그립니다 (`apply_builder`).
+                @ui.refreshable
+                def agent_palette() -> None:
+                    if not agents:
+                        ui.label("활성화된 전문가 에이전트가 없습니다.").classes("text-xs text-amber-400")
+                    for key, (name, role, color) in agents.items():
+                        with ui.button(
+                            on_click=lambda k=key: add_node({
+                                "type": "agent", "agent": k, "agentName": agents[k][0],
+                                "agentRole": agents[k][1], "color": agents[k][2],
+                            })
+                        ).props("flat dense no-caps align=left").classes("w-full"):
+                            with ui.row().classes("items-center gap-2 no-wrap w-full"):
+                                ui.element("span").classes("inline-block w-2.5 h-2.5 rounded-full flex-shrink-0").style(
+                                    f"background: {color or '#6366f1'}"
+                                )
+                                with ui.column().classes("gap-0 items-start min-w-0"):
+                                    ui.label(name).classes("text-xs text-slate-200 truncate")
+                                    ui.label(key).classes("text-[12px] text-slate-500 font-mono")
+
+                agent_palette()
 
                 ui.separator().classes("bg-slate-800 my-1")
                 ui.button("카드 순서로 다시 채우기", icon="account_tree", on_click=lambda: refill_dialog.open()).props(
@@ -400,6 +418,57 @@ def create_graph_page() -> None:
         def add_node(data: Dict[str, Any]) -> None:
             canvas.run_method("addNode", data)
             mark_dirty()
+
+        # ---------------- 대화로 고쳐 쓰기 ----------------
+        def builder_context_now():
+            return builder_context(
+                server_options(get_config(), guest=False), skill_options(), max_visits=PREVIEW_MAX_VISITS,
+            )
+
+        async def open_builder() -> None:
+            """지금 캔버스(저장하지 않은 편집 포함)에서 시작하는 대화 창을 엽니다."""
+            try:
+                current = await current_spec(spec.id, name_input.value or spec.id)
+            except ValueError as exc:
+                ui.notify(str(exc), type="negative", position="bottom-right")
+                return
+            GraphBuilderChat(
+                builder_context_now(),
+                on_finish=apply_builder,
+                finish_label="캔버스에 적용",
+                title="AI로 그래프 고쳐 쓰기",
+                start=draft_from_graph(current),
+                greeting=EDIT_GREETING,
+                finish_note="새 에이전트는 conf.json 에 등록됩니다. 그래프는 캔버스에만 적용되며, 파일은 [저장] 으로 씁니다.",
+            ).open()
+
+        async def apply_builder(draft) -> bool:
+            """새 에이전트를 등록하고 그래프를 캔버스에 넣습니다. 파일은 쓰지 않습니다 — 편집 상태는 브라우저가 듭니다."""
+            try:
+                saved = save_workflow(
+                    draft, builder_context_now(), graph_id=spec.id,
+                    running=get_debate_runner().running_sessions(), write_graph=False,
+                )
+            except SaveRefused as exc:
+                ui.notify(str(exc), type="warning", position="bottom-right", multi_line=True)
+                return False
+            if saved.agent_keys:
+                # 팔레트와 노드의 에이전트 선택 목록이 새 에이전트를 보도록 다시 만듭니다.
+                agents.clear()
+                agents.update(agent_infos(get_agent_pool().list_all()))
+                agent_palette.refresh()
+            if saved.spec.name and saved.spec.name != (name_input.value or ""):
+                name_input.set_value(saved.spec.name)
+            canvas.run_method("replaceGraph", spec_to_canvas(saved.spec, agents))
+            mark_dirty()
+            show_empty()
+            show_report(validate_graph(saved.spec, known_agents(), default_max_visits=PREVIEW_MAX_VISITS))
+            added = f" 새 에이전트 {len(saved.agent_keys)}명을 등록했습니다 ({', '.join(saved.agent_keys)})." if saved.agent_keys else ""
+            ui.notify(
+                f"캔버스에 적용했습니다.{added} 파일에 쓰려면 [저장] 을 누르세요.",
+                type="positive", position="bottom-right", multi_line=True,
+            )
+            return True
 
         # 첫 화면에서 지금 그래프의 검증 결과를 보여 줍니다.
         show_report(validate_graph(spec, known_agents(), default_max_visits=PREVIEW_MAX_VISITS))

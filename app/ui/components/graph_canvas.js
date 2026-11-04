@@ -73,10 +73,10 @@ const GraphNode = {
     },
   },
   template: `
-    <div class="gnode" :class="['gnode-' + data.type, run ? 'gnode-run-' + run.state : '', { 'gnode-selected': selected, 'gnode-invalid': data.type === 'agent' && !data.agentName }]">
+    <div class="gnode" :class="['gnode-' + data.type, run ? 'gnode-run-' + run.state : '', { 'gnode-selected': selected, 'gnode-invalid': data.type === 'agent' && !data.agentName, 'gnode-draft': data.type === 'agent' && data.draft }]">
       <Handle v-if="ports.input" type="target" :position="Position.Left" id="in" class="gpin" />
       <div class="gnode-band" :style="bandStyle">
-        <span>{{ kind }}</span>
+        <span>{{ kind }}<span v-if="data.type === 'agent' && data.draft" class="gnode-draft-tag"> · 새 에이전트</span></span>
         <span class="gnode-badges">{{ badges.join(' · ') }}</span>
       </div>
       <div v-if="runChip" class="gnode-chip" :class="run && run.decision ? 'gnode-chip-' + run.decision : ''">{{ runChip }}</div>

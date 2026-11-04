@@ -9,11 +9,11 @@ Vue Flow 는 `app/ui/static/graph_editor/index.js` 에 하나의 ES 모듈로 �
 
 from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from nicegui import ui
 
-from app.orchestration.graph import GraphSpec, parse_graph
+from app.orchestration.graph import GraphSpec, back_edges, parse_graph
 
 ASSETS = Path(__file__).resolve().parent.parent / "static" / "graph_editor"
 
@@ -35,20 +35,52 @@ def agent_infos(agents: List[Any]) -> Dict[str, Tuple[str, str, str]]:
     return out
 
 
-def auto_layout(spec: GraphSpec) -> Dict[str, Tuple[float, float]]:
-    """좌표가 없는 노드의 자리. `start` 에서의 거리(단계)로 열을, 같은 열 안의 순서로 행을 정합니다."""
-    depth: Dict[str, int] = {}
+def _longest_depths(spec: GraphSpec) -> Dict[str, int]:
+    """`start` 에서 닿는 노드마다 되돌림 선을 뺀 **가장 긴** 경로의 길이.
+
+    가장 짧은 거리로 열을 정하면, 길이가 다른 갈래가 취합 노드로 모일 때 취합이 긴 갈래의 마지막 노드와
+    같은 열에 놓여 선이 세로로 꺾입니다 (`start→A→B→M`, `start→C→M` 이면 B 와 M 이 둘 다 2열).
+    되돌림 선(`back_edges`)을 빼면 남은 그래프에는 순환이 없어 가장 긴 경로를 셀 수 있습니다.
+    """
     start = spec.start
-    queue = deque([start.id] if start else [])
-    if start:
-        depth[start.id] = 0
+    if start is None:
+        return {}
+    back = back_edges(spec)
+    forward: Dict[str, List[str]] = {n.id: [] for n in spec.nodes}
+    for edge in spec.edges:
+        if edge.id not in back and edge.source[0] in forward and edge.target[0] in forward:
+            forward[edge.source[0]].append(edge.target[0])
+
+    reachable = {start.id}
+    queue = deque([start.id])
     while queue:
-        node_id = queue.popleft()
-        for edge in spec.out_edges(node_id):
-            target = edge.target[0]
-            if target not in depth:
-                depth[target] = depth[node_id] + 1
+        for target in forward[queue.popleft()]:
+            if target not in reachable:
+                reachable.add(target)
                 queue.append(target)
+
+    incoming = {node_id: 0 for node_id in reachable}
+    for node_id in reachable:
+        for target in forward[node_id]:
+            incoming[target] += 1
+    depth = {node_id: 0 for node_id in reachable}
+    ready = deque([start.id])
+    while ready:
+        node_id = ready.popleft()
+        for target in forward[node_id]:
+            depth[target] = max(depth[target], depth[node_id] + 1)
+            incoming[target] -= 1
+            if incoming[target] == 0:
+                ready.append(target)
+    return depth
+
+
+def auto_layout(spec: GraphSpec) -> Dict[str, Tuple[float, float]]:
+    """좌표가 없는 노드의 자리. `start` 에서의 가장 긴 경로(단계)로 열을, 같은 열 안의 순서로 행을 정합니다.
+
+    `start` 에서 닿지 않는 노드는 맨 오른쪽 열에 모읍니다.
+    """
+    depth = _longest_depths(spec)
     deepest = max(depth.values(), default=0)
     rows: Dict[int, int] = {}
     positions: Dict[str, Tuple[float, float]] = {}
@@ -60,8 +92,17 @@ def auto_layout(spec: GraphSpec) -> Dict[str, Tuple[float, float]]:
     return positions
 
 
-def spec_to_canvas(spec: GraphSpec, agents: Mapping[str, Tuple[str, str, str]]) -> Dict[str, Any]:
-    """그래프 파일 → 캔버스 초기값. 없는 에이전트는 이름이 비어 노드가 경고색으로 보입니다."""
+def spec_to_canvas(
+    spec: GraphSpec,
+    agents: Mapping[str, Tuple[str, str, str]],
+    drafts: Iterable[str] = (),
+) -> Dict[str, Any]:
+    """그래프 파일 → 캔버스 초기값. 없는 에이전트는 이름이 비어 노드가 경고색으로 보입니다.
+
+    `drafts` 는 아직 등록하지 않은 새 에이전트의 키입니다 (대화로 워크플로 만들기). 그 노드는 점선 테두리로
+    그려 기존 에이전트와 구분합니다. 이름은 `agents` 에 초안 값을 넣어 넘깁니다.
+    """
+    draft_keys = set(drafts)
     layout = auto_layout(spec)
     nodes = []
     for node in spec.nodes:
@@ -75,6 +116,8 @@ def spec_to_canvas(spec: GraphSpec, agents: Mapping[str, Tuple[str, str, str]]) 
         if node.type == "agent":
             name, role, color = agents.get(node.agent or "", ("", "", ""))
             data.update(agent=node.agent or "", agentName=name, agentRole=role, color=color)
+            if node.agent in draft_keys:
+                data["draft"] = True
         if node.type == "gate":
             data.update(question=node.question, default=node.default)
         if node.type == "start":
@@ -135,6 +178,9 @@ GRAPH_EDITOR_CSS = """
          box-shadow: 0 6px 18px rgba(0,0,0,.35); font-family: inherit; position: relative; }
 .gnode-selected { border-color: #a5b4fc; box-shadow: 0 0 0 2px rgba(165,180,252,.45); }
 .gnode-invalid { border-color: #f87171; }
+/* 아직 등록하지 않은 새 에이전트 (대화로 워크플로 만들기의 미리보기). */
+.gnode-draft { border-style: dashed; border-color: #fbbf24; }
+.gnode-draft-tag { font-weight: 700; }
 .gnode-band { display: flex; justify-content: space-between; gap: 6px; background: #4f46e5; color: #fff;
               font: 600 12px/1 ui-monospace, Consolas, monospace; letter-spacing: .06em; padding: 5px 9px;
               border-radius: 8px 8px 0 0; }

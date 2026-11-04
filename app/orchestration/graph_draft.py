@@ -35,6 +35,18 @@ DRAFT_PROMPT_MARKER = "[실행 그래프 작성]"
 
 _NODE_FIELDS = ("id", "type", "label", "agent", "instruction", "question", "default", "wait", "max_visits", "sees")
 
+# 답으로 받는 그래프의 노드·선 규격. 적응형 그래프와 대화형 워크플로 빌더(`workflow_builder.py`)가 같은
+# 문장을 씁니다 — 규격이 바뀌면 여기 한 곳만 고칩니다.
+GRAPH_FORMAT_GUIDE = (
+    "노드 종류:\n"
+    '- agent: 전문가 한 명의 발언. "agent" 에 키, "label" 에 짧은 이름, "instruction" 에 이 차례의 구체적 지시.\n'
+    '- merge: 오케스트레이터가 들어온 발언을 하나로 합칩니다. 갈라진 갈래를 모을 때 씁니다.\n'
+    '- gate: 오케스트레이터가 예/아니오로 판정합니다. "question" 필수, "default" 는 판정을 못 읽었을 때 갈 쪽.\n'
+    "- 시작과 최종 합성은 id 가 start, end 인 노드로 이미 있습니다. 선에서 그 id 만 쓰세요.\n\n"
+    "선: {\"from\": 노드 id, \"to\": 노드 id, \"port\": \"yes\"|\"no\" (판정에서 나가는 선만), "
+    "\"carry\": \"full\"(전문, 기본)|\"digest\"(요지만)|\"refs\"(긴 코드는 참조로)}"
+)
+
 
 @dataclass
 class GraphDraft:
@@ -94,13 +106,7 @@ def draft_prompt(
         f"[쓸 수 있는 전문가]\n{roster}\n\n"
         f"{base_block}"
         f"{retry_block}"
-        "노드 종류:\n"
-        '- agent: 전문가 한 명의 발언. "agent" 에 키, "label" 에 짧은 이름, "instruction" 에 이 차례의 구체적 지시.\n'
-        '- merge: 오케스트레이터가 들어온 발언을 하나로 합칩니다. 갈라진 갈래를 모을 때 씁니다.\n'
-        '- gate: 오케스트레이터가 예/아니오로 판정합니다. "question" 필수, "default" 는 판정을 못 읽었을 때 갈 쪽.\n'
-        "- 시작과 최종 합성은 id 가 start, end 인 노드로 이미 있습니다. 선에서 그 id 만 쓰세요.\n\n"
-        "선: {\"from\": 노드 id, \"to\": 노드 id, \"port\": \"yes\"|\"no\" (판정에서 나가는 선만), "
-        "\"carry\": \"full\"(전문, 기본)|\"digest\"(요지만)|\"refs\"(긴 코드는 참조로)}\n\n"
+        f"{GRAPH_FORMAT_GUIDE}\n\n"
         "규칙:\n"
         "- 작업의 성격에 맞추세요. 단순하면 짧게 — 전문가 한두 명으로 끝나도 됩니다. 서로의 결과가 필요 없는 일만 "
         f"병렬로 가르고(동시 실행 상한 {parallel_limit}), 뒤 일이 앞 결과를 쓰면 줄지어 이으세요.\n"
@@ -180,6 +186,17 @@ def parse_draft(content: str, graph_id: str, max_visits: int) -> GraphDraft:
         data = json.loads(block.group(0))
     except (TypeError, ValueError) as exc:
         raise ValueError(f"JSON 을 읽지 못했습니다 ({exc})") from exc
+    spec = spec_from_draft(data, graph_id, max_visits)
+    return GraphDraft(spec=spec, reason=str(data.get("reason") or "").strip())
+
+
+def spec_from_draft(data: Any, graph_id: str, max_visits: int) -> GraphSpec:
+    """답 모양의 dict(`draft_view` 와 같은 모양)를 그래프로. 틀리면 사람이 읽을 문장의 ValueError.
+
+    누락되기 쉬운 것을 채웁니다 — 시작·최종 합성 노드, 선 id, 핀 이름, 갈래를 모으는 취합의 "모두 기다림".
+    응답 전체에서 JSON 을 찾는 일은 하지 않습니다. 블록이 여럿인 답(`workflow_builder`)은 블록을 먼저
+    잘라내고 이 함수만 씁니다.
+    """
     if not isinstance(data, dict) or not isinstance(data.get("nodes"), list) or not isinstance(data.get("edges"), list):
         raise ValueError("nodes 와 edges 목록이 없습니다")
 
@@ -194,13 +211,12 @@ def parse_draft(content: str, graph_id: str, max_visits: int) -> GraphDraft:
             if len(incoming) > 1:
                 node["wait"] = "all"
 
-    spec = parse_graph({
+    return parse_graph({
         "id": graph_id,
         "name": str(data.get("name") or "오케스트레이터 그래프").strip()[:80],
         "nodes": nodes,
         "edges": edges,
     })
-    return GraphDraft(spec=spec, reason=str(data.get("reason") or "").strip())
 
 
 def draft_report(spec: GraphSpec, candidates: Iterable[str], max_rounds: int) -> GraphReport:

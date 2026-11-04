@@ -9,10 +9,15 @@ from typing import Any, Callable, Dict, Optional
 
 from nicegui import ui
 
+from app.agents.catalog import server_options, skill_options
+from app.agents.draft import SaveRefused
 from app.graph_store import free_graph_id, graph_agent_keys, list_graphs, load_graph, save_graph
 from app.orchestration.graph import graph_from_card_order, parse_graph, validate_graph
 from app.orchestration.roster_service import RosterService
+from app.orchestration.runner import get_debate_runner
 from app.orchestration.strategies import STRATEGY_MAP, resolve_strategy_name
+from app.orchestration.workflow_builder import CompositeDraft, builder_context, new_graph_id, save_workflow
+from app.ui.components.graph_builder_dialog import GraphBuilderChat
 from app.ui.components.graph_canvas import GraphCanvas, agent_infos, spec_to_canvas
 from app.ui.components.roster.changes import RosterChanges
 from app.ui.components.roster.state import RosterState
@@ -87,6 +92,11 @@ class GraphRowComponent:
                     on_click=self.create_from_cards,
                 ).props("flat dense no-caps size=12px color=teal-4").tooltip(
                     "참여로 선택된 전문가 에이전트를 카드 순서대로 연결한 새 그래프를 생성하여 선택합니다."
+                )
+                ui.button(
+                    "대화로 만들기", icon="auto_awesome", on_click=self.open_builder,
+                ).props("flat dense no-caps size=12px color=amber-4").tooltip(
+                    "도우미와 대화해 그래프를 설계합니다. 맞는 전문가가 없으면 새 에이전트도 함께 만듭니다."
                 )
             self.status = ui.label("").classes("text-[12px] leading-snug w-full")
             with ui.row().classes("w-full items-center gap-2 no-wrap"):
@@ -339,6 +349,64 @@ class GraphRowComponent:
         # 이 대화의 선택을 먼저 저장하고 떠납니다. 타이머로 미루면 화면이 바뀌며 사라질 수 있습니다.
         await self.changes.config_changed_now()
         ui.navigate.to(f"/graphs/{spec.id}")
+
+    def _builder_context(self):
+        """설계와 저장에 쓸 지금의 구성. 상한 없는 노드는 이 대화의 최대 라운드로 셉니다."""
+        return builder_context(
+            server_options(self.service.config(), guest=False), skill_options(),
+            max_visits=self.state.max_rounds, pool=self.service.agent_pool(),
+        )
+
+    def open_builder(self) -> None:
+        """대화로 워크플로 만들기 창을 엽니다. 마치면 새 그래프 파일을 만들어 이 대화에 연결합니다."""
+        locked = bool(self.state.personas_locked)
+        chat = GraphBuilderChat(
+            self._builder_context(),
+            on_finish=self._finish_builder,
+            finish_label="저장" if locked else "저장하고 이 대화에 연결",
+            finish_note=(
+                "이 대화는 이미 시작되어 구성이 고정되었습니다. 저장한 그래프는 새 대화에서 고르세요."
+                if locked else "새 에이전트는 conf.json 에 등록되고, 그래프는 data/graphs 에 새 파일로 저장됩니다."
+            ),
+        )
+        chat.open()
+
+    async def _finish_builder(self, draft: CompositeDraft) -> bool:
+        """설계도를 저장합니다 (`save_workflow`). 거절되면 False — 창과 대화가 남습니다."""
+        try:
+            saved = save_workflow(
+                draft, self._builder_context(),
+                graph_id=new_graph_id(), running=get_debate_runner().running_sessions(),
+            )
+        except SaveRefused as exc:
+            ui.notify(str(exc), type="warning", position="bottom-right", multi_line=True)
+            return False
+        if saved.agent_keys:
+            # 풀을 다시 채웠으므로 카드·선택 상태를 지금 있는 에이전트에 맞춥니다.
+            self.changes.on_applied()
+        if saved.graph_error:
+            ui.notify(saved.graph_error, type="negative", position="bottom-right", multi_line=True)
+            return True
+
+        name = saved.spec.name or saved.spec.id
+        added = f" · 새 에이전트 {len(saved.agent_keys)}명 등록 ({', '.join(saved.agent_keys)})" if saved.agent_keys else ""
+        if self.state.personas_locked:
+            # 잠긴 대화는 첫 발언 때 고정한 구성으로 돌아 새 에이전트가 없습니다 (`session_roster_agents`).
+            ui.notify(
+                f"‘{name}’ 그래프를 저장했습니다 (data/graphs/{saved.spec.id}.json){added}. "
+                "이 대화는 이미 시작되어 연결하지 않았습니다 — 새 대화에서 이 그래프를 고르세요.",
+                type="info", position="bottom-right", multi_line=True,
+            )
+            return True
+        # 전략은 바꾸지 않습니다: 그래프 토론이면 실행 그래프, 적응형이면 기준 그래프가 됩니다.
+        self.state.graph_id = saved.spec.id
+        self.sync()
+        await self.changes.config_changed_now()
+        ui.notify(
+            f"‘{name}’ 그래프를 저장하고 이 대화에 연결했습니다{added}.",
+            type="positive", position="bottom-right", multi_line=True,
+        )
+        return True
 
     def create_from_cards(self) -> None:
         """참여로 체크한 전문가를 카드 순서대로 이은 그래프를 만들어 고릅니다."""

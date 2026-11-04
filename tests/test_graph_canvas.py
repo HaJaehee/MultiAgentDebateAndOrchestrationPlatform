@@ -78,6 +78,50 @@ def test_graphs_without_positions_are_laid_out_by_distance_from_start():
     assert split["impl"][0] == split["sec"][0] and split["impl"][1] != split["sec"][1], "갈라진 노드는 같은 열, 다른 행"
 
 
+def test_a_merge_of_uneven_branches_sits_after_the_longest_branch():
+    """가장 짧은 거리로 열을 정하면 취합(M)이 긴 갈래의 B 와 같은 열에 놓여 선이 세로로 꺾입니다."""
+    spec = parse_graph({
+        "id": "uneven", "name": "길이가 다른 갈래",
+        "nodes": [
+            {"id": "start", "type": "start"},
+            {"id": "a", "type": "agent", "agent": "architect"},
+            {"id": "b", "type": "agent", "agent": "coder"},
+            {"id": "c", "type": "agent", "agent": "critic"},
+            {"id": "m", "type": "merge"},
+            {"id": "end", "type": "end"},
+        ],
+        "edges": [
+            {"id": "e1", "from": ["start", "out"], "to": ["a", "in"]},
+            {"id": "e2", "from": ["a", "out"], "to": ["b", "in"]},
+            {"id": "e3", "from": ["b", "out"], "to": ["m", "in"]},
+            {"id": "e4", "from": ["start", "out"], "to": ["c", "in"]},
+            {"id": "e5", "from": ["c", "out"], "to": ["m", "in"]},
+            {"id": "e6", "from": ["m", "out"], "to": ["end", "in"]},
+        ],
+    })
+    layout = auto_layout(spec)
+    assert layout["m"][0] > layout["b"][0] > layout["a"][0]
+    assert layout["end"][0] > layout["m"][0]
+    assert len(set(layout.values())) == len(layout), "노드 자리가 서로 겹치지 않습니다"
+
+
+def test_a_loop_back_does_not_push_nodes_to_the_right():
+    layout = auto_layout(parse_graph(example()))
+    assert layout["impl"][0] < layout["merge"][0] < layout["gate"][0] < layout["end"][0], \
+        "판정에서 구현으로 되돌아가는 선은 열을 늘리지 않습니다"
+    assert len(set(layout.values())) == len(layout)
+
+
+def test_nodes_of_agents_not_registered_yet_are_marked_as_drafts():
+    infos = dict(INFOS, auditor=("컨트랙트 보안관", "취약점 점검", "#e64a19"))
+    data = example()
+    data["nodes"][3]["agent"] = "auditor"
+    canvas = spec_to_canvas(parse_graph(data), infos, drafts=["auditor"])
+    nodes = {n["id"]: n["data"] for n in canvas["nodes"]}
+    assert nodes["sec"]["draft"] is True and nodes["sec"]["agentName"] == "컨트랙트 보안관"
+    assert "draft" not in nodes["impl"], "기존 에이전트 노드에는 표시가 없습니다"
+
+
 def test_fields_that_do_not_belong_to_a_node_type_are_dropped():
     raw = {
         "nodes": [

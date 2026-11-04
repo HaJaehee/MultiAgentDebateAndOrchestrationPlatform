@@ -1,6 +1,6 @@
 # AI 대화형 커스텀 에이전트 그래프 및 페르소나 생성 기능 개발 계획
 
-> 상태: 설계 검토 반영본 (2026-11-04) · 구현 전. 처음 초안에서 바뀐 점은 [부록](#부록-검토-반영-내역-2026-11-04)에 모았습니다.
+> 상태: 구현됨 (2026-11-04) · 결정 기록은 [ADR-050](../lectures/05-adr/ADR-050-build-workflows-by-conversation.md). 처음 초안에서 바뀐 점은 [부록](#부록-검토-반영-내역-2026-11-04)에 모았습니다.
 
 ## 1. 개요 및 배경 (Overview & Background)
 
@@ -43,7 +43,7 @@ flowchart TD
         Dialog["GraphBuilderDialog<br>대화 + 신규 에이전트 랙 + 읽기 전용 미리보기"]
     end
 
-    subgraph Core_Layer ["빌더 코어 (app/agents/workflow_builder.py)"]
+    subgraph Core_Layer ["빌더 코어 (app/orchestration/workflow_builder.py)"]
         Ask["ask_workflow_builder<br>오케스트레이터의 도구 없는 사본"]
         Split["split_composite_reply<br>agents · graph 블록 추출"]
         Check["check_composite<br>draft_report + 새 키 충돌 검사"]
@@ -85,7 +85,7 @@ flowchart TD
 
 ## 3. 대화 프로토콜 및 복합 데이터 계약 (Composite Draft)
 
-새 모듈 이름은 `app/agents/workflow_builder.py`입니다. 기존 `app/orchestration/graph_draft.py`와 그 안의 `GraphDraft` 클래스와 헷갈리지 않도록 `graph_draft_builder` 같은 이름은 쓰지 않습니다.
+새 모듈은 `app/orchestration/workflow_builder.py`입니다. 계층 규칙(`tests/test_layering.py`)상 `app.agents`는 `app.orchestration`(그래프·`graph_draft`·`format_roster`)을 가져올 수 없어 orchestration 에 둡니다. 기존 `app/orchestration/graph_draft.py`와 그 안의 `GraphDraft` 클래스와 헷갈리지 않도록 `graph_draft_builder` 같은 이름은 쓰지 않습니다.
 
 ### 3.1 복합 설계도 데이터 모델
 
@@ -177,7 +177,7 @@ class CompositeDraft(BaseModel):
 최악의 경우 호출 수는 점검 2 + 판정 2 + 수정 2 + 계획 1 + 최종 합성 1 = 8회입니다. 판정 노드를 빼면 순환이 남지 않으므로 루프 검사를 통과합니다.
 
 ### 3.4 응답 파싱 및 양방향 컨텍스트 동기화
-- **`split_composite_reply(content) -> Tuple[str, Optional[List[Dict]], Optional[Dict]]`**
+- **`split_composite_reply(content) -> CompositeReply`** (`text`, `agents`, `graph`, `broken`)
   - 추론 흔적을 걷어낸 뒤(`strip_reasoning_trace`) 펜스 블록을 태그별로 **먼저** 잘라냅니다. 태그마다 마지막 블록만 씁니다.
   - 블록 안의 JSON을 읽지 못하면 그 항목은 `None`("이번 응답에 없음")으로 두어 이전 값을 지키고, 자가 교정(4.2)을 요청합니다.
   - 기존 파서는 그대로 쓸 수 없습니다.
@@ -279,7 +279,7 @@ class CompositeDraft(BaseModel):
 
 ## 6. 저장 파이프라인 (`save_workflow`)
 
-UI 없이 테스트할 수 있도록 `app/agents/workflow_builder.py`에 둡니다. 원칙은 **쓰기 전에 모든 검사를 끝내는 것**입니다. 그러면 쓰는 도중에 검증 때문에 실패해 되돌릴 일이 없습니다.
+UI 없이 테스트할 수 있도록 `app/orchestration/workflow_builder.py`에 둡니다. 원칙은 **쓰기 전에 모든 검사를 끝내는 것**입니다. 그러면 쓰는 도중에 검증 때문에 실패해 되돌릴 일이 없습니다.
 
 ```
 [저장하고 이 대화에 연결] 또는 [캔버스에 적용]
@@ -325,11 +325,11 @@ UI 없이 테스트할 수 있도록 `app/agents/workflow_builder.py`에 둡니�
 | 단계 | 작업 분류 | 주요 구현 파일 | 상세 작업 내용 |
 | :---: | :--- | :--- | :--- |
 | **Phase 1** | **공용 부품 정리** | `app/orchestration/graph_draft.py`<br>`app/ui/components/graph_canvas.py`<br>`app/ui/components/agent_builder_chat.py` | - `parse_draft`를 `spec_from_draft`로 분리 (적응형 그래프 동작은 그대로)<br>- 노드·선 규격 문장을 상수로 떼어 두 프롬프트가 함께 사용<br>- `auto_layout`을 최장 경로 열 배치로 개선<br>- `BuilderChat`의 요청·분해·병합을 훅으로 분리 |
-| **Phase 2** | **빌더 코어** | `app/agents/workflow_builder.py` | - `CompositeDraft`, `workflow_builder_prompt`<br>- `split_composite_reply`, `streaming_text` 일반화<br>- `with_composite_draft` (최근 메시지에만 첨부)<br>- `check_composite` (`draft_report` + 새 키 충돌 검사), 자가 교정 |
-| **Phase 3** | **저장** | `app/config/editors.py`<br>`app/agents/workflow_builder.py` | - `add_agents_to_conf_file` (한 번에 쓰기)<br>- `save_workflow` (잠금 → 키 확정·노드 치환 → 최종 검사 → conf → 그래프) |
+| **Phase 2** | **빌더 코어** | `app/orchestration/workflow_builder.py` | - `CompositeDraft`, `workflow_builder_prompt`<br>- `split_composite_reply`, `streaming_text` 일반화<br>- `with_composite_draft` (최근 메시지에만 첨부)<br>- `check_composite` (`draft_report` + 새 키 충돌 검사), 자가 교정 |
+| **Phase 3** | **저장** | `app/config/editors.py`<br>`app/orchestration/workflow_builder.py` | - `add_agents_to_conf_file` (한 번에 쓰기)<br>- `save_workflow` (잠금 → 키 확정·노드 치환 → 최종 검사 → conf → 그래프) |
 | **Phase 4** | **UI 컴포넌트** | `app/ui/components/graph_builder_dialog.py`<br>`app/ui/components/graph_canvas.js` | - 대화창, 신규 에이전트 랙과 편집 팝업<br>- 읽기 전용 미리보기 (`show` 뒤에 그리기), `gnode-draft` 점선 표시<br>- 자가 교정·비용·검증 결과 표시 |
 | **Phase 5** | **진입 연결** | `app/ui/components/roster/graph_row.py`<br>`app/ui/graph_page.py` | - `GraphRow` 버튼과 이 대화에 연결<br>- 편집기 버튼: `getGraph()`로 시작, `replaceGraph`로 적용, 팔레트 다시 그리기 |
-| **Phase 6** | **테스트 및 문서** | `tests/test_workflow_builder.py`<br>`tests/test_graph_canvas.py`<br>`lectures/05-adr/ADR-050-…` | - 8장의 테스트<br>- 결정 기록 ADR-050 (범위, 저장 원칙, 편집기 경로의 소유권) |
+| **Phase 6** | **테스트 및 문서** | `tests/test_workflow_builder.py`<br>`tests/test_graph_canvas.py`<br>`lectures/05-adr/ADR-050-build-workflows-by-conversation.md` | - 8장의 테스트<br>- 결정 기록 ADR-050 (범위, 저장 원칙, 편집기 경로의 소유권) |
 
 ---
 
@@ -378,3 +378,4 @@ UI 없이 테스트할 수 있도록 `app/agents/workflow_builder.py`에 둡니�
 - **미리보기**: 다이얼로그 캔버스는 읽기 전용이며 열린 뒤에 그립니다.
 - **예시**: 허용 팔레트 색(`#e64a19`)을 쓰고, 고칠 사람이 있는 루프로 바꾸고, 화면 목업과 JSON의 판정 갈래를 맞췄습니다.
 - **기타**: 모듈 이름을 `graph_draft_builder`에서 `workflow_builder`로 바꾸고, 범위(1.3)와 ADR-050 작성을 추가했습니다.
+- **구현 중 확정**: 계층 규칙 때문에 코어를 `app/agents`가 아니라 `app/orchestration`에 두었습니다. `split_composite_reply`는 튜플 대신 `CompositeReply`를 돌려주고, 읽지 못한 블록을 `broken`에 모읍니다.

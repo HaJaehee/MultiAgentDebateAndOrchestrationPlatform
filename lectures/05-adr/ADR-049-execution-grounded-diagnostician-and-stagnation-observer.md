@@ -1,6 +1,6 @@
 # ADR-049. 실행 기반 진단(Diagnostician) 에이전트 · 구조화된 시도 이력 · 외부 정체 관찰자 기반 재설계 에스컬레이션
 
-> [ADR 목록](README.md) · 이전: [ADR-048](ADR-048-token-and-time-mini-charts.md)
+> [ADR 목록](README.md) · 이전: [ADR-048](ADR-048-token-and-time-mini-charts.md) · 다음: [ADR-050](ADR-050-build-workflows-by-conversation.md)
 
 ## 상태 (Status)
 

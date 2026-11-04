@@ -6,7 +6,7 @@
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from app.config.env import resolve_env_vars
 from app.config.loader import (
@@ -675,8 +675,71 @@ def add_agent_to_conf_file(
     `overrides`에는 `prune_agent_overrides()`를 거친 값만 전달하십시오. 여기에 포함되지 않은
     항목은 파일에 기록되지 않고 llm 기본 설정에서 상속됩니다. 스킬은 선택한 항목이 있을 때만 기록합니다.
     """
-    key = _require_key(agent_key, "에이전트 키")
+    key, block = _new_agent_block(
+        agent_key, name, role, system_prompt=system_prompt, allowed_mcp_servers=allowed_mcp_servers,
+        overrides=overrides, sequential_thinking=sequential_thinking, debate_stance=debate_stance,
+        card_color=card_color, icon=icon, enabled=enabled, allowed_skills=allowed_skills,
+        decision_llm=decision_llm,
+    )
     path = Path(config_path)
+
+    data = read_conf_file(path)
+    agents = _section(data, "agents")
+    if key in agents:
+        raise ValueError(f"'{key}' 에이전트가 이미 {path.name} 에 있습니다.")
+    agents[key] = block
+
+    write_conf_file(path, data)
+    reload_config_if_active(path)
+
+def add_agents_to_conf_file(
+    entries: Sequence[Mapping[str, Any]],
+    config_path: str | Path = DEFAULT_CONFIG_PATH,
+) -> List[str]:
+    """`agents`에 여러 에이전트를 **한 번에** 추가하고, 추가한 키를 돌려줍니다.
+
+    각 항목은 `add_agent_to_conf_file` 과 같은 이름의 값을 담은 dict 입니다 (`agent_key`, `name`, `role`, ...).
+    전부 검사한 뒤 파일을 한 번만 씁니다. 하나라도 틀리거나 이미 있는 키면 아무것도 쓰지 않습니다 —
+    한 명씩 쓰다가 중간에 실패하면 일부만 남습니다 (대화로 워크플로 만들기가 쓰는 경로).
+    """
+    blocks = [_new_agent_block(**dict(entry)) for entry in entries]
+    keys = [key for key, _ in blocks]
+    repeated = sorted({key for key in keys if keys.count(key) > 1})
+    if repeated:
+        raise ValueError(f"같은 키가 두 번 있습니다: {', '.join(repeated)}")
+    if not blocks:
+        return []
+    path = Path(config_path)
+
+    data = read_conf_file(path)
+    agents = _section(data, "agents")
+    taken = [key for key in keys if key in agents]
+    if taken:
+        raise ValueError(f"이미 {path.name} 에 있는 에이전트입니다: {', '.join(taken)}")
+    for key, block in blocks:
+        agents[key] = block
+
+    write_conf_file(path, data)
+    reload_config_if_active(path)
+    return keys
+
+def _new_agent_block(
+    agent_key: str,
+    name: str,
+    role: str,
+    system_prompt: str = "",
+    allowed_mcp_servers: Optional[List[str]] = None,
+    overrides: Optional[Dict[str, Any]] = None,
+    sequential_thinking: Optional[Dict[str, Any]] = None,
+    debate_stance: str = "neutral",
+    card_color: Optional[str] = None,
+    icon: Optional[str] = None,
+    enabled: bool = True,
+    allowed_skills: Optional[List[str]] = None,
+    decision_llm: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, Dict[str, Any]]:
+    """새 에이전트의 (키, conf.json 블록). 파일은 읽지도 쓰지도 않고 입력만 검사합니다."""
+    key = _require_key(agent_key, "에이전트 키")
 
     name = (name or "").strip()
     role = (role or "").strip()
@@ -712,11 +775,6 @@ def add_agent_to_conf_file(
             f"{' | '.join(DEBATE_STANCES)} 중에서 고르세요."
         )
 
-    data = read_conf_file(path)
-    agents = _section(data, "agents")
-    if key in agents:
-        raise ValueError(f"'{key}' 에이전트가 이미 {path.name} 에 있습니다.")
-
     block: Dict[str, Any] = {"name": name, "role": role}
     if not enabled:
         block["enabled"] = False
@@ -746,11 +804,7 @@ def add_agent_to_conf_file(
             for field in DECISION_LLM_FIELDS
             if field in decision
         }
-
-    agents[key] = block
-
-    write_conf_file(path, data)
-    reload_config_if_active(path)
+    return key, block
 
 def set_agent_enabled_in_conf_file(
     agent_key: str,
