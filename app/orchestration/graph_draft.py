@@ -35,8 +35,8 @@ DRAFT_PROMPT_MARKER = "[실행 그래프 작성]"
 
 _NODE_FIELDS = ("id", "type", "label", "agent", "instruction", "question", "default", "wait", "max_visits", "sees")
 
-# 답으로 받는 그래프의 노드·선 규격. 적응형 그래프와 대화형 워크플로 빌더(`workflow_builder.py`)가 같은
-# 문장을 씁니다 — 규격이 바뀌면 여기 한 곳만 고칩니다.
+# 응답으로 수신할 그래프의 노드 및 엣지(선) 규격입니다. 적응형 그래프와 대화형 워크플로 빌더(`workflow_builder.py`)가
+# 동일한 가이드를 공유합니다. 규격이 변경될 경우 이곳 한 곳만 수정합니다.
 GRAPH_FORMAT_GUIDE = (
     "노드 종류:\n"
     '- agent: 전문가 한 명의 발언. "agent" 에 키, "label" 에 짧은 이름, "instruction" 에 이 차례의 구체적 지시.\n'
@@ -191,11 +191,11 @@ def parse_draft(content: str, graph_id: str, max_visits: int) -> GraphDraft:
 
 
 def spec_from_draft(data: Any, graph_id: str, max_visits: int) -> GraphSpec:
-    """답 모양의 dict(`draft_view` 와 같은 모양)를 그래프로. 틀리면 사람이 읽을 문장의 ValueError.
+    """초안 형태의 딕셔너리(`draft_view`와 동일한 구조)를 `GraphSpec` 객체로 변환합니다. 형식이 올바르지 않으면 직관적인 설명의 ValueError를 발생시킵니다.
 
-    누락되기 쉬운 것을 채웁니다 — 시작·최종 합성 노드, 선 id, 핀 이름, 갈래를 모으는 취합의 "모두 기다림".
-    응답 전체에서 JSON 을 찾는 일은 하지 않습니다. 블록이 여럿인 답(`workflow_builder`)은 블록을 먼저
-    잘라내고 이 함수만 씁니다.
+    누락되기 쉬운 필수 요소를 자동으로 보완합니다 — 시작·최종 합성 노드, 선 ID, 포트 이름, 분기를 모으는 취합 노드의 '모두 대기(wait: all)'.
+    응답 전체 텍스트에서 JSON을 탐색하지는 않습니다. 여러 블록이 포함된 응답(`workflow_builder`)의 경우 사전에 블록을 추출한 뒤
+    이 함수를 호출해야 합니다.
     """
     if not isinstance(data, dict) or not isinstance(data.get("nodes"), list) or not isinstance(data.get("edges"), list):
         raise ValueError("nodes 와 edges 목록이 없습니다")

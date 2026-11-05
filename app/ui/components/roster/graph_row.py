@@ -96,7 +96,7 @@ class GraphRowComponent:
                 ui.button(
                     "대화로 만들기", icon="auto_awesome", on_click=self.open_builder,
                 ).props("flat dense no-caps size=12px color=amber-4").tooltip(
-                    "도우미와 대화해 그래프를 설계합니다. 맞는 전문가가 없으면 새 에이전트도 함께 만듭니다."
+                    "AI 도우미와 대화하며 실행 그래프를 설계합니다. 필요한 전문가가 없으면 새 에이전트도 함께 생성합니다."
                 )
             self.status = ui.label("").classes("text-[12px] leading-snug w-full")
             with ui.row().classes("w-full items-center gap-2 no-wrap"):
@@ -351,22 +351,22 @@ class GraphRowComponent:
         ui.navigate.to(f"/graphs/{spec.id}")
 
     def _builder_context(self):
-        """설계와 저장에 쓸 지금의 구성. 상한 없는 노드는 이 대화의 최대 라운드로 셉니다."""
+        """설계 및 저장 시 사용할 현재 시스템 구성입니다. 방문 상한이 없는 노드는 현재 대화 세션의 최대 라운드 수를 기준으로 산정합니다."""
         return builder_context(
             server_options(self.service.config(), guest=False), skill_options(),
             max_visits=self.state.max_rounds, pool=self.service.agent_pool(),
         )
 
     def open_builder(self) -> None:
-        """대화로 워크플로 만들기 창을 엽니다. 마치면 새 그래프 파일을 만들어 이 대화에 연결합니다."""
+        """대화형 워크플로 생성창을 엽니다. 작성을 완료하면 새 그래프 파일을 생성하여 현재 대화 세션에 연결합니다."""
         locked = bool(self.state.personas_locked)
         chat = GraphBuilderChat(
             self._builder_context(),
             on_finish=self._finish_builder,
             finish_label="저장" if locked else "저장하고 이 대화에 연결",
             finish_note=(
-                "이 대화는 이미 시작되어 구성이 고정되었습니다. 저장한 그래프는 새 대화에서 고르세요."
-                if locked else "새 에이전트는 conf.json 에 등록되고, 그래프는 data/graphs 에 새 파일로 저장됩니다."
+                "이 대화는 이미 시작되어 참가자 구성이 고정되었습니다. 저장된 그래프는 새 대화에서 선택해 주세요."
+                if locked else "새 에이전트는 conf.json에 등록되며, 그래프는 data/graphs 디렉토리에 새 파일로 저장됩니다."
             ),
         )
         chat.open()
@@ -394,7 +394,7 @@ class GraphRowComponent:
             # 잠긴 대화는 첫 발언 때 고정한 구성으로 돌아 새 에이전트가 없습니다 (`session_roster_agents`).
             ui.notify(
                 f"‘{name}’ 그래프를 저장했습니다 (data/graphs/{saved.spec.id}.json){added}. "
-                "이 대화는 이미 시작되어 연결하지 않았습니다 — 새 대화에서 이 그래프를 고르세요.",
+                "현재 대화는 이미 시작되어 연결하지 않았습니다 — 새 대화에서 이 그래프를 선택해 주세요.",
                 type="info", position="bottom-right", multi_line=True,
             )
             return True
@@ -403,7 +403,7 @@ class GraphRowComponent:
         self.sync()
         await self.changes.config_changed_now()
         ui.notify(
-            f"‘{name}’ 그래프를 저장하고 이 대화에 연결했습니다{added}.",
+            f"‘{name}’ 그래프를 저장하고 현재 대화에 연결했습니다{added}.",
             type="positive", position="bottom-right", multi_line=True,
         )
         return True

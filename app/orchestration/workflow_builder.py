@@ -1,17 +1,19 @@
-"""대화로 워크플로 만들기 — 실행 그래프와 필요한 새 에이전트를 함께 설계합니다 (ADR-050).
+"""대화형 워크플로 빌더 — 실행 그래프와 필요한 신규 에이전트를 대화를 통해 함께 설계합니다 (ADR-050).
 
-에이전트 빌더(`app/agents/draft.py`)의 대화 방식과 적응형 그래프(`graph_draft.py`)의 그래프 규격을 합칩니다.
-도우미는 오케스트레이터의 연결 설정을 쓰는 **도구 없는 사본**이고(`builder_agent`), 답 끝에 두 종류의
-블록을 붙입니다.
+에이전트 빌더(`app/agents/draft.py`)의 대화형 인터랙션과 적응형 그래프(`graph_draft.py`)의 그래프 규격을 통합합니다.
+도우미는 오케스트레이터의 LLM 연결 설정을 활용하는 **도구 없는 사본**(`builder_agent`)이며, 응답 끝에 두 종류의
+코드 블록을 첨부합니다:
 
-* ```` ```agents ```` — 새로 만들 에이전트 전체 목록 (배열)
-* ```` ```graph ```` — 실행 그래프 전체 (`draft_view` 와 같은 모양)
+* ```` ```agents ```` — 새로 추가할 에이전트 전체 목록 (배열)
+* ```` ```graph ```` — 실행 그래프 전체 명세 (`draft_view`와 동일한 구조)
 
-화면에서 고친 값은 다음 말과 함께 `[지금 설계도]` 로 돌아갑니다. 기록에는 설계도를 **가장 최근 사용자
-메시지에만** 붙입니다 — 그래프와 여러 에이전트는 수 KB 라, 턴마다 쌓으면 금방 맥락 한도에 닿습니다.
+사용자가 화면에서 조정한 값은 다음 발화 시 `[지금 설계도]` 형태로 도우미에게 전달됩니다. 대화 기록에는 설계도를
+**가장 최근 사용자 메시지에만** 첨부합니다 — 그래프와 여러 에이전트 명세는 용량이 수 KB에 달하므로, 턴마다 누적하면
+컨텍스트 한도에 빠르게 도달하기 때문입니다.
 
-이 모듈은 화면을 모릅니다. 저장(`save_workflow`)도 여기 있어 브라우저 없이 시험합니다. 원칙은 **쓰기 전에
-모든 검사를 끝내는 것** — 그래야 쓰는 도중 검증 때문에 실패해 되돌릴 일이 없습니다.
+이 모듈은 UI 레이어와 분리되어 독립적으로 동작합니다. 저장 로직(`save_workflow`)도 여기에 위치하여 브라우저 없이
+단위 테스트가 가능합니다. 핵심 원칙은 **실제 저장(쓰기) 전에 모든 검증을 완료하는 것**입니다 — 그래야 기록 도중
+유효성 검사 실패로 불완전한 상태가 남아 롤백해야 하는 문제를 방지할 수 있습니다.
 """
 
 from __future__ import annotations
@@ -60,14 +62,14 @@ from app.orchestration.graph_draft import (
 )
 from app.orchestration.strategies import order_by_priority, specialists_of
 
-# 저장하기 전 그래프의 임시 id. 저장할 때 정합니다 (`save_workflow`).
+# 저장하기 전 그래프의 임시 ID. 실제 저장 시점에 최종 결정됩니다 (`save_workflow`).
 DRAFT_GRAPH_ID = "builder-draft"
-# 도우미 응답에 문제가 있을 때 고쳐 받는 횟수까지 포함한 시도 수 (적응형 그래프와 같은 규칙).
+# 도우미 응답에 문제가 있을 때 자체 수정을 요청하는 최대 시도 횟수 (적응형 그래프와 동일한 규칙).
 BUILDER_ATTEMPTS = DRAFT_ATTEMPTS
 CURRENT_DRAFT_MARKER = "[지금 설계도]"
 CORRECTION_MARKER = "[앞선 설계의 문제]"
 COMPACT_NOTE = "(설계도 블록 — 다음 사용자 메시지의 [지금 설계도] 참조)"
-# 새 에이전트 키 규칙. `app/agents/draft.py` 의 저장 규칙과 같습니다.
+# 새 에이전트 키 명명 규칙. `app/agents/draft.py`의 저장 규칙과 같습니다.
 KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 
 _FENCE_RE = re.compile(r"```(agents?|graph)\b[^\n]*")
@@ -81,19 +83,19 @@ _DECODER = json.JSONDecoder()
 
 
 class CompositeDraft(BaseModel):
-    """대화 중에 쌓이고 고쳐지는 설계도. 화면과 도우미가 같은 값을 봅니다."""
+    """대화 진행에 따라 점진적으로 누적·수정되는 복합 설계도입니다. 화면과 도우미 에이전트가 동일한 상태를 공유합니다."""
 
     new_agents: List[AgentDraft] = Field(default_factory=list)
-    # 사용자가 랙에서 뺀 새 에이전트 키. 도우미가 다시 만들어 넣지 않도록 함께 알립니다.
+    # 사용자가 에이전트 랙에서 제거한 새 에이전트의 키 목록입니다. 도우미가 다시 생성하지 않도록 프롬프트로 전달합니다.
     removed_agents: List[str] = Field(default_factory=list)
-    # 도우미가 보낸 모양 그대로의 그래프. 읽지 못한 답이 와도 마지막으로 읽은 값을 지킵니다.
+    # 도우미가 전달한 원형 그대로의 그래프 데이터입니다. 파싱할 수 없는 응답이 오더라도 마지막으로 정상 파싱된 값을 보존합니다.
     graph_data: Optional[Dict[str, Any]] = None
-    # `graph_data` 를 읽은 결과. id 는 임시 값(`DRAFT_GRAPH_ID`)이고 저장할 때 정합니다.
+    # `graph_data`를 검증하고 파싱한 결과입니다. ID는 임시 값(`DRAFT_GRAPH_ID`)이며 최종 저장 시 확정됩니다.
     graph: Optional[GraphSpec] = None
     errors: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     worst_case_calls: int = 0
-    # 편집기에서 열었을 때 고쳐 쓰는 그래프의 id. 대화 화면에서 새로 만들면 빈 값입니다.
+    # 편집기에서 열었을 때 수정 대상이 되는 기본 그래프의 ID입니다. 대화 화면에서 새로 생성하는 경우 빈 문자열입니다.
     base_graph_id: str = ""
 
     @property
@@ -106,15 +108,15 @@ class CompositeDraft(BaseModel):
 
 @dataclass
 class BuilderContext:
-    """설계와 검사에 쓰는 지금의 구성. 대화 중에는 열 때 한 번, 저장할 때 다시 만듭니다."""
+    """설계 및 유효성 검사에 사용되는 현재 시스템 구성입니다. 대화 세션 시작 시 한 번 생성하고, 저장 시점에 최신 상태로 다시 조회합니다."""
 
-    # 그래프에 놓을 수 있는 기존 전문가 (켜진 것, 오케스트레이터 제외).
+    # 그래프에 배치할 수 있는 기존 전문가 에이전트 목록 (활성화 상태이며 오케스트레이터 제외).
     candidates: List[Agent]
-    # 새 에이전트가 쓸 수 없는 키 — conf.json 의 모든 에이전트(꺼진 것 포함)와 오케스트레이터.
+    # 새 에이전트가 사용할 수 없는 키 집합 — conf.json의 모든 에이전트(비활성화 포함) 및 오케스트레이터.
     taken: Set[str]
     servers: List[Option]
     skills: List[Option]
-    # 상한을 적지 않은 노드를 몇 번으로 셀지 (대화의 최대 라운드 또는 편집기의 미리보기 값).
+    # 최대 방문 횟수 상한이 지정되지 않은 노드를 몇 회로 산정할지 결정하는 기준값 (대화 세션의 최대 라운드 또는 편집기의 미리보기 기준값).
     max_visits: int = 3
 
     @property
@@ -130,7 +132,7 @@ def builder_context(
     pool: Optional[AgentPool] = None,
     configured: Optional[Iterable[str]] = None,
 ) -> BuilderContext:
-    """지금 풀과 conf.json 으로 `BuilderContext` 를 만듭니다."""
+    """현재 에이전트 풀과 conf.json 구성을 바탕으로 `BuilderContext`를 생성합니다."""
     pool = pool or get_agent_pool()
     if configured is None:
         configured = get_config().agents.keys()
@@ -144,7 +146,7 @@ def builder_context(
 
 
 def draft_from_graph(spec: GraphSpec) -> CompositeDraft:
-    """편집기의 지금 그래프에서 시작하는 설계도. 좌표는 그대로 들고 갑니다 (`apply_reply` 가 이어 씁니다)."""
+    """편집기의 현재 그래프 상태에서 시작하는 복합 설계도를 생성합니다. 기존 노드 좌표를 그대로 계승합니다 (`apply_reply`에서 유지)."""
     graph = spec.model_copy(update={"id": DRAFT_GRAPH_ID}, deep=True)
     return CompositeDraft(graph=graph, graph_data=draft_view(graph), base_graph_id=spec.id)
 
@@ -153,61 +155,61 @@ def draft_from_graph(spec: GraphSpec) -> CompositeDraft:
 # 도우미
 # ---------------------------------------------------------------------------
 
-_PROMPT = """당신은 '워크플로 설계 도우미'입니다. 대화 상대는 개발자가 아닌 일반 직장인입니다. 사용자가 맡기려는 업무의 흐름을 파악해, 여러 AI 전문가가 차례로 또는 동시에 일하는 **실행 그래프**를 설계합니다. 쓸 수 있는 전문가 중에 맞는 사람이 없으면 새 전문가(에이전트)도 함께 설계합니다.
+_PROMPT = """당신은 '워크플로 설계 도우미'입니다. 대화 상대는 개발자가 아닌 일반 직장인입니다. 사용자가 수행하려는 업무의 흐름을 파악하여, 여러 AI 전문가가 순차적으로 또는 동시에 협업하는 **실행 그래프**를 설계합니다. 기존 전문가 중 적합한 역할이 없다면 새로운 전문가(에이전트)도 함께 설계합니다.
 
 ## 대화 방식
-- 알기 쉬운 한국어로 간결하게 대화합니다. 전문 용어를 쓸 때는 바로 뒤 괄호 안에 쉬운 설명을 덧붙입니다.
-- 질문은 한 번에 최대 두 개까지만 합니다. 이미 확인한 내용은 다시 묻지 않습니다.
-- 두세 번의 대화 안에 초안을 완성합니다. 정보가 부족하면 합리적인 기본값으로 먼저 그린 뒤 고칠 부분을 묻습니다.
-- 설계도를 바꿀 때마다 무엇을 왜 바꿨는지 한두 문장으로 설명합니다. 새 전문가를 만들었다면 왜 기존 전문가로는 부족했는지, 어떤 도구를 왜 주었는지 알려 줍니다.
+- 이해하기 쉬운 자연스러운 한국어로 간결하게 대화합니다. 전문 용어를 쓸 때는 바로 뒤 괄호 안에 알기 쉬운 설명을 덧붙입니다.
+- 질문은 한 번에 최대 두 개까지만 합니다. 이미 확인한 내용은 불필요하게 다시 묻지 않습니다.
+- 2~3회의 대화 왕복 이내에 초안을 신속히 완성합니다. 정보가 부족한 경우 합리적인 기본값으로 초안 그래프를 먼저 그린 뒤 수정할 부분을 확인합니다.
+- 설계도를 수정할 때마다 무엇을 왜 변경했는지 1~2문장으로 명확히 설명합니다. 새 전문가를 생성했다면 기존 전문가로는 왜 부족했는지, 어떤 도구를 왜 부여했는지 함께 안내합니다.
 
-## 쓸 수 있는 전문가 (키: 이름 (역할) · 도구)
+## 사용 가능한 기존 전문가 (키: 이름 (역할) · 도구)
 {roster}
 
-## 이미 쓰인 키 — 새 전문가는 이 키를 쓸 수 없습니다
+## 이미 사용 중인 키 — 새 전문가는 이 키를 쓸 수 없습니다
 {taken}
 
 ## 그래프 규격
 {graph_format}
 
 ## 설계 규칙
-- 작업의 성격에 맞춥니다. 단순하면 짧게 — 전문가 한두 명으로 끝나도 됩니다. 서로의 결과가 필요 없는 일만 병렬로 가르고, 뒤 일이 앞 결과를 쓰면 줄지어 잇습니다.
-- 갈라진 갈래는 merge 로 모은 뒤 다음 단계나 최종 합성으로 보냅니다.
-- 되돌아가는 선은 반드시 gate 를 거칩니다. 루프는 고칠 사람이 있을 때만 만듭니다 (검토 → 판정 → 수정 → 검토). 같은 검토자에게 되돌리기만 하는 루프는 만들지 않습니다.
-- 루프 안의 노드에는 "max_visits" (2~3) 를 적습니다. 그래야 비용이 정해집니다.
-- 시작·최종 합성을 빼고 노드는 {max_nodes}개까지, 최악의 경우 한 턴의 호출은 {max_calls}번까지입니다.
-- agent 노드에는 그 차례에 할 일을 "instruction" 에 구체적으로 적습니다.
-- 위 목록에 맞는 전문가가 있으면 그 키를 씁니다. 없을 때만 새 전문가를 만듭니다. 오케스트레이터(orchestrator)는 agent 노드가 될 수 없습니다 — 취합(merge)과 판정(gate)이 그 역할입니다.
-- 이미 있는 전문가의 설정(도구, 업무 지시서 등)을 바꿔 달라는 요청에는 설계도를 바꾸지 말고, 로스터 화면에서 직접 고칠 수 있다고 안내합니다.
+- 작업의 성격에 맞추어 설계합니다. 단순한 작업은 전문가 1~2명만으로 짧게 구성해도 충분합니다. 상호 결과가 독립적인 작업만 병렬로 분기하고, 선행 작업의 결과물을 후속 작업이 활용해야 한다면 직렬로 연결합니다.
+- 분기된 갈래는 반드시 merge 노드로 모은 뒤 다음 단계나 최종 합성(end) 노드로 보냅니다.
+- 되돌아가는 선(루프)은 반드시 gate 노드를 거치도록 합니다. 루프는 피드백을 반영해 수정할 작업자가 있을 때만 구성합니다 (예: 검토 → 판정 → 수정 → 검토). 동일한 검토자에게 무의미하게 되돌리기만 하는 루프는 만들지 않습니다.
+- 루프 내 노드에는 "max_visits" (2~3)를 지정하여 실행 비용 상한을 설정해야 합니다.
+- 시작(start)과 최종 합성(end) 노드를 제외하고 노드는 최대 {max_nodes}개까지, 최악의 경우 한 턴당 호출 횟수는 최대 {max_calls}회 이내여야 합니다.
+- agent 노드에는 해당 차례에 수행할 작업을 "instruction"에 구체적으로 작성합니다.
+- 위 기존 전문가 목록에 적합한 전문가가 있다면 해당 키를 우선 사용합니다. 적합한 전문가가 없을 때만 새로운 전문가를 정의합니다. 오케스트레이터(orchestrator)는 agent 노드가 될 수 없습니다 — 취합(merge)과 판정(gate)이 오케스트레이터의 고유 역할입니다.
+- 기존 전문가의 기본 설정(도구, 업무 지시서 등)을 변경해 달라는 요청에는 설계도를 수정하지 말고, 로스터(에이전트 목록) 화면에서 직접 수정할 수 있음을 안내합니다.
 
-## 새 전문가의 네 가지 요소
+## 새 전문가의 네 가지 필수 요소
 - 페르소나: name(이름), role(한 줄 역할)
-- 업무 지시서: system_prompt — "당신은 ..." 으로 시작하는 2인칭. 목표, 작업 절차(번호 목록), 결과물 양식, 도구를 쓸 때, 주의·금지 사항을 적습니다.
-- 도구: allowed_mcp_servers — 아래 목록의 id 만 씁니다. 도구가 없으면 글로만 일합니다.
-- 스킬: allowed_skills — 아래 목록의 id 만 씁니다.
+- 업무 지시서: system_prompt — "당신은 ..."으로 시작하는 2인칭 문장. 목표, 구체적 작업 절차(번호 목록), 결과물 양식, 도구 활용 기준, 주의 및 금지 사항 작성.
+- 도구: allowed_mcp_servers — 아래 도구 ID 목록에서만 선택. 필요한 도구가 없으면 빈 목록으로 설정.
+- 스킬: allowed_skills — 아래 스킬 ID 목록에서만 선택.
 
-## 고를 수 있는 도구 (id 만 씁니다)
+## 선택 가능한 도구 (ID만 사용)
 {tools}
 
-## 고를 수 있는 스킬 (id 만 씁니다)
+## 선택 가능한 스킬 (ID만 사용)
 {skills}
 
-## 설계도 블록 — 설계도를 바꿀 때 답의 맨 끝에 붙입니다
-바꾼 블록만 붙입니다. 블록을 붙이지 않으면 그 부분은 그대로라는 뜻입니다. 블록 밖에는 JSON 을 쓰지 않습니다.
+## 설계도 블록 — 설계도를 변경할 때 응답의 맨 끝에 첨부합니다
+변경된 블록만 첨부하세요. 블록을 첨부하지 않으면 해당 부분은 기존 설계를 유지한다는 의미입니다. 블록 외부에는 JSON 코드를 작성하지 마세요.
 
-새 전문가 **전체** 목록 (새 전문가가 없으면 빈 배열 []):
+새 전문가 **전체** 목록 (새로 만든 전문가가 없으면 빈 배열 []):
 ```agents
 [{"key": "영문 소문자와 밑줄로 된 식별자", "name": "이름", "role": "한 줄 역할", "system_prompt": "업무 지시서", "allowed_mcp_servers": ["도구 id"], "allowed_skills": ["스킬 id"], "card_color": "#rrggbb", "icon": "아이콘 이름"}]
 ```
-- card_color 는 다음 중 하나입니다: {colors}
-- icon 은 다음 중 하나입니다: {icons}
+- card_color는 다음 중 하나를 선택합니다: {colors}
+- icon은 다음 중 하나를 선택합니다: {icons}
 
 실행 그래프 **전체**:
 ```graph
 {"name": "그래프 이름", "nodes": [{"id": "review", "type": "agent", "agent": "에이전트키", "label": "검토", "instruction": "..."}], "edges": [{"from": "start", "to": "review"}, {"from": "review", "to": "end"}]}
 ```
 
-사용자 메시지 끝에 [지금 설계도]가 붙어 있으면 사용자가 화면에서 직접 고친 최신 값입니다. 그 값을 가장 먼저 따르고, removed_agents 에 있는 키는 사용자가 다시 요청하지 않는 한 만들지 않습니다."""
+사용자 메시지 끝에 [지금 설계도]가 첨부되어 있다면 사용자가 화면에서 직접 조정한 최신 상태입니다. 해당 값을 최우선으로 반영하며, removed_agents에 명시된 키는 사용자가 다시 요청하지 않는 한 새로 만들지 마세요."""
 
 
 def _option_lines(options: Sequence[Option], empty: str) -> str:
@@ -216,15 +218,15 @@ def _option_lines(options: Sequence[Option], empty: str) -> str:
 
 
 def workflow_builder_prompt(ctx: BuilderContext) -> str:
-    roster = format_roster(ctx.candidates, with_keys=True) or "- (없습니다. 필요한 전문가를 새로 만드세요)"
+    roster = format_roster(ctx.candidates, with_keys=True) or "- (사용 가능한 전문가가 없습니다. 필요한 전문가를 새로 정의하세요)"
     return (
         _PROMPT.replace("{roster}", roster)
         .replace("{taken}", ", ".join(sorted(ctx.taken)))
         .replace("{graph_format}", GRAPH_FORMAT_GUIDE)
         .replace("{max_nodes}", str(MAX_DRAFT_NODES))
         .replace("{max_calls}", str(MAX_DRAFT_CALLS))
-        .replace("{tools}", _option_lines(ctx.servers, "- (지금 쓸 수 있는 도구가 없습니다. 빈 목록으로 두세요)"))
-        .replace("{skills}", _option_lines(ctx.skills, "- (등록된 스킬이 없습니다. 빈 목록으로 두세요)"))
+        .replace("{tools}", _option_lines(ctx.servers, "- (현재 사용 가능한 도구가 없습니다. 빈 목록으로 두세요)"))
+        .replace("{skills}", _option_lines(ctx.skills, "- (현재 등록된 스킬이 없습니다. 빈 목록으로 두세요)"))
         .replace("{colors}", ", ".join(c["hex"] for c in CARD_COLOR_CHOICES))
         .replace("{icons}", ", ".join(ICON_CHOICES))
     )
@@ -238,14 +240,14 @@ async def ask_workflow_builder(
     llm: Optional[Any] = None,
     pool: Optional[AgentPool] = None,
 ) -> str:
-    """도우미에게 묻고 전체 답을 돌려줍니다. 연결할 수 없으면 `LLMUnavailableError`."""
+    """도우미에게 질문을 전달하고 전체 응답을 반환합니다. 연결할 수 없으면 `LLMUnavailableError`가 발생합니다."""
     agent = builder_agent(pool or get_agent_pool(), workflow_builder_prompt(ctx))
     content, _ = await (llm or LLMCaller()).call_agent(agent, messages, on_chunk=on_chunk)
     return content
 
 
 def with_composite_draft(text: str, draft: CompositeDraft) -> str:
-    """사용자 말에 지금 설계도를 붙입니다. 화면에서 고친 값을 도우미가 덮어쓰지 않게 합니다."""
+    """사용자 메시지에 현재 설계도를 첨부합니다. 화면에서 직접 수정한 값을 도우미가 덮어쓰지 않도록 합니다."""
     if draft.is_empty:
         return text
     payload = {
@@ -257,7 +259,7 @@ def with_composite_draft(text: str, draft: CompositeDraft) -> str:
 
 
 def request_messages(history: Sequence[Dict[str, str]], draft: CompositeDraft) -> List[Dict[str, str]]:
-    """도우미에게 보낼 대화. 기록은 그대로 두고, 마지막 사용자 말에만 지금 설계도를 붙입니다."""
+    """도우미에게 전달할 메시지 이력을 구성합니다. 이전 대화 기록은 유지하고, 마지막 사용자 메시지에만 현재 설계도를 첨부합니다."""
     messages = [dict(m) for m in history]
     for message in reversed(messages):
         if message.get("role") == "user":
@@ -267,7 +269,7 @@ def request_messages(history: Sequence[Dict[str, str]], draft: CompositeDraft) -
 
 
 def correction_message(problems: Sequence[str]) -> str:
-    """앞선 답의 문제를 알려 주고 블록을 다시 받는 말. 기록에는 남기지 않습니다."""
+    """이전 응답에서 발견된 문제를 전달하고 설계도 블록의 수정을 요청하는 메시지입니다. 대화 기록에는 남기지 않습니다."""
     return (
         f"{CORRECTION_MARKER} 방금 보낸 설계도에 아래 문제가 있습니다. 고쳐서 설계도 블록을 다시 보내 주세요. "
         "설명은 한두 문장이면 됩니다.\n" + "\n".join(f"- {p}" for p in problems)
@@ -281,12 +283,12 @@ def correction_message(problems: Sequence[str]) -> str:
 
 @dataclass
 class CompositeReply:
-    """도우미 답을 나눈 결과. `None` 은 "이번 답에 그 블록이 없음" — 지금 값을 그대로 둡니다."""
+    """도우미 응답을 분해한 결과입니다. `None`은 "이번 응답에 해당 블록이 없음"을 나타내며 현재 값을 그대로 유지합니다."""
 
     text: str
     agents: Optional[List[Dict[str, Any]]] = None
     graph: Optional[Dict[str, Any]] = None
-    # 블록은 있었지만 읽지 못한 것 (사람이 읽을 문장). 도우미에게 고쳐 달라고 돌려줍니다.
+    # 블록은 존재했으나 정상적으로 읽지 못한 오류 항목입니다. 도우미에게 자가 교정을 요청할 때 활용됩니다.
     broken: List[str] = field(default_factory=list)
 
     @property
@@ -295,9 +297,9 @@ class CompositeReply:
 
 
 def _decode_block(text: str, start: int) -> Tuple[Any, int]:
-    """`start` 뒤의 첫 JSON 값과 그 끝 위치. 읽지 못하면 ValueError.
+    """`start` 위치 이후 첫 번째 JSON 값과 그 끝 위치를 반환합니다. 읽지 못하면 ValueError가 발생합니다.
 
-    정규식으로 닫는 펜스까지 자르지 않습니다 — 업무 지시서 안에 ``` 가 있으면 거기서 잘리기 때문입니다.
+    정규식으로 마감 펜스(```)까지 자르지 않습니다 — 업무 지시서 내에 ```가 포함되어 있으면 그곳에서 잘못 잘리기 때문입니다.
     """
     index = start
     while index < len(text) and text[index] in " \t\r\n":
@@ -308,10 +310,9 @@ def _decode_block(text: str, start: int) -> Tuple[Any, int]:
 
 
 def split_composite_reply(content: str) -> CompositeReply:
-    """도우미 답을 (보여 줄 말, 새 에이전트 목록, 그래프) 로 나눕니다. 태그마다 마지막 블록을 씁니다.
+    """도우미 응답을 (사용자에게 보여 줄 안내 텍스트, 새 에이전트 목록, 그래프 명세)로 분리합니다. 동일한 태그가 여럿이면 마지막 블록을 채택합니다.
 
-    `agent` 태그도 받고, 배열 대신 객체 하나가 와도 받습니다. `json` 태그는 받지 않습니다 — 어느 블록인지
-    알 수 없습니다.
+    `agent` 태그와 단일 객체 형식도 수용하며, 유형을 특정할 수 없는 `json` 태그는 무시합니다.
     """
     text = strip_reasoning_trace(content or "")
     reply = CompositeReply(text="")
@@ -355,13 +356,13 @@ def split_composite_reply(content: str) -> CompositeReply:
 
 
 def streaming_text(text: str) -> str:
-    """스트리밍 중인 답에서 설계도 블록이 시작되는 곳부터 가립니다."""
+    """스트리밍 중인 응답에서 설계도 코드 블록이 시작되는 지점 이후를 숨깁니다."""
     match = _BLOCK_START_RE.search(text or "")
     return (text[:match.start()] if match else text or "").strip()
 
 
 def compact_reply(content: str) -> str:
-    """기록에 남길 도우미 답. 블록은 한 줄로 줄입니다 — 최신 설계도는 다음 말의 `[지금 설계도]` 에 있습니다."""
+    """대화 기록에 보존할 도우미 응답입니다. 코드 블록은 한 줄 안내로 축약하며, 최신 설계도는 다음 사용자 메시지의 `[지금 설계도]`에 첨부됩니다."""
     reply = split_composite_reply(content)
     if not reply.has_blocks:
         return reply.text
@@ -374,9 +375,9 @@ def compact_reply(content: str) -> str:
 
 
 def _carry_positions(new: GraphSpec, old: Optional[GraphSpec]) -> GraphSpec:
-    """노드가 그대로면 편집기 좌표를 이어 씁니다. 하나라도 새 노드가 있으면 전부 자동 배치합니다.
+    """노드 구성이 동일하게 유지되면 편집기 상의 기존 좌표를 계승합니다. 새로 추가된 노드가 하나라도 있으면 전체 노드를 자동 배치합니다.
 
-    섞어 두면 자동 배치한 새 노드가 사람이 놓은 노드 위에 겹칩니다.
+    기존 좌표와 자동 배치를 혼용하면 새로 자동 배치된 노드가 사용자가 수동 배치한 노드와 겹칠 수 있습니다.
     """
     if old is None:
         return new
@@ -388,11 +389,11 @@ def _carry_positions(new: GraphSpec, old: Optional[GraphSpec]) -> GraphSpec:
 
 
 def check_composite(draft: CompositeDraft, ctx: BuilderContext) -> CompositeDraft:
-    """설계도를 검사해 오류·경고·최악 호출 수를 채운 사본을 돌려줍니다.
+    """설계도를 검사하여 발견된 오류·경고 목록과 최악 시나리오의 호출 횟수를 계산한 사본을 반환합니다.
 
-    그래프는 적응형 그래프와 같은 `draft_report`(검증 + 노드 12개·호출 40회 상한)로 봅니다. 여기에 새
-    에이전트 검사를 더합니다 — 특히 **키 충돌**. 이미 있는 키와 겹친 채 저장하면 `agent_key_for` 가 키를
-    바꾸고, 노드는 기존 에이전트를 가리킨 채 검증을 통과해 오류 없이 다른 에이전트가 발언합니다.
+    그래프는 적응형 그래프와 동일한 `draft_report`(검증 및 노드 12개·호출 40회 상한)로 검증합니다. 여기에 새
+    에이전트 검사를 추가합니다 — 특히 **키 충돌 방지**. 이미 존재하는 키와 중복된 채로 저장하면 `agent_key_for`가 키를
+    임의로 변경하고, 노드는 기존 에이전트를 가리킨 채 검증을 통과하여 의도치 않게 다른 에이전트가 발언하는 결함이 발생할 수 있습니다.
     """
     errors: List[str] = []
     warnings: List[str] = []
@@ -429,10 +430,10 @@ def check_composite(draft: CompositeDraft, ctx: BuilderContext) -> CompositeDraf
 
 
 def apply_reply(current: CompositeDraft, reply: CompositeReply, ctx: BuilderContext) -> Tuple[CompositeDraft, List[str]]:
-    """도우미 답을 설계도에 합칩니다. (새 설계도, 도우미에게 고쳐 달라고 할 문제) 를 돌려줍니다.
+    """도우미 응답을 현재 설계도에 병합합니다. (갱신된 설계도, 도우미에게 수정을 요청할 문제 목록) 튜플을 반환합니다.
 
-    문제는 **이번 답이 만든 것만** 셉니다. 블록이 없는 답(질문만 한 답)이나 사용자가 화면에서 고쳐 생긴
-    오류로는 다시 쓰게 하지 않습니다 — 사용자 수정을 덮어씁니다.
+    문제 목록에는 **이번 응답으로 인해 발생한 문제만** 집계합니다. 코드 블록이 없는 질문 응답이나 사용자가 화면에서
+    직접 편집해 발생한 오류에 대해서는 재작성을 요청하지 않습니다 — 사용자의 직접 수정을 덮어쓰는 부작용을 방지하기 위함입니다.
     """
     draft = current.model_copy(deep=True)
     problems: List[str] = list(reply.broken)
@@ -447,7 +448,7 @@ def apply_reply(current: CompositeDraft, reply: CompositeReply, ctx: BuilderCont
             agent = sanitize_draft(merge_draft(base or AgentDraft(), data), server_ids, skill_ids)
             merged[agent.key] = agent
         draft.new_agents = list(merged.values())
-        # 도우미가 뺀 키를 다시 만들었다면 사용자가 다시 요청한 것입니다.
+        # 사용자가 제외했던 키를 도우미가 다시 포함했다면, 사용자가 재요청한 것으로 간주합니다.
         draft.removed_agents = [k for k in current.removed_agents if k not in merged]
 
     if reply.graph is not None:
@@ -466,7 +467,7 @@ def apply_reply(current: CompositeDraft, reply: CompositeReply, ctx: BuilderCont
 
 
 def remove_new_agent(draft: CompositeDraft, key: str, ctx: BuilderContext) -> CompositeDraft:
-    """랙에서 새 에이전트를 뺍니다. 그 키를 쓰던 노드는 검사 오류로 보입니다."""
+    """에이전트 랙에서 새 에이전트를 제거합니다. 해당 키를 참조하던 노드는 검증 오류로 표시됩니다."""
     updated = draft.model_copy(update={
         "new_agents": [a for a in draft.new_agents if a.key != key],
         "removed_agents": list(dict.fromkeys([*draft.removed_agents, key])),
@@ -475,7 +476,7 @@ def remove_new_agent(draft: CompositeDraft, key: str, ctx: BuilderContext) -> Co
 
 
 def replace_new_agent(draft: CompositeDraft, key: str, agent: AgentDraft, ctx: BuilderContext) -> CompositeDraft:
-    """랙에서 고친 새 에이전트를 바꿔 끼웁니다. 키를 바꿨으면 그 키를 쓰던 노드도 함께 바꿉니다."""
+    """에이전트 랙에서 수정한 새 에이전트 정보를 반영합니다. 키를 변경했다면 해당 키를 참조하던 그래프 노드도 함께 갱신합니다."""
     fixed = sanitize_draft(agent, [o.id for o in ctx.servers], [o.id for o in ctx.skills])
     agents = [fixed if a.key == key else a for a in draft.new_agents]
     graph = draft.graph
@@ -489,7 +490,7 @@ def replace_new_agent(draft: CompositeDraft, key: str, agent: AgentDraft, ctx: B
 
 
 def rename_agents(spec: GraphSpec, renamed: Dict[str, str]) -> GraphSpec:
-    """agent 노드가 가리키는 키를 바꾼 사본."""
+    """agent 노드가 참조하는 에이전트 키를 변경한 새 GraphSpec 사본을 반환합니다."""
     if not renamed:
         return spec
     nodes: List[GraphNode] = [
@@ -506,7 +507,7 @@ def rename_agents(spec: GraphSpec, renamed: Dict[str, str]) -> GraphSpec:
 
 @dataclass
 class SavedWorkflow:
-    """저장 결과. `graph_error` 가 있으면 에이전트는 등록했지만 그래프 파일을 쓰지 못한 것입니다."""
+    """저장 결과 객체입니다. `graph_error`가 설정되어 있다면 에이전트는 등록되었으나 그래프 파일 저장에 실패한 경우입니다."""
 
     spec: GraphSpec
     agent_keys: List[str]
@@ -515,7 +516,7 @@ class SavedWorkflow:
 
 
 def new_graph_id(directory: Optional[Path] = None, now: Optional[datetime] = None) -> str:
-    """새 그래프 파일의 id. 이름에서 만들지 않습니다 — `free_graph_id` 는 한글을 걷어내 전부 `graph` 가 됩니다."""
+    """새 그래프 파일의 ID를 생성합니다. 그래프 이름 기반으로 만들지 않습니다 — `free_graph_id`는 한글을 제거하여 모두 `graph`로 수렴되기 때문입니다."""
     stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M")
     return free_graph_id(f"ai-{stamp}", directory)
 
@@ -526,10 +527,10 @@ def prepare_save(
     *,
     graph_id: str,
 ) -> Tuple[List[Tuple[str, AgentDraft]], GraphSpec, Dict[str, str]]:
-    """쓰기 전 최종 검사. (최종 키와 에이전트, 저장할 그래프, 바뀐 키) — 틀리면 `SaveRefused`.
+    """실제 파일 기록 전 최종 검증을 수행합니다. (최종 확정된 키와 에이전트 목록, 저장할 GraphSpec, 변경된 키 매핑)을 반환하며, 검증 실패 시 `SaveRefused`가 발생합니다.
 
-    `ctx` 는 저장하는 지금 다시 만든 것이어야 합니다. 대화하는 사이 다른 창에서 같은 키의 에이전트가
-    생겼으면 `agent_key_for` 로 새 키를 받고, 그 키를 쓰던 노드도 함께 바꿉니다.
+    `ctx`는 저장 시점에 최신 상태로 새로 조회한 컨텍스트여야 합니다. 대화를 나누는 사이에 다른 브라우저 창에서 동일한 키의 에이전트가
+    생성되었을 경우 `agent_key_for`를 통해 새 키를 발급받고, 해당 키를 참조하던 노드 역시 함께 갱신합니다.
     """
     if draft.graph is None:
         raise SaveRefused("아직 그래프가 없습니다. 도우미와 대화해 그래프를 먼저 만들어 주세요.")
@@ -571,15 +572,15 @@ def save_workflow(
     config_path: Optional[str | Path] = None,
     directory: Optional[Path] = None,
 ) -> SavedWorkflow:
-    """새 에이전트를 conf.json 에 한 번에 등록하고 그래프를 저장합니다.
+    """새 에이전트를 conf.json에 한 번에 등록하고 그래프 명세를 저장합니다.
 
-    1. 새 에이전트가 있으면, 어느 대화든 돌고 있을 때 거부합니다 (`save_owner_agent` 와 같은 규칙). 에이전트
-       풀은 프로세스 전체가 하나라서, 돌고 있는 토론의 발언자 목록이 도중에 바뀝니다.
-    2. 쓰기 전에 모든 검사를 끝냅니다 (`prepare_save`).
-    3. conf.json 에 한 번에 쓰고 풀을 다시 채웁니다.
-    4. 그래프 파일을 씁니다 (`write_graph=False` 면 쓰지 않고 돌려만 줍니다 — 편집기는 캔버스에 적용하고
-       자기 [저장] 으로 씁니다). 실패해도 conf.json 은 되돌리지 않습니다. 등록된 에이전트는 남아도 해가
-       없고, 통째로 되돌리면 그 사이 다른 창이 고친 설정까지 지워집니다.
+    1. 등록할 새 에이전트가 존재할 때, 현재 진행 중인 대화 세션이 하나라도 있다면 저장을 거부합니다 (`save_owner_agent`와 동일한 규칙).
+       에이전트 풀은 프로세스 전체에서 단일 인스턴스로 관리되므로, 실행 중인 토론 도중에 발언자 구성이 변경되는 위험을 방지합니다.
+    2. 파일 쓰기 전에 모든 검증을 완료합니다 (`prepare_save`).
+    3. conf.json에 새 에이전트를 일괄 기록하고 에이전트 풀을 갱신합니다.
+    4. 그래프 파일을 저장합니다 (`write_graph=False`인 경우 파일 저장을 건너뛰고 객체만 반환합니다 — 편집기 화면에서 캔버스에 먼저 적용한 뒤
+       편집기의 자체 [저장] 버튼을 통해 파일로 기록하도록 지원합니다). 그래프 저장이 실패하더라도 conf.json 변경은 롤백하지 않습니다.
+       이미 등록된 에이전트는 남아 있어도 시스템에 해가 없으며, 설정을 통째로 되돌리면 그 사이 다른 창에서 수정한 설정까지 유실될 위험이 있기 때문입니다.
     """
     if draft.new_agents and running:
         raise SaveRefused(
@@ -610,7 +611,7 @@ def save_workflow(
 
 
 def _conf_entry(key: str, agent: AgentDraft) -> Dict[str, Any]:
-    """`add_agents_to_conf_file` 의 한 항목. 모델·API 키는 적지 않아 llm 기본 설정을 상속합니다."""
+    """`add_agents_to_conf_file`에 전달할 개별 항목을 구성합니다. 모델 및 API 키는 지정하지 않아 llm 기본 설정을 상속합니다."""
     return {
         "agent_key": key,
         "name": agent.name,

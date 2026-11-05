@@ -1,13 +1,14 @@
-"""대화로 워크플로 만들기 창 — 도우미와 대화해 실행 그래프와 필요한 새 에이전트를 함께 설계합니다 (ADR-050).
+"""대화형 워크플로 빌더 대화창 — 도우미와 대화하여 실행 그래프와 필요한 신규 에이전트를 함께 설계합니다 (ADR-050).
 
-대화 흐름(버블·스트리밍·연결 실패 처리)은 `BuilderChat.send` 그대로이고, 무엇을 묻고 답을 어떻게 읽을지만
-바꿉니다 (`app/orchestration/workflow_builder.py`). 이 창은 저장하지 않습니다 — 마침 버튼을 누르면 설계도를
-`on_finish` 로 넘기고, 여는 쪽이 자기 방식으로 내보냅니다.
+기본 대화 흐름(말풍선 표시, 스트리밍, 연결 예외 처리)은 `BuilderChat.send`를 그대로 계승하며, 질의 생성 및 응답 처리
+로직만 목적에 맞게 재정의합니다 (`app/orchestration/workflow_builder.py`). 이 대화창 자체는 직접 저장 작업을 수행하지 않습니다.
+사용자가 완료 버튼을 누르면 완성된 복합 설계도를 `on_finish` 콜백으로 전달하며, 호출한 화면에서 자체 방식으로 저장 및 반영합니다.
 
-* 대화 화면 로스터(`GraphRow`) — 에이전트 등록 → 새 그래프 파일 → 이 대화의 `graph_id`
-* 그래프 편집기(`graph_page`) — 에이전트 등록 → 캔버스 교체. 파일은 편집기의 [저장] 이 씁니다
+* 대화 세션 화면 로스터(`GraphRow`) — 새 에이전트 등록 → 새 그래프 파일 생성 → 현재 대화의 `graph_id`로 연결
+* 그래프 편집기 화면(`graph_page`) — 새 에이전트 등록 → 캔버스 그래프 교체. 파일 저장은 편집기의 자체 [저장] 버튼이 담당
 
-미리보기는 읽기 전용입니다. 노드 속성을 고치는 패널은 편집기에 있고, 이 창에서 고치는 수단은 대화와 랙입니다.
+미리보기 캔버스는 읽기 전용입니다. 개별 노드 속성을 정밀하게 편집하는 패널은 메인 편집기 화면에 마련되어 있으며,
+이 대화창 내에서는 대화 프롬프트와 신규 에이전트 랙을 통해 설계를 조정합니다.
 """
 
 from __future__ import annotations
@@ -43,21 +44,21 @@ from app.ui.shared.page import MARKDOWN_EXTRAS
 logger = logging.getLogger(__name__)
 
 GREETING = (
-    "안녕하세요! 업무 흐름을 함께 그려 보겠습니다.\n\n"
-    "**어떤 일을 어떤 순서로 맡기고 싶으신가요?** 누가 먼저 하고, 무엇을 동시에 하고, 언제 다시 고쳐야 하는지 "
-    "편하게 말씀해 주세요. 맞는 전문가가 없으면 새로 만들어 드립니다."
+    "안녕하세요! 원하시는 업무 흐름을 함께 설계해 드리겠습니다.\n\n"
+    "**어떤 작업을 어떤 순서로 진행하고 싶으신가요?** 어떤 전문가가 먼저 시작하고, 어떤 작업을 병렬로 처리하며, "
+    "어떤 조건에서 재검토해야 하는지 편하게 말씀해 주세요. 필요한 전문가가 없다면 새로 만들어 드립니다."
 )
 EDIT_GREETING = (
-    "안녕하세요! 지금 캔버스의 그래프에서 시작합니다.\n\n"
-    "**무엇을 바꾸고 싶으신가요?** 단계를 더하거나 빼고, 검토 루프를 넣거나, 새 전문가를 만들 수 있습니다."
+    "안녕하세요! 현재 캔버스에 있는 그래프를 바탕으로 수정을 시작하겠습니다.\n\n"
+    "**어떤 부분을 변경하고 싶으신가요?** 단계를 추가하거나 삭제하고, 검토 루프를 구성하거나, 새로운 전문가 에이전트를 정의할 수 있습니다."
 )
 EXAMPLES = [
-    "자료를 조사해 보고서를 쓰고, 검토자가 통과시킬 때까지 고치는 흐름",
-    "시장 조사와 보안 감사를 동시에 하고, 취합해 결함이 있으면 다시 하는 흐름",
-    "설계 → 구현 → 코드 리뷰, 리뷰에서 결함이 나오면 구현으로 되돌리기",
+    "자료를 조사해 보고서를 작성하고, 검토자가 승인할 때까지 반복 수정하는 흐름",
+    "시장 조사와 보안 감사를 병렬로 수행한 뒤, 결과를 취합해 결함이 있으면 재수행하는 흐름",
+    "설계 → 구현 → 코드 리뷰 순서로 진행하며, 리뷰에서 결함 발견 시 구현 단계로 되돌리기",
 ]
-RETRY_NOTE = "설계도에 문제가 있어 한 번 고쳐 받는 중입니다…"
-CORRECTED_NOTE = "_설계도에 문제가 있어 한 번 고쳐 받았습니다._"
+RETRY_NOTE = "설계도에 보완할 문제가 발견되어 자동으로 수정을 요청하는 중입니다…"
+CORRECTED_NOTE = "_설계도에 발견된 문제를 자동으로 보완하여 반영했습니다._"
 
 FinishHandler = Callable[[CompositeDraft], Awaitable[bool]]
 
@@ -68,7 +69,7 @@ class GraphBuilderChat(BuilderChat):
     `on_finish` 가 True 를 돌려주면 창을 닫습니다. 저장이 거절되면(False) 창과 대화가 그대로 남습니다.
     """
 
-    UPDATED_NOTE = "설계도를 갱신했습니다. 오른쪽 미리보기를 확인해 주세요."
+    UPDATED_NOTE = "설계도를 갱신했습니다. 우측 미리보기를 확인해 주세요."
 
     def __init__(
         self,
@@ -106,14 +107,14 @@ class GraphBuilderChat(BuilderChat):
     # ------------------------------------------------------------ 도우미와 주고받기
 
     def user_entry(self, text: str) -> str:
-        # 기록에는 사용자 원문만 남기고, 지금 설계도는 보낼 때 마지막 말에만 붙입니다 (`request_messages`).
+        # 대화 기록에는 사용자의 순수 발화만 보존하고, 최신 설계도는 요청 시 마지막 메시지에만 첨부합니다 (`request_messages`).
         return text
 
     def streaming_view(self, text: str) -> str:
         return streaming_text(text)
 
     async def ask(self, on_chunk: Callable[[str], None], restart: Callable[[str], None]) -> str:
-        """묻고, 이번 답이 만든 문제가 있으면 한 번 고쳐 받습니다. 고쳐 받는 주고받기는 기록에 남지 않습니다."""
+        """도우미에게 질의하고, 이번 응답으로 발생한 문제가 있다면 1회 자체 교정을 요청합니다. 교정 과정의 왕복 메시지는 대화 기록에 남기지 않습니다."""
         self._corrected = False
         messages = request_messages(self.history, self.composite)
         content = await ask_workflow_builder(messages, self.ctx, on_chunk=on_chunk)
@@ -150,7 +151,7 @@ class GraphBuilderChat(BuilderChat):
         return visible
 
     def read_card(self) -> AgentDraft:
-        # 에이전트 하나짜리 설계도 칸은 없습니다. 설계도는 `self.composite` 입니다.
+        # 단일 에이전트용 설계도 필드는 사용하지 않으며, 복합 설계도 전체는 `self.composite`에서 관리합니다.
         return self.draft
 
     def fill_card(self) -> None:
@@ -175,7 +176,7 @@ class GraphBuilderChat(BuilderChat):
                 ui.label(self.title).classes("text-base font-bold flex-grow")
                 ui.button(icon="close", on_click=self.dialog.close).props(
                     "flat dense round size=12px color=slate-4"
-                ).tooltip("창을 닫습니다. 대화와 설계도는 저장되지 않습니다.")
+                ).tooltip("창을 닫습니다. 저장되지 않은 대화와 설계도는 유실됩니다.")
             with ui.row().classes("w-full flex-grow no-wrap gap-0 min-h-0 items-stretch"):
                 self._build_chat_column()
                 self._build_design_column()
@@ -199,7 +200,7 @@ class GraphBuilderChat(BuilderChat):
                         "outline dense no-caps color=teal-3"
                     ).classes("text-[11px] leading-snug text-left")
             with ui.row().classes("w-full items-end gap-2 flex-nowrap"):
-                self.input = ui.textarea(placeholder="예: 기획안을 쓰고, 법무 검토를 거쳐, 문제가 있으면 다시 고치게 해 줘").props(
+                self.input = ui.textarea(placeholder="예: 기획안을 작성하고, 법무 검토를 거쳐 결함 발견 시 보완하도록 설계해 줘").props(
                     "outlined dense dark autogrow rows=2"
                 ).classes("flex-grow text-sm")
                 self.send_button = ui.button(icon="send", on_click=self._send_input).props(
@@ -208,7 +209,7 @@ class GraphBuilderChat(BuilderChat):
 
     def _build_design_column(self) -> None:
         with ui.column().classes("w-3/5 min-w-0 h-full p-3 gap-2 no-wrap"):
-            ui.label("새로 만들 에이전트").classes("text-[11px] font-semibold text-slate-400 tracking-wider")
+            ui.label("새로 추가할 에이전트").classes("text-[11px] font-semibold text-slate-400 tracking-wider")
             self.rack = ui.column().classes("w-full gap-1 max-h-[28%] overflow-y-auto")
             ui.label("미리보기 (읽기 전용)").classes("text-[11px] font-semibold text-slate-400 tracking-wider mt-1")
             self.preview_box = ui.element("div").classes(
@@ -244,7 +245,7 @@ class GraphBuilderChat(BuilderChat):
         rack.clear()
         with rack:
             if not self.composite.new_agents:
-                ui.label("아직 없습니다. 맞는 전문가가 없으면 도우미가 새로 만듭니다.").classes(
+                ui.label("아직 추가된 에이전트가 없습니다. 필요한 전문가가 없으면 도우미가 새로 생성합니다.").classes(
                     "text-[12px] text-slate-500"
                 )
             for agent in self.composite.new_agents:
@@ -265,12 +266,12 @@ class GraphBuilderChat(BuilderChat):
                         ui.label(
                             f"역할: {agent.role or '—'} · 도구: {tools}" + (f" · 스킬: {skills}" if skills else "")
                         ).classes("text-[11px] text-slate-400 truncate")
-                    ui.button("고치기", on_click=lambda k=agent.key: self._open_agent_editor(k)).props(
+                    ui.button("수정", on_click=lambda k=agent.key: self._open_agent_editor(k)).props(
                         "flat dense no-caps size=12px color=teal-4"
                     )
-                    ui.button("빼기", on_click=lambda k=agent.key: self._remove_agent(k)).props(
+                    ui.button("제거", on_click=lambda k=agent.key: self._remove_agent(k)).props(
                         "flat dense no-caps size=12px color=red-4"
-                    ).tooltip("새 에이전트를 뺍니다. 이 에이전트를 쓰던 노드는 오류로 표시됩니다.")
+                    ).tooltip("새 에이전트를 목록에서 제외합니다. 이 에이전트를 참조하던 노드는 오류로 표시됩니다.")
 
     def _remove_agent(self, key: str) -> None:
         self.composite = remove_new_agent(self.composite, key, self.ctx)
@@ -285,7 +286,7 @@ class GraphBuilderChat(BuilderChat):
         with ui.dialog() as dialog, ui.card().classes(
             "w-[640px] max-w-[94vw] bg-slate-900 text-white border border-slate-700 p-4 gap-2"
         ):
-            ui.label("새 에이전트 고치기").classes("text-sm font-bold")
+            ui.label("새 에이전트 정보 수정").classes("text-sm font-bold")
             with ui.row().classes("w-full gap-2 no-wrap"):
                 key_in = ui.input("키", value=agent.key).props("outlined dense dark").classes("w-48 text-xs")
                 name_in = ui.input("이름", value=agent.name).props("outlined dense dark").classes("flex-grow text-xs")
@@ -297,7 +298,7 @@ class GraphBuilderChat(BuilderChat):
             server_boxes = {}
             with ui.row().classes("w-full gap-x-3 gap-y-0"):
                 if not self.servers:
-                    ui.label("쓸 수 있는 도구가 없습니다.").classes("text-[11px] text-slate-500")
+                    ui.label("사용 가능한 도구가 없습니다.").classes("text-[11px] text-slate-500")
                 for option in self.servers:
                     server_boxes[option.id] = ui.checkbox(
                         option.label, value=option.id in agent.allowed_mcp_servers,
@@ -312,7 +313,7 @@ class GraphBuilderChat(BuilderChat):
                         ).props("dense dark").classes("text-xs")
             with ui.row().classes("w-full gap-2 no-wrap"):
                 color_in = ui.select(colors, value=agent.card_color if agent.card_color in colors else "",
-                                     label="카드 색").props("outlined dense dark options-dense").classes("w-1/2 text-xs")
+                                     label="카드 색상").props("outlined dense dark options-dense").classes("w-1/2 text-xs")
                 icon_in = ui.select(icons, value=agent.icon if agent.icon in icons else "",
                                     label="아이콘").props("outlined dense dark options-dense").classes("w-1/2 text-xs")
 
@@ -347,15 +348,15 @@ class GraphBuilderChat(BuilderChat):
         box.clear()
         with box:
             if draft.graph is None:
-                ui.label("아직 그래프가 없습니다. 원하는 업무 흐름을 말씀해 주세요.").classes("text-xs text-slate-400")
+                ui.label("아직 생성된 그래프가 없습니다. 원하시는 업무 흐름을 입력해 주세요.").classes("text-xs text-slate-400")
             else:
                 tone = "text-red-400" if draft.errors else ("text-amber-400" if draft.warnings else "text-teal-300")
-                head = (f"오류 {len(draft.errors)}건" if draft.errors else "검증 통과") + (
+                head = (f"오류 {len(draft.errors)}건" if draft.errors else "검증 통과 (정상)") + (
                     f" · 경고 {len(draft.warnings)}건" if draft.warnings else ""
                 )
                 ui.label(
                     f"{head} · 한 턴에 최대 {draft.worst_case_calls}번 호출 "
-                    f"(상한 없는 노드는 {self.ctx.max_visits}번으로 계산)"
+                    f"(상한 없는 노드는 {self.ctx.max_visits}회 기준)"
                 ).classes(f"text-xs font-semibold {tone}")
             for error in draft.errors:
                 ui.label(f"오류 · {error}").classes("text-[11px] text-red-300 leading-snug")
@@ -401,7 +402,7 @@ class GraphBuilderChat(BuilderChat):
             done = await self.on_finish(self.composite)
         except Exception as exc:  # noqa: BLE001 - 실패 원인을 사람에게 보여 주고 창은 남깁니다
             logger.error("Finishing the workflow builder failed: %s", exc, exc_info=True)
-            ui.notify(f"저장하지 못했습니다: {exc}", type="negative", position="bottom-right")
+            ui.notify(f"저장에 실패했습니다: {exc}", type="negative", position="bottom-right")
             done = False
         if done and self.dialog is not None:
             self.dialog.close()

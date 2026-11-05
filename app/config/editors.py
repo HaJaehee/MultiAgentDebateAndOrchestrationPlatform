@@ -696,17 +696,18 @@ def add_agents_to_conf_file(
     entries: Sequence[Mapping[str, Any]],
     config_path: str | Path = DEFAULT_CONFIG_PATH,
 ) -> List[str]:
-    """`agents`에 여러 에이전트를 **한 번에** 추가하고, 추가한 키를 돌려줍니다.
+    """`agents` 섹션에 여러 에이전트를 **한 번에** 추가하고, 추가된 키 목록을 반환합니다.
 
-    각 항목은 `add_agent_to_conf_file` 과 같은 이름의 값을 담은 dict 입니다 (`agent_key`, `name`, `role`, ...).
-    전부 검사한 뒤 파일을 한 번만 씁니다. 하나라도 틀리거나 이미 있는 키면 아무것도 쓰지 않습니다 —
-    한 명씩 쓰다가 중간에 실패하면 일부만 남습니다 (대화로 워크플로 만들기가 쓰는 경로).
+    각 항목은 `add_agent_to_conf_file`과 동일한 인자 명의 값을 담은 딕셔너리입니다 (`agent_key`, `name`, `role` 등).
+    모든 항목의 유효성을 먼저 검증한 뒤 파일을 한 번만 씁니다. 유효하지 않은 값이 있거나 이미 존재하는 키가 포함되어 있다면
+    아무것도 기록하지 않습니다. 순차적으로 기록하다 중간에 실패하여 불완전한 상태가 남는 문제를 방지합니다
+    (대화형 워크플로 생성 기능에서 사용하는 경로입니다).
     """
     blocks = [_new_agent_block(**dict(entry)) for entry in entries]
     keys = [key for key, _ in blocks]
     repeated = sorted({key for key in keys if keys.count(key) > 1})
     if repeated:
-        raise ValueError(f"같은 키가 두 번 있습니다: {', '.join(repeated)}")
+        raise ValueError(f"동일한 키가 두 번 이상 포함되어 있습니다: {', '.join(repeated)}")
     if not blocks:
         return []
     path = Path(config_path)
@@ -715,7 +716,7 @@ def add_agents_to_conf_file(
     agents = _section(data, "agents")
     taken = [key for key in keys if key in agents]
     if taken:
-        raise ValueError(f"이미 {path.name} 에 있는 에이전트입니다: {', '.join(taken)}")
+        raise ValueError(f"이미 {path.name}에 등록되어 있는 에이전트 키입니다: {', '.join(taken)}")
     for key, block in blocks:
         agents[key] = block
 
@@ -738,7 +739,7 @@ def _new_agent_block(
     allowed_skills: Optional[List[str]] = None,
     decision_llm: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, Dict[str, Any]]:
-    """새 에이전트의 (키, conf.json 블록). 파일은 읽지도 쓰지도 않고 입력만 검사합니다."""
+    """새 에이전트의 (키, conf.json 블록) 튜플을 반환합니다. 파일 I/O 없이 입력값 유효성만 검증합니다."""
     key = _require_key(agent_key, "에이전트 키")
 
     name = (name or "").strip()

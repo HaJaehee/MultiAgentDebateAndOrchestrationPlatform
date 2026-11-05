@@ -36,11 +36,13 @@ def agent_infos(agents: List[Any]) -> Dict[str, Tuple[str, str, str]]:
 
 
 def _longest_depths(spec: GraphSpec) -> Dict[str, int]:
-    """`start` 에서 닿는 노드마다 되돌림 선을 뺀 **가장 긴** 경로의 길이.
+    """`start` 노드로부터 도달 가능한 각 노드까지의 역방향 선(되돌림 엣지)을 제외한 **최장 경로** 길이를 계산합니다.
 
-    가장 짧은 거리로 열을 정하면, 길이가 다른 갈래가 취합 노드로 모일 때 취합이 긴 갈래의 마지막 노드와
-    같은 열에 놓여 선이 세로로 꺾입니다 (`start→A→B→M`, `start→C→M` 이면 B 와 M 이 둘 다 2열).
-    되돌림 선(`back_edges`)을 빼면 남은 그래프에는 순환이 없어 가장 긴 경로를 셀 수 있습니다.
+    단순 최단 거리로 열을 배치하면, 길이가 서로 다른 병렬 갈래가 merge(취합) 노드로 합쳐질 때
+    취합 노드가 긴 갈래의 이전 노드와 같은 열에 배치되어 연결선이 수직으로 꺾이는 왜곡이 발생합니다
+    (`start→A→B→M`, `start→C→M`일 때 B와 M이 모두 2열에 배치되는 문제).
+    역방향 선(`back_edges`)을 배제한 DAG(유향 비순환 그래프) 상태에서 최장 경로 위상 순서를 계산함으로써
+    모든 선행 노드의 우측에 취합 노드가 자연스럽게 배치되도록 합니다.
     """
     start = spec.start
     if start is None:
@@ -76,9 +78,9 @@ def _longest_depths(spec: GraphSpec) -> Dict[str, int]:
 
 
 def auto_layout(spec: GraphSpec) -> Dict[str, Tuple[float, float]]:
-    """좌표가 없는 노드의 자리. `start` 에서의 가장 긴 경로(단계)로 열을, 같은 열 안의 순서로 행을 정합니다.
+    """좌표가 지정되지 않은 노드의 기본 위치를 자동 계산합니다. `start` 노드 기준 최장 경로(단계 수)로 열(X)을 결정하고, 동일 열 내 순서로 행(Y)을 배치합니다.
 
-    `start` 에서 닿지 않는 노드는 맨 오른쪽 열에 모읍니다.
+    `start` 노드로부터 도달할 수 없는 고립 노드는 가장 우측 열에 정렬하여 모아둡니다.
     """
     depth = _longest_depths(spec)
     deepest = max(depth.values(), default=0)
@@ -97,10 +99,10 @@ def spec_to_canvas(
     agents: Mapping[str, Tuple[str, str, str]],
     drafts: Iterable[str] = (),
 ) -> Dict[str, Any]:
-    """그래프 파일 → 캔버스 초기값. 없는 에이전트는 이름이 비어 노드가 경고색으로 보입니다.
+    """GraphSpec 객체를 Vue Flow 캔버스 렌더링용 데이터 구조로 변환합니다. 시스템에 등록되지 않은 에이전트는 이름이 비어 경고 스타일로 표시됩니다.
 
-    `drafts` 는 아직 등록하지 않은 새 에이전트의 키입니다 (대화로 워크플로 만들기). 그 노드는 점선 테두리로
-    그려 기존 에이전트와 구분합니다. 이름은 `agents` 에 초안 값을 넣어 넘깁니다.
+    `drafts`는 아직 conf.json에 등록되지 않은 신규 에이전트의 키 목록입니다 (대화형 워크플로 생성기).
+    해당 노드는 점선 테두리로 렌더링되어 기존 에이전트와 시각적으로 명확히 구분됩니다. 에이전트 이름은 `agents` 매핑에 포함하여 전달합니다.
     """
     draft_keys = set(drafts)
     layout = auto_layout(spec)
@@ -178,7 +180,7 @@ GRAPH_EDITOR_CSS = """
          box-shadow: 0 6px 18px rgba(0,0,0,.35); font-family: inherit; position: relative; }
 .gnode-selected { border-color: #a5b4fc; box-shadow: 0 0 0 2px rgba(165,180,252,.45); }
 .gnode-invalid { border-color: #f87171; }
-/* 아직 등록하지 않은 새 에이전트 (대화로 워크플로 만들기의 미리보기). */
+/* 아직 등록되지 않은 신규 에이전트 노드 스타일 (대화형 워크플로 빌더 미리보기용). */
 .gnode-draft { border-style: dashed; border-color: #fbbf24; }
 .gnode-draft-tag { font-weight: 700; }
 .gnode-band { display: flex; justify-content: space-between; gap: 6px; background: #4f46e5; color: #fff;

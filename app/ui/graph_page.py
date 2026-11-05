@@ -119,7 +119,7 @@ def create_graph_page() -> None:
                 dirty_badge.set_visibility(False)
                 ui.button("AI로 고쳐 쓰기", icon="auto_awesome", on_click=lambda: open_builder()).props(
                     "flat dense no-caps color=amber-4"
-                ).tooltip("도우미와 대화해 지금 캔버스의 그래프를 고칩니다. 결과는 캔버스에만 적용되고, 파일은 [저장] 으로 씁니다.")
+                ).tooltip("AI 도우미와 대화하며 현재 캔버스의 그래프를 수정합니다. 결과는 캔버스에만 적용되며, 파일 저장은 상단 [저장] 버튼을 사용합니다.")
                 ui.button("검증", icon="rule", on_click=lambda: validate()).props(
                     "flat dense no-caps color=grey-3"
                 )
@@ -156,7 +156,7 @@ def create_graph_page() -> None:
                 ui.separator().classes("bg-slate-800 my-1")
                 ui.label("에이전트").classes("text-[11px] font-semibold text-slate-400 tracking-wider")
 
-                # 대화로 고쳐 쓰며 새 에이전트를 등록하면 다시 그립니다 (`apply_builder`).
+                # 대화로 그래프를 수정하며 새 에이전트를 등록한 경우 팔레트를 갱신합니다 (`apply_builder`).
                 @ui.refreshable
                 def agent_palette() -> None:
                     if not agents:
@@ -426,7 +426,7 @@ def create_graph_page() -> None:
             )
 
         async def open_builder() -> None:
-            """지금 캔버스(저장하지 않은 편집 포함)에서 시작하는 대화 창을 엽니다."""
+            """현재 캔버스 상태(저장되지 않은 편집 내용 포함)를 바탕으로 대화형 워크플로 수정 대화창을 엽니다."""
             try:
                 current = await current_spec(spec.id, name_input.value or spec.id)
             except ValueError as exc:
@@ -439,11 +439,11 @@ def create_graph_page() -> None:
                 title="AI로 그래프 고쳐 쓰기",
                 start=draft_from_graph(current),
                 greeting=EDIT_GREETING,
-                finish_note="새 에이전트는 conf.json 에 등록됩니다. 그래프는 캔버스에만 적용되며, 파일은 [저장] 으로 씁니다.",
+                finish_note="새 에이전트는 conf.json에 즉시 등록됩니다. 그래프는 캔버스에만 반영되며, 파일 저장은 상단의 [저장] 버튼으로 진행하세요.",
             ).open()
 
         async def apply_builder(draft) -> bool:
-            """새 에이전트를 등록하고 그래프를 캔버스에 넣습니다. 파일은 쓰지 않습니다 — 편집 상태는 브라우저가 듭니다."""
+            """새 에이전트를 등록하고 수정된 그래프를 캔버스에 적용합니다. 파일 저장은 브라우저 편집 상태를 유지하기 위해 상단 저장을 통해 수행합니다."""
             try:
                 saved = save_workflow(
                     draft, builder_context_now(), graph_id=spec.id,
@@ -453,7 +453,7 @@ def create_graph_page() -> None:
                 ui.notify(str(exc), type="warning", position="bottom-right", multi_line=True)
                 return False
             if saved.agent_keys:
-                # 팔레트와 노드의 에이전트 선택 목록이 새 에이전트를 보도록 다시 만듭니다.
+                # 팔레트와 노드의 에이전트 선택 목록이 새 에이전트를 인식하도록 갱신합니다.
                 agents.clear()
                 agents.update(agent_infos(get_agent_pool().list_all()))
                 agent_palette.refresh()
@@ -465,7 +465,7 @@ def create_graph_page() -> None:
             show_report(validate_graph(saved.spec, known_agents(), default_max_visits=PREVIEW_MAX_VISITS))
             added = f" 새 에이전트 {len(saved.agent_keys)}명을 등록했습니다 ({', '.join(saved.agent_keys)})." if saved.agent_keys else ""
             ui.notify(
-                f"캔버스에 적용했습니다.{added} 파일에 쓰려면 [저장] 을 누르세요.",
+                f"캔버스에 성공적으로 적용했습니다.{added} 변경 사항을 파일에 저장하려면 [저장] 버튼을 누르세요.",
                 type="positive", position="bottom-right", multi_line=True,
             )
             return True

@@ -1,6 +1,6 @@
 # AI 대화형 커스텀 에이전트 그래프 및 페르소나 생성 기능 개발 계획
 
-> 상태: 구현됨 (2026-11-04) · 결정 기록은 [ADR-050](../lectures/05-adr/ADR-050-build-workflows-by-conversation.md). 처음 초안에서 바뀐 점은 [부록](#부록-검토-반영-내역-2026-11-04)에 모았습니다.
+> 상태: 구현 완료 (2026-11-04) · 아키텍처 결정 기록: [ADR-050](../lectures/05-adr/ADR-050-build-workflows-by-conversation.md). 초기 초안 대비 변경 사항은 [부록](#부록-검토-반영-내역-2026-11-04)을 참조하세요.
 
 ## 1. 개요 및 배경 (Overview & Background)
 
@@ -85,7 +85,7 @@ flowchart TD
 
 ## 3. 대화 프로토콜 및 복합 데이터 계약 (Composite Draft)
 
-새 모듈은 `app/orchestration/workflow_builder.py`입니다. 계층 규칙(`tests/test_layering.py`)상 `app.agents`는 `app.orchestration`(그래프·`graph_draft`·`format_roster`)을 가져올 수 없어 orchestration 에 둡니다. 기존 `app/orchestration/graph_draft.py`와 그 안의 `GraphDraft` 클래스와 헷갈리지 않도록 `graph_draft_builder` 같은 이름은 쓰지 않습니다.
+새 모듈은 `app/orchestration/workflow_builder.py`입니다. 계층 규칙(`tests/test_layering.py`)상 `app.agents`는 상위 계층인 `app.orchestration`(그래프 명세·`graph_draft`·`format_roster`)을 참조할 수 없으므로 `orchestration` 패키지에 배치합니다. 기존 `app/orchestration/graph_draft.py` 및 내부의 `GraphDraft` 클래스와 혼동되지 않도록 `graph_draft_builder` 같은 이름은 사용하지 않습니다.
 
 ### 3.1 복합 설계도 데이터 모델
 
@@ -378,4 +378,4 @@ UI 없이 테스트할 수 있도록 `app/orchestration/workflow_builder.py`에 
 - **미리보기**: 다이얼로그 캔버스는 읽기 전용이며 열린 뒤에 그립니다.
 - **예시**: 허용 팔레트 색(`#e64a19`)을 쓰고, 고칠 사람이 있는 루프로 바꾸고, 화면 목업과 JSON의 판정 갈래를 맞췄습니다.
 - **기타**: 모듈 이름을 `graph_draft_builder`에서 `workflow_builder`로 바꾸고, 범위(1.3)와 ADR-050 작성을 추가했습니다.
-- **구현 중 확정**: 계층 규칙 때문에 코어를 `app/agents`가 아니라 `app/orchestration`에 두었습니다. `split_composite_reply`는 튜플 대신 `CompositeReply`를 돌려주고, 읽지 못한 블록을 `broken`에 모읍니다.
+- **구현 중 확정**: 계층 규칙에 따라 코어를 `app/agents`가 아닌 `app/orchestration`에 배치했습니다. `split_composite_reply`는 튜플 대신 `CompositeReply` 객체를 반환하며, 파싱에 실패한 블록 정보는 `broken` 필드에 수집합니다.

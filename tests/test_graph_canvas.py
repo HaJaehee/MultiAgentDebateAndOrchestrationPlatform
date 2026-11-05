@@ -79,7 +79,7 @@ def test_graphs_without_positions_are_laid_out_by_distance_from_start():
 
 
 def test_a_merge_of_uneven_branches_sits_after_the_longest_branch():
-    """가장 짧은 거리로 열을 정하면 취합(M)이 긴 갈래의 B 와 같은 열에 놓여 선이 세로로 꺾입니다."""
+    """최단 거리를 기준으로 열을 결정하면 취합 노드(M)가 긴 갈래의 노드(B)와 동일한 열에 배치되어 연결선이 수직으로 꺾이는 문제가 발생합니다."""
     spec = parse_graph({
         "id": "uneven", "name": "길이가 다른 갈래",
         "nodes": [
@@ -102,13 +102,13 @@ def test_a_merge_of_uneven_branches_sits_after_the_longest_branch():
     layout = auto_layout(spec)
     assert layout["m"][0] > layout["b"][0] > layout["a"][0]
     assert layout["end"][0] > layout["m"][0]
-    assert len(set(layout.values())) == len(layout), "노드 자리가 서로 겹치지 않습니다"
+    assert len(set(layout.values())) == len(layout), "노드 좌표가 서로 중복되지 않아야 합니다"
 
 
 def test_a_loop_back_does_not_push_nodes_to_the_right():
     layout = auto_layout(parse_graph(example()))
     assert layout["impl"][0] < layout["merge"][0] < layout["gate"][0] < layout["end"][0], \
-        "판정에서 구현으로 되돌아가는 선은 열을 늘리지 않습니다"
+        "판정에서 구현으로 되돌아가는 루프 선은 열 번호를 불필요하게 증가시키지 않습니다"
     assert len(set(layout.values())) == len(layout)
 
 
@@ -119,7 +119,7 @@ def test_nodes_of_agents_not_registered_yet_are_marked_as_drafts():
     canvas = spec_to_canvas(parse_graph(data), infos, drafts=["auditor"])
     nodes = {n["id"]: n["data"] for n in canvas["nodes"]}
     assert nodes["sec"]["draft"] is True and nodes["sec"]["agentName"] == "컨트랙트 보안관"
-    assert "draft" not in nodes["impl"], "기존 에이전트 노드에는 표시가 없습니다"
+    assert "draft" not in nodes["impl"], "기존 등록 에이전트 노드에는 draft 표시가 없어야 합니다"
 
 
 def test_fields_that_do_not_belong_to_a_node_type_are_dropped():

@@ -1,16 +1,13 @@
-"""대화로 워크플로 만들기 (app/orchestration/workflow_builder.py, ADR-050).
+"""대화형 워크플로 빌더 단위 테스트 (app/orchestration/workflow_builder.py, ADR-050).
 
-지키려는 것.
+검증 목표:
 
-1. **답 읽기** — `agents`·`graph` 블록을 함께 읽고 보이는 말에서 걷어낸다. `agent` 태그·객체 하나도 받고 `json`
-   태그는 받지 않는다. 업무 지시서 안의 ``` 에 잘리지 않는다. 깨진 블록은 지금 값을 지키고 고쳐 달라고 한다.
-2. **맥락 크기** — 지금 설계도는 마지막 사용자 말에만 붙고, 기록에는 블록 대신 한 줄이 남는다.
-3. **키 충돌** — 새 에이전트 키가 이미 있는 키(꺼진 것·오케스트레이터 포함)와 겹치면 오류다. 겹친 채 저장하면
-   노드가 기존 에이전트를 가리켜, 오류 없이 다른 에이전트가 발언한다.
-4. **같은 검사** — 그래프는 적응형 그래프와 같은 `draft_report` 를 지난다 (판정 없는 루프, 노드·호출 상한).
-5. **자가 교정** — 이번 답이 만든 문제만 한 번 고쳐 받고, 그 주고받기는 기록에 남지 않는다.
-6. **저장** — 쓰기 전에 모든 검사를 끝내고 conf.json 에 한 번에 쓴다. 진행 중인 대화가 있으면 아무것도 쓰지
-   않는다. 저장 직전에 키가 겹치면 노드까지 새 키로 바꾼다. 그래프 저장이 실패해도 에이전트는 남고 그 사실을 말한다.
+1. **응답 파싱** — `agents` 및 `graph` 블록을 함께 추출하고 사용자 노출 본문에서 깔끔히 분리한다. `agent` 태그와 단일 객체 형식도 수용하며 `json` 태그는 무시한다. 업무 지시서 내의 백틱(```)에 의해 파싱이 끊기지 않는다. 파싱 실패 블록은 기존 값을 유지하고 자체 교정을 요청한다.
+2. **컨텍스트 최적화** — 현재 설계도는 최신 사용자 메시지에만 첨부하고, 대화 이력에는 블록 대신 요약 안내 문구만 남긴다.
+3. **키 충돌 방지** — 새 에이전트 키가 기존 키(비활성화 및 오케스트레이터 포함)와 중복되면 검증 오류로 차단한다. 중복된 채로 저장되어 노드가 기존 에이전트를 가리킴으로써 엉뚱한 에이전트가 발언하는 결함을 예방한다.
+4. **일관된 검증** — 그래프 명세는 적응형 그래프와 동일한 `draft_report` 검증을 통과해야 한다 (판정 노드 없는 무한 루프 차단, 노드 수 및 호출 횟수 상한).
+5. **자가 교정** — 이번 응답으로 발생한 오류에 대해서만 1회 교정을 재요청하며, 해당 교정 왕복 대화는 이력에 남기지 않는다.
+6. **안전한 저장** — 실제 파일 기록 전에 모든 사전 검증을 완료하고 conf.json에 일괄 기록한다. 진행 중인 대화가 있으면 저장을 거부한다. 저장 직전 키 경합 시 노드 참조 키도 함께 치환한다. 그래프 저장이 실패해도 conf.json은 롤백하지 않고 사실을 알린다.
 """
 
 import json
@@ -145,7 +142,7 @@ def test_a_single_agent_object_and_the_agent_tag_are_accepted_but_a_json_tag_is_
     assert wb.split_composite_reply(text).agents == [AUDITOR]
 
     ambiguous = wb.split_composite_reply(f"설명\n```json\n{json.dumps(audit_graph())}\n```")
-    assert ambiguous.agents is None and ambiguous.graph is None, "어느 블록인지 모르는 json 태그는 읽지 않습니다"
+    assert ambiguous.agents is None and ambiguous.graph is None, "블록 유형이 불분명한 json 태그는 파싱 대상에서 제외합니다"
 
 
 def test_a_fence_inside_a_system_prompt_does_not_cut_the_block():
@@ -162,7 +159,7 @@ def test_a_broken_block_keeps_the_current_value_and_asks_for_a_fix():
     assert broken.graph is None and broken.broken and broken.text == "고쳤습니다."
 
     draft, problems = wb.apply_reply(current, broken, ctx)
-    assert draft.graph == current.graph, "읽지 못한 답이 와도 마지막으로 읽은 그래프를 지킵니다"
+    assert draft.graph == current.graph, "파싱할 수 없는 응답이 오더라도 마지막으로 정상 파싱된 그래프를 유지합니다"
     assert any("그래프 블록" in p for p in problems)
 
 
@@ -188,9 +185,9 @@ def test_the_current_draft_rides_only_on_the_last_user_message():
     assert messages[2]["content"].startswith("수정은 두 번까지만\n\n" + wb.CURRENT_DRAFT_MARKER)
     payload = json.loads(messages[2]["content"].split("```json\n", 1)[1].rsplit("\n```", 1)[0])
     assert [a["key"] for a in payload["agents"]] == ["contract_auditor"]
-    assert '"pos"' not in json.dumps(payload["graph"]), "편집기 좌표는 도우미에게 필요 없습니다"
-    assert history[2]["content"] == "수정은 두 번까지만", "기록은 그대로 둡니다"
-    assert wb.request_messages(history, wb.CompositeDraft()) == history, "빈 설계도는 붙이지 않습니다"
+    assert '"pos"' not in json.dumps(payload["graph"]), "편집기 좌표 정보는 도우미 에이전트에게 불필요하므로 전송 데이터에서 제외합니다"
+    assert history[2]["content"] == "수정은 두 번까지만", "대화 이력 원본은 수정하지 않고 그대로 보존합니다"
+    assert wb.request_messages(history, wb.CompositeDraft()) == history, "빈 설계도는 메시지에 첨부하지 않습니다"
 
 
 def test_the_record_keeps_a_line_instead_of_the_blocks():
@@ -213,14 +210,14 @@ def test_a_new_key_that_already_exists_is_an_error(key):
 
 
 def test_the_collision_would_otherwise_pass_silently():
-    """키 검사가 없으면 무엇이 잘못되는지: 그래프 검증만으로는 통과합니다 (`coder` 가 풀에 있으므로)."""
+    """키 중복 검사가 누락되었을 때의 부작용 검증: 풀에 기존 `coder`가 존재하므로 그래프 검증 자체는 통과해 버립니다."""
     ctx = offline_context()
     graph = audit_graph()
     graph["nodes"][0]["agent"] = "coder"
     draft = drafted(ctx, agents=[dict(AUDITOR, key="coder")], graph=graph)
     report = graph_draft.draft_report(draft.graph, ctx.candidate_keys, ctx.max_visits)
-    assert report.ok, "그래프만 보면 문제가 없어 보입니다 — 그래서 키를 따로 봐야 합니다"
-    assert draft.errors, "빌더 검사는 막습니다"
+    assert report.ok, "그래프 자체만 보면 유효해 보이지만, 키 충돌을 별도로 검사해야 합니다"
+    assert draft.errors, "빌더 유효성 검사에서 키 충돌을 정상 차단합니다"
 
 
 def test_new_agents_must_be_usable_and_used():
@@ -236,7 +233,7 @@ def test_new_agents_must_be_usable_and_used():
     assert "Bad-Key" in joined
     assert "업무 지시서" in joined and "쉬는 도우미" in joined
     assert any("idle_helper" in w and "쓰이지 않습니다" in w for w in draft.warnings)
-    assert len([a for a in draft.new_agents if a.key == "contract_auditor"]) == 1, "같은 키는 마지막 것 하나만 남습니다"
+    assert len([a for a in draft.new_agents if a.key == "contract_auditor"]) == 1, "동일 키가 중복 전달될 경우 마지막 항목 하나만 반영합니다"
 
 
 def test_unknown_tools_are_dropped_from_new_agents():
@@ -270,7 +267,7 @@ def test_both_prompts_share_the_graph_format_and_the_builder_lists_what_it_must_
     assert graph_draft.GRAPH_FORMAT_GUIDE in prompt
     assert "coder: Senior Python Engineer" in prompt
     taken_line = prompt.split("새 전문가는 이 키를 쓸 수 없습니다\n", 1)[1].split("\n", 1)[0]
-    assert {"coder", "critic", "orchestrator"} <= set(taken_line.split(", ")), "꺼진 에이전트의 키도 쓸 수 없습니다"
+    assert {"coder", "critic", "orchestrator"} <= set(taken_line.split(", ")), "비활성화된 에이전트의 키도 중복 사용이 불가능해야 합니다"
     assert "`filesystem`" in prompt and "{tools}" not in prompt and "{colors}" not in prompt
 
     adaptive = graph_draft.draft_prompt(goal="g", record="", plan="", roster="- coder", max_rounds=3, parallel_limit=2)
@@ -315,20 +312,20 @@ def test_a_reply_merges_agents_by_key_and_the_list_is_the_whole_list():
         agents=[{"key": "contract_auditor", "role": "취약점 점검과 등급"}, helper],
     )), ctx)
     auditor = draft.agent("contract_auditor")
-    assert auditor.name == "보안관 (고침)", "답에 없는 필드는 지금 값(사용자가 고친 값)을 지킵니다"
+    assert auditor.name == "보안관 (고침)", "응답에 누락된 필드는 현재 값(사용자가 화면에서 수정한 값)을 그대로 유지합니다"
     assert auditor.role == "취약점 점검과 등급"
     assert [a.key for a in draft.new_agents] == ["contract_auditor", "report_writer"]
 
     emptied, _ = wb.apply_reply(draft, wb.split_composite_reply(answer(agents=[])), ctx)
-    assert emptied.new_agents == [] and emptied.graph == draft.graph, "agents 블록만 오면 그래프는 그대로"
+    assert emptied.new_agents == [] and emptied.graph == draft.graph, "agents 블록만 전달된 경우 그래프는 기존 설계를 유지합니다"
 
 
 def test_problems_are_counted_only_for_what_the_reply_made():
     ctx = offline_context()
     current = wb.remove_new_agent(drafted(ctx), "contract_auditor", ctx)
-    assert current.errors, "사용자가 랙에서 뺀 에이전트를 쓰던 노드는 오류입니다"
+    assert current.errors, "사용자가 랙에서 제거한 에이전트를 참조하는 노드는 오류로 감지되어야 합니다"
     _, problems = wb.apply_reply(current, wb.split_composite_reply("어떤 점검을 원하시나요?"), ctx)
-    assert problems == [], "블록 없는 답이나 사용자 수정으로 생긴 오류로는 다시 쓰게 하지 않습니다"
+    assert problems == [], "블록이 없는 일반 응답이나 사용자의 직접 수정으로 발생한 오류로는 재요청을 유발하지 않습니다"
 
 
 def test_a_removed_agent_is_announced_and_cleared_when_the_assistant_brings_it_back():
@@ -356,7 +353,7 @@ def test_editor_positions_carry_over_only_when_the_nodes_stay():
     grown["edges"].append({"from": "audit", "to": "notes"})
     grown["edges"].append({"from": "notes", "to": "end"})
     moved, _ = wb.apply_reply(start, wb.split_composite_reply(answer(graph=grown)), ctx)
-    assert all(n.pos is None for n in moved.graph.nodes), "새 노드가 있으면 겹치지 않게 전부 자동 배치합니다"
+    assert all(n.pos is None for n in moved.graph.nodes), "새 노드가 추가되면 겹침을 방지하기 위해 전체 노드를 자동 배치합니다"
 
 
 def test_renaming_a_new_agent_in_the_rack_renames_its_nodes():
@@ -443,14 +440,14 @@ def test_save_registers_every_new_agent_in_one_write_and_saves_the_graph(live_co
 
     saved = wb.save_workflow(draft, wb.builder_context(SERVERS, []), graph_id="ai-test", directory=graphs)
 
-    assert len(writes) == 1, "여러 에이전트를 한 번에 씁니다"
+    assert len(writes) == 1, "여러 에이전트를 conf.json에 한 번에 일괄 기록합니다"
     assert saved.agent_keys == ["contract_auditor", "report_writer"] and saved.renamed == {}
     raw = read_conf_file(live_conf)
-    assert raw["agents"]["// orchestrator"] == "필수 오케스트레이터", "설명 주석 키를 지킵니다"
+    assert raw["agents"]["// orchestrator"] == "필수 오케스트레이터", "설정 파일의 주석용 키를 유지합니다"
     block = raw["agents"]["contract_auditor"]
-    assert "model" not in block and "api_key" not in block, "모델·키는 llm 기본 설정을 상속합니다"
+    assert "model" not in block and "api_key" not in block, "모델과 API 키는 llm 기본 설정을 상속받도록 생략합니다"
     assert block["allowed_mcp_servers"] == ["filesystem"]
-    assert pool_module.get_agent_pool().get("report_writer") is not None, "재시작 없이 풀에 반영됩니다"
+    assert pool_module.get_agent_pool().get("report_writer") is not None, "서버 재시작 없이도 에이전트 풀에 즉시 반영됩니다"
 
     stored = load_graph("ai-test", graphs)
     assert stored.agent_keys() == ["contract_auditor", "coder", "report_writer"]
@@ -467,7 +464,7 @@ def test_a_key_taken_while_talking_is_renamed_together_with_its_nodes(live_conf,
 
     saved = wb.save_workflow(draft, wb.builder_context(SERVERS, []), graph_id="ai-race", directory=tmp_path)
     assert saved.renamed == {"contract_auditor": "contract_auditor_2"}
-    assert saved.spec.node("audit").agent == "contract_auditor_2", "노드가 남의 에이전트를 가리키면 안 됩니다"
+    assert saved.spec.node("audit").agent == "contract_auditor_2", "노드가 다른 에이전트를 가리키지 않고 치환된 새 키를 정확히 참조해야 합니다"
     assert load_config(live_conf).agents["contract_auditor"].name == "다른 창의 보안관"
     assert load_config(live_conf).agents["contract_auditor_2"].name == "컨트랙트 보안관"
 
@@ -512,7 +509,7 @@ def test_a_failed_graph_write_keeps_the_agents_and_says_so(live_conf, tmp_path, 
     draft = drafted(wb.builder_context(SERVERS, []))
     saved = wb.save_workflow(draft, wb.builder_context(SERVERS, []), graph_id="ai-disk", directory=tmp_path)
     assert "에이전트 1명은 등록했지만" in saved.graph_error and "디스크가 가득 찼습니다" in saved.graph_error
-    assert "contract_auditor" in read_conf_file(live_conf)["agents"], "conf.json 은 되돌리지 않습니다"
+    assert "contract_auditor" in read_conf_file(live_conf)["agents"], "그래프 파일 저장이 실패하더라도 conf.json 변경 사항은 롤백하지 않습니다"
 
 
 def test_the_editor_path_registers_agents_without_writing_a_graph_file(live_conf, tmp_path):
@@ -520,7 +517,7 @@ def test_the_editor_path_registers_agents_without_writing_a_graph_file(live_conf
     saved = wb.save_workflow(draft, wb.builder_context(SERVERS, []), graph_id="my-graph", write_graph=False,
                              directory=tmp_path / "graphs")
     assert saved.spec.id == "my-graph" and saved.agent_keys == ["contract_auditor"]
-    assert not (tmp_path / "graphs").exists(), "편집기 경로의 파일은 편집기의 [저장] 이 씁니다"
+    assert not (tmp_path / "graphs").exists(), "편집기 경로에서는 파일 저장을 편집기의 자체 [저장] 기능에 위임합니다"
 
 
 def test_new_graph_ids_are_not_made_from_korean_names(tmp_path):
@@ -545,7 +542,7 @@ def test_adding_several_agents_is_all_or_nothing(tmp_path):
         add_agents_to_conf_file([one, dict(one)], path)
     with pytest.raises(ValueError, match="이름"):
         add_agents_to_conf_file([one, {"agent_key": "nameless", "name": "", "role": "역할"}], path)
-    assert path.read_bytes() == before, "하나라도 틀리면 아무것도 쓰지 않습니다"
+    assert path.read_bytes() == before, "입력값 중 하나라도 잘못되면 conf.json에 아무것도 기록하지 않아야 합니다"
 
     assert add_agents_to_conf_file([one, {"agent_key": "reader", "name": "독자", "role": "읽기",
                                           "system_prompt": "한 줄\n두 줄"}], path) == ["writer", "reader"]
@@ -570,7 +567,7 @@ def test_adding_one_agent_still_behaves_as_before(tmp_path):
 
 
 def test_the_two_entry_points_finish_the_way_the_design_says():
-    """대화 화면은 새 파일로 저장해 연결하고, 편집기는 파일을 쓰지 않고 캔버스에 적용합니다."""
+    """대화 화면은 새 파일로 저장하여 연결하고, 편집기는 파일 저장 없이 캔버스에 즉시 반영합니다."""
     import inspect
 
     from app.ui import graph_page

@@ -1,8 +1,8 @@
-"""도우미와 대화해 설계도를 채우는 부분 — 쉬운 화면의 빌더, 전문가 화면의 '에이전트 만들기' 창, '대화로 워크플로
-만들기' 창이 함께 씁니다.
+"""도우미와 대화하여 설계도를 작성하는 공통 채팅 컴포넌트입니다.
 
-사용자가 고친 설계도는 다음 말과 함께 도우미에게 넘어가므로 임의로 덮어쓰이지 않습니다(`draft.with_draft`).
-설계도를 어디에 보여 주고 어떻게 저장할지는 쓰는 쪽이 정합니다 (`read_card`, `fill_card`, `_bubble`).
+간편 화면의 빌더, 전문가 화면의 '에이전트 만들기' 대화창, '대화로 워크플로 만들기' 대화창에서 공통으로 상속받아 사용합니다.
+사용자가 화면에서 수정한 설계도는 다음 발화 시 도우미에게 함께 전달되므로 임의로 덮어쓰이지 않습니다(`draft.with_draft`).
+설계도의 시각적 표시 방식과 저장 절차는 이를 상속하는 구체 클래스에서 결정합니다 (`read_card`, `fill_card`, `_bubble`).
 """
 
 from __future__ import annotations
@@ -62,28 +62,28 @@ class BuilderChat:
         """`self.draft` 를 화면에 옮깁니다."""
         raise NotImplementedError
 
-    # ------------------------------------------------------------ 도우미와 주고받기 (하위 클래스가 바꿀 수 있음)
+    # ------------------------------------------------------------ 도우미 인터랙션 (서브클래스에서 재정의 가능)
     #
-    # 대화 흐름(버블·스트리밍·연결 실패 처리)은 `send` 하나가 맡고, 무엇을 묻고 답을 어떻게 읽을지는 아래
-    # 네 메서드가 정합니다. 대화로 워크플로 만들기(`graph_builder_dialog.py`)가 그래프와 여러 에이전트를
-    # 다루려고 바꿉니다.
+    # 대화 흐름(말풍선 렌더링, 스트리밍 출력, 연결 실패 예외 처리)은 `send` 메서드가 일괄 담당하며,
+    # 질문 생성 방식과 응답 파싱 절차는 아래 네 메서드에서 구체화합니다.
+    # 워크플로 빌더 대화창(`graph_builder_dialog.py`)에서는 그래프 명세와 다중 에이전트를 다루기 위해 이를 재정의합니다.
 
     def user_entry(self, text: str) -> str:
-        """기록에 남길 사용자 말. 지금 화면의 설계도를 함께 넘깁니다."""
+        """대화 기록에 남길 사용자 발화 텍스트를 구성합니다. 현재 화면의 설계도 내용을 함께 첨부합니다."""
         return with_draft(text, self.read_card())
 
     def streaming_view(self, text: str) -> str:
-        """스트리밍 중 보여 줄 말. 설계도 블록이 시작되면 그 뒤는 가립니다."""
+        """스트리밍 출력 중 사용자에게 보여줄 텍스트입니다. 설계도 코드 블록이 시작되면 그 이후는 숨깁니다."""
         return streaming_text(text)
 
     async def ask(self, on_chunk: Callable[[str], None], restart: Callable[[str], None]) -> str:
-        """도우미에게 묻고 전체 답을 돌려줍니다. `restart` 는 같은 말풍선에 다시 받기 전에 비울 때 씁니다."""
+        """도우미 에이전트에 질의하고 전체 응답을 수신합니다. `restart` 콜백은 동일 말풍선에서 재시도할 때 내용을 비우는 데 사용합니다."""
         return await ask_builder(
             self.history, servers=self.servers, skills=self.skills, guest=self.guest, on_chunk=on_chunk,
         )
 
     def take_reply(self, content: str) -> str:
-        """답을 기록과 설계도에 반영하고, 말풍선에 보일 말을 돌려줍니다."""
+        """도우미 응답을 대화 기록과 설계도에 반영하고, 말풍선에 노출할 본문 텍스트를 반환합니다."""
         visible, data = split_reply(content)
         self.history.append({"role": "assistant", "content": content})
         if data is not None:
