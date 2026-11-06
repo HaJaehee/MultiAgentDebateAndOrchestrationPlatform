@@ -169,7 +169,7 @@ def render_message(msg: DebateMessage, body: Optional[str] = None) -> str:
     if msg.sender_key == "user":
         return f"### [User] · Round {msg.round_number}\n{body or msg.content}"
     return (
-        f"### {msg.speaker} · Round {msg.round_number}\n"
+        f"### {msg.speaker_label} · Round {msg.round_number}\n"
         f"{body or reference_code_blocks(strip_reasoning_trace(msg.content), msg.tool_calls)}"
     )
 
@@ -253,6 +253,14 @@ DIGEST_INSTRUCTION = (
     f"이 발언의 요지만 읽을 수 있으니, 요지만 읽어도 무엇이 결정·제안됐는지 알 수 있게 쓰세요."
 )
 DIGEST_MAX_CHARS = 800
+
+# 인용 라벨 (ADR-052). 발언은 머리줄에 실린 번호(`[이름 · S14]:`)로, 쟁점은 결정 장부의 고정 번호(ADR-051)로 가리킵니다.
+# 전문가 화면은 본문의 `[S14]`·`[I-3]` 을 그 카드·쟁점으로 가는 링크로 그립니다. 머리줄을 따라 쓰면 발언이 다른
+# 발언처럼 읽히므로 쓰지 말라고 합니다.
+CITE_INSTRUCTION = (
+    "다른 발언을 인용하거나 반박할 때는 그 발언의 번호를 `[S14]` 처럼, 결정 장부의 쟁점은 `[I-3]` 처럼 적어 가리키세요. "
+    "기록의 발언 머리줄(`[이름 (역할) · S14]:`)은 직접 쓰지 마세요."
+)
 # 이보다 짧은 발언은 요지로 바꿔도 얻는 것이 없어 원문을 줍니다.
 DIGEST_MIN_BODY_CHARS = 700
 

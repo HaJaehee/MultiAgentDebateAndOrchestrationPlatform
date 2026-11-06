@@ -34,7 +34,7 @@ from app.session_ops import discard_turn, reviewable_changes, session_code_versi
 from app.ui.attention import ATTENTION_JS, WaitingTabTitle, WaitingWatcher
 from app.ui.components.artifact_viewer import ArtifactViewer, merge_artifacts
 from app.ui.components.chat_feed.feed import ChatFeed
-from app.ui.components.chat_feed.common import clip_reloaded_output, reveal_js
+from app.ui.components.chat_feed.common import CITATION_JS, clip_reloaded_output, reveal_js
 from app.ui.components.chat_feed.speech_actions import SPEECH_COMMENT_JS
 from app.ui.components.quiet_splitter import SPLITTER_FREEZE_JS, QuietSplitter
 from app.ui.components.roster.control import AgentRosterControl
@@ -89,6 +89,7 @@ class ExpertPage:
             f"<script>{SPLITTER_FREEZE_JS}</script>"
             f"<script>{MENTION_JS}</script>"
             f"<script>{SPEECH_COMMENT_JS}</script>"
+            f"<script>{CITATION_JS}</script>"
             f"<script>{CLIENT_DIAGNOSTICS_JS}</script>"
             f"<script>{ATTENTION_JS}</script>"
         )
@@ -127,6 +128,7 @@ class ExpertPage:
             show_ledger_strip=True,
             on_open_ledger=self.open_ledger,
             group_rounds=True,
+            link_citations=True,
         )
         # 결론으로 스킬 초안을 만드는 창. 초안은 토론과 같은 호출기로 씁니다 (바꿔 끼운 호출기도 그대로).
         self.skill_draft = SkillDraftDialog(
@@ -980,6 +982,8 @@ class ExpertPage:
                     "graph_port": m.graph_port,
                     # 라운드 묶음의 열쇠 (턴, 라운드).
                     "turn_id": m.turn_id,
+                    # 발언 번호 (ADR-052). 카드의 `S14` 칩과 인용 링크가 씁니다.
+                    "speech_no": m.speech_no,
                     "turn_meta": m.turn_meta,
                     "llm_meta": m.llm_meta,
                     "revisions": revisions.get(m.id),

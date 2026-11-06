@@ -106,7 +106,7 @@ class SubDebateRunner(PhaseExecutor):
                 selector = self.conversation.tool_less(setup.orchestrator)
                 issues = memory.ledger_items(state.decision_ledger, "미해결 쟁점") or []
                 recent = [
-                    f"{m.speaker}: {self.conversation.snippet(m, 300)}"
+                    f"{m.speaker_label}: {self.conversation.snippet(m, 300)}"
                     for m in state.messages if m.msg_type != "error" and turns.in_main_record(m)
                 ][-8:]
                 state_parts = [
@@ -161,7 +161,7 @@ class SubDebateRunner(PhaseExecutor):
         selector = self.conversation.tool_less(setup.orchestrator)
         issues = memory.ledger_items(state.decision_ledger, "미해결 쟁점") or []
         recent = [
-            f"{m.speaker}: {self.conversation.snippet(m, 300)}"
+            f"{m.speaker_label}: {self.conversation.snippet(m, 300)}"
             for m in state.messages if m.msg_type != "error" and turns.in_main_record(m)
         ][-8:]
         prompt = [{"role": "user", "content": (
@@ -287,7 +287,10 @@ class SubDebateRunner(PhaseExecutor):
                 "직전 발언의 근거를 당신의 전문 영역에서 검증하세요. 동의하면 어디까지인지, 반대하면 막연한 "
                 "우려 대신 재현 가능한 반례나 근거를 대세요. 이미 합의한 것은 되풀이하지 마세요."
             )
-        return head + body + " 쟁점 밖의 일은 다루지 말고, 도구는 쟁점을 검증하는 데 꼭 필요할 때만 쓰세요."
+        return (
+            head + body + " 쟁점 밖의 일은 다루지 말고, 도구는 쟁점을 검증하는 데 꼭 필요할 때만 쓰세요.\n\n"
+            + memory.CITE_INSTRUCTION
+        )
 
     def speech_prompt(
         self, state: DebateState, speaker: Agent, exchange: List[DebateMessage], instruction: str,
@@ -305,7 +308,7 @@ class SubDebateRunner(PhaseExecutor):
         context: List[Dict[str, Any]] = [{"role": "user", "content": "\n\n".join(head)}]
 
         recent = [
-            f"{m.speaker}: {self.conversation.snippet(m, RECENT_CHARS)}"
+            f"{m.speaker_label}: {self.conversation.snippet(m, RECENT_CHARS)}"
             for m in state.messages[state.turn_message_start:]
             if m.msg_type != "error" and m.sender_key != "user" and turns.in_main_record(m)
             and turns.kind_of(m) != turns.KIND_PLAN
@@ -318,7 +321,7 @@ class SubDebateRunner(PhaseExecutor):
                 continue
             context.append({
                 "role": "assistant" if message.sender_key == speaker.key else "user",
-                "content": f"[{message.speaker}]:\n{strip_reasoning_trace(message.content)}",
+                "content": f"[{message.speaker_label}]:\n{strip_reasoning_trace(message.content)}",
             })
         context.append({"role": "user", "content": instruction})
         return context
@@ -365,7 +368,7 @@ class SubDebateRunner(PhaseExecutor):
             state, model=judge.model, token_cap=int(self.conversation.speech_budget(judge, state) * memory.ROUTING_RECORD_SHARE)
         )
         body = "\n\n".join(
-            f"[{m.speaker}]:\n{memory.reference_code_blocks(strip_reasoning_trace(m.content), m.tool_calls)}"
+            f"[{m.speaker_label}]:\n{memory.reference_code_blocks(strip_reasoning_trace(m.content), m.tool_calls)}"
             for m in spoken
         )
         prompt = [{"role": "user", "content": (

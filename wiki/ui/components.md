@@ -994,6 +994,32 @@ of the feed (0 px). The browser pane was hidden during the check, which pauses a
 so for the chip check `requestAnimationFrame` was replaced by a 16 ms timer and scrolling made instant in the page.
 Real provider responses were not used.
 
+### 1.3.15. Citation links (expert page)
+
+Speech cards on the expert page (`ChatFeed(link_citations=True)`) show the speech number as an `S14` chip next to the
+round badge, and render `[S14]` and `[I-3]` in the text as links. Numbers come from [Conversation Memory
+§2.4.1](../orchestration/context-memory.md#241-speech-numbers-and-citations-adr-052); the decision is
+[ADR-052](../../lectures/05-adr/ADR-052-round-groups-and-citation-labels.md).
+
+- **Rendering** (`math_markdown.link_refs`, `MathMarkdown(link_refs=True)`). Labels become `#mado-ref-…` links after
+  math placeholders are made, in prose segments only, so code spans, fenced blocks and math are left alone, and before
+  Markdown runs, so `[S14][S15]` does not turn into a reference link. The pattern
+  `(?<![\[\\\w])\[(S\d{1,5}|I-\d{1,5})\](?![\](])` skips `[[S14]]`, `\[S14\]`, `ab[S14]` and a written link
+  `[S14](https://…)`; `[S14]: 동의합니다` at the start of a line becomes a link instead of disappearing as a reference
+  definition. The cache key of `render_markdown` includes the flag. Links look like small chips (`theme.py`).
+- **Clicking.** `CITATION_JS` puts one delegated listener on the document. It calls `preventDefault()` first, so the
+  address bar and the page do not jump to a hash, and sends `mado_cite` to the server. `ChatFeed.follow_citation` opens
+  a speech's round group and reveals its card (`CardTimeline.reveal_speech` → `reveal_message`), highlights an open
+  issue's chip in the ledger strip (`LedgerStrip.highlight_issue`), or says `이 대화에 S99 발언이 없습니다.`; an issue
+  with no chip (closed, or under `외 n`) gets a notice too.
+- Trial and beginner pages do not turn this on; there the labels stay plain text.
+
+**Verified in a browser** with a scripted LLM and a scratch database (one three-round turn, reloaded): cards carried
+`S1`–`S11` (plan, nine speeches, conclusion); `[S2]` in a folded round-3 group became a link while the `[S2]` inside
+inline code did not; clicking it opened round 1, outlined the S2 card and centered it, and `location.hash` stayed empty;
+`[I-1]`, closed by then, and `[S99]` each showed their notice. As in §1.3.14, the pane was hidden, so animation frames
+were replaced by a 16 ms timer and scrolling made instant in the page.
+
 ### 1.4. Artifact Viewer ([app/ui/components/artifact_viewer.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/artifact_viewer.py))
 - **Tabs accumulate across turns.** `add_artifacts()` appends a finished turn's artifacts (skipping ids
   already shown) and opens that turn's report; `render_artifacts()` is only for rebuilding from a full

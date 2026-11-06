@@ -187,6 +187,8 @@ class LedgerStrip:
         self.synthesizing: Optional[str] = None
         # 턴마다 합의 수렴으로 조기 종료한 라운드.
         self.converged: Dict[str, int] = {}
+        # 지금 그려 둔 쟁점 칩 (번호 → 칩). 본문의 `[I-3]` 링크가 칩을 강조합니다 (ADR-052).
+        self._chips: Dict[int, ui.label] = {}
 
     def build(self) -> None:
         self.row = ui.row().classes(STRIP_CLASSES)
@@ -243,6 +245,7 @@ class LedgerStrip:
         if self.row is None or self.row.is_deleted:
             return
         self.row.clear()
+        self._chips = {}
         self.row.set_visibility(self.visible)
         if not self.visible:
             return
@@ -274,6 +277,7 @@ class LedgerStrip:
         no = item["no"]
         chip = ui.label(ledger_history.issue_label(no)).classes(CHIP_CLASSES)
         chip.props(f'data-mado-issue="{no}"')
+        self._chips[no] = chip
         opened = issue_opened_label(self.revisions, no, turn)
         tip = f"{ledger_history.issue_tag(no)} {item.get('text', '')}"
         if opened:
@@ -305,6 +309,15 @@ class LedgerStrip:
                 ui.label(f"수렴(R{converged})").classes("text-emerald-300 flex-shrink-0").tooltip(
                     f"Round {converged} 에서 장부가 수렴해 남은 라운드를 건너뛰었습니다"
                 )
+
+    def highlight_issue(self, no: int) -> bool:
+        """쟁점 칩을 잠깐 강조합니다 (본문의 `[I-3]` 링크). 칩이 없으면(닫힌 쟁점, '외 n' 에 든 쟁점) False."""
+        chip = self._chips.get(int(no))
+        if chip is None or chip.is_deleted:
+            return False
+        chip.classes(add="ring-2 ring-amber-400")
+        ui.timer(2.5, lambda: chip.is_deleted or chip.classes(remove="ring-2 ring-amber-400"), once=True)
+        return True
 
     def _open_ledger(self, _event: Any = None) -> None:
         if self.on_open_ledger is not None:

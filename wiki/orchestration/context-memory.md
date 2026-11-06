@@ -222,6 +222,31 @@ Measured by a test (three specialists, three rounds, each speech ≈ 1,100 token
 code block + a digest): the critic's last prompt is about **54 %** of what sending the eight earlier
 speeches verbatim would cost. Four of them arrive as digests; code is sent for the two new ones only.
 
+#### 2.4.1. Speech numbers and citations (ADR-052)
+
+Every agent and orchestrator speech gets a number that is fixed for the conversation (`messages.speech_no`,
+`DebateMessage.tag` → `S14`); user messages and notes get none. Transcripts carry it in the header,
+`[System Architect (High-Level …) · S14]:` (`DebateMessage.speaker_label`), in speech context, ledger and summary input
+(`render_message`), the synthesis transcript and fallback report, graph inputs, and sub-debate speeches and
+conclusions. The decision is [ADR-052](../../lectures/05-adr/ADR-052-round-groups-and-citation-labels.md).
+
+- **Assigning.** The first number a turn hands out aligns the counter once with the largest of the recorded
+  `speech_no`, the numbers reserved in this turn's speech drafts and the in-memory counter
+  (`turns.ensure_speech_counter`, which closes its read transaction for ADR-041); after that the counter lives in
+  `state.speech_counter`. A draft stores its reserved number (`DRAFT_SPEECH_NO`), and a speech resumed from it keeps
+  that number, so new numbers start above the drafts. A number reserved for a speech cut before any draft may come
+  back; no prompt ever carried it. Parallel rounds reserve numbers in assignment order and graph steps in activation
+  order before the speeches start. Failed speeches keep their number, a retried speech keeps its original number, and
+  a fork copies the column.
+- **Cache.** The number is stored on the message, so a header never changes between rounds and the prompt prefix stays
+  identical (§2.5). `load_history` reads it back, so a reopened conversation's first turn builds the same headers.
+- **Asking for citations.** `CITE_INSTRUCTION` asks speakers to point at another speech as `[S14]` and at a ledger issue
+  as `[I-3]`, and not to write transcript headers themselves. It goes before `DIGEST_INSTRUCTION` in speech turns, and
+  into graph node, sub-debate and synthesis instructions.
+- **Continuing a session.** Speech numbers restart in the new conversation, so `continue_session` strips `[S…]` from
+  the carried ledger (`session_ops.strip_speech_refs`); issue numbers stay.
+- The Markdown export adds `· S14` to each speech header. Speeches folded into the summary may lose their number there.
+
 ### 2.5. Prompt caching
 
 Providers serve a request cheaper and faster when its **prefix** matches an earlier one. What changes

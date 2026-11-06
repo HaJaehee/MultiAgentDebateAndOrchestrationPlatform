@@ -47,6 +47,7 @@ class CardTimeline:
         on_delete_comment: Optional[Callable[[str], Coroutine[None, None, bool]]] = None,
         render_turn_usage: Optional[Callable[[str], None]] = None,
         group_rounds: bool = False,
+        link_citations: bool = False,
     ):
         # 결론 카드에 해당 턴의 토큰·시간 패널을 렌더링하는 콜백 (턴 ID 전달, ADR-048). 미지정 시 패널이 표시되지 않습니다.
         self.render_turn_usage = render_turn_usage
@@ -99,6 +100,10 @@ class CardTimeline:
         self._comment_rows: Dict[str, Dict[str, Any]] = {}
         # 라운드 묶음 (전문가 화면만, docs/feature_ui_upgrade.md P3). 열쇠는 (턴 id, 라운드)입니다.
         self.group_rounds = group_rounds
+        # 인용 라벨 (전문가 화면만, ADR-052). 카드에 `S14` 칩을 달고 본문의 `[S14]`·`[I-3]` 을 링크로 그립니다.
+        self.link_citations = link_citations
+        # 발언 번호 → 카드 상태. 인용 링크가 그 카드를 찾습니다.
+        self._cards_by_speech_no: Dict[int, Dict[str, Any]] = {}
         self._groups: Dict[Tuple[str, int], Dict[str, Any]] = {}
         self._card_group: Dict[str, Tuple[str, int]] = {}
         # 가장 최근에 연 묶음. 새 라운드의 첫 카드가 오면 이것을 접습니다.
@@ -179,6 +184,7 @@ class CardTimeline:
         self._node_badges.reset()
         self._active_streams.clear()
         self._cards_by_id.clear()
+        self._cards_by_speech_no.clear()
         self._comment_rows.clear()
         # 카드가 사라지므로 펼침 기억도 함께 버립니다. 남겨 두면 다음 대화가
         # 있지도 않은 카드 때문에 자동 스크롤이 꺼진 채로 시작합니다.
@@ -212,6 +218,7 @@ class CardTimeline:
         self._node_badges.reset()
         self._active_streams.clear()
         self._cards_by_id.clear()
+        self._cards_by_speech_no.clear()
         self._comment_rows.clear()
         self._user_expanded.clear()
         self._forget_groups()
@@ -620,6 +627,13 @@ class CardTimeline:
                         # 그래프 토론의 라운드는 단계입니다 (상태 줄의 "N단계" 와 같은 수).
                         round_word = "Step" if msg.get("graph_node_id") else "Round"
                         ui.badge(f"{round_word} {round_num}", color="slate-700").props("dense text-[12px]")
+                    # 발언 번호 (ADR-052). 다른 발언이 본문에서 `[S14]` 로 이 발언을 가리킵니다.
+                    if self.link_citations and msg.get("speech_no"):
+                        ui.badge(f"S{msg['speech_no']}", color="blue-grey-9").props(
+                            "dense text-[12px]"
+                        ).classes("font-mono text-slate-200").tooltip(
+                            "발언 번호 — 다른 발언이 [S" + str(msg["speech_no"]) + "] 로 이 발언을 가리킵니다"
+                        )
                     # 다시 실행한 발언의 버전 넘기기 (`_show_version`). 지난 버전이 있을 때만 보입니다.
                     versions = speech_versions(msg)
                     with ui.row().classes("items-center gap-0 no-wrap") as version_box:
@@ -666,7 +680,7 @@ class CardTimeline:
             )
             with body:
                 # 수식(`$…$`, `\(…\)` 등)은 MathML 로 그립니다 (`app/ui/math_markdown.py`).
-                md = MathMarkdown(content, extras=FEED_MARKDOWN_EXTRAS)
+                md = MathMarkdown(content, extras=FEED_MARKDOWN_EXTRAS, link_refs=self.link_citations)
                 md.on_rendered = self.scroll_to_bottom
 
             tool_container = ui.column().classes("w-full mt-2 gap-1")
@@ -745,6 +759,8 @@ class CardTimeline:
         self._apply_clamp(info, collapsed=not streaming)
         if info["id"]:
             self._cards_by_id[info["id"]] = info
+        if msg.get("speech_no"):
+            self._cards_by_speech_no[int(msg["speech_no"])] = info
         return info
 
     # ------------------------------------------------------------ 다시 실행과 버전 (ADR-036)
@@ -893,6 +909,11 @@ class CardTimeline:
         ui.run_javascript(reveal_js(card.id, "center"))
         ui.timer(2.5, lambda: card.is_deleted or card.classes(remove="ring-2 ring-amber-400"), once=True)
         return True
+
+    def reveal_speech(self, speech_no: int) -> bool:
+        """발언 번호로 카드를 찾아 보여 줍니다 (본문의 `[S14]` 링크, ADR-052). 이 대화에 없으면 False."""
+        info = self._cards_by_speech_no.get(int(speech_no))
+        return bool(info and info.get("id")) and self.reveal_message(info["id"])
 
     def reveal_round(self, turn_id: str, round_number: int) -> bool:
         """그 라운드 묶음을 펴고 머리줄이 보이게 스크롤합니다 (장부 요약 띠의 라운드 칩). 묶음이 없으면 False."""

@@ -727,6 +727,7 @@ class SessionSidebar:
                         "graph_port": m.graph_port,
                         "turn_meta": m.turn_meta,
                         "llm_meta": m.llm_meta,
+                        "speech_no": m.speech_no,
                         "tool_calls": [
                             {
                                 "tool_name": tc.tool_name,

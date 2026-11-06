@@ -269,6 +269,9 @@ class MessageModel(Base):
     graph_port: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     # 이 기록이 속한 턴 (`TurnModel`). 이 컬럼이 생기기 전의 기록은 NULL.
     turn_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    # 발언 번호 (ADR-052). 에이전트와 오케스트레이터의 발언에만 붙고 대화 안에서 1부터 늘어납니다. 프롬프트와 화면이
+    # `[S14]` 로 가리킵니다. 유저 발언·메모와 이 컬럼이 생기기 전의 발언은 NULL. 실패한 발언도 번호를 지킵니다(빈 번호 허용).
+    speech_no: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # 이 기록이 턴의 흐름에서 맡은 자리 (`app/orchestration/turns.py` 의 KIND_*). 끊긴 턴을 다시
     # 세울 때 기록을 문장이 아니라 이것으로 읽습니다 — 지명·분배는 누가 불렸고 무엇을 맡았는지를
     # 값으로 함께 적습니다. 화면에 보이는 문장은 `content` 에 그대로 있습니다.

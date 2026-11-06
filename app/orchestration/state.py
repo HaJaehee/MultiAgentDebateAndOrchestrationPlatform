@@ -47,6 +47,8 @@ class DebateMessage(BaseModel):
     turn_started_at: Optional[datetime] = None
     # 이 기록이 속한 턴 (`MessageModel.turn_id`). 화면이 라운드 묶음의 열쇠(턴, 라운드)로 씁니다.
     turn_id: Optional[str] = None
+    # 발언 번호 (`MessageModel.speech_no`, ADR-052). 유저 발언·메모는 None.
+    speech_no: Optional[int] = None
     # 그래프 토론에서 이 발언을 낸 노드 (`MessageModel.graph_node_id`).
     graph_node_id: Optional[str] = None
     # 노드의 출력으로 나간 핀 (`MessageModel.graph_port`). 출력이 아닌 기록은 None.
@@ -65,6 +67,19 @@ class DebateMessage(BaseModel):
         요청하는 쪽도 늘 그 유저라, 역할 칸이 이름을 되풀이할 뿐입니다.
         """
         return f"{self.sender_name} ({self.sender_role})" if self.sender_role else self.sender_name
+
+    @property
+    def tag(self) -> str:
+        """발언 번호 라벨 `S14`. 번호가 없으면 빈 문자열."""
+        return f"S{self.speech_no}" if self.speech_no else ""
+
+    @property
+    def speaker_label(self) -> str:
+        """프롬프트 머리줄의 발언자 — "System Architect (High-Level …) · S14" (ADR-052).
+
+        번호는 이 발언에 저장된 값이라 라운드가 바뀌어도 같은 글입니다. 프롬프트 캐시의 앞부분이 그대로입니다 (ADR-045).
+        """
+        return f"{self.speaker} · {self.tag}" if self.tag else self.speaker
 
 
 class DebateState(BaseModel):
@@ -141,6 +156,10 @@ class DebateState(BaseModel):
     # 세션의 쟁점 색인 (`ledger_history.IssueIndex`, ADR-051). 턴에서 처음 장부를 갱신할 때 개정 이력에서 한 번 세우고, 그
     # 뒤로는 메모리에서 갱신합니다. 직렬화하지 않습니다.
     issue_index: Optional[Any] = Field(default=None, exclude=True)
+    # 발언 번호 계수기 (ADR-052). 마지막으로 내준 번호입니다. 턴에서 처음 번호를 낼 때 DB 의 최대값과 이 턴 초안의 예약
+    # 번호로 한 번 맞추고(`turns.ensure_speech_counter`), 그 뒤로는 여기서만 늘어납니다.
+    speech_counter: int = 0
+    speech_counter_ready: bool = Field(default=False, exclude=True)
     # 앞선 기록의 누적 요약과, 요약이 덮는 발언의 수 (`messages[:summary_through]`).
     transcript_summary: str = ""
     summary_through: int = 0

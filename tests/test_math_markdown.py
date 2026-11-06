@@ -163,7 +163,7 @@ def test_math_markdown_keeps_the_raw_content_for_copying():
 
 
 @pytest.mark.parametrize("rel, needle", [
-    ("app/ui/components/chat_feed/cards.py", "md = MathMarkdown(content, extras=FEED_MARKDOWN_EXTRAS)"),
+    ("app/ui/components/chat_feed/cards.py", "md = MathMarkdown(content, extras=FEED_MARKDOWN_EXTRAS, link_refs=self.link_citations)"),
     ("app/ui/components/artifact_viewer.py", "MathMarkdown(content)"),
     ("app/ui/components/roster/ledger_panel.py", 'self.view = MathMarkdown("")'),
     ("app/trial/pages/session.py", "MathMarkdown(result.final, extras=MARKDOWN_EXTRAS)"),

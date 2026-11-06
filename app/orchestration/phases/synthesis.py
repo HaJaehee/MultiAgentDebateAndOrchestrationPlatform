@@ -299,7 +299,7 @@ class SynthesisPhaseExecutor(PhaseExecutor):
         placeholders = memory.placeholders_for(state, record, plan_pinned=False)
 
         def render(index: int, msg: DebateMessage) -> str:
-            prefix = "### [User]" if msg.sender_key == "user" else f"### {msg.speaker}"
+            prefix = "### [User]" if msg.sender_key == "user" else f"### {msg.speaker_label}"
             body = msg.content if msg.sender_key == "user" else strip_reasoning_trace(msg.content)
             return f"{prefix}:\n{placeholders.get(index) or body}\n"
 
@@ -413,7 +413,8 @@ class SynthesisPhaseExecutor(PhaseExecutor):
             "\n"
             "[하지 말 것] 소스 코드를 다시 쓰거나 붙여 넣지 마세요. 코드는 전문가 발언과 작업 "
             "공간 파일에 이미 있고, 산출물 탭에도 전문가 발언에서 따로 모읍니다. 코드가 필요한 "
-            "자리는 파일 경로·모듈·함수 이름으로만 가리키세요."
+            "자리는 파일 경로·모듈·함수 이름으로만 가리키세요.\n\n"
+            f"{memory.CITE_INSTRUCTION}"
         )
         return [{"role": "user", "content": prompt}]
 
@@ -647,7 +648,7 @@ class SynthesisPhaseExecutor(PhaseExecutor):
             for msg in latest.values():
                 body = strip_reasoning_trace(msg.content).strip() or "(내용 없음)"
                 parts.append(
-                    f"### {msg.speaker} — Round {msg.round_number}\n\n{body}"
+                    f"### {msg.speaker_label} — Round {msg.round_number}\n\n{body}"
                 )
         else:
             parts.append("_이번 턴에는 기록된 전문가 발언이 없습니다._")

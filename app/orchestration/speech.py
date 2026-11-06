@@ -120,6 +120,7 @@ class _Speech:
         on_event: Optional[EventCallback],
         draft: Optional[Dict[str, Any]],
         revision: Optional[SpeechRevision] = None,
+        speech_no: Optional[int] = None,
     ) -> None:
         self.recorder = recorder
         self.db, self.db_lock, self.state, self.agent = db, db_lock, state, agent
@@ -130,6 +131,8 @@ class _Speech:
         # 끝난 발언을 다시 실행하는 중이면 그 발언의 자리입니다 (ADR-036). 새 행을 넣지 않고 그 행을 고칩니다.
         self.revision = revision
         self.id = revision.message_id if revision else (draft["id"] if draft else str(uuid.uuid4()))
+        # 발언 번호 (ADR-052). `SpeechRunner.speak` 이 정합니다.
+        self.speech_no = speech_no
         extra_meta = (
             {"stance": agent.debate_stance}
             if kind == turns.KIND_SPEECH and agent.debate_stance != "neutral"
@@ -185,6 +188,7 @@ class _Speech:
                 "started_at": self.started_at,
                 # 라운드 묶음의 열쇠 (턴, 라운드). 첫 조각 전에 카드를 놓을 묶음을 정합니다.
                 "turn_id": self.state.turn_id,
+                "speech_no": self.speech_no,
                 "graph_node_id": self.graph_node_id,
                 "graph_port": self.graph_port,
                 "turn_meta": self.turn_meta,
@@ -230,7 +234,9 @@ class _Speech:
 
     async def checkpoint(self, loop_state: Dict[str, Any]) -> None:
         payload = json.loads(json.dumps(
-            {**loop_state, "tool_record_ids": self.prior_record_ids + list(self.recorded_tools.values())},
+            {**loop_state, "tool_record_ids": self.prior_record_ids + list(self.recorded_tools.values()),
+             # 예약한 발언 번호. 이어 가는 발언이 같은 번호를 씁니다 (ADR-052).
+             turns.DRAFT_SPEECH_NO: self.speech_no},
             ensure_ascii=False, default=str,
         ))
         db = self.db
@@ -318,6 +324,7 @@ class _Speech:
                 graph_node_id=self.graph_node_id,
                 graph_port=self.graph_port,
                 turn_id=self.state.turn_id,
+                speech_no=self.speech_no,
                 turn_meta=self.turn_meta,
                 llm_meta=llm_meta,
                 **({"created_at": created_at} if created_at is not None else {}),
@@ -547,6 +554,7 @@ class SpeechRunner:
         graph_port: Optional[str] = None,
         kind: str = turns.KIND_SPEECH,
         revision: Optional[SpeechRevision] = None,
+        speech_no: Optional[int] = None,
     ) -> DebateMessage:
         """한 에이전트의 발언을 스트리밍하고, DB 에 기록하고, 상태에 반영합니다.
 
@@ -564,6 +572,10 @@ class SpeechRunner:
 
         `revision` 을 주면 끝난 발언 하나를 다시 실행하는 것입니다 (ADR-036). 새 행을 넣지 않고 그 발언의 값을
         바꾸며, 실패로 끝나면 지금 발언은 그대로 둡니다 (`SpeechRevision.apply`).
+
+        `speech_no` 는 미리 잡아 둔 발언 번호입니다 (ADR-052). 동시에 도는 발언(병렬 지시, 그래프 단계)은 배정·활성화
+        순서대로 미리 잡습니다. 주지 않으면 여기서 다음 번호를 냅니다. 다시 실행하는 발언은 원래 번호를, 초안에서
+        이어 가는 발언은 초안에 적힌 번호를 씁니다.
 
         `created_at` 을 주면 그 시각으로 기록합니다. 병렬 라운드에서는 발언이 끝나는
         순서가 제각각이라, 커밋 시각을 그대로 쓰면 새로고침한 화면의 발언 순서가
@@ -595,6 +607,7 @@ class SpeechRunner:
             self.recorder, db=db, db_lock=db_lock, state=state, agent=agent, kind=kind,
             round_number=round_number, msg_type=msg_type, graph_node_id=graph_node_id,
             graph_port=graph_port, on_event=on_event, draft=draft, revision=revision,
+            speech_no=await self._speech_number(db, db_lock, state, revision, draft, speech_no),
         )
         speech.remember_prompt(prompt_messages)
         # 유저가 이 에이전트의 발언에 달아 둔 코멘트 (ADR-036). 초안에서 이어 가는 발언은 프롬프트를 새로 만들지 않습니다.
@@ -647,6 +660,23 @@ class SpeechRunner:
             speech, content=content, final_type=final_type, tool_logs=tool_logs,
             finished_at=finished_at, turn_started_at=turn_started_at, llm_meta=llm_meta,
         )
+
+    @staticmethod
+    async def _speech_number(
+        db, db_lock: Optional[asyncio.Lock], state: DebateState, revision: Optional[SpeechRevision],
+        draft: Optional[Dict[str, Any]], reserved: Optional[int],
+    ) -> Optional[int]:
+        """이 발언의 번호 (ADR-052). 다시 실행은 원래 번호, 초안에서 이어 가면 초안의 번호, 미리 잡았으면 그 번호."""
+        if revision is not None:
+            return revision.speech_no
+        drafted = ((draft or {}).get("state") or {}).get(turns.DRAFT_SPEECH_NO)
+        if isinstance(drafted, int) and not isinstance(drafted, bool):
+            return drafted
+        if reserved is not None:
+            return reserved
+        async with (db_lock or nullcontext()):
+            await turns.ensure_speech_counter(db, state)
+        return turns.reserve_speech_no(state)
 
     async def _title_new_session(self, speech: _Speech, content: str, final_type: str) -> None:
         """새 대화의 첫 제목을 이 발언으로 정합니다. 계획 승인 카드와 그 알림보다 먼저 적습니다."""
@@ -951,6 +981,7 @@ class SpeechRunner:
             round_number=speech.round_number,
             msg_type=final_type,
             turn_id=speech.state.turn_id,
+            speech_no=speech.speech_no,
             # 발언이 실패로 끝나면 `call_agent` 는 도구 기록을 돌려주지 못합니다.
             # 그전에 실제로 실행된 것은 남아 있어야 합니다.
             tool_calls=tool_logs or speech.executed_tools,

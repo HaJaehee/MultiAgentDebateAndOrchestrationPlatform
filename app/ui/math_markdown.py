@@ -21,6 +21,10 @@ Firefox), NiceGUI 의 DOMPurify 도 지우지 않습니다. 폐쇄망에 들여�
 서버에서도 MathML 태그 밖의 `<`, `>` 를 이스케이프하고 링크·이벤트 속성을 걷어 냅니다.
 
 **긴 글은 이벤트 루프 밖에서 그립니다** (`OFFLOAD_CHARS`, ADR-033). 짧은 글은 전처럼 그 자리에서 그립니다.
+
+**인용 라벨** (`link_refs`, ADR-052) — 전문가 화면의 발언 카드는 본문의 `[S14]`(발언)·`[I-3]`(쟁점)을
+`#mado-ref-…` 링크로 그립니다. 수식 자리표시자를 만든 **뒤에** 글 구간에서만 바꾸므로 코드와 수식 안은 저절로
+빠지고, 마크다운으로 바꾸기 **전에** 바꾸므로 `[S14][S15]` 가 참조 링크 문법과 엉키지 않습니다.
 """
 
 from __future__ import annotations
@@ -214,6 +218,18 @@ _SINGLE_VARIABLE = re.compile(r"[A-Za-z](?:'|_?\d{1,2})?")
 _NUMERIC = re.compile(r"[\d\s.,%]+")
 _TOKEN = re.compile(r"MADOMATH[0-9a-f]{6}X\d+Z")
 
+# 인용 라벨 (ADR-052). 앞이 `[`·`\`·글자이면 바꾸지 않습니다 — 위키 링크 `[[S14]]`, 이스케이프 `\[S14\]`, `ab[S14]`.
+# 뒤가 `]`·`(` 이면 바꾸지 않습니다 — 모델이 직접 쓴 링크 `[S14](https://…)`. 뒤의 `[` 는 막지 않습니다(`[S14][S15]`
+# 둘 다 링크). 뒤의 `:` 도 막지 않습니다. 줄 첫머리의 `[S14]: 동의합니다` 는 그대로 두면 markdown2 가 참조 정의로
+# 보고 줄을 통째로 지웁니다.
+REF_LINK = re.compile(r"(?<![\[\\\w])\[(S\d{1,5}|I-\d{1,5})\](?![\](])")
+REF_HREF_PREFIX = "#mado-ref-"
+
+
+def link_refs(segment: str) -> str:
+    """글 구간의 `[S14]`·`[I-3]` 을 `#mado-ref-…` 링크로 바꿉니다 (보이는 글은 `S14`)."""
+    return REF_LINK.sub(lambda m: f"[{m.group(1)}]({REF_HREF_PREFIX}{m.group(1)})", segment)
+
 
 def _code_spans(text: str) -> List[Tuple[int, int]]:
     fences = [m.span() for m in _FENCE.finditer(text)]
@@ -230,8 +246,11 @@ def _accept_math(body: str) -> bool:
     return bool(_MATHY.search(body) or _SINGLE_VARIABLE.fullmatch(body))
 
 
-def protect_math(text: str) -> Tuple[str, Dict[str, str]]:
-    """수식 구간을 자리표시자로 바꾸고 (자리표시자 → HTML) 표를 돌려줍니다. 맨몸 명령도 여기서 바꿉니다."""
+def protect_math(text: str, link_citations: bool = False) -> Tuple[str, Dict[str, str]]:
+    """수식 구간을 자리표시자로 바꾸고 (자리표시자 → HTML) 표를 돌려줍니다. 맨몸 명령도 여기서 바꿉니다.
+
+    `link_citations` 면 글 구간의 인용 라벨도 링크로 바꿉니다 (`link_refs`). 코드 구간은 건너뜁니다.
+    """
     nonce = hashlib.sha1(text.encode("utf-8", "surrogatepass")).hexdigest()[:6]
     found: Dict[str, str] = {}
     out: List[str] = []
@@ -250,7 +269,8 @@ def protect_math(text: str) -> Tuple[str, Dict[str, str]]:
             found[token] = math_html(tex, display)
             return token
 
-        return replace_bare_commands(_MATH.sub(repl, segment))
+        prose = replace_bare_commands(_MATH.sub(repl, segment))
+        return link_refs(prose) if link_citations else prose
 
     for start, end in _code_spans(text):
         out.append(handle_prose(text[cursor:start]))
@@ -261,9 +281,12 @@ def protect_math(text: str) -> Tuple[str, Dict[str, str]]:
 
 
 @lru_cache(maxsize=1000)
-def render_markdown(content: str, extras: str) -> str:
-    """마크다운 → HTML, 수식은 MathML. NiceGUI 의 변환(`prepare_content`)을 그대로 쓰고 수식만 끼웁니다."""
-    protected, found = protect_math(content)
+def render_markdown(content: str, extras: str, link_citations: bool = False) -> str:
+    """마크다운 → HTML, 수식은 MathML. NiceGUI 의 변환(`prepare_content`)을 그대로 쓰고 수식만 끼웁니다.
+
+    캐시 열쇠에 `link_citations` 가 들어갑니다. 같은 글을 링크 없이 그리는 화면(초급자·체험)과 섞이지 않습니다.
+    """
+    protected, found = protect_math(content, link_citations)
     try:
         rendered = prepare_content(protected, extras)
     except Exception as exc:  # noqa: BLE001 - 글 하나를 못 바꿔도 화면은 그려야 합니다 (`>` 2천 개는 RecursionError)
@@ -300,11 +323,18 @@ class MathMarkdown(ui.markdown):
     # 백그라운드 렌더링 완료 후 호출되는 콜백입니다. 컴포넌트 높이 변경에 맞춰 피드 스크롤 위치를 재조정합니다.
     on_rendered: Optional[Callable[[], None]] = None
     _rendering = False
+    # 본문의 `[S14]`·`[I-3]` 을 링크로 그릴지 (ADR-052, 전문가 화면의 발언 카드).
+    link_refs = False
+
+    def __init__(self, content: str = "", *, link_refs: bool = False, **kwargs) -> None:
+        # 부모 생성자가 곧바로 내용을 그리므로 그 전에 정합니다.
+        self.link_refs = link_refs
+        super().__init__(content, **kwargs)
 
     def _handle_content_change(self, content: str) -> None:
         loop = core.loop
         if len(content) < OFFLOAD_CHARS or loop is None or not loop.is_running():
-            self._show(render_markdown(content, " ".join(self.extras)))
+            self._show(render_markdown(content, " ".join(self.extras), self.link_refs))
             return
         self._props.setdefault("innerHTML", "")
         if not self._rendering:
@@ -317,7 +347,7 @@ class MathMarkdown(ui.markdown):
             while True:
                 content = self.content
                 markup = await asyncio.get_running_loop().run_in_executor(
-                    _RENDER_POOL, render_markdown, content, " ".join(self.extras)
+                    _RENDER_POOL, render_markdown, content, " ".join(self.extras), self.link_refs
                 )
                 if self.is_deleted:
                     return

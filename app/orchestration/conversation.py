@@ -501,7 +501,7 @@ class ConversationMemory:
             )
             if attempt_history:
                 turn_prompt += f"\n\n{attempt_history}"
-        turn_prompt += f"\n\n{memory.DIGEST_INSTRUCTION}"
+        turn_prompt += f"\n\n{memory.CITE_INSTRUCTION}\n\n{memory.DIGEST_INSTRUCTION}"
 
         # 이 발언자가 마지막으로 말한 뒤에 나온 발언은 원문으로 (모듈 설명의 "발언을 얼마나
         # 넘길까"). 이번 턴에 아직 말하지 않았으면 이번 턴 전체가 새 발언입니다.
@@ -549,7 +549,8 @@ class ConversationMemory:
                         "content": f"[User]:\n{placeholders.get(index, msg.content)}"
                     })
                 else:
-                    role_label = f"[{msg.speaker}]"
+                    # 발언 번호는 이 발언에 저장된 값이라 라운드가 바뀌어도 같은 머리줄입니다 (ADR-052, ADR-045).
+                    role_label = f"[{msg.speaker_label}]"
                     context.append({
                         "role": "assistant" if msg.sender_key == agent.key else "user",
                         # 사고 과정은 히스토리 로그와 UI 표시에만 유지하고 프롬프트에는 주입하지 않습니다.

@@ -580,6 +580,22 @@ div.mado-math-fallback {
     background: rgba(99, 102, 241, 0.08);
 }
 
+/* 인용 링크 (ADR-052). 발언 카드 본문의 `[S14]`·`[I-3]` 은 작은 칩처럼 보입니다 (`math_markdown.link_refs`). */
+.nicegui-markdown a[href^="#mado-ref-"] {
+    display: inline-block;
+    padding: 0 0.3em;
+    border-radius: 0.25rem;
+    background: rgba(71, 85, 105, 0.45);
+    color: #fde68a;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85em;
+    text-decoration: none;
+    cursor: pointer;
+}
+.nicegui-markdown a[href^="#mado-ref-"]:hover {
+    background: rgba(100, 116, 139, 0.6);
+}
+
 /* 결정 장부 요약 띠 (`chat_feed/ledger_strip.py`). 한 줄을 지키고, 좁으면 추이를 숨깁니다. 화면 폭이 아니라
    스플리터로 좁아진 피드 폭을 따라야 하므로 미디어 질의가 아니라 컨테이너 질의입니다. 숨긴 추이는 개수 쪽 툴팁에
    있습니다. */

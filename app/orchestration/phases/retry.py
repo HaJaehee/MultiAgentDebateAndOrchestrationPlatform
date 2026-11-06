@@ -206,7 +206,7 @@ class SpeechRevisionExecutor(PhaseExecutor):
         message = DebateMessage(
             id=row.id, sender_key=row.sender_key, sender_name=row.sender_name, sender_role=row.sender_role,
             content=restored["content"], round_number=row.round_number, msg_type=restored["msg_type"],
-            turn_meta=row.turn_meta,
+            turn_meta=row.turn_meta, turn_id=row.turn_id, speech_no=row.speech_no,
         )
         await self._correct_ledger(db, state, setup, message, on_event=on_event)
         if on_event:

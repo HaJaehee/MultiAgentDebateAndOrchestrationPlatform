@@ -110,6 +110,9 @@ class ParallelRoundRunner(PhaseExecutor):
         db_lock = asyncio.Lock()
         semaphore = asyncio.Semaphore(parallel_limit)
         start_index = len(state.messages)
+        # 발언 번호는 배정 순서대로 미리 잡습니다 (ADR-052). 동시에 도는 발언은 시작하는 순서가 제각각입니다.
+        await turns.ensure_speech_counter(db, state)
+        numbers = {index: turns.reserve_speech_no(state) for index in todo}
 
         async def run_one(index: int) -> DebateMessage:
             agent, _task = assignments[index]
@@ -126,6 +129,7 @@ class ParallelRoundRunner(PhaseExecutor):
                     control=control,
                     db_lock=db_lock,
                     created_at=base_time + timedelta(milliseconds=index),
+                    speech_no=numbers[index],
                 )
 
         if on_event and todo:

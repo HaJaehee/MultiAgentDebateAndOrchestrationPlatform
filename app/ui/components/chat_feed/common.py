@@ -58,6 +58,24 @@ def clip_reloaded_output(text: str, limit: int = MAX_RELOADED_TOOL_OUTPUT) -> st
     )
 
 
+# 인용 링크 (ADR-052). 발언 카드 본문의 `[S14]`·`[I-3]` 은 `#mado-ref-…` 링크로 그려집니다 (`math_markdown.link_refs`).
+# 누르면 브라우저의 해시 이동(주소창 `#` 변경, 스크롤 점프)을 먼저 막고 서버에 알립니다. 이동은 서버의 `reveal` 길 하나로만
+# 일어납니다. 링크가 카드마다 다시 그려지므로 리스너는 document 에 하나만 둡니다 (`speech_actions.SPEECH_COMMENT_JS` 와 같은 방식).
+CITATION_EVENT = "mado_cite"
+CITATION_JS = """
+(function () {
+    if (window.MadoCitations) return;
+    window.MadoCitations = true;
+    var PREFIX = '#mado-ref-';
+    document.addEventListener('click', function (e) {
+        var link = e.target && e.target.closest ? e.target.closest('a[href^="' + PREFIX + '"]') : null;
+        if (!link) return;
+        e.preventDefault();
+        emitEvent('""" + CITATION_EVENT + """', { ref: link.getAttribute('href').slice(PREFIX.length) });
+    }, true);
+})();
+"""
+
 # 입력창 플레이스홀더. 토론 실행 중에는 동일 입력 필드가 "새 요청"이 아닌 "개입"으로
 # 동작하므로, 현재 입력 모드를 명확히 고지합니다. props로 전달되므로
 # 큰따옴표는 사용하지 않습니다.

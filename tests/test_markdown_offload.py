@@ -50,7 +50,7 @@ def slow_render(monkeypatch):
     """`RENDER_SECONDS` 동안 걸리는 렌더. 무엇을 어느 스레드에서 그렸는지 적어 둡니다."""
     calls: List[dict] = []
 
-    def render(content, extras):
+    def render(content, extras, link_citations=False):
         calls.append({"content": content, "thread": threading.current_thread().name})
         time.sleep(RENDER_SECONDS)
         return f"<p>{len(content)}</p>"
@@ -122,7 +122,7 @@ async def test_the_worker_draws_the_same_thing(ui_page, running_loop):
 @pytest.mark.asyncio
 async def test_a_short_text_is_drawn_on_the_spot(ui_page, running_loop, slow_render, monkeypatch):
     running_loop()
-    monkeypatch.setattr(math_markdown, "render_markdown", lambda content, extras: "<p>바로</p>")
+    monkeypatch.setattr(math_markdown, "render_markdown", lambda content, extras, link_citations=False: "<p>바로</p>")
     with ui_page:
         element = MathMarkdown("가" * (OFFLOAD_CHARS - 1))
     assert element._props["innerHTML"] == "<p>바로</p>"  # noqa: SLF001
@@ -162,7 +162,7 @@ async def test_a_text_that_became_short_is_not_overwritten_by_the_old_long_one(u
     running_loop()
     started = threading.Event()
 
-    def render(content, extras):
+    def render(content, extras, link_citations=False):
         if len(content) >= OFFLOAD_CHARS:
             started.set()
             time.sleep(RENDER_SECONDS)
@@ -201,7 +201,7 @@ async def test_a_failed_draw_does_not_block_the_next_one(ui_page, running_loop, 
     monkeypatch.setattr(core.app, "handle_exception", lambda exc: None)
     answers = [RuntimeError("그리지 못함"), "<p>다음</p>"]
 
-    def render(content, extras):
+    def render(content, extras, link_citations=False):
         answer = answers.pop(0)
         if isinstance(answer, Exception):
             raise answer

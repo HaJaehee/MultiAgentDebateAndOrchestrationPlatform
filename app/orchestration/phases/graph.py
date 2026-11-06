@@ -422,6 +422,9 @@ class GraphRunner(PhaseExecutor):
         db_lock = asyncio.Lock()
         semaphore = asyncio.Semaphore(max(1, parallel_limit))
         start_index = len(state.messages)
+        # 발언 번호는 활성화 순서대로 미리 잡습니다 (ADR-052). 판정 노드는 발언이 아니라 번호가 없습니다.
+        await turns.ensure_speech_counter(db, state)
+        numbers = {a.node.id: turns.reserve_speech_no(state) for a in activations if a.node.type != "gate"}
 
         async def run_one(index: int, activation: Activation) -> Tuple[str, List[str]]:
             node = activation.node
@@ -455,6 +458,7 @@ class GraphRunner(PhaseExecutor):
                     graph_node_id=node.id,
                     graph_port="out",
                     kind=turns.KIND_MERGE if node.type == "merge" else turns.KIND_SPEECH,
+                    speech_no=numbers[node.id],
                 )
                 return "out", [message.id]
 
@@ -511,7 +515,7 @@ class GraphRunner(PhaseExecutor):
         if message.msg_type == "error":
             return f"[{message.sender_name}]: (이 발언은 실패해 내용이 없습니다)"
         pinned = placeholders.get(index_of.get(message.id, -1))
-        label = "[User]" if message.sender_key == "user" else f"[{message.speaker}]"
+        label = "[User]" if message.sender_key == "user" else f"[{message.speaker_label}]"
         if pinned:
             return f"{label}:\n{pinned}"
         body = strip_reasoning_trace(message.content)
@@ -628,6 +632,7 @@ class GraphRunner(PhaseExecutor):
             )
         if node.instruction.strip():
             lines.append(f"[이 노드의 지시]\n{node.instruction.strip()}")
+        lines.append(memory.CITE_INSTRUCTION)
         lines.append(memory.DIGEST_INSTRUCTION)
         return "\n\n".join(lines)
 

@@ -62,6 +62,7 @@ sessions ─────┬──▶ messages ──────▶ tool_calls
 | `turn_started_at` | **턴을 마무리한 최종 합성 발언에만 기록**: 해당 턴을 시작한 사용자 요청이 등록된 시각 |
 | `created_at` | **대화 기록 정렬 기준 타임스탬프** (실제 발언 시각이 아님, 하단 설명 참고) |
 | `turn_id` | 이 기록이 속한 턴 (`turns.id`). 기능 도입 이전의 기록은 NULL |
+| `speech_no` | 발언 번호 (`S14`, ADR-052). 에이전트·오케스트레이터 발언에만 대화 안에서 1부터 붙고, 유저 발언·메모와 기능 도입 이전의 발언은 NULL. 실패한 발언도 번호를 지키며, 다시 실행해도 번호는 그대로입니다 |
 | `turn_meta` | 해당 기록이 턴의 흐름에서 맡은 역할 (JSON). `kind`는 `opening` · `interjection` · `plan` · `speech` · `merge` · `gate` · `nomination` · `assignment` · `note` · `failure` · `interrupted` · `synthesis` 중 하나이며, 지명(`speakers`)과 병렬 분배(`tasks`)는 결과를 값으로 함께 기록합니다 |
 | `revisions` | 현재 활성화되지 않은 이전 발언 리비전 이력 (JSON, [ADR-036](../../../lectures/05-adr/ADR-036-retry-one-speech-and-inline-comments.md)). 재생성 이력이 없으면 NULL이며, 본 행에는 항상 최신 활성 버전이 저장됩니다 |
 

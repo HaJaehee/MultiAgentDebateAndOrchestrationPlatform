@@ -23,6 +23,7 @@
 
 import asyncio
 import logging
+import re
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -407,6 +408,16 @@ def build_handoff_note(
     return "\n".join(lines)
 
 
+# 발언 번호 인용 (`[S14]`, ADR-052). 새 대화로 이어 가면 발언 번호가 1부터 다시 시작하므로 넘겨받는 장부에서 지웁니다.
+# 쟁점 번호(`[I-3]`)는 그대로 둡니다. 새 대화의 쟁점 색인이 장부 글에서 이어 셉니다 (ADR-051).
+_SPEECH_REF = re.compile(r"\s?\[S\d{1,5}\]")
+
+
+def strip_speech_refs(text: str) -> str:
+    """글에서 `[S14]` 인용을 뗍니다."""
+    return _SPEECH_REF.sub("", text or "")
+
+
 async def continue_session(
     db,
     source_session_id: str,
@@ -462,7 +473,7 @@ async def continue_session(
         # 결정 장부는 따라옵니다 — 비우려던 것은 발언 기록이지 합의된 상태가 아닙니다.
         # 반영 지점은 비워 둡니다 (새 대화에는 그 발언이 없습니다). 요약은 옛 발언을
         # 덮는 것이라 따라오지 않습니다.
-        decision_ledger=source.decision_ledger or "",
+        decision_ledger=strip_speech_refs(source.decision_ledger or ""),
         workspace_dir=source.workspace_dir or "",
         # 도구 보안 모드는 따라오고, "이 대화에서 허용" 은 따라오지 않습니다. 허락은
         # 그 대화에서 사람이 본 호출에 대한 것이라, 새 대화에서 다시 묻는 편이 맞습니다.

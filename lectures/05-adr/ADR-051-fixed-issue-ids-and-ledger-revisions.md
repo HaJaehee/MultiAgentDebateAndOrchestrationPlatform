@@ -1,6 +1,6 @@
 # ADR-051. 미해결 쟁점에 서버가 고정 번호를 붙이고, 장부가 바뀔 때마다 개정 이력을 바로 저장한다
 
-> [ADR 목록](README.md) · 이전: [ADR-050](ADR-050-build-workflows-by-conversation.md)
+> [ADR 목록](README.md) · 이전: [ADR-050](ADR-050-build-workflows-by-conversation.md) · 다음: [ADR-052](ADR-052-round-groups-and-citation-labels.md)
 
 ## 상태 (Status)
 

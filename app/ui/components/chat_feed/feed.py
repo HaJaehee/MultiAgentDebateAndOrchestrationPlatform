@@ -4,6 +4,7 @@
 값과 콜백을 생성자로 받는 독립된 객체입니다. 세 화면이 쓰는 면은 이 클래스의 메서드뿐이고, 내용은 부품에 있습니다.
 """
 
+import re
 import time
 from typing import Any, Callable, Coroutine, Dict, Iterable, List, Optional
 
@@ -13,6 +14,7 @@ from app.orchestration import ledger_history
 from app.ui.components.chat_feed.approvals import ApprovalCards, PlanApprovalCard
 from app.ui.components.chat_feed.cards import CardTimeline
 from app.ui.components.chat_feed.common import (
+    CITATION_EVENT,
     IDLE_PLACEHOLDER,
     INTERJECT_PLACEHOLDER,
     STREAM_RENDER_INTERVAL,
@@ -68,6 +70,7 @@ class ChatFeed:
         on_open_ledger: Optional[OpenLedger] = None,
         on_reveal_round: Optional[RevealRound] = None,
         group_rounds: bool = False,
+        link_citations: bool = False,
     ):
         self.on_send_message = on_send_message
         # 토론 실행 도중 전달된 개입 입력 및 정지 요청 핸들러. 미지정 시
@@ -110,6 +113,7 @@ class ChatFeed:
             on_delete_comment=on_delete_comment,
             render_turn_usage=render_turn_usage,
             group_rounds=group_rounds,
+            link_citations=link_citations,
         )
         self.speech_actions = SpeechActions(
             alive=lambda: self.alive,
@@ -258,6 +262,9 @@ class ChatFeed:
 
             self.unfinished.build_dialog()
             self.speech_actions.build()
+            # 본문의 인용 링크 (ADR-052). 스크립트(`CITATION_JS`)는 화면이 머리에 붙입니다.
+            if self.timeline.link_citations:
+                ui.on(CITATION_EVENT, self._on_citation)
 
             # 3. Input Bar
             with ui.row().classes("w-full items-center gap-2 p-2 bg-slate-900 border border-slate-800 rounded-xl shadow-lg flex-shrink-0"):
@@ -506,6 +513,28 @@ class ChatFeed:
 
     def reveal_round(self, turn_id: str, round_number: int) -> bool:
         return self.timeline.reveal_round(turn_id, round_number)
+
+    def _on_citation(self, event: Any) -> None:
+        """본문의 `[S14]`·`[I-3]` 을 눌렀습니다. 발언은 그 카드로(묶음을 펴고 테두리), 쟁점은 요약 띠의 칩으로."""
+        ref = str((getattr(event, "args", None) or {}).get("ref") or "")
+        self.follow_citation(ref)
+
+    def follow_citation(self, ref: str) -> bool:
+        """인용 라벨 하나를 따라갑니다. 이 대화에 없으면 알리고 False."""
+        speech = re.fullmatch(r"S(\d{1,5})", ref)
+        issue = re.fullmatch(r"I-(\d{1,5})", ref)
+        if speech is not None and self.timeline.reveal_speech(int(speech.group(1))):
+            return True
+        if issue is not None and self.ledger_strip is not None and self.ledger_strip.highlight_issue(int(issue.group(1))):
+            return True
+        if speech is not None:
+            message = f"이 대화에 {ref} 발언이 없습니다."
+        elif issue is not None:
+            message = f"{ref} 쟁점은 지금 미해결 쟁점에 없습니다. 닫혔거나 이 대화의 쟁점이 아닙니다."
+        else:
+            message = f"알 수 없는 인용입니다: {ref}"
+        ui.notify(message, type="warning", position="bottom-right")
+        return False
 
     def set_round_summaries(self, summaries: Dict[Any, Dict[str, Any]]) -> None:
         self.timeline.set_round_summaries(summaries)

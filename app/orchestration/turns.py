@@ -26,6 +26,7 @@
 실제로 이어 가는 일은 `OrchestratorEngine.resume_turn` 이 합니다.
 """
 
+import asyncio
 import json
 import logging
 from dataclasses import asdict, dataclass, field
@@ -99,6 +100,55 @@ SUB_DEBATE_LABELS = {
     KIND_SUBDEBATE_SPEECH: "서브 토론",
     KIND_SUBDEBATE_CONCLUSION: "서브 토론 결론",
 }
+
+
+# ---------------------------------------------------------------- 발언 번호 (ADR-052)
+
+# 발언 초안의 상태(`SpeechDraftModel.state`)에 적어 두는 예약 번호의 열쇠. 초안에서 이어 가는 발언은 이 번호를 그대로 씁니다.
+DRAFT_SPEECH_NO = "speech_no"
+
+
+async def speech_no_floor(db, session_id: str, turn_id: Optional[str]) -> int:
+    """이 대화에서 이미 쓴 가장 큰 발언 번호. 기록된 발언과 이 턴의 발언 초안에 예약해 둔 번호 중 큰 것.
+
+    초안에서 이어 가는 발언은 초안의 번호를 그대로 쓰므로, 새 번호는 그보다 커야 겹치지 않습니다. 예약만 하고 저장되지
+    않은 번호(초안도 없이 끊긴 발언)는 다시 쓰여도 됩니다. 그 번호는 어떤 프롬프트에도 실린 적이 없습니다.
+    """
+    recorded = await db.scalar(
+        select(func.max(MessageModel.speech_no)).where(MessageModel.session_id == session_id)
+    )
+    reserved = 0
+    if turn_id:
+        for draft_state in (await db.execute(
+            select(SpeechDraftModel.state).where(SpeechDraftModel.turn_id == turn_id)
+        )).scalars():
+            number = draft_state.get(DRAFT_SPEECH_NO) if isinstance(draft_state, Mapping) else None
+            if isinstance(number, int) and not isinstance(number, bool):
+                reserved = max(reserved, number)
+    return max(int(recorded or 0), reserved)
+
+
+async def ensure_speech_counter(db, state: Any) -> None:
+    """턴에서 처음 번호를 낼 때 계수기를 DB 에 맞춥니다 (새 턴·재개·재실행 모두 이 길). 읽지 못하면 메모리의 값으로 이어 갑니다."""
+    if state.speech_counter_ready:
+        return
+    try:
+        floor = await speech_no_floor(db, state.session_id, state.turn_id)
+        # 읽은 트랜잭션을 닫아 연결을 돌려줍니다 (ADR-041). 바로 뒤에 LLM 응답을 기다리는 호출(그래프 판정 등)이 옵니다.
+        await db.commit()
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - 번호를 못 맞춰도 발언은 합니다
+        logger.warning(f"Could not read the speech numbers of session {state.session_id}: {type(exc).__name__}: {exc}")
+        floor = 0
+    state.speech_counter = max(int(state.speech_counter or 0), floor)
+    state.speech_counter_ready = True
+
+
+def reserve_speech_no(state: Any) -> int:
+    """다음 발언 번호를 냅니다. 한 세션에서는 턴이 하나씩만 돌므로 경쟁은 없습니다."""
+    state.speech_counter = int(state.speech_counter or 0) + 1
+    return state.speech_counter
 
 
 def draft_key(agent_key: str, kind: str, round_number: int, graph_node_id: Optional[str]) -> str:
