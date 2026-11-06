@@ -20,7 +20,7 @@ from app.database.models import TURN_COMPLETED, ArtifactModel, utc_now
 from app.events import EventCallback, EventType
 from app.mermaid_lint import format_issues, lint_mermaid
 from app.orchestration import context_memory as memory
-from app.orchestration import plan_gate, turns
+from app.orchestration import ledger_history, plan_gate, turns
 from app.orchestration.artifacts import (
     CODE_LANGUAGES,
     MAX_DEBATE_CODE_ARTIFACTS,
@@ -168,10 +168,12 @@ class SynthesisPhaseExecutor(PhaseExecutor):
             })
 
         await self.conversation.update_ledger(
+            db=db,
             state=state,
             orchestrator=orchestrator_agent,
             on_event=on_event,
             reason="최종 합성",
+            kind=ledger_history.KIND_FINAL,
         )
 
         deferred = await self.recorder.apply_interjections(

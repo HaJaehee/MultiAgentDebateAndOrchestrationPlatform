@@ -104,6 +104,61 @@ def test_changes_are_listed_per_section_and_layout_alone_is_no_change():
     assert ledger_edit.describe_changes(LEDGER, LEDGER.replace("\n\n", "\n")) == []
 
 
+NUMBERED = LEDGER.replace("- 캐시 키 형식", "- [I-1] 캐시 키 형식").replace("- 장애 시 동작", "- [I-2] 장애 시 동작")
+
+
+def test_issue_numbers_are_kept_apart_from_the_text_and_written_back():
+    """편집기는 쟁점 번호를 글과 따로 들고, 저장할 때 그대로 되씁니다 (ADR-051)."""
+    sections = ledger_edit.parse_sections(NUMBERED)
+    issues = next(s for s in sections if s.title == ledger_edit.OPEN_ISSUES).items
+    assert [(i.issue_no, i.text) for i in issues] == [(1, "캐시 키 형식"), (2, "장애 시 동작")]
+    decided = next(s for s in sections if s.title == "결정 사항").items
+    assert all(i.issue_no is None for i in decided), "번호는 미해결 쟁점에만 있습니다"
+    assert ledger_edit.render_sections(sections) == NUMBERED
+
+
+def test_open_issues_are_compared_by_their_number():
+    reworded = NUMBERED.replace("[I-1] 캐시 키 형식", "[I-1] 캐시 키는 sha1 로").replace("- [I-2] 장애 시 동작\n", "")
+    assert ledger_edit.describe_changes(NUMBERED, reworded + "\n- 새 쟁점") == [
+        "- 미해결 쟁점에서 닫음: [I-2] 장애 시 동작",
+        "- 미해결 쟁점 [I-1] 고침: 캐시 키는 sha1 로",
+        "- 담당·다음 할 일에 넣음: 새 쟁점",
+    ]
+    assert ledger_edit.describe_changes(LEDGER, NUMBERED) == [], "번호만 붙은 것은 바뀐 것이 아닙니다"
+
+
+@pytest.mark.asyncio
+async def test_a_saved_edit_numbers_new_issues_and_records_an_edit_revision():
+    from app.database.models import LedgerRevisionModel
+
+    sid = await _finished_turn()
+    await _set_ledger(sid)
+    first = await _save(sid, LEDGER.replace("- 만료는 10분", "- 만료는 5분"))
+    assert first.ledger == NUMBERED.replace("- 만료는 10분", "- 만료는 5분"), "번호 없던 쟁점도 저장할 때 번호를 받습니다"
+
+    closed = await _save(sid, first.ledger.replace("- [I-2] 장애 시 동작\n", "").replace(
+        "- [I-1] 캐시 키 형식", "- [I-1] 캐시 키 형식\n- 인증 토큰 위치"), expected=first.ledger)
+    assert "- [I-3] 인증 토큰 위치" in closed.ledger, "새로 넣은 쟁점은 저장할 때 번호를 받습니다"
+    assert "미해결 쟁점에 넣음: [I-3] 인증 토큰 위치" in closed.note["content"]
+    assert closed.revision["kind"] == "edit" and closed.revision["closed"] == [2] and closed.revision["opened"] == [3]
+
+    reopened = await _save(
+        sid, closed.ledger.replace("- [I-3] 인증 토큰 위치", "- [I-3] 인증 토큰 위치\n- 장애 시 동작"),
+        expected=closed.ledger,
+    )
+    assert "- [I-2] 장애 시 동작" in reopened.ledger, "닫았던 쟁점을 같은 글로 다시 넣으면 옛 번호를 받습니다"
+
+    async with get_session_factory(DB_URL)() as db:
+        rows = (await db.execute(
+            select(LedgerRevisionModel).where(LedgerRevisionModel.session_id == sid, LedgerRevisionModel.kind == "edit")
+            .order_by(LedgerRevisionModel.seq)
+        )).scalars().all()
+    assert [(r.turn_id, r.round_number, r.message_id) for r in rows] == [
+        (None, 0, first.note["id"]), (None, 0, closed.note["id"]), (None, 0, reopened.note["id"]),
+    ]
+    assert rows[-1].ledger == (await _session_row(sid)).decision_ledger == reopened.ledger
+
+
 def test_the_limit_follows_the_smallest_window():
     def agent(window: int) -> Any:
         return AgentPool({"a": AgentConfig(
@@ -147,6 +202,8 @@ async def _rows(sid: str) -> List[MessageModel]:
 
 
 FIXED = LEDGER.replace("캐시는 Redis 로 둔다 — 빠르다", "캐시는 메모리에 둔다").replace("- 캐시 키 형식\n", "")
+# 저장하면 남은 쟁점이 고정 번호를 받습니다 (ADR-051).
+FIXED_SAVED = FIXED.replace("- 장애 시 동작", "- [I-1] 장애 시 동작")
 
 
 @pytest.mark.asyncio
@@ -196,14 +253,16 @@ async def test_a_saved_edit_leaves_a_note_in_the_record():
     sid = await _finished_turn()
     await _set_ledger(sid)
 
-    note = await _save(sid, FIXED)
+    saved = await _save(sid, FIXED)
+    note = saved.note
 
     assert note["msg_type"] == "system" and note["sender_name"] == "MADO"
     assert "결정 사항에 넣음: 캐시는 메모리에 둔다" in note["content"]
     assert "미해결 쟁점에서 닫음: 캐시 키 형식" in note["content"]
     last = (await _rows(sid))[-1]
     assert last.id == note["id"] and turns.kind_of(last) == turns.KIND_LEDGER_EDIT and last.turn_id is None
-    assert (await _session_row(sid)).decision_ledger == FIXED
+    assert saved.ledger == FIXED_SAVED
+    assert (await _session_row(sid)).decision_ledger == FIXED_SAVED
 
 
 @pytest.mark.asyncio
@@ -212,7 +271,7 @@ async def test_a_huge_edit_does_not_fill_the_pinned_record():
     await _set_ledger(sid)
     huge = LEDGER + "".join(f"\n- 새 항목 {n} " + "가" * 100 for n in range(40))
 
-    note = await _save(sid, huge)
+    note = (await _save(sid, huge)).note
 
     assert len(note["content"]) <= ledger_edit.NOTE_MAX_CHARS + 40
     assert note["content"].endswith("지금 장부를 보세요)")
@@ -315,7 +374,7 @@ async def test_a_fork_at_the_edited_turn_carries_both_the_ledger_and_the_note(tm
     async with get_session_factory(DB_URL)() as db:
         fork = await fork_session(db, sid, turn_id)
 
-    assert (await _session_row(fork.session_id)).decision_ledger == FIXED
+    assert (await _session_row(fork.session_id)).decision_ledger == FIXED_SAVED
     assert [turns.kind_of(m) for m in await _rows(fork.session_id)].count(turns.KIND_LEDGER_EDIT) == 1
 
 
@@ -353,7 +412,8 @@ async def test_an_edit_alone_does_not_cost_a_ledger_update():
     state.decision_ledger = LEDGER
 
     updated = await engine.conversation.update_ledger(
-        state=state, orchestrator=engine.agent_pool.get_orchestrator(), on_event=None, reason="라운드",
+        db=None, state=state, orchestrator=engine.agent_pool.get_orchestrator(), on_event=None, reason="라운드",
+        kind="round",
     )
 
     assert updated is False and llm.calls == []
@@ -403,7 +463,7 @@ def notes(monkeypatch):
 
 @pytest.fixture
 def make_panel(ui_page):
-    def make(ledger: str = LEDGER, *, fail: Any = None):
+    def make(ledger: str = LEDGER, *, fail: Any = None, returns: Any = None):
         state = RosterState(agent_pool=_pool(), session_id="s", decision_ledger=ledger)
         service = Service()
         saved: List[Any] = []
@@ -412,6 +472,7 @@ def make_panel(ui_page):
             if fail is not None:
                 raise fail
             saved.append((expected, edited))
+            return returns
 
         panel = LedgerPanelComponent(state, service, on_save=on_save)
         with ui_page:
@@ -473,6 +534,23 @@ async def test_editing_a_decision_and_unchecking_an_issue_saves_the_ledger(notes
     assert panel.state.decision_ledger == saved[0][1]
     assert panel.editing is False and panel.view.visible is True and panel.edit_button.visible is True
     assert notes[-1][1] == "positive"
+
+
+@pytest.mark.asyncio
+async def test_issue_numbers_show_as_fixed_chips_and_the_saved_ledger_comes_back(notes, make_panel):
+    """번호는 고칠 수 없는 칩으로 보이고, 저장한 쪽이 번호를 붙여 돌려준 장부로 돌아갑니다 (ADR-051)."""
+    numbered_saved = NUMBERED + "\n- [I-3] 새 쟁점"
+    panel, _service, saved = make_panel(NUMBERED, returns=numbered_saved)
+    panel.open_editor()
+    chips = [el.text for el in _elements(panel.editor, ui.label) if el.text.startswith("I-")]
+    assert chips == ["I-1", "I-2"]
+    assert all(not b.value.startswith("[I-") for b in _elements(panel.editor, ui.textarea)), "글 칸에는 번호가 없습니다"
+    _elements(panel.editor, ui.checkbox)[1].set_value(False)
+
+    await panel.save()
+
+    assert "- [I-1] 캐시 키 형식" in saved[0][1] and "장애 시 동작" not in saved[0][1]
+    assert panel.state.decision_ledger == numbered_saved
 
 
 @pytest.mark.asyncio

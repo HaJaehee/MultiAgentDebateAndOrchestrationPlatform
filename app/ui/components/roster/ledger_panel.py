@@ -11,7 +11,7 @@ from typing import Callable, Coroutine, List, Optional
 from nicegui import ui
 
 from app.config import ORCHESTRATOR_KEY
-from app.orchestration import ledger_edit
+from app.orchestration import ledger_edit, ledger_history
 from app.orchestration.ledger_edit import LedgerItem, LedgerSection
 from app.orchestration.roster_service import RosterService
 from app.ui.components.roster.state import RosterState
@@ -29,11 +29,12 @@ class LedgerPanelComponent:
         state: RosterState,
         service: RosterService,
         *,
-        on_save: Callable[[str, str], Coroutine[None, None, None]],
+        on_save: Callable[[str, str], Coroutine[None, None, Optional[str]]],
     ):
         self.state = state
         self.service = service
-        # 고친 장부를 저장하는 쪽 (편집을 시작할 때 읽은 장부, 고친 장부).
+        # 고친 장부를 저장하는 쪽 (편집을 시작할 때 읽은 장부, 고친 장부). 저장한 장부를 돌려줍니다. 새로 넣은 쟁점이
+        # 번호를 받아 고친 글과 다를 수 있습니다 (ADR-051). 아무것도 돌려주지 않으면 고친 글을 그대로 씁니다.
         self.on_save = on_save
         self.expansion: Optional[ui.expansion] = None
         self.view: Optional[ui.markdown] = None
@@ -153,6 +154,11 @@ class LedgerPanelComponent:
             if closable:
                 check = ui.checkbox(value=True).props("dense dark size=sm color=indigo-4").classes("mt-1")
                 check.tooltip("체크를 풀면 저장할 때 이 쟁점을 닫습니다")
+                # 쟁점의 고정 번호는 고칠 수 없습니다 (ADR-051). 새로 넣은 쟁점은 저장할 때 번호를 받습니다.
+                if item.issue_no is not None:
+                    ui.label(ledger_history.issue_label(item.issue_no)).classes(
+                        "mt-1.5 px-1.5 rounded bg-slate-700 text-[10px] font-mono text-slate-300 shrink-0"
+                    ).tooltip("쟁점 번호 — 고칠 수 없습니다")
             box = ui.textarea(
                 value=item.text, on_change=lambda e: self._on_text(item, e.value),
             ).props("outlined dark dense autogrow rows=1").classes("flex-grow min-w-0 text-xs")
@@ -218,7 +224,7 @@ class LedgerPanelComponent:
             return
         # 알림 표시는 편집 폼을 닫기 전에 실행합니다. 본 핸들러는 저장 버튼의 DOM 슬롯에서 실행되므로 폼 종료 시 슬롯이 소멸되기 때문입니다.
         try:
-            await self.on_save(self.base, ledger)
+            saved = await self.on_save(self.base, ledger)
         except ledger_edit.LedgerEditError as exc:
             ui.notify(str(exc), type="warning", position="bottom-right", multi_line=True)
             self.close_editor()
@@ -226,7 +232,7 @@ class LedgerPanelComponent:
             return
         ui.notify("결정 장부를 고쳤습니다. 다음 발언부터 반영됩니다.", type="positive", position="bottom-right")
         self.close_editor()
-        self.set_ledger(ledger)
+        self.set_ledger(saved if isinstance(saved, str) and saved else ledger)
 
     def close_editor(self) -> None:
         """고치던 것을 버리고 보기로 돌아갑니다."""

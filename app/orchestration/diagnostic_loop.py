@@ -33,7 +33,7 @@ from app.agents.reasoning import strip_reasoning_trace
 from app.agents.tool_loading import LOAD_TOOLS_TOOL
 from app.mcp.policy import EXEC, KNOWN_TOOLS, tool_outcome
 from app.orchestration import context_memory as memory
-from app.orchestration import turns
+from app.orchestration import ledger_history, turns
 
 DIAGNOSTICIAN_STANCE = "diagnostician"
 DEFAULT_STAGNATION_STREAK = 2
@@ -389,12 +389,6 @@ def _short_diagnostic_note(content: str) -> str:
     return joined[:200] + ("…" if len(joined) > 200 else "")
 
 
-def _normalize_issue(issue: str) -> str:
-    text = re.sub(r"\([^)]*\)", "", issue or "")
-    text = re.sub(r"[^\w가-힣./_-]+", " ", text.lower())
-    return _WS_RE.sub(" ", text).strip()[:80]
-
-
 def collect_round_attempts(
     messages: Sequence[Any],
     *,
@@ -466,7 +460,9 @@ def collect_round_attempts(
             if not attempt.active_failure_signatures and attempt.modified_files and not diag_ran:
                 files_key = ",".join(sorted(os.path.basename(p).lower() for p in attempt.modified_files[:3]))
                 for issue in issues[:3]:
-                    norm = _normalize_issue(issue)
+                    # 쟁점에 고정 번호가 있으면 번호로 서명합니다(ADR-051). 장부를 다시 쓰며 문장이 바뀌어도 같은 쟁점입니다.
+                    no, text = ledger_history.split_issue_tag(issue)
+                    norm = ledger_history.issue_label(no) if no is not None else ledger_history.normalize_issue(text)
                     if norm:
                         sig = f"patch:{files_key}|issue:{norm}"
                         if sig not in attempt.active_failure_signatures:

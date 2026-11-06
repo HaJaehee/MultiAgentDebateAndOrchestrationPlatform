@@ -19,7 +19,7 @@ from app.agents.llm_types import LLMUnavailableError
 from app.agents.reasoning import strip_reasoning_trace
 from app.config import ORCHESTRATOR_KEY
 from app.events import EventCallback, EventType
-from app.orchestration import context_memory as memory, diagnostic_loop, turns
+from app.orchestration import context_memory as memory, diagnostic_loop, ledger_history, turns
 from app.orchestration.artifacts import format_roster
 from app.orchestration.control import TurnControl
 from app.orchestration.phases.base import PhaseExecutor
@@ -295,7 +295,8 @@ class DebatePhaseExecutor(PhaseExecutor):
           발생하지 않아 조기 종료합니다 (합의 완료로 정상 처리).
         """
         updated = await self.conversation.update_ledger(
-            state=state, orchestrator=setup.orchestrator, on_event=on_event, reason=f"Round {round_num}",
+            db=db, state=state, orchestrator=setup.orchestrator, on_event=on_event, reason=f"Round {round_num}",
+            kind=ledger_history.KIND_ROUND,
         )
         current = state.decision_ledger if updated else None
         if current is not None and round_ledgers is not None:

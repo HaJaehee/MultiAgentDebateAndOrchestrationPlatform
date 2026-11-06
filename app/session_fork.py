@@ -9,6 +9,7 @@
 
 * 발언 메시지, 도구 실행 기록, 아티팩트, 턴 기록 — 새로운 고유 ID가 부여되며 상호 참조 ID(계획 승인 대상 등)도 자동 갱신됩니다.
 * 해당 턴 완료 시점의 대화 기억(결정 장부 및 요약, `TurnModel.memory`). 마지막 턴인 경우 세션의 최신 기억을 사용합니다.
+* 결정 장부의 개정 이력(`ledger_revisions`, ADR-051) — 메시지와 같은 경계로 자르고 턴·메모 id 를 새 id 로 바꿉니다.
 * 에이전트 구성 스냅샷 — 페르소나 잠금이 해제된 상태로 복제되어 다음 턴 시작 전에 모델 및 구성을 변경할 수 있습니다.
 * 작업 공간 — 해당 턴 완료 시점의 스냅샷(`app/workspace_checkpoint.export`)을 기반으로 **별도의 독립 디렉터리**를 생성합니다.
   동일 파일 동시 수정으로 인한 충돌을 방지합니다. 스냅샷이 없는 경우 현재 디렉터리를 복사합니다.
@@ -35,6 +36,7 @@ from app.config import resolve_workspace_dir
 from app.database.models import (
     TURN_UNFINISHED,
     ArtifactModel,
+    LedgerRevisionModel,
     MessageModel,
     SessionAgentModel,
     SessionModel,
@@ -43,6 +45,7 @@ from app.database.models import (
     TurnModel,
     utc_now,
 )
+from app.orchestration import ledger_history
 # 비교 화면은 화면 없는 길(`app/headless.py`)과 같은 결과 모양을 씁니다.
 from app.headless import turn_result
 from app.mcp.manager import memory_graph_dir
@@ -226,6 +229,26 @@ async def fork_session(db, source_session_id: str, turn_id: str) -> ForkResult:
             turn_id=ids.get(row.turn_id) if row.turn_id else None,
         )
         db.add(ToolCallRecordModel(**fields))
+
+    # 결정 장부의 개정 이력 (ADR-051). 메시지와 같은 경계로 자릅니다. 다만 남기는 턴의 발언을 경계 뒤에 다시 실행해 고친
+    # 장부(`retry`)는 경계 뒤의 장부라 가져가지 않습니다. 쟁점 번호는 그대로이므로 새 대화도 같은 번호를 이어 씁니다.
+    for row in (await db.execute(
+        select(LedgerRevisionModel)
+        .where(LedgerRevisionModel.session_id == source_session_id)
+        .order_by(LedgerRevisionModel.seq)
+    )).scalars().all():
+        if row.turn_id in kept_turn_ids:
+            if row.kind == ledger_history.KIND_RETRY and not before_boundary(row.created_at):
+                continue
+        elif row.turn_id is not None or not before_boundary(row.created_at):
+            continue
+        fields = _columns(row)
+        fields.update(
+            id=str(uuid.uuid4()), session_id=new_id,
+            turn_id=ids.get(row.turn_id) if row.turn_id else None,
+            message_id=ids.get(row.message_id) if row.message_id else None,
+        )
+        db.add(LedgerRevisionModel(**fields))
 
     artifact_rows = (await db.execute(
         select(ArtifactModel).where(ArtifactModel.session_id == source_session_id)

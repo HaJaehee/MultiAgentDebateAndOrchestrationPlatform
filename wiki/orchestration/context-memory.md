@@ -112,6 +112,60 @@ the anchor is appended verbatim to the elision notice under
   keeps its shape — trimming already breaks the prompt cache, so restoring costs nothing extra there.
 - Before this, the same loss applied to the turn instruction regardless of the ledger.
 
+#### 2.2.2. Fixed issue numbers and the revision history (ADR-051)
+
+The model rewrites the whole ledger every time, so an open issue used to have no identity: the same issue came
+back in other words each round, and the sub-debate and the stagnation observer found issues by list position or
+text. Items under `미해결 쟁점` now carry a number, `- [I-3] 내용`, and every ledger change is saved as a
+revision. Code: [`ledger_history.py`](file:///d:/MultiAgentDebateOrchestration/app/orchestration/ledger_history.py).
+The decision is [ADR-051](../../lectures/05-adr/ADR-051-fixed-issue-ids-and-ledger-revisions.md).
+
+- **The server numbers issues** (`assign_issue_ids`). The prompt only asks the model to keep earlier `[I-n]` tags and
+  to write new issues without one. For each open item, in order:
+  1. a tag that is at most the highest number used so far and not yet used in this ledger stays;
+  2. otherwise, text that matches a known issue after normalizing (tags, parenthesized notes, punctuation and spacing
+     removed, the first 80 characters; `normalize_issue`, moved here from `diagnostic_loop`) gets that issue's
+     number, **closed issues included**;
+  3. otherwise the issue gets the next number.
+  Tags in other sections are removed. `- 없음` and the clip note `- …(장부가 길어 뒷부분을 생략했습니다)` are not
+  issues; the clip note used to be counted by `open_issue_count`, which also affected convergence.
+- **Closed and reopened.** An issue that disappears from the list is closed. Matching runs against the whole
+  conversation (`IssueIndex`), so an issue reopened with the same text gets its old number. The ledger prompt also
+  lists up to five recently closed issues, each clipped to 80 characters, under `[최근에 닫힌 쟁점]`, and asks the
+  model to reuse one of those numbers only if that issue was raised again; that is the only way a reworded reopened
+  issue keeps its number. The list's tokens come out of the update's room.
+- **Numbers are never reused.** The next number is one past the largest of the revisions' `issue_high`, the tags in
+  the current ledger text and the in-memory index. Reading the ledger text covers a ledger carried over by
+  `continue_session` and a revision whose save failed. A discarded turn's revisions are deleted with it, so its
+  numbers may come back; the ledger is only saved at the end of a turn, so no saved text points at them.
+- **When the index is built.** The first ledger update of a turn reads the conversation's revisions once into
+  `state.issue_index`; later updates in the turn work in memory. A resumed turn builds its state again and so reads
+  its own earlier revisions too, which keeps `I-5` as `I-5` even though the session column still holds the previous
+  turn's ledger.
+- **Revisions** (`ledger_revisions`, [Database Schema §2.6.1](../architecture/database-schema.md#261-ledger_revisions-table-ledgerrevisionmodel)).
+  `update_ledger(db=, kind=)` saves a row right after each successful update, and the six callers name the kind:
+  `round` (end of a round), `step` (graph step), `subdebate`, `final` (after synthesis), `resume` and `retry`
+  (`_correct_ledger`, recorded with the retried turn's id). A direct edit records `edit`. The row holds the full
+  ledger, the open issues as JSON, the counts of decisions and rejected alternatives, `issue_high`, and a per-session
+  `seq` used for ordering (`created_at` can repeat: the clock on Windows ticks about every 15 ms).
+- **Saving never stops the debate.** Like other writes here, the insert is committed at once and rolled back on
+  failure, followed by `persist_failed` ("결정 장부 개정 이력"). Every engine write commits where it happens, so at the
+  six call sites nothing else is pending and the rollback drops only that row; a test asserts the session is clean
+  on every call. SAVEPOINTs are not used: SQLite drivers need an engine-wide workaround for them. All values are set in
+  Python and the row is not read back, so no expired object is touched after a rollback.
+- **Event.** `ledger_updated` now carries `revision: {id, turn_id, round, kind, reason, open, opened, closed, decided,
+  rejected, created_at, seq, message_id}`. `opened` and `closed` compare with the ledger before the update.
+- **Per-round deltas** (`round_deltas`). For each (turn, round) the last revision is compared with the revision just
+  before that round: decisions `+n`, issues closed, issues opened. `retry` and `edit` revisions form no round of their
+  own but are the baseline for the next one. When a round has two revisions (round end and sub-debate, or early
+  convergence and synthesis), the last one counts.
+- **Consumers.** The sub-debate prompt lists the tagged issues and asks for `"issue_id": "I-3"`; `parse_sub_debate`
+  accepts it (or a tag in front of `issue`) only for an issue that is open now and fills a missing `issue` from the
+  ledger. `evaluate_sub_debate` strips the tag from the item it picks and returns the number separately. The opening
+  note stores `issue_no`, and the conclusion header reads `[서브 토론 결론 · I-3 · …]`. The stagnation observer signs
+  a repeated patch with `issue:I-3` when the issue has a number, so rewording no longer breaks the match. Convergence
+  and consensus only count items and did not change. The trial page shows the ledger as before, tags included.
+
 ### 2.3. Summarize instead of drop
 
 Before building a speaker's context (`ConversationMemory.context_for_speech`) and before synthesis
@@ -253,6 +307,9 @@ synthesis (`turns.early_end`).
   earlier turn starts from that turn's memory ([Session Handoff §7](session-handoff.md)).
 - A direct edit (§4.1) is the one write outside a turn. It changes `decision_ledger` on the session and in the
   latest turn's `memory`, and leaves `ledger_through_id` and `updated_at` alone.
+- Unlike the column, the revision history (§2.2.2) is written **during** the turn, after every update. Deleting a
+  conversation, discarding a turn (`session_ops.discard_turn`, by `turn_id`) and the trial server's ORM delete remove
+  revisions with it; a fork copies them with the same boundary as messages, with new turn and note ids.
 
 ## 4. UI
 
@@ -292,6 +349,11 @@ item under `미해결 쟁점` is closed by unchecking it. The decision is
   interrupted turn has no `memory`; resuming it reads the session column.
 - **Limit.** A save may not grow the ledger past the cap a turn applies to the model (`ledger_edit.char_limit`). A
   ledger already over it can still be shortened.
+- **Issue numbers.** Each open issue shows its number as a read-only chip; the text box holds the text alone
+  (`LedgerItem.issue_no`). The note compares open issues by number (`고침` / `닫음` / `넣음`), and an item that only
+  gained a number is no change. A new issue is numbered on save from the conversation's index, so typing a closed
+  issue's text again brings its old number back. `save_edit` returns `SavedEdit(note, ledger, revision)` and records an
+  `edit` revision with the note's id; the panel shows the saved ledger, numbers included.
 - **Not covered.** An empty ledger has no edit button; the custom instructions take text in advance. There is no
   HTTP route, and the trial and beginner pages only read. A correction after a retried speech
   (`_correct_ledger`) sees the edit only as the previous ledger, the same as a later chat message.
@@ -306,6 +368,12 @@ actually sends, and that everything but the last message is identical between ro
 
 [tests/test_ledger_edit.py](file:///d:/MultiAgentDebateOrchestration/tests/test_ledger_edit.py) covers direct edits:
 the format round trip, conflicts, the pin in later prompts, forks, retries and resumes, and the panel.
+
+[tests/test_ledger_history.py](file:///d:/MultiAgentDebateOrchestration/tests/test_ledger_history.py) covers issue
+numbers (kept, matched by text, new, duplicated, made up, reopened, the clip note), `summarize`, `round_deltas`, the
+revisions a three-round turn saves and the event it sends, numbering across turns and after a resume, a failed save,
+and deletion and forks. Its autouse fixture wraps `record_revision` and fails if the DB session holds anything
+uncommitted when a revision is recorded.
 
 `tests/conftest.py` now creates the database engine on `:memory:` before every test if none exists.
 The engine is a process-wide singleton fixed by whoever creates it first, and `OrchestratorEngine()`

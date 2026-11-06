@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import (
     ArtifactModel,
+    LedgerRevisionModel,
     MessageModel,
     SessionAgentModel,
     SessionModel,
@@ -272,6 +273,12 @@ async def discard_turn(
         await db.execute(delete(SpeechDraftModel).where(
             SpeechDraftModel.turn_id == turn_id,
             SpeechDraftModel.session_id == session_id,
+        ))
+        # 그 턴의 장부 개정 이력도 지웁니다 (ADR-051). 장부는 턴 끝에만 저장되므로 지워진 쟁점 번호를 가리키는 글이 남지
+        # 않고, 그 번호는 다시 쓰여도 됩니다.
+        await db.execute(delete(LedgerRevisionModel).where(
+            LedgerRevisionModel.turn_id == turn_id,
+            LedgerRevisionModel.session_id == session_id,
         ))
         await db.execute(delete(ToolCallRecordModel).where(
             ToolCallRecordModel.turn_id == turn_id,

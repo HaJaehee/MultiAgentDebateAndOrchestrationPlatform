@@ -36,7 +36,7 @@ from app.database.models import (
 from app.database.session import get_session_factory
 from app.events import EventCallback, EventType
 from app.mcp.pool import get_runtime_pool
-from app.orchestration import kernel_replay, speech_retry, turns
+from app.orchestration import kernel_replay, ledger_history, speech_retry, turns
 from app.orchestration.context import EngineContext
 from app.orchestration.control import TurnControl
 from app.orchestration.conversation import ConversationMemory
@@ -595,7 +595,8 @@ class OrchestratorEngine:
                 # 끊기기 전의 발언까지 장부에 접어 두고 이어 갑니다 (라운드 중간에 끊겼으면 장부가
                 # 그 라운드를 모릅니다). 새 발언이 없으면 부르지 않습니다.
                 await self.conversation.update_ledger(
-                    state=state, orchestrator=setup.orchestrator, on_event=on_event, reason="재개",
+                    db=db, state=state, orchestrator=setup.orchestrator, on_event=on_event, reason="재개",
+                    kind=ledger_history.KIND_RESUME,
                 )
                 with consultation_scope(
                     setup.active_agents,

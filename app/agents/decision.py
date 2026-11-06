@@ -21,6 +21,7 @@ import asyncio
 import importlib
 import inspect
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
@@ -36,6 +37,10 @@ from app.config import DecisionLLMConfig
 logger = logging.getLogger(__name__)
 
 QuestionKind = Literal["noul", "choice", "score"]
+
+# 결정 장부 미해결 쟁점 앞의 고정 번호 (`app.orchestration.ledger_history.ISSUE_TAG` 와 같은 모양). 이 층은 orchestration 을
+# 가져올 수 없어 따로 둡니다.
+_ISSUE_TAG = re.compile(r"^\[I-(\d{1,5})\]\s*")
 
 # 단일 패스 입력 텍스트 상한 (과도한 프롬프트로 인한 결정 모델 컨텍스트 초과 방지)
 MAX_DECISION_STATE_CHARS = 32_000
@@ -481,8 +486,12 @@ class DecisionCaller:
         state_text: str,
         issues: Sequence[str],
         candidates: Sequence[Agent],
-    ) -> Optional[Tuple[List[Agent], str, str]]:
-        """라운드 경계에서 서브 토론 개시 여부, 핵심 쟁점, 당사자 2인을 단일 패스로 결정합니다."""
+    ) -> Optional[Tuple[List[Agent], str, str, Optional[int]]]:
+        """라운드 경계에서 서브 토론 개시 여부, 핵심 쟁점, 당사자 2인을 단일 패스로 결정합니다.
+
+        돌려주는 값은 (두 전문가, 쟁점 글, 사유, 쟁점 번호)입니다. 장부의 미해결 쟁점은 `[I-3] 내용` 모양이라(ADR-051), 고른
+        항목에서 태그를 떼어 번호로 따로 돌려줍니다.
+        """
         if len(candidates) < 2 or not issues:
             return None
         cfg = orchestrator.decision_llm
@@ -531,7 +540,10 @@ class DecisionCaller:
             f"System 1({cfg.backend.upper()}/{resp.model}) 서브 토론 개시 판정 p={open_prob:.2f} · "
             f"당사자 적합도 {pair[0].name}({scored_cands[0][0]:.2f}), {pair[1].name}({scored_cands[1][0]:.2f})"
         )
-        return pair, chosen_issue, reason
+        tag = _ISSUE_TAG.match(chosen_issue.strip())
+        issue_no = int(tag.group(1)) if tag else None
+        issue_text = chosen_issue.strip()[tag.end():].strip() if tag else chosen_issue.strip()
+        return pair, issue_text, reason, issue_no
 
     # ------------------------------------------------------------ 전문가 System 1 발언 평가
 

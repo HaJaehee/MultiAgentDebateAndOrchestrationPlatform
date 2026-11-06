@@ -23,7 +23,7 @@ from app.agents.reasoning import strip_reasoning_trace
 from app.config import DEFAULT_PEER_TOOL_ITERATIONS, PEERS_TOOL_PREFIX
 from app.events import EventCallback, EventType
 from app.orchestration import context_memory as memory
-from app.orchestration import turns
+from app.orchestration import ledger_history, turns
 from app.orchestration.artifacts import format_roster
 from app.orchestration.control import TurnControl
 from app.orchestration.phases.base import PhaseExecutor
@@ -46,6 +46,11 @@ SUB_DEBATE_CONCLUSION_MARKER = "[서브 토론 결론 작성]"
 # 쟁점이 나온 직전 논의로 함께 주는 발언 수와 한 발언의 길이.
 RECENT_SPEECHES = 6
 RECENT_CHARS = 600
+
+
+def issue_heading(issue: str, issue_no: Optional[int]) -> str:
+    """서브 토론 안내·결론 머리줄의 쟁점. 고정 번호가 있으면 `I-3 · 쟁점` (ADR-051)."""
+    return f"{ledger_history.issue_label(issue_no)} · {issue}" if issue_no else issue
 
 
 class SubDebateRunner(PhaseExecutor):
@@ -120,14 +125,16 @@ class SubDebateRunner(PhaseExecutor):
                 )
             else:
                 content = await self.ask_orchestrator(state, setup, candidates)
-                decision = parse_sub_debate(content, candidates)
+                decision = parse_sub_debate(
+                    content, candidates, open_issues=dict(ledger_history.tagged_open_issues(state.decision_ledger)),
+                )
         except LLMUnavailableError as exc:
             # 묻지 못하면 그냥 다음 라운드로 갑니다. 토론의 필수 단계가 아닙니다.
             logger.warning(f"Could not ask whether to open a sub-debate: {exc}")
             return None
         if decision is None:
             return None
-        pair, issue, reason = decision
+        pair, issue, reason, issue_no = decision
 
         await self.recorder.record_note(
             db=db,
@@ -137,15 +144,15 @@ class SubDebateRunner(PhaseExecutor):
             round_number=boundary,
             msg_type="orchestrator",
             content=(
-                f"[서브 토론] **쟁점:** {issue}\n\n"
+                f"[서브 토론] **쟁점:** {issue_heading(issue, issue_no)}\n\n"
                 f"{pair[0].name} ↔ {pair[1].name} · 최대 {setup.sub_debate_rounds}라운드 주고받은 뒤 "
                 f"오케스트레이터가 결론을 씁니다."
                 + (f"\n\n{reason}" if reason else "")
             ),
             kind=turns.KIND_SUBDEBATE_OPEN,
-            data={"issue": issue, "agents": [a.key for a in pair]},
+            data={"issue": issue, "issue_no": issue_no, "agents": [a.key for a in pair]},
         )
-        return turns.SubDebateRecord(issue=issue, agents=[a.key for a in pair])
+        return turns.SubDebateRecord(issue=issue, agents=[a.key for a in pair], issue_no=issue_no)
 
     async def ask_orchestrator(
         self, state: DebateState, setup: "TurnSetup", candidates: List[Agent],
@@ -168,8 +175,9 @@ class SubDebateRunner(PhaseExecutor):
             "두 전문가의 의견이 실제로 부딪히거나, 두 분야를 함께 봐야 풀리는 **구체적인 쟁점 하나**가 있을 때만 "
             "여세요. 다음 차례에 자연히 다룰 일, 한 사람이 혼자 답할 수 있는 일, 유저에게 물어야 풀리는 일에는 "
             "열지 마세요. 확신이 없으면 열지 마세요.\n\n"
-            "다음 JSON 형식으로만 답하세요:\n"
-            '{"open": true, "issue": "쟁점 한 문장", "agents": ["에이전트키", "에이전트키"], '
+            "다음 JSON 형식으로만 답하세요. `issue_id` 는 위 쟁점의 번호(`I-3` 모양)이고, 번호가 없는 쟁점이면 "
+            "빼세요:\n"
+            '{"open": true, "issue_id": "I-3", "issue": "쟁점 한 문장", "agents": ["에이전트키", "에이전트키"], '
             '"reason": "한두 문장으로 연 이유"} 또는 {"open": false}'
         )}]
         content, _ = await self.ctx.llm_caller.call_agent(
@@ -222,7 +230,9 @@ class SubDebateRunner(PhaseExecutor):
                         "speaker": f"{speaker.name} (서브 토론)",
                         "round": boundary,
                     })
-                instruction = self.speech_instruction(speaker, other, record.issue, index, total)
+                instruction = self.speech_instruction(
+                    speaker, other, issue_heading(record.issue, record.issue_no), index, total,
+                )
                 if speaker.key in redo:
                     instruction = f"{turns.resume_notice(redo.pop(speaker.key))}\n\n{instruction}"
                 message = await self.speech.speak(
@@ -243,7 +253,10 @@ class SubDebateRunner(PhaseExecutor):
 
         if control is not None and control.stop_requested:
             return
-        await self.conclude(db, state, setup, boundary, record.issue, exchange, control=control, on_event=on_event)
+        await self.conclude(
+            db, state, setup, boundary, record.issue, exchange,
+            issue_no=record.issue_no, control=control, on_event=on_event,
+        )
 
     @staticmethod
     def budget_spent(state: DebateState, setup: "TurnSetup") -> bool:
@@ -319,10 +332,12 @@ class SubDebateRunner(PhaseExecutor):
         issue: str,
         exchange: List[DebateMessage],
         *,
+        issue_no: Optional[int] = None,
         control: Optional[TurnControl],
         on_event: Optional[EventCallback],
     ) -> None:
         """오케스트레이터가 결론을 쓰고 장부에 반영합니다. 받은 발언이 없으면 결론 없이 닫습니다."""
+        heading = issue_heading(issue, issue_no)
         spoken = [m for m in exchange if m.msg_type != "error"]
         if not spoken:
             await self.recorder.record_note(
@@ -332,7 +347,7 @@ class SubDebateRunner(PhaseExecutor):
                 agent=setup.orchestrator,
                 round_number=boundary,
                 msg_type="error",
-                content=f"[서브 토론] 두 전문가의 응답을 받지 못해 결론 없이 닫습니다. 쟁점은 그대로 남습니다: {issue}",
+                content=f"[서브 토론] 두 전문가의 응답을 받지 못해 결론 없이 닫습니다. 쟁점은 그대로 남습니다: {heading}",
                 kind=turns.KIND_SUBDEBATE_CONCLUSION,
             )
             return
@@ -358,7 +373,7 @@ class SubDebateRunner(PhaseExecutor):
             f"않고 지금 쓰는 결론만 읽습니다.\n\n"
             f"[목표]\n{state.user_prompt}\n\n"
             + (f"{record.text}\n\n" if record.text else "")
-            + f"[쟁점]\n{issue}\n\n[두 전문가의 발언]\n{body}\n\n"
+            + f"[쟁점]\n{heading}\n\n[두 전문가의 발언]\n{body}\n\n"
             "수석 오케스트레이터로서 이 쟁점을 닫으세요:\n"
             "1. 합의된 것\n"
             "2. 남은 이견과 그 판정 (아직 판단할 수 없다면 그 이유)\n"
@@ -367,7 +382,7 @@ class SubDebateRunner(PhaseExecutor):
         )}]
 
         async def _label(text: str) -> str:
-            return f"[서브 토론 결론 · {issue}]\n\n{text.strip()}"
+            return f"[서브 토론 결론 · {heading}]\n\n{text.strip()}"
 
         message = await self.speech.speak(
             db=db,
@@ -384,5 +399,6 @@ class SubDebateRunner(PhaseExecutor):
         )
         if message.msg_type != "error":
             await self.conversation.update_ledger(
-                state=state, orchestrator=setup.orchestrator, on_event=on_event, reason=f"서브 토론 {boundary}",
+                db=db, state=state, orchestrator=setup.orchestrator, on_event=on_event,
+                reason=f"서브 토론 {boundary}", kind=ledger_history.KIND_SUBDEBATE,
             )

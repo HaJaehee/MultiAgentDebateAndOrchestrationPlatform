@@ -1,6 +1,6 @@
 # ADR-050. 대화로 실행 그래프와 새 에이전트를 함께 설계하고, 쓰기 전에 모든 검사를 끝낸 뒤 한 번에 저장한다
 
-> [ADR 목록](README.md) · 이전: [ADR-049](ADR-049-execution-grounded-diagnostician-and-stagnation-observer.md)
+> [ADR 목록](README.md) · 이전: [ADR-049](ADR-049-execution-grounded-diagnostician-and-stagnation-observer.md) · 다음: [ADR-051](ADR-051-fixed-issue-ids-and-ledger-revisions.md)
 
 ## 상태 (Status)
 

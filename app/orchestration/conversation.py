@@ -15,7 +15,7 @@ from app.agents.llm_tools import memory_search_tool
 from app.agents.reasoning import strip_reasoning_trace
 from app.database.models import SessionModel, TurnModel
 from app.events import EventCallback, EventType
-from app.orchestration import context_memory as memory, diagnostic_loop, plan_gate, turns
+from app.orchestration import context_memory as memory, diagnostic_loop, ledger_history, plan_gate, turns
 from app.orchestration.context import EngineContext
 from app.orchestration.state import DebateMessage, DebateState
 from app.workspace_files import mention_token
@@ -307,15 +307,21 @@ class ConversationMemory:
     async def update_ledger(
         self,
         *,
+        db,
         state: DebateState,
         orchestrator: Agent,
         on_event: Optional[EventCallback],
         reason: str,
+        kind: str,
     ) -> bool:
         """결정 장부를 갱신합니다. 갱신했으면 True.
 
         새 발언이 없거나 실패하면 이전 장부를 그대로 둡니다. 장부는 토론의 부산물이라,
         장부를 못 써서 토론이 멈추면 안 됩니다.
+
+        미해결 쟁점에는 서버가 고정 번호를 붙이고(`ledger_history.assign_issue_ids`), 갱신할 때마다 개정 이력을 바로
+        저장합니다(`kind` 는 `ledger_history.REVISION_KINDS` 중 하나, ADR-051). 쟁점 색인은 턴에서 처음 갱신할 때
+        세션의 개정 이력으로 한 번 세웁니다. 재개하면 상태를 새로 세우므로 이 턴의 앞선 개정까지 다시 읽습니다.
         """
         start, upto = state.ledger_through, len(state.messages)
         fresh = [
@@ -325,6 +331,13 @@ class ConversationMemory:
         # 사용자 발언 및 장부 직접 수정 이력만으로는 재작성 대상이 없습니다. 수정한 값은 이미 장부에 반영되어 있습니다.
         if not any(m.sender_key != "user" and turns.kind_of(m) != turns.KIND_LEDGER_EDIT for _index, m in fresh):
             return False
+
+        if state.issue_index is None:
+            state.issue_index = await ledger_history.load_index(db, state.session_id)
+        issues: ledger_history.IssueIndex = state.issue_index
+        # 개정 이력 없이 글만 넘어온 장부(`continue_session`)와 저장에 실패한 개정의 번호도 이어 셉니다.
+        issues.absorb(state.decision_ledger)
+        closed_issues = ledger_history.recently_closed_block(issues, state.decision_ledger)
 
         writer = self.tool_less(orchestrator)
         budget = context_budget(writer)
@@ -346,6 +359,7 @@ class ConversationMemory:
             - memory.text_tokens(writer.model, state.decision_ledger)
             - memory.text_tokens(writer.model, record.text)
             - memory.text_tokens(writer.model, state.user_prompt)
+            - memory.text_tokens(writer.model, closed_issues)
         )
         if room <= 0:
             logger.warning(
@@ -380,6 +394,7 @@ class ConversationMemory:
                     skipped=len(fresh) - len(kept),
                     user_prompt=state.user_prompt,
                     max_chars=ledger_chars,
+                    closed_issues=closed_issues,
                 ),
                 state.custom_instructions,
                 session_id=state.session_id,
@@ -403,10 +418,27 @@ class ConversationMemory:
                 })
             return False
 
+        ledger, open_issues = ledger_history.assign_issue_ids(ledger, issues)
+        previous = state.decision_ledger
         state.decision_ledger = ledger
         state.ledger_through = upto
+        revision = await ledger_history.record_revision(
+            db,
+            session_id=state.session_id,
+            turn_id=state.turn_id,
+            round_number=state.current_round,
+            kind=kind,
+            reason=reason,
+            ledger=ledger,
+            open_issues=open_issues,
+            issue_high=issues.high,
+            previous_ledger=previous,
+            on_event=on_event,
+        )
         if on_event:
-            await on_event({"type": EventType.LEDGER_UPDATED, "reason": reason, "ledger": ledger})
+            await on_event({
+                "type": EventType.LEDGER_UPDATED, "reason": reason, "ledger": ledger, "revision": revision,
+            })
         return True
 
     def build_context_for_agent(

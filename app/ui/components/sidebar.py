@@ -11,6 +11,7 @@ from app.agents.pool import get_agent_pool
 from app.database.models import (
     TURN_UNFINISHED,
     ArtifactModel,
+    LedgerRevisionModel,
     MessageModel,
     SessionModel,
     SpeechCommentModel,
@@ -840,6 +841,7 @@ class SessionSidebar:
                     await db.execute(delete(MessageModel).where(MessageModel.session_id == session_id))
                     await db.execute(delete(ArtifactModel).where(ArtifactModel.session_id == session_id))
                     await db.execute(delete(SpeechDraftModel).where(SpeechDraftModel.session_id == session_id))
+                    await db.execute(delete(LedgerRevisionModel).where(LedgerRevisionModel.session_id == session_id))
                     await forget_checkpoints(db, session_id)
                     await db.execute(delete(TurnModel).where(TurnModel.session_id == session_id))
                     await db.execute(delete(SessionModel).where(SessionModel.id == session_id))

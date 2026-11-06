@@ -17,7 +17,7 @@ from app.agents.base import Agent
 from app.database.models import MessageModel, SessionModel, TurnModel
 from app.database.session import get_session_factory, init_db
 from app.orchestration import context_memory as memory
-from app.orchestration import turns
+from app.orchestration import ledger_history, turns
 from app.orchestration.engine import OrchestratorEngine
 from tests.fake_llm import LEDGER_REPLY, FakeLLMCaller
 
@@ -136,6 +136,12 @@ async def test_a_converged_ledger_skips_the_remaining_rounds():
     assert "[참고] Round 2 에서 결정 장부가 수렴해" in caller.synthesis_prompt
     assert "[주의]" not in caller.synthesis_prompt
     assert turn.config["converge_early"] is True
+
+    # 수렴한 라운드에는 라운드 끝 개정과 최종 합성 개정이 함께 남습니다. 라운드 변화량은 마지막 것을 씁니다 (ADR-051).
+    revisions = [e["revision"] for e in events if e["type"] == "ledger_updated"]
+    assert [(r["kind"], r["round"]) for r in revisions] == [("round", 1), ("round", 2), ("final", 2)]
+    deltas = ledger_history.round_deltas(revisions)
+    assert deltas[(state.turn_id, 2)]["final"] is True and deltas[(state.turn_id, 2)]["open"] == 0
 
 
 @pytest.mark.asyncio

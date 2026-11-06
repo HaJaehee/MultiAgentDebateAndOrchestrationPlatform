@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import json
 import re
-from typing import List, Optional, Tuple
+from typing import List, Mapping, Optional, Tuple
 
 from app.agents.base import Agent
+from app.orchestration import ledger_history
 
 
 def parse_speaker_selection(
@@ -93,12 +94,15 @@ def parse_assignments(
 
 
 def parse_sub_debate(
-    content: str, candidates: List[Agent]
-) -> Optional[Tuple[List[Agent], str, str]]:
-    """서브 토론을 열겠다는 답이면 (두 전문가, 쟁점, 사유). 아니면 None.
+    content: str, candidates: List[Agent], open_issues: Optional[Mapping[int, str]] = None,
+) -> Optional[Tuple[List[Agent], str, str, Optional[int]]]:
+    """서브 토론을 열겠다는 답이면 (두 전문가, 쟁점, 사유, 쟁점 번호). 아니면 None.
 
     지명·분배와 달리 본문에서 에이전트 키를 긁어 오지 않습니다. 형식을 어긴 답에서 추측해 열면 사람이 고른 적
     없는 비용이 나갑니다. 열지 않아도 토론은 그대로 돕니다.
+
+    쟁점 번호는 `"issue_id": "I-3"` 으로 받습니다 (ADR-051). 없으면 쟁점 글 앞의 `[I-3]` 태그를 봅니다. `open_issues`
+    (지금 열린 쟁점 번호 → 글)를 주면 그중에 있는 번호만 받고, 쟁점 글을 빠뜨린 답은 장부의 글로 채웁니다.
     """
     block = re.search(r"\{.*\}", content or "", re.DOTALL)
     if block is None:
@@ -112,7 +116,13 @@ def parse_sub_debate(
     by_key = {a.key: a for a in candidates}
     raw = data.get("agents")
     keys = list(dict.fromkeys(str(k).strip() for k in raw)) if isinstance(raw, list) else []
-    issue = str(data.get("issue") or "").strip()
+    tagged_no, issue = ledger_history.split_issue_tag(str(data.get("issue") or ""))
+    issue = ledger_history.strip_issue_tags(issue)
+    issue_no = ledger_history.parse_issue_label(data.get("issue_id")) or tagged_no
+    if open_issues is not None and issue_no not in open_issues:
+        issue_no = None
+    if not issue and issue_no is not None and open_issues:
+        issue = open_issues[issue_no]
     if len(keys) != 2 or not all(k in by_key for k in keys) or not issue:
         return None
-    return [by_key[k] for k in keys], issue, str(data.get("reason") or "").strip()
+    return [by_key[k] for k in keys], issue, str(data.get("reason") or "").strip(), issue_no

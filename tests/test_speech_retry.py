@@ -19,6 +19,7 @@ from app.agents.base import Agent
 from app.agents.llm_usage import Usage
 from app.config import LLMConfig
 from app.database.models import (
+    LedgerRevisionModel,
     MessageModel,
     SessionModel,
     SpeechCommentModel,
@@ -373,6 +374,13 @@ async def test_the_decision_ledger_is_corrected_for_the_new_version():
     async with get_session_factory(DB_URL)() as db:
         session = await db.get(SessionModel, sid)
         assert session.ledger_through_id == through, "다음 턴이 접을 범위는 그대로입니다"
+        last = (await db.execute(
+            select(LedgerRevisionModel).where(LedgerRevisionModel.session_id == sid)
+            .order_by(LedgerRevisionModel.seq.desc()).limit(1)
+        )).scalar_one()
+    assert (last.kind, last.turn_id, last.round_number) == ("retry", target.turn_id, target.round_number), \
+        "고친 장부는 다시 실행한 발언의 턴으로 남고, 라운드 변화량에서는 빠집니다"
+    assert last.ledger == session.decision_ledger
 
 
 @pytest.mark.asyncio

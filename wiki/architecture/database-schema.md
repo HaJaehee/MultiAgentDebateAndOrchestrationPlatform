@@ -15,6 +15,7 @@ erDiagram
     sessions ||--o{ turns : "has"
     turns ||--o{ speech_drafts : "has (cascade)"
     sessions ||--o{ speech_comments : "has (cascade)"
+    sessions ||--o{ ledger_revisions : "has (cascade)"
     messages ||--o{ tool_calls : "contains (set null)"
 
     sessions {
@@ -284,6 +285,34 @@ Sessions gained `converge_early` (default on), `token_budget` (0 = none), `ask_u
 expert page creates conversations with it on) and `forked_from` (v1.5). `messages.llm_meta` now also
 carries the speech's `usage` and, for a speech resumed from a draft, `resumed_at`
 ([ADR-048](../../lectures/05-adr/ADR-048-token-and-time-mini-charts.md)).
+
+### 2.6.1. `ledger_revisions` Table ([LedgerRevisionModel](file:///d:/MultiAgentDebateOrchestration/app/database/models.py))
+One row each time the decision ledger changes, written right away during the turn (the ledger column itself is
+only written when a turn ends). It carries the open issues with their fixed numbers, so issue numbers can be matched
+across the conversation and the screen can show how the open issues changed round by round
+([Conversation Memory §2.2.2](../orchestration/context-memory.md#222-fixed-issue-numbers-and-the-revision-history-adr-051),
+[ADR-051](../../lectures/05-adr/ADR-051-fixed-issue-ids-and-ledger-revisions.md)). There is no separate issue table.
+
+| Column | Type | Nullable | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `id` | `VARCHAR(36)` | No | `uuid4()` | Primary key, chosen by the writer. |
+| `session_id` | `VARCHAR(36)` | No | - | Owner; `ON DELETE CASCADE`, and cascades on ORM delete of the session. |
+| `turn_id` | `VARCHAR(36)` | Yes | - | The turn that changed the ledger. `NULL` for a direct edit between turns. No foreign key, like `messages.turn_id`. |
+| `seq` | `INTEGER` | No | `0` | Order within the session. `created_at` can repeat (the Windows clock ticks about every 15 ms). |
+| `round_number` | `INTEGER` | No | `0` | Round (graph: step). `0` for a direct edit. |
+| `kind` | `VARCHAR(16)` | No | `'round'` | `round`, `step`, `subdebate`, `final`, `resume`, `retry`, `edit`. |
+| `reason` | `VARCHAR(120)` | No | `''` | The event's `reason`, e.g. `Round 2`. |
+| `ledger` | `TEXT` | No | `''` | The full ledger at that point. |
+| `open_issues` | `JSON` | No | `[]` | `[{"no": 3, "text": "…"}]`, text without the tag. Read instead of parsing `ledger` each time. |
+| `decided` / `rejected` | `INTEGER` | No | `0` | Item counts only; the items are in `ledger`. |
+| `issue_high` | `INTEGER` | No | `0` | The largest issue number used so far. Numbers are never reused. |
+| `message_id` | `VARCHAR(36)` | Yes | - | The note a direct edit (`edit`) left. |
+| `created_at` | `DATETIME` | No | `utc_now` | When it was written. |
+
+Deleted with the conversation (sidebar), with a discarded turn (`session_ops.discard_turn`, by `turn_id`) and by the
+trial server's ORM delete. A fork copies the rows inside its boundary with new ids.
+
+---
 
 ### 2.7. `speech_drafts` Table ([SpeechDraftModel](file:///d:/MultiAgentDebateOrchestration/app/database/models.py))
 The in-progress state of a speech that uses tools, so an interrupted speech continues after its last

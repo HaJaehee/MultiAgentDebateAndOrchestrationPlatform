@@ -489,14 +489,19 @@ class ExpertPage:
                 row.tool_denials = list(denials)
                 await db.commit()
 
-    async def on_ledger_edited(self, expected: str, ledger: str) -> None:
-        """로스터에서 수정한 결정 장부를 저장하고, 변경 요약 안내를 피드에 발행합니다 (ADR-038)."""
+    async def on_ledger_edited(self, expected: str, ledger: str) -> Optional[str]:
+        """로스터에서 수정한 결정 장부를 저장하고, 변경 요약 안내를 피드에 발행합니다 (ADR-038).
+
+        돌려주는 값은 저장한 장부입니다. 새로 넣은 쟁점이 번호를 받으므로(ADR-051) 화면이 고친 글과 다를 수 있습니다.
+        """
         if not self.current_session_id:
-            return
+            return None
         async with self.session_factory() as db:
-            note = await ledger_edit.save_edit(db, self.current_session_id, expected, ledger)
-        if note is not None:
-            self.chat_feed.append_message(note)
+            saved = await ledger_edit.save_edit(db, self.current_session_id, expected, ledger)
+        if saved is None:
+            return None
+        self.chat_feed.append_message(saved.note)
+        return saved.ledger
 
     async def on_decision(self, extra: int, request_id: str) -> None:
         """한도에 닿은 에이전트에게 확장 여부를 알려 줍니다 (도구 상한·컨텍스트 공통).

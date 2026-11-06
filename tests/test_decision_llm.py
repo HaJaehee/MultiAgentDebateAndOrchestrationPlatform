@@ -560,6 +560,10 @@ async def test_orchestrator_system1_controls_speaker_selection_sub_debate_and_gr
     assert len(sub_open_notes) == 1
     assert "Architect ↔ Critic" in sub_open_notes[0].content
     assert "System 1(JEV/jev-ctrl)" in sub_open_notes[0].content
+    # 장부의 쟁점은 `[I-1] …` 모양입니다 (ADR-051). 고른 항목에서 태그를 떼고 번호는 따로 남깁니다.
+    assert "**쟁점:** I-1 · 캐시 무효화 정책 충돌" in sub_open_notes[0].content
+    assert sub_open_notes[0].turn_meta["issue"] == "캐시 무효화 정책 충돌"
+    assert sub_open_notes[0].turn_meta["issue_no"] == 1
 
     # (B) graph_debate 게이트 판정
     graph_spec = parse_graph({

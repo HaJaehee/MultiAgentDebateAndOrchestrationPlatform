@@ -47,6 +47,8 @@ sessions ─────┬──▶ messages ──────▶ tool_calls
 
 **턴 외부에서 결정 장부를 갱신하는 경우는 사용자의 직접 편집 및 발언 재생성에 따른 장부 교정뿐입니다.** 직접 편집은 토론이 유휴 상태일 때만 수행 가능하며, 낙관적 락을 통해 편집 시작 시점의 장부가 불변일 때만 안전하게 저장됩니다. `sessions.decision_ledger`와 마지막 턴의 `turns.memory`를 동시 갱신하며, 반영 기준 ID(`ledger_through_id`)는 보존하고 대화 타임라인에 `turn_meta.kind = ledger_edit` 안내 레코드를 영구 기록합니다 (ADR-038).
 
+**장부 개정 이력(`ledger_revisions`)은 턴 도중에도 즉시 저장합니다 (ADR-051).** 장부 본문(`sessions.decision_ledger`)과 달리, 장부가 갱신될 때마다 그 시점의 장부 전문, 고정 번호가 붙은 미해결 쟁점 목록(`open_issues`), 결정·기각 개수, 지금까지 쓴 가장 큰 쟁점 번호(`issue_high`)를 한 행으로 남깁니다. 종류(`kind`)는 `round`·`step`·`subdebate`·`final`·`resume`·`retry`·`edit` 이고, 정렬은 세션 안 순번(`seq`)으로 합니다. 요청 되돌리기로 턴을 버리면 그 턴의 개정 이력도 함께 지워지고, 세션 삭제 시에도 함께 지워지며, 세션 분기(Fork) 시에는 분기 시점까지의 이력이 복사됩니다.
+
 ### `messages` 테이블
 
 | 컬럼명 | 설명 |

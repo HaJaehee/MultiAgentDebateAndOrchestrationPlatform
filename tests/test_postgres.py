@@ -24,6 +24,7 @@ from app.database import session as db_session
 from app.database.models import (
     ArtifactModel,
     Base,
+    LedgerRevisionModel,
     MessageModel,
     SessionAgentModel,
     SessionModel,
@@ -348,6 +349,7 @@ async def test_deleting_a_session_takes_everything_with_it(factory):
             ArtifactModel(session_id=sid),
             SessionAgentModel(session_id=sid, agent_key="a"),
             SpeechDraftModel(id=str(uuid.uuid4()), session_id=sid, turn_id=turn.id, agent_key="a"),
+            LedgerRevisionModel(session_id=sid, turn_id=turn.id, kind="round"),
             TrialSessionModel(session_id=sid, user_id=user.id),
             TrialFeedbackModel(session_id=sid, user_id=user.id),
             EasySessionModel(session_id=sid),
@@ -358,6 +360,7 @@ async def test_deleting_a_session_takes_everything_with_it(factory):
         await db.commit()
 
         for model in (MessageModel, ToolCallRecordModel, ArtifactModel, SessionAgentModel, SpeechDraftModel,
+                      LedgerRevisionModel,
                       TrialSessionModel, TrialFeedbackModel, EasySessionModel, TurnModel):
             assert (await db.execute(select(model))).first() is None, model.__name__
 

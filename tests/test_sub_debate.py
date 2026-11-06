@@ -26,7 +26,7 @@ from app.config import (
     AgentConfig,
     clamp_sub_debate_rounds,
 )
-from app.database.models import MessageModel, SessionModel, TurnModel
+from app.database.models import LedgerRevisionModel, MessageModel, SessionModel, TurnModel
 from app.database.session import get_session_factory, init_db
 from app.export import build_session_markdown
 from app.orchestration import turns
@@ -213,9 +213,52 @@ def test_only_a_well_formed_yes_opens_one(content):
 
 def test_a_well_formed_yes_names_the_two_and_the_issue():
     agents = [a for a in _pool().list_all() if a.key != "orchestrator"]
-    pair, issue, reason = parse_sub_debate("좋습니다.\n" + OPEN_ANSWER, agents)
+    pair, issue, reason, issue_no = parse_sub_debate("좋습니다.\n" + OPEN_ANSWER, agents)
     assert [a.key for a in pair] == ["architect", "critic"]
     assert issue == "토큰 저장 위치" and reason == "두 분야가 부딪힙니다"
+    assert issue_no is None
+
+
+def test_the_issue_is_named_by_its_fixed_number():
+    """쟁점은 `issue_id` 로 고정 번호를 받습니다 (ADR-051). 지금 열린 쟁점의 번호만 받습니다."""
+    agents = [a for a in _pool().list_all() if a.key != "orchestrator"]
+    open_issues = {3: "인증 토큰을 어디에 저장할지"}
+
+    def parse(**fields):
+        content = json.dumps({"open": True, "agents": ["architect", "critic"], **fields}, ensure_ascii=False)
+        found = parse_sub_debate(content, agents, open_issues=open_issues)
+        return found and (found[1], found[3])
+
+    assert parse(issue_id="I-3", issue="토큰 저장 위치") == ("토큰 저장 위치", 3)
+    assert parse(issue="[I-3] 토큰 저장 위치") == ("토큰 저장 위치", 3), "글 앞의 태그도 번호로 읽습니다"
+    assert parse(issue_id="I-3") == ("인증 토큰을 어디에 저장할지", 3), "글을 빠뜨리면 장부의 글로 채웁니다"
+    assert parse(issue_id="I-9", issue="없는 쟁점") == ("없는 쟁점", None), "열려 있지 않은 번호는 버립니다"
+    assert parse(issue_id="I-9") is None
+
+
+@pytest.mark.asyncio
+async def test_a_numbered_issue_names_the_note_the_conclusion_and_its_ledger_revision():
+    sid = await _session()
+    llm = IssueLLM(answer=json.dumps({
+        "open": True, "issue_id": "I-1", "issue": "토큰 저장 위치", "agents": ["architect", "critic"],
+    }, ensure_ascii=False))
+    await _run(llm, sid)
+
+    asked = llm.prompts_with(SUB_DEBATE_PROMPT_MARKER)[0]
+    assert "- [I-1] 인증 토큰을 어디에 저장할지" in asked and '"issue_id": "I-3"' in asked
+    rows = await _rows(sid)
+    opened = next(m for m in rows if turns.kind_of(m) == turns.KIND_SUBDEBATE_OPEN)
+    assert opened.turn_meta["issue_no"] == 1 and "**쟁점:** I-1 · 토큰 저장 위치" in opened.content
+    conclusion = next(m for m in rows if turns.kind_of(m) == turns.KIND_SUBDEBATE_CONCLUSION)
+    assert conclusion.content.startswith("[서브 토론 결론 · I-1 · 토큰 저장 위치]")
+    assert "쟁점: I-1 · 토큰 저장 위치" in llm.side_prompts()[0]
+    assert turns.sub_debate_at(rows, 1).issue_no == 1, "끊긴 서브 토론을 이어 갈 때도 번호를 압니다"
+
+    async with get_session_factory(DB_URL)() as db:
+        kinds = [r.kind for r in (await db.execute(
+            select(LedgerRevisionModel).where(LedgerRevisionModel.session_id == sid).order_by(LedgerRevisionModel.seq)
+        )).scalars().all()]
+    assert kinds == ["round", "subdebate", "final"]
 
 
 @pytest.mark.asyncio

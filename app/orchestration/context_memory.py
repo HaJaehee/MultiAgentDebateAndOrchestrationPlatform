@@ -426,12 +426,24 @@ def ledger_prompt(
     skipped: int,
     user_prompt: str,
     max_chars: int = LEDGER_MAX_CHARS,
+    closed_issues: str = "",
 ) -> List[Dict[str, str]]:
-    """장부 갱신 프롬프트. 이전 장부 + 사용자 발언 + 그 뒤로 새로 나온 발언."""
+    """장부 갱신 프롬프트. 이전 장부 + 사용자 발언 + 그 뒤로 새로 나온 발언.
+
+    `closed_issues` 는 최근에 닫힌 쟁점 목록입니다 (`ledger_history.recently_closed_block`). 미해결 쟁점의 번호는 서버가
+    붙이므로(ADR-051), 모델에게는 이전 번호를 지키고 새 쟁점은 번호 없이 쓰라고만 합니다.
+    """
     sections = "\n".join(f"## {name}" for name in LEDGER_SECTIONS)
     skipped_note = (
         f"\n(이보다 앞선 발언 {skipped}건은 길이 한도로 싣지 못했습니다. 이전 장부에 반영돼 있다고 보세요.)\n"
         if skipped else ""
+    )
+    closed_part = (
+        f"[최근에 닫힌 쟁점 — 이전 장부에서 해결돼 빠진 것]\n{closed_issues}\n\n" if closed_issues else ""
+    )
+    reopen_rule = (
+        "- 위 [최근에 닫힌 쟁점] 중 하나가 다시 제기됐을 때만 그 번호를 붙여 미해결 쟁점에 되살리세요.\n"
+        if closed_issues else ""
     )
     content = (
         f"{LEDGER_PROMPT_MARKER} 멀티 에이전트 토론의 **결정 장부**를 갱신합니다. 이 장부는 이후 모든 "
@@ -439,11 +451,15 @@ def ledger_prompt(
         f"[이번 턴 요청]\n{user_prompt}\n\n"
         + (f"{user_record}\n\n" if user_record else "")
         + f"[이전 장부]\n{previous.strip() or '(아직 없음)'}\n\n"
-        f"[새로 나온 발언 — 오래된 순]{skipped_note}\n" + "\n\n".join(blocks) + "\n\n"
+        + closed_part
+        + f"[새로 나온 발언 — 오래된 순]{skipped_note}\n" + "\n\n".join(blocks) + "\n\n"
         "이전 장부에 새 발언을 반영해 **갱신된 장부 전체**를 쓰세요.\n"
         "- 각 항목은 한 줄. 결정과 기각에는 근거를 짧게 붙이세요.\n"
         "- 뒤집힌 결정은 결정 사항에서 빼고 기각된 대안으로 옮기되 이유를 적으세요. 해결된 쟁점은 "
         "미해결에서 지우세요.\n"
+        "- 미해결 쟁점은 `- [I-3] 내용` 모양입니다. 이전 장부에 있던 쟁점은 `[I-n]` 번호를 그대로 두고, 새 쟁점은 "
+        "번호 없이 `- 내용` 으로 쓰세요. 번호는 시스템이 붙입니다.\n"
+        + reopen_rule +
         "- 유저 발언과 어긋나는 결정은 유저 발언을 따르세요. 누군가 제안만 했고 합의되지 않은 것은 "
         "결정 사항이 아니라 미해결 쟁점입니다. 없는 사실을 지어내지 마세요.\n"
         "- 파일 경로·함수·인터페이스 이름·수치는 원문 그대로.\n"
@@ -470,11 +486,13 @@ def parse_ledger(content: str, max_chars: int = LEDGER_MAX_CHARS) -> Optional[st
     if first is None:
         return None
     ledger = "\n".join(lines[first:]).strip()
-    return clip_chars(ledger, max_chars, "- …(장부가 길어 뒷부분을 생략했습니다)")
+    return clip_chars(ledger, max_chars, f"- {LEDGER_CLIP_NOTE}")
 
 
 # 결정 장부 섹션에서 빈 값(항목 없음)으로 인식할 텍스트 집합. 프롬프트 지침('- 없음') 외 모델 변형 표기를 포괄합니다.
 EMPTY_ITEMS = {"없음", "없음.", "해당 없음", "none", "n/a", "-"}
+# 장부가 상한을 넘어 잘렸다는 표시 (`parse_ledger`). 항목 모양이지만 항목이 아니므로 `ledger_items` 가 세지 않습니다.
+LEDGER_CLIP_NOTE = "…(장부가 길어 뒷부분을 생략했습니다)"
 
 
 def ledger_items(ledger: str, title: str) -> Optional[List[str]]:
@@ -493,7 +511,7 @@ def ledger_items(ledger: str, title: str) -> Optional[List[str]]:
         if items is None or not line.startswith(("- ", "* ")):
             continue
         text = line[2:].strip()
-        if text and text.lower() not in EMPTY_ITEMS:
+        if text and text.lower() not in EMPTY_ITEMS and text != LEDGER_CLIP_NOTE:
             items.append(text)
     return items
 

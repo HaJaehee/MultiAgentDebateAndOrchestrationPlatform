@@ -18,7 +18,7 @@ from app.agents.llm_usage import Usage
 from app.config import get_config
 from app.database.models import MessageModel, SessionModel, TurnModel
 from app.events import EventCallback, EventType
-from app.orchestration import speech_comments, speech_retry, turns
+from app.orchestration import ledger_history, speech_comments, speech_retry, turns
 from app.orchestration.control import TurnControl
 from app.orchestration.phases.base import PhaseExecutor
 from app.orchestration.state import DebateMessage, DebateState
@@ -237,8 +237,10 @@ class SpeechRevisionExecutor(PhaseExecutor):
             "decision_ledger": current,
             "ledger_through": _cut(state, message),
         })
+        # 개정 이력은 다시 실행한 발언의 턴(`state.turn_id`)으로 남습니다. 라운드 변화량에서는 빠집니다(`kind=retry`).
         if await self.conversation.update_ledger(
-            state=view, orchestrator=setup.orchestrator, on_event=on_event, reason="발언 교체",
+            db=db, state=view, orchestrator=setup.orchestrator, on_event=on_event, reason="발언 교체",
+            kind=ledger_history.KIND_RETRY,
         ):
             await db.execute(
                 update(SessionModel).where(SessionModel.id == state.session_id).values(

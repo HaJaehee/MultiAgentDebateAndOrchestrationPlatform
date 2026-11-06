@@ -136,6 +136,9 @@ class DebateState(BaseModel):
     # 결정 장부와, 장부에 반영된 발언의 수 (`messages[:ledger_through]`).
     decision_ledger: str = ""
     ledger_through: int = 0
+    # 세션의 쟁점 색인 (`ledger_history.IssueIndex`, ADR-051). 턴에서 처음 장부를 갱신할 때 개정 이력에서 한 번 세우고, 그
+    # 뒤로는 메모리에서 갱신합니다. 직렬화하지 않습니다.
+    issue_index: Optional[Any] = Field(default=None, exclude=True)
     # 앞선 기록의 누적 요약과, 요약이 덮는 발언의 수 (`messages[:summary_through]`).
     transcript_summary: str = ""
     summary_through: int = 0

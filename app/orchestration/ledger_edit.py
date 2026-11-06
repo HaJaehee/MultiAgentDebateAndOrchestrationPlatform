@@ -10,15 +10,16 @@
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import func, select, update
 
 from app.agents.base import Agent
 from app.agents.llm_context import context_budget
 from app.database.models import MessageModel, SessionModel, TurnModel, utc_now
+from app.events import EventCallback
 from app.orchestration import context_memory as memory
-from app.orchestration import turns
+from app.orchestration import ledger_history, turns
 
 OPEN_ISSUES = "미해결 쟁점"
 _EMPTY_SECTION = "- 없음"
@@ -45,6 +46,18 @@ class LedgerItem:
     marker: str = "- "
     # 저장할 때 뺍니다 — 화면에서 쟁점의 체크를 풀었거나 항목을 지웠습니다.
     dropped: bool = False
+    # 미해결 쟁점의 고정 번호 (ADR-051). `text` 에는 태그를 넣지 않습니다. 편집기에서 새로 넣은 항목은 None 이고, 저장할 때
+    # 번호를 받습니다(`save_edit`).
+    issue_no: Optional[int] = None
+
+
+@dataclass
+class SavedEdit:
+    """직접 수정을 저장한 결과. `note` 는 피드에 올릴 안내, `ledger` 는 번호까지 붙여 저장한 장부, `revision` 은 개정 이력."""
+
+    note: Dict[str, Any]
+    ledger: str
+    revision: Dict[str, Any]
 
 
 @dataclass
@@ -69,15 +82,18 @@ def parse_sections(ledger: str) -> List[LedgerSection]:
         if not sections:
             sections.append(LedgerSection(""))
         items = sections[-1].items
+        issue_no: Optional[int] = None
         if line.startswith(("- ", "* ")):
             text, marker = line[2:].strip(), line[:2]
+            if sections[-1].title == OPEN_ISSUES:
+                issue_no, text = ledger_history.split_issue_tag(text)
         elif line[0].isspace() and items:
             items[-1].text += "\n" + (line[2:] if line.startswith("  ") else line.lstrip()).rstrip()
             continue
         else:
             text, marker = line.strip(), ""
         if text.lower() not in memory.EMPTY_ITEMS:
-            items.append(LedgerItem(text, marker))
+            items.append(LedgerItem(text, marker, issue_no=issue_no))
     return sections
 
 
@@ -103,6 +119,8 @@ def _render_item(item: LedgerItem) -> str:
     first = re.sub(r"^[-*](\s+|$)", "", lines[0]).strip() if item.marker else lines[0]
     if not first:
         return ""
+    if item.marker and item.issue_no is not None:
+        first = f"{ledger_history.issue_tag(item.issue_no)} {first}"
     return "\n".join([f"{item.marker}{first}", *(f"  {line}" for line in lines[1:])])
 
 
@@ -118,24 +136,60 @@ def render_sections(sections: Iterable[LedgerSection]) -> str:
     return "\n\n".join(blocks)
 
 
-def _items_by_section(ledger: str) -> Dict[str, List[str]]:
-    out: Dict[str, List[str]] = {}
+def _items_by_section(ledger: str) -> Dict[str, List[Tuple[Optional[int], str]]]:
+    out: Dict[str, List[Tuple[Optional[int], str]]] = {}
     for section in parse_sections(ledger):
-        out.setdefault(section.title, []).extend(" ".join(item.text.split()) for item in section.items)
+        out.setdefault(section.title, []).extend(
+            (item.issue_no, " ".join(item.text.split())) for item in section.items
+        )
     return out
 
 
+def _issue_text(no: Optional[int], text: str) -> str:
+    return f"{ledger_history.issue_tag(no)} {text}" if no is not None else text
+
+
+def _issue_changes(
+    old: List[Tuple[Optional[int], str]], new: List[Tuple[Optional[int], str]],
+) -> Tuple[List[str], List[Tuple[Optional[int], str]], List[Tuple[Optional[int], str]]]:
+    """미해결 쟁점을 번호로 비교합니다 (ADR-051). (고친 줄, 닫은 쟁점, 넣은 쟁점).
+
+    번호가 같으면 같은 쟁점이고 글이 달라졌으면 고친 것입니다. 한쪽에만 번호가 있는 쟁점(옛 장부, 저장하며 번호를 받은 새
+    항목)은 글로 맞춰 봅니다. 글이 같으면 번호만 붙은 것이라 바뀐 것이 없습니다.
+    """
+    old_by_no = {no: text for no, text in old if no is not None}
+    new_by_no = {no: text for no, text in new if no is not None}
+    edited = [
+        f"- {OPEN_ISSUES} {ledger_history.issue_tag(no)} 고침: {new_by_no[no]}"
+        for no in old_by_no if no in new_by_no and old_by_no[no] != new_by_no[no]
+    ]
+    gone = [(no, text) for no, text in old if no is None or no not in new_by_no]
+    came = [(no, text) for no, text in new if no is None or no not in old_by_no]
+    came_texts = [text for _no, text in came]
+    gone_texts = [text for _no, text in gone]
+    return (
+        edited,
+        [(no, text) for no, text in gone if text not in came_texts],
+        [(no, text) for no, text in came if text not in gone_texts],
+    )
+
+
 def describe_changes(before: str, after: str) -> List[str]:
-    """바뀐 항목을 한 줄씩. 글자 배치만 달라졌으면 빈 목록입니다."""
+    """바뀐 항목을 한 줄씩. 글자 배치만 달라졌으면 빈 목록입니다. 미해결 쟁점은 고정 번호로 비교합니다."""
     old, new = _items_by_section(before), _items_by_section(after)
     lines: List[str] = []
     for title in [*new, *(t for t in old if t not in new)]:
-        gone = [text for text in old.get(title, []) if text not in new.get(title, [])]
-        came = [text for text in new.get(title, []) if text not in old.get(title, [])]
         label = title or "장부"
-        verb = "닫음" if title == OPEN_ISSUES else "뺌"
-        lines += [f"- {label}에서 {verb}: {text}" for text in gone]
-        lines += [f"- {label}에 넣음: {text}" for text in came]
+        if title == OPEN_ISSUES:
+            edited, gone, came = _issue_changes(old.get(title, []), new.get(title, []))
+            lines += [f"- {label}에서 닫음: {_issue_text(no, text)}" for no, text in gone]
+            lines += edited
+            lines += [f"- {label}에 넣음: {_issue_text(no, text)}" for no, text in came]
+            continue
+        old_texts = [text for _no, text in old.get(title, [])]
+        new_texts = [text for _no, text in new.get(title, [])]
+        lines += [f"- {label}에서 뺌: {text}" for text in old_texts if text not in new_texts]
+        lines += [f"- {label}에 넣음: {text}" for text in new_texts if text not in old_texts]
     return lines
 
 
@@ -145,15 +199,23 @@ def char_limit(agents: Iterable[Agent]) -> int:
     return memory.memory_cap(memory.LEDGER_SHARE, memory.LEDGER_MAX_CHARS, budget)
 
 
-async def save_edit(db, session_id: str, expected: str, ledger: str) -> Optional[Dict[str, Any]]:
-    """장부를 사람이 고친 값으로 바꾸고 안내를 남깁니다. 돌려주는 값은 피드에 올릴 안내이고, 바뀐 항목이 없으면 None.
+async def save_edit(
+    db, session_id: str, expected: str, ledger: str, *, on_event: Optional[EventCallback] = None,
+) -> Optional[SavedEdit]:
+    """장부를 사람이 고친 값으로 바꾸고 안내를 남깁니다. 바뀐 항목이 없으면 None.
 
     `expected` 는 편집을 시작할 때 읽은 장부입니다. 그 사이 다른 탭이나 턴이 장부를 바꿨으면 저장하지 않습니다.
 
     장부에 반영된 지점(`ledger_through_id`)은 그대로 둡니다. 안내는 그 뒤에 놓이므로 다음 갱신이 함께 읽습니다. 마지막 턴의
     기억(`TurnModel.memory`)도 맞춥니다. 다음 턴은 고친 장부로 시작하는데, 그 턴에서 발언을 다시 실행하거나 이 턴에서
     갈라지면 그 기억을 읽고, 안내도 그 자리에 함께 있습니다.
+
+    편집기에서 새로 넣은 쟁점은 세션의 쟁점 색인으로 번호를 받습니다(ADR-051). 옛 쟁점의 글을 그대로 다시 넣으면 옛 번호를
+    받습니다. 저장한 뒤 개정 이력(`kind=edit`)을 안내 id 와 함께 남깁니다.
     """
+    index = await ledger_history.load_index(db, session_id)
+    index.absorb(expected)
+    ledger, open_issues = ledger_history.assign_issue_ids(ledger, index)
     changes = describe_changes(expected, ledger)
     if not changes:
         return None
@@ -190,9 +252,24 @@ async def save_edit(db, session_id: str, expected: str, ledger: str) -> Optional
     )
     db.add(note)
     await db.commit()
-    return {
+    shown = {
         "id": note.id, "sender_key": note.sender_key, "sender_name": note.sender_name,
         "sender_role": note.sender_role, "content": note.content, "round_number": note.round_number,
         "msg_type": note.msg_type, "created_at": note.created_at, "started_at": note.started_at,
         "finished_at": note.finished_at, "turn_meta": note.turn_meta, "tool_calls": [],
     }
+    revision = await ledger_history.record_revision(
+        db,
+        session_id=session_id,
+        turn_id=None,
+        round_number=0,
+        kind=ledger_history.KIND_EDIT,
+        reason="직접 수정",
+        ledger=ledger,
+        open_issues=open_issues,
+        issue_high=index.high,
+        previous_ledger=expected,
+        message_id=shown["id"],
+        on_event=on_event,
+    )
+    return SavedEdit(note=shown, ledger=ledger, revision=revision)

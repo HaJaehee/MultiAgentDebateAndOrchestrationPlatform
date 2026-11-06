@@ -80,7 +80,7 @@ KIND_APPROVAL = "plan_approval"       # 사용자의 계획 승인. 값: plan_id
 # 오케스트레이터가 그린 이번 턴의 실행 그래프 (ADR-034). 값: spec, fallback
 KIND_GRAPH_DRAFT = "graph_draft"
 # 서브 토론 (ADR-034). 라운드(그래프는 단계) 경계에서 전문가 두 명이 쟁점 하나를 따로 다룹니다.
-KIND_SUBDEBATE_OPEN = "subdebate_open"              # 값: issue, agents
+KIND_SUBDEBATE_OPEN = "subdebate_open"              # 값: issue, issue_no, agents
 KIND_SUBDEBATE_SPEECH = "subdebate_speech"          # 그 안의 발언. 본 기록의 맥락에는 싣지 않습니다
 KIND_SUBDEBATE_CONCLUSION = "subdebate_conclusion"  # 오케스트레이터의 결론. 이것이 본 토론에 합류합니다
 # 사용자가 결정 장부를 직접 편집한 기록 (ADR-038). 유저 발언 기록에 함께 고정됩니다 (`build_user_record`).
@@ -369,6 +369,8 @@ class SubDebateRecord:
     agents: List[str]
     speeches: List[Any] = field(default_factory=list)
     concluded: bool = False
+    # 쟁점의 고정 번호 (ADR-051). 번호 없는 쟁점이나 이 칸이 생기기 전의 기록은 None.
+    issue_no: Optional[int] = None
 
 
 def sub_debate_at(messages: Iterable[Any], boundary: int) -> Optional[SubDebateRecord]:
@@ -380,8 +382,10 @@ def sub_debate_at(messages: Iterable[Any], boundary: int) -> Optional[SubDebateR
         kind = kind_of(msg)
         if kind == KIND_SUBDEBATE_OPEN:
             data = _get(msg, "turn_meta") or {}
+            issue_no = data.get("issue_no")
             record = SubDebateRecord(
                 issue=str(data.get("issue") or ""), agents=[str(k) for k in data.get("agents") or []],
+                issue_no=issue_no if isinstance(issue_no, int) and not isinstance(issue_no, bool) else None,
             )
         elif record is not None and kind == KIND_SUBDEBATE_SPEECH:
             record.speeches.append(msg)

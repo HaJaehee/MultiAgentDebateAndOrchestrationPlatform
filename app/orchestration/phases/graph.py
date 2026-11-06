@@ -17,7 +17,7 @@ from app.agents.llm_context import context_budget
 from app.agents.reasoning import strip_reasoning_trace
 from app.database.models import SessionModel, utc_now
 from app.events import EventCallback, EventType
-from app.orchestration import context_memory as memory, turns
+from app.orchestration import context_memory as memory, ledger_history, turns
 from app.orchestration.control import TurnControl
 from app.orchestration.graph import (
     CARRY_LABELS,
@@ -292,7 +292,7 @@ class GraphRunner(PhaseExecutor):
             for activation in activations:
                 port, value = outputs[activation.node.id]
                 scheduler.deliver(activation.node.id, port, value)
-            await self.after_graph_step(state, spec, scheduler, orchestrator, step, control, on_event, between_steps)
+            await self.after_graph_step(db, state, spec, scheduler, orchestrator, step, control, on_event, between_steps)
 
     @staticmethod
     def heading_to_end(spec: GraphSpec, scheduler: GraphScheduler) -> bool:
@@ -301,6 +301,7 @@ class GraphRunner(PhaseExecutor):
 
     async def after_graph_step(
         self,
+        db: Any,
         state: DebateState,
         spec: GraphSpec,
         scheduler: GraphScheduler,
@@ -312,7 +313,8 @@ class GraphRunner(PhaseExecutor):
     ) -> None:
         if not self.heading_to_end(spec, scheduler) and not (control is not None and control.stop_requested):
             await self.conversation.update_ledger(
-                state=state, orchestrator=orchestrator, on_event=on_event, reason=f"Step {step}",
+                db=db, state=state, orchestrator=orchestrator, on_event=on_event, reason=f"Step {step}",
+                kind=ledger_history.KIND_STEP,
             )
             if between_steps is not None:
                 await between_steps(step)
@@ -372,7 +374,7 @@ class GraphRunner(PhaseExecutor):
         for activation in replay.activations:
             port, value = outputs[activation.node.id]
             replay.scheduler.deliver(activation.node.id, port, value)
-        await self.after_graph_step(state, spec, replay.scheduler, orchestrator, step, control, on_event, between_steps)
+        await self.after_graph_step(db, state, spec, replay.scheduler, orchestrator, step, control, on_event, between_steps)
 
     @staticmethod
     async def graph_finished(on_event: Optional[EventCallback], reason: str, steps: int) -> None:

@@ -45,7 +45,8 @@ class AgentRosterControl:
             Callable[[List[str], List[str]], Coroutine[None, None, None]]
         ] = None
         # 고친 결정 장부를 저장하는 쪽 (읽었던 장부, 고친 장부). 화면이 채웁니다.
-        self.on_ledger_edited: Optional[Callable[[str, str], Coroutine[None, None, None]]] = None
+        # 저장한 장부를 돌려줍니다 (새 쟁점에 번호가 붙어 고친 글과 다를 수 있습니다, ADR-051).
+        self.on_ledger_edited: Optional[Callable[[str, str], Coroutine[None, None, Optional[str]]]] = None
         # 이 화면이 서버 PC 에서 열렸는가와 보안 감사에서 고른 호출의 대화를 여는 쪽 (화면이 채웁니다).
         # 채우지 않으면 원격으로 봅니다 — 전역 규칙을 고치지 못하는 쪽이 안전합니다.
         self.viewer_is_local: Callable[[], bool] = lambda: False
@@ -238,9 +239,11 @@ class AgentRosterControl:
         if self.on_tool_rules_changed is not None:
             await self.on_tool_rules_changed(grants, denials)
 
-    async def _save_ledger(self, expected: str, ledger: str) -> None:
+    async def _save_ledger(self, expected: str, ledger: str) -> Optional[str]:
+        """저장한 장부를 돌려줍니다 (새 쟁점에 번호가 붙어 고친 글과 다를 수 있습니다)."""
         if self.on_ledger_edited is not None:
-            await self.on_ledger_edited(expected, ledger)
+            return await self.on_ledger_edited(expected, ledger)
+        return None
 
     async def _open_tool_call(self, session_id: str, message_id: Optional[str]) -> None:
         if self.on_open_tool_call is not None:

@@ -117,6 +117,10 @@ class SessionModel(Base):
     speech_comments: Mapped[List["SpeechCommentModel"]] = relationship(
         "SpeechCommentModel", back_populates="session", cascade="all, delete-orphan", lazy="select"
     )
+    # 결정 장부의 개정 이력 (ADR-051). 체험 서버가 세션을 ORM 으로 지울 때 함께 지워지도록 둡니다.
+    ledger_revisions: Mapped[List["LedgerRevisionModel"]] = relationship(
+        "LedgerRevisionModel", back_populates="session", cascade="all, delete-orphan", lazy="select"
+    )
 
 
 # 턴의 상태 (`TurnModel.status`).
@@ -315,6 +319,47 @@ class SpeechCommentModel(Base):
     delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     session: Mapped["SessionModel"] = relationship("SessionModel", back_populates="speech_comments")
+
+
+class LedgerRevisionModel(Base):
+    """결정 장부가 바뀔 때마다 남기는 한 행 (`app/orchestration/ledger_history.py`, ADR-051).
+
+    장부 자체는 `sessions.decision_ledger` 에 턴이 끝날 때만 저장되고, 라운드마다의 장부는 턴 실행 중 메모리에만 있다가
+    사라졌습니다. 이 표가 있어야 미해결 쟁점이 라운드마다 어떻게 줄었는지 보여 주고, 쟁점의 고정 번호를 세션 전체에서
+    대조할 수 있습니다. 쟁점 목록은 표를 따로 두지 않고 `open_issues` JSON 칸에 둡니다.
+
+    행의 값은 모두 기록하는 쪽이 정합니다(`id`·`seq`·`created_at`). 커밋 뒤에 행을 다시 읽지 않습니다.
+    """
+
+    __tablename__ = "ledger_revisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
+    # 이 개정을 낸 턴. 턴 밖의 직접 수정은 NULL. 외래키는 두지 않습니다(`messages.turn_id` 와 같은 방식).
+    turn_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    # 세션 안의 순번. 정렬 키입니다. `created_at` 은 Windows 의 시계 해상도(약 15ms)로 같은 값이 나올 수 있습니다.
+    seq: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 라운드 번호 (그래프는 단계 번호). 턴 밖의 직접 수정은 0.
+    round_number: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # round · step · subdebate · final · resume · retry · edit (`ledger_history.REVISION_KINDS`).
+    kind: Mapped[str] = mapped_column(String(16), default="round", nullable=False)
+    # 이벤트의 `reason` (예: "Round 2").
+    reason: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    # 그 시점의 장부 전문.
+    ledger: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # 열린 쟁점 `[{"no": 3, "text": "…"}]`. 글에는 태그를 넣지 않습니다. 장부 글에서도 꺼낼 수 있지만, 쟁점 색인과 닫힘·새 쟁점
+    # 비교가 장부를 매번 파싱하지 않도록 따로 둡니다.
+    open_issues: Mapped[Any] = mapped_column(JSON, default=list)
+    # 결정 사항·기각된 대안의 **개수**. 항목은 같은 행의 `ledger` 에서 다시 꺼냅니다.
+    decided: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    rejected: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 지금까지 쓴 가장 큰 쟁점 번호. 번호를 재사용하지 않는 근거입니다.
+    issue_high: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 직접 수정(`kind=edit`)이 남긴 안내 메모의 id.
+    message_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    session: Mapped["SessionModel"] = relationship("SessionModel", back_populates="ledger_revisions")
 
 
 class ToolCallRecordModel(Base):
