@@ -705,6 +705,8 @@ class TurnRun:
             "session_id": self.session_id,
             "turn_id": self.turn_id,
             "status": self.status,
+            # 턴의 단계 (`STATUS_CHANGED` 의 status). 다시 붙은 화면이 합성 중임을 알아야 장부 띠에 `합성 …` 을 둡니다.
+            "phase": self.phase,
             "error": self.error,
             "retry_target": self.retry_target,
             "busy": self.busy,

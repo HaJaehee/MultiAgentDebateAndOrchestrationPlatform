@@ -38,6 +38,11 @@ class ExpertEventView:
         # 그래프 토론의 실행 표시. 이벤트와 기록 둘 다 이것 하나로 모읍니다 (graph_run.py).
         self.graph_tracker: Optional[GraphRunTracker] = None
 
+    def _turn_id(self) -> Optional[str]:
+        """이 화면이 붙어 있는 토론의 턴."""
+        run = self.page.runner.get(self.page.current_session_id)
+        return getattr(run, "turn_id", None) if run is not None else None
+
     async def apply(self, event: Event) -> None:
         etype = event.get("type")
 
@@ -71,6 +76,9 @@ class ExpertEventView:
         label = f"[{speaker}] 발언 및 분석 중..." if speaker else f"상태: {status}"
         round_info = f"Round {round_num}" if round_num else "Debating"
         self.page.chat_feed.set_busy(True, label, round_info)
+        if status == "synthesizing":
+            # 장부 띠에 흐린 `합성 …` 을 둡니다. 최종 개정이 오면 값으로 바뀝니다.
+            self.page.chat_feed.set_ledger_synthesizing(self._turn_id())
 
     @_handles(EventType.RUNTIME_QUEUED)
     async def _on_runtime_queued(self, event: Event) -> None:
@@ -91,6 +99,7 @@ class ExpertEventView:
                 type="warning", position="bottom-right",
             )
         else:
+            self.page.chat_feed.set_ledger_converged(self._turn_id(), r)
             ui.notify(
                 f"Round {r}/{mr}에서 상호 합의에 도달하여 남은 라운드를 건너뛰고 결론을 합성합니다.",
                 type="positive", position="bottom-right",
@@ -416,9 +425,12 @@ class ExpertEventView:
     @_handles(EventType.LEDGER_UPDATED)
     async def _on_ledger_updated(self, event: Event) -> None:
         self.page.roster_control.set_decision_ledger(event.get("ledger", ""))
+        self.page.chat_feed.add_ledger_revision(event.get("revision"))
 
     @_handles(EventType.LEDGER_UPDATE_FAILED)
     async def _on_ledger_update_failed(self, event: Event) -> None:
+        # 최종 갱신이 실패하면 합성 값이 오지 않습니다. 추이는 마지막 라운드에서 끝납니다.
+        self.page.chat_feed.set_ledger_synthesizing(None)
         ui.notify(
             f"결정 장부를 갱신하지 못하여 기존 장부를 유지합니다 ({event.get('reason', '')}): "
             f"{event.get('error', '')}",
@@ -486,6 +498,9 @@ class ExpertEventView:
 
     @_handles(EventType.TURN_COMPLETED)
     async def _on_turn_completed(self, event: Event) -> None:
+        self.page.chat_feed.set_ledger_synthesizing(None)
+        if event.get("converged_round"):
+            self.page.chat_feed.set_ledger_converged(event.get("turn_id"), event["converged_round"])
         # 이 턴의 토큰·LLM 시간. 끝난 사유를 적는 상태 줄 끝에 붙입니다.
         used = usage_line(event.get("usage"))
         used = f" · {used}" if used else ""
@@ -566,6 +581,7 @@ class ExpertEventView:
         status = event.get("status")
         # 턴 생성 전 슬롯 미확보로 종료(취소/실패)된 경우 사용자 프롬프트가 DB에 미기록 상태이므로 입력창으로 복원합니다.
         run = self.page.runner.get(self.page.current_session_id)
+        self.page.chat_feed.set_ledger_synthesizing(None)
         if status in ("failed", "cancelled") and run is not None and not run.turn_id and run.user_prompt:
             self.page.chat_feed.restore_input(run.user_prompt)
         if event.get("retry_target"):

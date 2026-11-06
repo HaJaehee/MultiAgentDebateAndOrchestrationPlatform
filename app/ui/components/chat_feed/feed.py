@@ -22,6 +22,7 @@ from app.ui.components.chat_feed.common import (
     UploadHandler,
 )
 from app.ui.components.chat_feed.decisions import DecisionBar, UnfinishedTurnBar
+from app.ui.components.chat_feed.ledger_strip import LedgerStrip, OpenLedger, RevealRound
 from app.ui.components.chat_feed.mentions import MentionUpload
 from app.ui.components.chat_feed.speech_actions import (
     CommentHandler,
@@ -62,6 +63,9 @@ class ChatFeed:
         on_add_comment: Optional[CommentHandler] = None,
         on_delete_comment: Optional[Callable[[str], Coroutine[None, None, bool]]] = None,
         render_turn_usage: Optional[Callable[[str], None]] = None,
+        show_ledger_strip: bool = False,
+        on_open_ledger: Optional[OpenLedger] = None,
+        on_reveal_round: Optional[RevealRound] = None,
     ):
         self.on_send_message = on_send_message
         # 토론 실행 도중 전달된 개입 입력 및 정지 요청 핸들러. 미지정 시
@@ -129,6 +133,11 @@ class ChatFeed:
             alive=lambda: self.alive, input_field=lambda: self.input_field, mention_provider=mention_provider,
             on_upload_file=on_upload_file, upload_destination=upload_destination,
         )
+        # 결정 장부 요약 띠. 전문가 화면만 켭니다 (초급자·체험 화면은 지금 그대로입니다).
+        self.ledger_strip: Optional[LedgerStrip] = (
+            LedgerStrip(on_open_ledger=on_open_ledger, on_reveal_round=on_reveal_round)
+            if show_ledger_strip else None
+        )
 
     @property
     def alive(self) -> bool:
@@ -181,6 +190,9 @@ class ChatFeed:
                 self.unfinished.build_bar()
                 self.approvals.build()
                 self.plan.build()
+                # 상태 칸은 스크롤 영역 밖(flex-shrink-0)이라 띠는 늘 보이고, 자리를 차지할 뿐 카드를 덮지 않습니다.
+                if self.ledger_strip is not None:
+                    self.ledger_strip.build()
 
                 # 쉬머(Shimmer) 진행 막대. 스트리밍 지연 중에도 백그라운드 작업이 진행 중임을
                 # 것을 한눈에 보여줍니다.
@@ -458,6 +470,8 @@ class ChatFeed:
     def clear(self) -> None:
         self._stop_pending = False
         self.timeline.clear()
+        if self.ledger_strip is not None:
+            self.ledger_strip.clear()
 
     # ------------------------------------------------------------ 타임라인
 
@@ -490,6 +504,26 @@ class ChatFeed:
 
     def mark_comments_delivered(self, comment_ids: Iterable[str], agent_name: str = "") -> None:
         self.timeline.mark_comments_delivered(comment_ids, agent_name)
+
+    # ------------------------------------------------------------ 결정 장부 요약 띠 (띠를 켠 화면만)
+
+    def set_ledger_revisions(
+        self, revisions: List[Dict[str, Any]], ledger: str = "", converged: Optional[Dict[str, int]] = None,
+    ) -> None:
+        if self.ledger_strip is not None:
+            self.ledger_strip.set_revisions(revisions, ledger, converged)
+
+    def add_ledger_revision(self, revision: Optional[Dict[str, Any]]) -> None:
+        if self.ledger_strip is not None:
+            self.ledger_strip.add_revision(revision)
+
+    def set_ledger_synthesizing(self, turn_id: Optional[str]) -> None:
+        if self.ledger_strip is not None:
+            self.ledger_strip.set_synthesizing(turn_id)
+
+    def set_ledger_converged(self, turn_id: Optional[str], round_number: int) -> None:
+        if self.ledger_strip is not None:
+            self.ledger_strip.set_converged(turn_id, round_number)
 
     # ------------------------------------------------------------ 승인 카드
 

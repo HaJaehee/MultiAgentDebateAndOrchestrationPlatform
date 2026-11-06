@@ -452,3 +452,231 @@ def test_plan_bars_take_the_colours_the_timeline_knows():
     feed = ChatFeed(_noop)
     feed.set_agent_styles([Agent.from_config("critic", AgentConfig(name="C", role="R", card_color="#c2185b"))])
     assert feed.plan.style_for("critic")["badge_color"] == "#c2185b"
+
+
+# ------------------------------------------------------------------ 결정 장부 요약 띠 (P2)
+
+from app.ui.components.chat_feed import ledger_strip as strip_module  # noqa: E402
+from app.ui.components.chat_feed.ledger_strip import LedgerStrip, trend_points, trend_text  # noqa: E402
+
+
+def _rev(turn, rnd, kind, open_nos, *, decided=0, rejected=0, reason=None, rid=None):
+    return {
+        "id": rid or f"{turn}-{rnd}-{kind}", "turn_id": turn, "round": rnd, "kind": kind,
+        "reason": reason if reason is not None else (f"Round {rnd}" if kind == "round" else kind),
+        "open": [{"no": n, "text": f"쟁점 {n}"} for n in open_nos], "decided": decided, "rejected": rejected,
+    }
+
+
+def _labels(strip: LedgerStrip) -> List[str]:
+    return [el.text for el in strip.row.descendants() if isinstance(el, ui.label)]
+
+
+def _click(element) -> None:
+    for listener_id, listener in list(element._event_listeners.items()):
+        if listener.type == "click":
+            element._handle_event({"listener_id": listener_id, "args": None})
+
+
+def _built_strip(**kwargs) -> LedgerStrip:
+    strip = LedgerStrip(**kwargs)
+    strip.build()
+    return strip
+
+
+def test_the_first_turn_trend_starts_at_its_first_round_and_ends_at_synthesis():
+    turn, points = trend_points([
+        _rev("t1", 1, "round", [1, 2, 3]), _rev("t1", 2, "round", [1, 2]), _rev("t1", 3, "final", []),
+    ])
+    assert turn == "t1"
+    assert [p.text for p in points] == ["R1 3", "R2 2", "합성 0"], "첫 턴은 직전 값이 없습니다"
+    assert trend_text(points) == "추이 R1 3 → R2 2 → 합성 0 ✓"
+
+
+def test_a_later_turn_starts_from_the_previous_turns_last_revision():
+    revisions = [
+        _rev("t1", 1, "round", [1]), _rev("t1", 1, "final", [1, 2, 3]),
+        _rev(None, 0, "edit", [1, 2]),                                        # 턴 사이의 직접 수정
+        _rev("t2", 1, "round", [2]), _rev("t2", 1, "subdebate", []),          # 같은 라운드는 마지막 것
+        _rev("t1", 1, "retry", [9]),                                          # 옛 턴의 재실행은 추이 밖
+    ]
+    turn, points = trend_points(revisions)
+    assert turn == "t2"
+    assert [p.text for p in points] == ["2", "R1 0"]
+    assert points[1].turn_id == "t2" and points[1].round_number == 1
+
+
+def test_one_round_shows_only_synthesis_and_steps_are_named_as_steps():
+    assert [p.text for p in trend_points([_rev("t1", 1, "final", [4])])[1]] == ["합성 1"]
+    _turn, points = trend_points([_rev("g", 1, "step", [1]), _rev("g", 2, "step", [])])
+    assert [p.text for p in points] == ["단계 1 1", "단계 2 0"]
+
+
+def test_synthesis_in_progress_is_a_pending_point_until_its_value_arrives():
+    revisions = [_rev("t1", 1, "final", [1]), _rev("t2", 1, "round", [1, 2])]
+    _turn, points = trend_points(revisions, synthesizing="t2")
+    assert [p.text for p in points] == ["1", "R1 2", "합성 …"] and points[-1].pending
+    _turn, points = trend_points(revisions, synthesizing="t3")
+    assert [p.text for p in points] == ["2", "합성 …"], "라운드 개정이 없는 새 턴(한 라운드)도 합성 중이 보입니다"
+
+
+def test_counts_fall_back_to_the_ledger_text_without_revisions():
+    ledger = "## 결정 사항\n- a\n- b\n\n## 기각된 대안\n- c\n\n## 미해결 쟁점\n- [I-2] 장애\n- 옛 쟁점"
+    counts = strip_module.strip_counts([], ledger)
+    assert (counts["decided"], counts["rejected"], [i["no"] for i in counts["open"]]) == (2, 1, [2, None])
+
+
+def test_an_issue_chip_tells_when_it_was_opened():
+    revisions = [
+        _rev("t1", 1, "round", [1]), _rev("t1", 2, "round", [1, 2]), _rev("t2", 1, "round", [1, 2]),
+    ]
+    assert strip_module.issue_opened_label(revisions, 2, "t2") == "Round 2 (이전 턴)"
+    assert strip_module.issue_opened_label(revisions, 1, "t1") == "Round 1 (이번 턴)"
+    assert strip_module.issue_opened_label(revisions + [_rev(None, 0, "edit", [1, 2, 3])], 3, "t2") == "직접 수정"
+
+
+def test_the_strip_is_one_line_of_fixed_height_and_hides_when_there_is_no_ledger():
+    strip = _built_strip()
+    classes = set(strip.row._classes)
+    assert {"ledger-strip", "h-7", "flex-nowrap", "overflow-hidden", "min-w-0", "whitespace-nowrap"} <= classes
+    assert strip.row.visible is False, "새 대화처럼 장부가 비어 있으면 숨깁니다"
+
+    strip.set_revisions([_rev("t1", 1, "round", [1, 2, 3, 4, 5, 6], decided=5, rejected=2)])
+    assert strip.row.visible is True
+    labels = _labels(strip)
+    assert labels[0] == "결정 5 · 기각 2 · 미해결 6"
+    assert labels[1:6] == ["I-1", "I-2", "I-3", "I-4", "외 2"], "칩은 최대 4개, 칩 글은 번호만"
+    trend = next(el for el in strip.row.descendants() if "ledger-strip-trend" in el._classes)
+    assert "ml-auto" in trend._classes
+
+
+def test_the_trend_keeps_the_last_five_values():
+    strip = _built_strip()
+    strip.set_revisions([_rev("t1", n, "round", list(range(n))) for n in range(1, 8)])
+    labels = _labels(strip)
+    at = labels.index("추이")
+    assert labels[at + 1] == "…" and [l for l in labels[at:] if l.startswith("R")] == ["R3 3", "R4 4", "R5 5", "R6 6", "R7 7"]
+
+
+def test_the_synthesis_chip_appears_turns_into_a_value_and_is_withdrawn_on_failure():
+    strip = _built_strip()
+    strip.set_revisions([_rev("t1", 1, "round", [1, 2])])
+
+    strip.set_synthesizing("t1")
+    assert "합성 …" in _labels(strip)
+
+    strip.add_revision(_rev("t1", 1, "final", []))
+    assert "합성 …" not in _labels(strip) and "합성 0" in _labels(strip) and "✓" in _labels(strip)
+    assert strip.synthesizing is None
+
+    strip.add_revision(_rev("t2", 1, "round", [3]))
+    strip.set_synthesizing("t2")
+    strip.set_synthesizing(None)   # 최종 갱신 실패 또는 그 값 없이 끝난 턴
+    labels = _labels(strip)
+    assert "합성 …" not in labels and labels[-1] == "R1 1", "추이는 마지막 라운드에서 끝납니다"
+
+
+def test_a_converged_turn_says_so():
+    strip = _built_strip()
+    strip.set_revisions([_rev("t1", 1, "round", [1]), _rev("t1", 2, "round", []), _rev("t1", 2, "final", [])],
+                        converged={"t1": 2})
+    assert _labels(strip)[-2:] == ["✓", "수렴(R2)"]
+
+
+def test_the_same_revision_is_counted_once():
+    strip = _built_strip()
+    revision = _rev("t1", 1, "round", [1])
+    strip.add_revision(revision)
+    strip.add_revision(dict(revision))
+    assert len(strip.revisions) == 1
+
+
+def test_chips_open_the_ledger_and_round_chips_reveal_their_round():
+    opened: List[Any] = []
+    revealed: List[Any] = []
+    strip = _built_strip(on_open_ledger=lambda: opened.append(True),
+                         on_reveal_round=lambda turn, rnd: revealed.append((turn, rnd)))
+    strip.set_revisions([_rev("t1", 1, "round", [3])])
+    chip = next(el for el in strip.row.descendants() if isinstance(el, ui.label) and el.text == "I-3")
+    _click(chip)
+    assert opened == [True]
+    round_chip = next(el for el in strip.row.descendants() if isinstance(el, ui.label) and el.text == "R1 1")
+    _click(round_chip)
+    assert revealed == [("t1", 1)]
+
+
+def test_old_conversations_show_counts_without_a_trend():
+    strip = _built_strip()
+    strip.set_revisions([], "## 결정 사항\n- a\n\n## 미해결 쟁점\n- 옛 쟁점")
+    assert _labels(strip) == ["결정 1 · 기각 0 · 미해결 1"]
+
+
+def test_only_the_feed_that_asks_for_it_has_the_strip():
+    assert ChatFeed(_noop).ledger_strip is None
+    feed = ChatFeed(_noop, show_ledger_strip=True)
+    feed.build_ui()
+    assert feed.ledger_strip.row is not None and feed.ledger_strip.row.visible is False
+    feed.add_ledger_revision(_rev("t1", 1, "round", [1]))
+    assert feed.ledger_strip.row.visible is True
+    feed.clear()
+    assert feed.ledger_strip.revisions == [] and feed.ledger_strip.row.visible is False
+    ChatFeed(_noop).add_ledger_revision(_rev("t1", 1, "round", [1]))   # 띠가 없으면 조용히 넘어갑니다
+
+
+def test_the_reveal_script_waits_for_the_dom_and_for_an_opening_animation():
+    from app.ui.components.chat_feed.common import reveal_js
+
+    script = reveal_js(42, "start")
+    assert script.count("requestAnimationFrame") == 2 and "getHtmlElement(42)" in script
+    assert 'block: "start"' in script and "setTimeout" not in script
+    assert reveal_js(42, delay_ms=350).startswith("setTimeout(") and ", 350)" in reveal_js(42, delay_ms=350)
+
+
+@pytest.mark.asyncio
+async def test_debate_events_drive_the_strip_on_the_expert_page(ui_page, monkeypatch):
+    """전문가 화면의 이벤트 처리가 띠를 움직입니다: 개정 추가, 합성 중 칩, 실패 시 거둠, 수렴."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.events import EventType
+    from app.ui.expert.events import ExpertEventView
+
+    monkeypatch.setattr(ui, "notify", lambda *a, **k: None)
+    run = SimpleNamespace(turn_id="t1", user_prompt="", session_id="s")
+    feed = ChatFeed(_noop, show_ledger_strip=True)
+    with ui_page:
+        feed.build_ui()
+    page = SimpleNamespace(
+        chat_feed=feed, roster_control=MagicMock(), sidebar=SimpleNamespace(refresh_list=AsyncMock()),
+        runner=SimpleNamespace(get=lambda _sid: run), current_session_id="s",
+    )
+    view = ExpertEventView(page)
+    strip = feed.ledger_strip
+
+    await view.apply({"type": EventType.LEDGER_UPDATED, "reason": "Round 1", "ledger": "L1",
+                      "revision": _rev("t1", 1, "round", [1, 2])})
+    page.roster_control.set_decision_ledger.assert_called_with("L1")
+    await view.apply({"type": EventType.STATUS_CHANGED, "status": "synthesizing", "speaker": "Orchestrator"})
+    assert strip.synthesizing == "t1" and "합성 …" in _labels(strip)
+    await view.apply({"type": EventType.LEDGER_UPDATED, "reason": "최종 합성", "ledger": "L2",
+                      "revision": _rev("t1", 1, "final", [])})
+    assert "합성 0" in _labels(strip) and strip.synthesizing is None
+
+    run.turn_id = "t2"
+    await view.apply({"type": EventType.STATUS_CHANGED, "status": "synthesizing", "speaker": "Orchestrator"})
+    assert strip.synthesizing == "t2"
+    await view.apply({"type": EventType.LEDGER_UPDATE_FAILED, "reason": "최종 합성", "error": "x"})
+    assert strip.synthesizing is None and "합성 …" not in _labels(strip)
+
+    await view.apply({"type": EventType.DEBATE_ENDED_EARLY, "reason": "converged", "round": 2, "max_rounds": 4})
+    assert strip.converged == {"t2": 2}
+    await view.apply({"type": EventType.DEBATE_ENDED_EARLY, "reason": "budget", "round": 1, "max_rounds": 4})
+    assert strip.converged == {"t2": 2}, "예산 종료는 수렴이 아닙니다"
+
+
+def test_a_reattached_page_knows_the_turn_is_synthesizing():
+    from app.events import EventType
+    from app.orchestration.turn_run import TurnRun
+
+    run = TurnRun("s", "요청", None)
+    run.apply({"type": EventType.STATUS_CHANGED, "status": "synthesizing", "speaker": "Orchestrator"})
+    assert run.snapshot()["phase"] == "synthesizing"

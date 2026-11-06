@@ -110,6 +110,19 @@ CLAMP_MIN_NEWLINES = 3
 SCROLL_TO_BOTTOM_PX = 10_000_000
 
 
+def reveal_js(element_id: int, block: str = "center", delay_ms: int = 0) -> str:
+    """요소가 보이게 스크롤하는 스크립트. 펼친 직후에도 위치가 맞도록 DOM 갱신 뒤에 돕니다.
+
+    NiceGUI 는 요소 갱신과 `run_javascript` 를 같은 메시지 묶음으로 보내고, 브라우저는 Vue 가 DOM 을 고치기 전에
+    스크립트를 실행합니다(`CardTimeline.scroll_to_bottom` 의 현상과 같음). 그때 막 펼친 칸은 아직 `display: none` 이라
+    `scrollIntoView` 가 아무 일도 하지 않습니다. 그래서 `requestAnimationFrame` 을 두 번 기다립니다. 펼침 애니메이션이
+    있는 칸(로스터의 접이식 칸)은 `delay_ms` 로 애니메이션이 끝나기를 기다립니다.
+    """
+    scroll = f'getHtmlElement({int(element_id)})?.scrollIntoView({{block: "{block}", behavior: "smooth"}})'
+    frames = f"requestAnimationFrame(() => requestAnimationFrame(() => {scroll}))"
+    return f"setTimeout(() => {frames}, {int(delay_ms)})" if delay_ms > 0 else frames
+
+
 def is_clampable(content: str) -> bool:
     """세 줄을 넘길 만한 글인지 (펼치기 버튼을 달지 결정)."""
     body = content or ""

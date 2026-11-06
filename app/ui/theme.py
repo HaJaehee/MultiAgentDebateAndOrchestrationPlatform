@@ -578,6 +578,19 @@ div.mado-math-fallback {
     background: rgba(99, 102, 241, 0.08);
 }
 
+/* 결정 장부 요약 띠 (`chat_feed/ledger_strip.py`). 한 줄을 지키고, 좁으면 추이를 숨깁니다. 화면 폭이 아니라
+   스플리터로 좁아진 피드 폭을 따라야 하므로 미디어 질의가 아니라 컨테이너 질의입니다. 숨긴 추이는 개수 쪽 툴팁에
+   있습니다. */
+.ledger-strip {
+    container-type: inline-size;
+    flex-shrink: 0;
+}
+@container (max-width: 560px) {
+    .ledger-strip-trend {
+        display: none !important;
+    }
+}
+
 /* 애니메이션을 줄이도록 설정한 환경에서는 움직임을 멈춥니다. 상태는 글자로도
    전해지므로 (경과 시간·문구) 정보가 사라지지는 않습니다. */
 @media (prefers-reduced-motion: reduce) {

@@ -891,6 +891,52 @@ The rules live in [Retrying One Speech and Inline Comments](../orchestration/spe
 
 **Verified in a browser** with a scripted LLM and a scratch database: an expanded sidebar panel went from 259.6k to 389.4k across ten updates during a turn started on the page; a new conclusion card got its panel; the header's `open_in_full` opened the dialog without toggling the panel; the range selector and table worked; in a `parallel_dispatch` turn, a round whose speeches added up to 9.4 s showed 6.2 s elapsed. Real provider responses were not used.
 
+### 1.3.13. Decision ledger strip (expert page)
+
+[app/ui/components/chat_feed/ledger_strip.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/chat_feed/ledger_strip.py)
+puts one line under the status bar, in the column that does not scroll:
+
+```
+결정 5 · 기각 2 · 미해결 2  I-3 I-5        추이 3 → R1 3 → R2 2 → 합성 0 ✓
+```
+
+It draws the ledger's revision history ([Conversation Memory §2.2.2](../orchestration/context-memory.md#222-fixed-issue-numbers-and-the-revision-history-adr-051)).
+The plan is `docs/feature_ui_upgrade.md` §3.
+
+- **One line, fixed height** (`h-7 flex-nowrap overflow-hidden min-w-0`). If the strip grew a line each time an issue
+  opened or closed, the feed's scroll area would jump during streaming. The status column is `flex-shrink-0` and the
+  scroll area `flex-grow min-h-0`, so the strip takes space and never covers a card.
+- **Narrow feeds.** Counts always stay; issue chips come next (at most four, labelled `I-3` only, then `외 n`); the
+  trend goes first. It is hidden by a CSS container query on the strip (`.ledger-strip`, `container-type:
+  inline-size`, 560px), because the feed is narrowed by the splitter, not the screen. The counts' tooltip holds the
+  full trend.
+- **Trend** covers the latest turn only and keeps the last five values (`…` before them). The first value is the
+  previous turn's last revision; a first turn starts at `R1`. Each round shows its last revision, so a sub-debate
+  folds into its round; graph steps read `단계 n`. The last round never updates the ledger on its own
+  (`debate._close_round` skips it), so the turn ends with `합성 n`; a one-round turn shows only that. During synthesis
+  a dimmed `합성 …` waits for the `final` revision and is removed if the closing update fails or the turn ends without
+  it. `✓` follows a last value of 0, and `수렴(R2)` marks a turn that ended early on convergence.
+- **Chips.** An issue chip's tooltip has the full text and when its current open stretch began (`Round 2 (이번 턴)`,
+  `직접 수정`). A click, on a chip or on the counts, opens the ledger: `ExpertPage.open_ledger` unfolds the roster
+  expansion and the ledger panel (`AgentRosterControl.open_ledger`) and scrolls to the ledger with
+  `chat_feed.common.reveal_js`. That script waits two animation frames so the DOM is updated, plus 350 ms when it had
+  to unfold something, since Quasar animates the roster expansion. Round chips take `on_reveal_round`; nothing passes
+  it yet (round groups, P3).
+- **Wiring.** `ChatFeed(show_ledger_strip=True, on_open_ledger=...)` only on the expert page; trial and beginner pages
+  show the ledger as before. `load_session_state` reads `ledger_history.load_revisions` and the turns that ended on
+  convergence. Revisions are saved during the turn, so a page opened mid-turn has this turn's rounds too, and a
+  reattached page learns about synthesis from the runner snapshot's new `phase`. `ExpertEventView` adds the revision on
+  `ledger_updated`, sets `합성 …` on `status_changed` with `synthesizing`, and clears it on `ledger_update_failed`,
+  `turn_completed` and `run_finished`. A direct edit adds its `edit` revision. A conversation without revisions shows
+  counts from the ledger text and no trend; nothing is backfilled.
+
+**Verified in a browser** with a scripted LLM and a scratch database (two three-round turns): the strip went
+`0 → R1 2 → R2 2 → 합성 …` and then `합성 2`, staying 28px tall at every step; a reload drew the same line from the
+database; with the roster folded, an issue chip unfolded the roster and the ledger panel and scrolled the ledger into
+the roster's scroll box; at strip widths of 540px and below the trend was hidden and the height did not change; closing
+`I-5` in the direct editor left `미해결 1 · I-4`. With the roster open in a 1000px-high window the feed's scroll area is
+44px, 32px less than before; folding the roster gives it the space back. Real provider responses were not used.
+
 ### 1.4. Artifact Viewer ([app/ui/components/artifact_viewer.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/artifact_viewer.py))
 - **Tabs accumulate across turns.** `add_artifacts()` appends a finished turn's artifacts (skipping ids
   already shown) and opens that turn's report; `render_artifacts()` is only for rebuilding from a full

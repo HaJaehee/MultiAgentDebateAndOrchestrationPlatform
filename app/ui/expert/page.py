@@ -21,12 +21,12 @@ from app.agents.skills import scan_skills
 from app.config import get_config, resolve_workspace_dir
 from app.database.models import ArtifactModel, MessageModel, SessionModel, TurnModel
 from app.database.session import get_session_factory
-from app.orchestration import ledger_edit, speech_comments, speech_retry
+from app.orchestration import ledger_edit, ledger_history, speech_comments, speech_retry
 from app.orchestration.graph_run import GraphRunTracker, last_graph_turn, node_labels
 from app.orchestration.runner import get_debate_runner
 from app.orchestration.session_title import DEFAULT_SESSION_TITLE
 from app.orchestration.strategies import resolve_strategy_name
-from app.orchestration.turns import KIND_SYNTHESIS, kind_of, unfinished_turn
+from app.orchestration.turns import EARLY_END_CONVERGED, KIND_EARLY_END, KIND_SYNTHESIS, kind_of, unfinished_turn
 from app.security import is_loopback
 from app.session_fork import ForkError, fork_session
 from app.code_versions import CodeVersion
@@ -34,7 +34,7 @@ from app.session_ops import discard_turn, reviewable_changes, session_code_versi
 from app.ui.attention import ATTENTION_JS, WaitingTabTitle, WaitingWatcher
 from app.ui.components.artifact_viewer import ArtifactViewer, merge_artifacts
 from app.ui.components.chat_feed.feed import ChatFeed
-from app.ui.components.chat_feed.common import clip_reloaded_output
+from app.ui.components.chat_feed.common import clip_reloaded_output, reveal_js
 from app.ui.components.chat_feed.speech_actions import SPEECH_COMMENT_JS
 from app.ui.components.quiet_splitter import SPLITTER_FREEZE_JS, QuietSplitter
 from app.ui.components.roster.control import AgentRosterControl
@@ -62,6 +62,9 @@ from app.workspace_files import (
 )
 
 logger = logging.getLogger(__name__)
+
+# 로스터 칸을 펼친 뒤 장부까지 스크롤하기 전에 기다리는 시간. Quasar 펼침 애니메이션(약 300ms)보다 깁니다.
+LEDGER_REVEAL_DELAY_MS = 350
 
 
 def create_ui() -> None:
@@ -124,6 +127,8 @@ class ExpertPage:
             on_add_comment=self.on_add_comment,
             on_delete_comment=self.on_delete_comment,
             render_turn_usage=self.render_turn_usage,
+            show_ledger_strip=True,
+            on_open_ledger=self.open_ledger,
         )
         # 결론으로 스킬 초안을 만드는 창. 초안은 토론과 같은 호출기로 씁니다 (바꿔 끼운 호출기도 그대로).
         self.skill_draft = SkillDraftDialog(
@@ -501,7 +506,15 @@ class ExpertPage:
         if saved is None:
             return None
         self.chat_feed.append_message(saved.note)
+        self.chat_feed.add_ledger_revision(saved.revision)
         return saved.ledger
+
+    def open_ledger(self) -> None:
+        """요약 띠의 쟁점 칩·개수를 눌렀을 때. 로스터와 결정 장부 칸을 펼치고 장부가 보이는 곳까지 스크롤합니다."""
+        target, expanded = self.roster_control.open_ledger()
+        if target is not None:
+            # 로스터 칸은 펼침 애니메이션(약 300ms)이 있습니다. 펼쳤으면 끝난 뒤에 스크롤합니다.
+            ui.run_javascript(reveal_js(target.id, "start", LEDGER_REVEAL_DELAY_MS if expanded else 0))
 
     async def on_decision(self, extra: int, request_id: str) -> None:
         """한도에 닿은 에이전트에게 확장 여부를 알려 줍니다 (도구 상한·컨텍스트 공통).
@@ -1001,6 +1014,16 @@ class ExpertPage:
                 if m.turn_id in checkpoints and kind_of(m) == KIND_SYNTHESIS
             ]
 
+            # 결정 장부 요약 띠 (ADR-051). 개정은 턴 도중에도 바로 저장되므로 진행 중인 턴의 라운드까지 들어 있습니다.
+            ledger_revisions = await ledger_history.load_revisions(db, sid)
+            converged_rounds = {
+                m.turn_id: int((m.turn_meta or {}).get("round") or m.round_number or 0)
+                for m in messages_db
+                if m.turn_id and kind_of(m) == KIND_EARLY_END
+                and (m.turn_meta or {}).get("reason") == EARLY_END_CONVERGED
+            }
+            ledger_text = (s_obj.decision_ledger or "") if s_obj else ""
+
             # Load artifacts
             stmt_a = select(ArtifactModel).where(ArtifactModel.session_id == sid).order_by(ArtifactModel.created_at)
             res_a = await db.execute(stmt_a)
@@ -1049,6 +1072,9 @@ class ExpertPage:
             self.events.graph_tracker = GraphRunTracker.from_history(graph_spec, history, state=graph_state)
         self.roster_control.set_graph_run(self.events.graph_tracker, active=running)
 
+        self.chat_feed.set_ledger_revisions(ledger_revisions, ledger_text, converged_rounds)
+        if running and snapshot.get("phase") == "synthesizing":
+            self.chat_feed.set_ledger_synthesizing(snapshot.get("turn_id"))
         if formatted_msgs:
             self.chat_feed.render_all(formatted_msgs, streaming_ids=streaming_ids)
             # 결론 카드마다 그 턴이 작업 공간에서 바꾼 파일 수 (`TurnModel.checkpoint`).
