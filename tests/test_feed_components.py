@@ -623,13 +623,15 @@ def test_only_the_feed_that_asks_for_it_has_the_strip():
     ChatFeed(_noop).add_ledger_revision(_rev("t1", 1, "round", [1]))   # 띠가 없으면 조용히 넘어갑니다
 
 
-def test_the_reveal_script_waits_for_the_dom_and_for_an_opening_animation():
-    from app.ui.components.chat_feed.common import reveal_js
+def test_the_reveal_script_waits_until_the_target_stops_moving():
+    """Quasar 의 접이식 칸은 펼친 뒤에도 잠깐 `height: 0` 입니다. 정해 둔 프레임 수가 아니라 자리가 그대로일 때 스크롤합니다."""
+    from app.ui.components.chat_feed.common import REVEAL_MAX_FRAMES, reveal_js
 
     script = reveal_js(42, "start")
-    assert script.count("requestAnimationFrame") == 2 and "getHtmlElement(42)" in script
-    assert 'block: "start"' in script and "setTimeout" not in script
-    assert reveal_js(42, delay_ms=350).startswith("setTimeout(") and ", 350)" in reveal_js(42, delay_ms=350)
+    assert "getHtmlElement(42)" in script and 'block: "start"' in script
+    assert "still >= 2" in script and f"++frames > {REVEAL_MAX_FRAMES}" in script
+    assert "getBoundingClientRect" in script and "requestAnimationFrame(tick)" in script
+    assert "q-expansion-item__content" in script and "style.height" in script, "붙잡힌 높이가 풀리기를 기다립니다"
 
 
 @pytest.mark.asyncio
@@ -680,3 +682,190 @@ def test_a_reattached_page_knows_the_turn_is_synthesizing():
     run = TurnRun("s", "요청", None)
     run.apply({"type": EventType.STATUS_CHANGED, "status": "synthesizing", "speaker": "Orchestrator"})
     assert run.snapshot()["phase"] == "synthesizing"
+
+
+# ------------------------------------------------------------------ 라운드 묶음 (P3)
+
+from app.orchestration import turns as turn_kinds  # noqa: E402
+
+
+def _gm(mid, rnd, kind=turn_kinds.KIND_SPEECH, *, turn="t1", sender="architect", tools=0, msg_type="agent", **extra):
+    return {
+        "id": mid, "turn_id": turn, "round_number": rnd, "sender_key": sender, "sender_name": sender.title(),
+        "sender_role": "", "content": f"{mid} 의 발언", "msg_type": msg_type,
+        "turn_meta": turn_kinds.meta(kind) if kind else None,
+        "tool_calls": [{"tool_name": "fs__read_file", "arguments": {}, "output": "", "status": "success"}] * tools,
+        **extra,
+    }
+
+
+def _grouped_timeline() -> CardTimeline:
+    timeline = CardTimeline(group_rounds=True)
+    timeline.build_status_buttons()
+    timeline.build_area()
+    return timeline
+
+
+def _top_level(timeline: CardTimeline) -> List[str]:
+    """타임라인 바로 아래에 놓인 것: 카드는 그 발언 id, 묶음은 "group:턴:라운드"."""
+    by_card = {id(info["card"]): mid for mid, info in timeline._cards_by_id.items()}
+    by_group = {id(g["expansion"]): f"group:{k[0]}:{k[1]}" for k, g in timeline._groups.items()}
+    out = []
+    for child in timeline.message_container.default_slot.children:
+        out.append(by_card.get(id(child)) or by_group.get(id(child)) or type(child).__name__)
+    return out
+
+
+def test_without_grouping_the_timeline_stays_flat():
+    timeline = CardTimeline()
+    timeline.build_status_buttons()
+    timeline.build_area()
+    timeline.render_all([_gm("a", 1), _gm("b", 2)])
+    assert timeline._groups == {} and _top_level(timeline) == ["a", "b"]
+
+
+def test_cards_go_into_round_groups_and_turn_boundaries_stay_outside():
+    timeline = _grouped_timeline()
+    timeline.render_all([
+        _gm("req", 0, turn_kinds.KIND_OPENING, sender="user", msg_type="user"),
+        _gm("plan", 0, turn_kinds.KIND_PLAN, sender="orchestrator", msg_type="orchestrator"),
+        _gm("nom1", 1, turn_kinds.KIND_NOMINATION, sender="orchestrator", msg_type="orchestrator"),
+        _gm("a1", 1, tools=2), _gm("c1", 1, sender="critic", tools=1),
+        _gm("a2", 2), _gm("fail2", 2, turn_kinds.KIND_FAILURE, sender="critic", msg_type="error"),
+        _gm("syn", 3, turn_kinds.KIND_SYNTHESIS, sender="orchestrator", msg_type="orchestrator"),
+        _gm("old", 1, None, turn=None),                                   # 턴 id 없는 옛 기록
+    ])
+    assert _top_level(timeline) == ["req", "plan", "group:t1:1", "group:t1:2", "syn", "old"]
+    assert timeline._groups[("t1", 1)]["cards"] == {"nom1", "a1", "c1"}
+    assert timeline._groups[("t1", 1)]["header"].text == "Round 1 · 발언 2 · 도구 3회"
+    assert timeline._groups[("t1", 2)]["header"].text == "Round 2 · 발언 1", "실패한 발언은 세지 않습니다"
+
+
+def test_an_interjection_joins_an_open_group_but_never_opens_one():
+    timeline = _grouped_timeline()
+    timeline.render_all([_gm("a1", 1)])
+    timeline.append_message(_gm("u1", 1, turn_kinds.KIND_INTERJECTION, sender="user", msg_type="user"))
+    timeline.append_message(_gm("late", 4, turn_kinds.KIND_INTERJECTION, sender="user", msg_type="user"))
+    assert "u1" in timeline._groups[("t1", 1)]["cards"]
+    assert ("t1", 4) not in timeline._groups and _top_level(timeline)[-1] == "late", \
+        "합성 뒤로 미룬 개입이 발언 없는 묶음을 만들지 않습니다"
+
+
+def test_a_new_group_opens_expanded_without_animation_and_folds_the_previous_one():
+    timeline = _grouped_timeline()
+    timeline.start_streaming_message(_gm("a1", 1))
+    first = timeline._groups[("t1", 1)]["expansion"]
+    assert first.value is True and first._props.get("duration") == 0
+    timeline.append_message(_gm("a1", 1))
+    timeline._scroll_settle_pending = False
+
+    timeline.start_streaming_message(_gm("a2", 2))
+
+    assert timeline._groups[("t1", 2)]["expansion"].value is True, "방금 시작한 발언이 접힌 칸 안에서 흐르지 않습니다"
+    assert first.value is False, "따라가는 중이면 직전 묶음을 접습니다"
+    assert timeline._scroll_settle_pending is True, "접은 뒤 바닥을 다시 맞춥니다"
+
+
+def test_the_previous_group_stays_open_when_the_reader_is_elsewhere():
+    timeline = _grouped_timeline()
+    timeline.append_message(_gm("a1", 1))
+    timeline.handle_manual_scroll()           # 위로 스크롤해 읽는 중
+    timeline.append_message(_gm("a2", 2))
+    assert timeline._groups[("t1", 1)]["expansion"].value is True
+
+    timeline.release_scroll()
+    timeline._groups[("t1", 2)]["expansion"].set_value(False)   # 사람이 접었다가
+    timeline._groups[("t1", 2)]["expansion"].set_value(True)    # 다시 폄
+    assert timeline.following is False, "직접 편 묶음은 펼친 카드처럼 자동 스크롤을 멈춥니다"
+    timeline.release_scroll()
+    timeline.append_message(_gm("a3", 3))
+    assert timeline._groups[("t1", 2)]["expansion"].value is True, "사람이 편 묶음은 접지 않습니다"
+
+
+def test_a_group_with_a_streaming_card_is_never_folded():
+    timeline = _grouped_timeline()
+    timeline.start_streaming_message(_gm("a1", 1))       # 아직 흐르는 중
+    timeline.append_message(_gm("c2", 2))
+    assert timeline._groups[("t1", 1)]["expansion"].value is True
+
+    timeline.render_all([_gm("a1", 1), _gm("a2", 2)], streaming_ids=["a1"])
+    assert timeline._groups[("t1", 1)]["expansion"].value is True, "불러올 때도 흐르는 카드의 묶음은 펼칩니다"
+
+
+def test_loading_folds_finished_turns_and_keeps_the_live_turns_last_group_open():
+    timeline = _grouped_timeline()
+    messages = [_gm("a1", 1, turn="t1"), _gm("a2", 2, turn="t1"), _gm("b1", 1, turn="t2"), _gm("b2", 2, turn="t2")]
+    timeline.render_all(messages)
+    assert [g["expansion"].value for g in timeline._groups.values()] == [False, False, False, False]
+
+    timeline.render_all(messages, live_turn_id="t2")
+    assert [g["expansion"].value for g in timeline._groups.values()] == [False, False, False, True]
+    assert timeline.following is True, "불러온 접힘은 사람이 연 것이 아닙니다"
+
+
+def test_a_late_card_goes_into_its_own_round_and_keeps_its_fold():
+    timeline = _grouped_timeline()
+    timeline.render_all([_gm("a1", 1), _gm("a2", 2)])
+    timeline.append_message(_gm("late1", 1, turn_kinds.KIND_STAGNATION, sender="orchestrator", msg_type="orchestrator"))
+    assert "late1" in timeline._groups[("t1", 1)]["cards"] and _top_level(timeline) == ["group:t1:1", "group:t1:2"]
+    assert timeline._groups[("t1", 1)]["expansion"].value is False
+
+
+def test_headers_carry_the_ledger_change_of_their_round():
+    timeline = _grouped_timeline()
+    timeline.render_all([_gm("a1", 1), _gm("a2", 2), _gm("s1", 1, turn="g", graph_node_id="n1")])
+    timeline.set_round_summaries({
+        ("t1", 1): {"decided": 1, "closed": [3], "opened": [5, 6, 7, 8], "final": False},
+        ("t1", 2): {"decided": 0, "closed": [], "opened": [], "final": True},
+    })
+    assert timeline._groups[("t1", 1)]["header"].text == "Round 1 · 발언 1 · 결정 +1 · 닫힘 I-3 · 새 I-5, I-6, I-7 외 1"
+    assert timeline._groups[("t1", 2)]["header"].text == "Round 2 · 발언 1 (최종 합성 반영)"
+    assert timeline._groups[("g", 1)]["header"].text.startswith("Step 1"), "그래프 토론은 단계입니다"
+
+
+def test_revealing_a_card_in_a_folded_group_opens_it_first_and_waits_for_layout(monkeypatch):
+    scripts: List[str] = []
+    monkeypatch.setattr(ui, "run_javascript", lambda code, *a, **k: scripts.append(code))
+    timeline = _grouped_timeline()
+    timeline.render_all([_gm("a1", 1), _gm("a2", 2)])
+    assert timeline._groups[("t1", 1)]["expansion"].value is False
+
+    assert timeline.reveal_message("a1") is True
+
+    assert timeline._groups[("t1", 1)]["expansion"].value is True
+    assert "still >= 2" in scripts[-1] and "scrollIntoView" in scripts[-1]
+
+    assert timeline.reveal_round("t1", 2) is True and timeline._groups[("t1", 2)]["expansion"].value is True
+    assert f"getHtmlElement({timeline._groups[('t1', 2)]['expansion'].id})" in scripts[-1]
+    assert timeline.reveal_round("t1", 9) is False
+
+
+def test_collapse_all_also_folds_groups_the_person_opened():
+    timeline = _grouped_timeline()
+    timeline.render_all([_gm("a1", 1), _gm("a2", 2)])
+    timeline._groups[("t1", 1)]["expansion"].set_value(True)        # 사람이 폄
+    assert timeline.collapse_all_button.visible is True
+
+    timeline.collapse_all_cards()
+
+    assert timeline._groups[("t1", 1)]["expansion"].value is False and timeline.following is True
+
+
+def test_retrying_a_speech_in_a_folded_group_opens_that_group():
+    timeline = _grouped_timeline()
+    timeline.render_all([_gm("a1", 1), _gm("a2", 2)])
+    timeline.start_streaming_message(_gm("a1", 1))
+    assert timeline._groups[("t1", 1)]["expansion"].value is True
+    timeline.append_message(_gm("a2b", 2))
+    assert timeline._groups[("t1", 1)]["expansion"].value is True, "다시 실행 중인 묶음은 접지 않습니다"
+
+
+def test_the_feed_wires_round_chips_to_its_groups():
+    feed = ChatFeed(_noop, show_ledger_strip=True, group_rounds=True)
+    assert feed.ledger_strip.on_reveal_round == feed.timeline.reveal_round
+    assert ChatFeed(_noop, show_ledger_strip=True).ledger_strip.on_reveal_round is None
+    feed.build_ui()
+    feed.render_all([_gm("a1", 1)])
+    feed.add_ledger_revision({"id": "r1", "turn_id": "t1", "round": 1, "kind": "round",
+                              "open": [{"no": 1, "text": "x"}], "decided": 2, "rejected": 0})
+    assert feed.timeline._groups[("t1", 1)]["header"].text == "Round 1 · 발언 1 · 결정 +2 · 새 I-1"

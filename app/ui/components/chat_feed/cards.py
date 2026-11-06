@@ -1,7 +1,7 @@
 """토론 피드 — 발언 카드 타임라인: 그리기, 스트리밍, 확정, 겉모습, 접기·복사, 도구 기록, 스크롤 따라가기."""
 
 import json
-from typing import Any, Callable, Coroutine, Dict, Iterable, List, Optional, Set
+from typing import Any, Callable, Coroutine, Dict, Iterable, List, Optional, Set, Tuple
 
 from nicegui import ui
 
@@ -11,7 +11,7 @@ from app.orchestration.graph_run import NodeBadges
 from app.orchestration.speech_comments import commentable
 from app.orchestration.speech_retry import retryable
 from app.orchestration.state import FALLBACK_BADGE, fallback_sentence
-from app.orchestration.turns import in_main_record, sub_debate_label
+from app.orchestration.turns import in_main_record, kind_of, sub_debate_label
 from app.ui.clipboard import copy_to_clipboard
 from app.ui.components.chat_feed.common import (
     CLAMP_LINES,
@@ -19,9 +19,14 @@ from app.ui.components.chat_feed.common import (
     OUTCOME_STYLES,
     SCROLL_TO_BOTTOM_PX,
     SPEECH_ATTRIBUTE,
-    _card_classes,
+    JOIN_ONLY_KINDS,
+    card_class_string,
     card_time_text,
+    counts_as_speech,
     is_clampable,
+    reveal_js,
+    round_group_header,
+    round_group_key,
     speech_versions,
     version_caption,
 )
@@ -41,6 +46,7 @@ class CardTimeline:
         on_restore_version: Optional[Callable[[str, int], Coroutine[None, None, None]]] = None,
         on_delete_comment: Optional[Callable[[str], Coroutine[None, None, bool]]] = None,
         render_turn_usage: Optional[Callable[[str], None]] = None,
+        group_rounds: bool = False,
     ):
         # 결론 카드에 해당 턴의 토큰·시간 패널을 렌더링하는 콜백 (턴 ID 전달, ADR-048). 미지정 시 패널이 표시되지 않습니다.
         self.render_turn_usage = render_turn_usage
@@ -91,6 +97,16 @@ class CardTimeline:
         self.follow_button: Optional[ui.button] = None
         # 그려 둔 코멘트 줄 (코멘트 id → {row, badge, delete}). 전달되면 그 줄만 고칩니다.
         self._comment_rows: Dict[str, Dict[str, Any]] = {}
+        # 라운드 묶음 (전문가 화면만, docs/feature_ui_upgrade.md P3). 열쇠는 (턴 id, 라운드)입니다.
+        self.group_rounds = group_rounds
+        self._groups: Dict[Tuple[str, int], Dict[str, Any]] = {}
+        self._card_group: Dict[str, Tuple[str, int]] = {}
+        # 가장 최근에 연 묶음. 새 라운드의 첫 카드가 오면 이것을 접습니다.
+        self._latest_group: Optional[Tuple[str, int]] = None
+        # 사용자가 직접 펼친 묶음. 펼친 카드처럼 자동 스크롤을 멈춥니다.
+        self._user_expanded_groups: Dict[Tuple[str, int], Dict[str, Any]] = {}
+        # 라운드마다의 장부 변화량 (`ledger_history.round_deltas`). 화면이 넘깁니다.
+        self._round_summaries: Dict[Tuple[str, int], Dict[str, Any]] = {}
 
     @property
     def alive(self) -> bool:
@@ -167,6 +183,7 @@ class CardTimeline:
         # 카드가 사라지므로 펼침 기억도 함께 버립니다. 남겨 두면 다음 대화가
         # 있지도 않은 카드 때문에 자동 스크롤이 꺼진 채로 시작합니다.
         self._user_expanded.clear()
+        self._forget_groups()
         self.release_scroll()
         if not self.alive:
             return
@@ -179,11 +196,15 @@ class CardTimeline:
         self,
         messages: List[Dict[str, Any]],
         streaming_ids: Optional[Iterable[str]] = None,
+        live_turn_id: Optional[str] = None,
     ) -> None:
         """피드를 통째로 다시 그립니다.
 
         `streaming_ids` 는 아직 생성 중인 발언입니다. 새로고침 뒤에 다시 붙었을 때
         이어지는 청크가 갈 곳을 만들어 두기 위해 스트리밍 카드로 등록해 둡니다.
+
+        라운드 묶음을 켰으면 끝난 턴의 묶음은 모두 접습니다. `live_turn_id` 는 진행 중인 턴이고, 그 턴의 마지막
+        묶음과 스트리밍 중인 카드가 든 묶음만 펼쳐 둡니다.
         """
         if not self.alive:
             return
@@ -193,6 +214,7 @@ class CardTimeline:
         self._cards_by_id.clear()
         self._comment_rows.clear()
         self._user_expanded.clear()
+        self._forget_groups()
         self._scroll_detached = False
         self.refresh_follow_button()
         self._placeholder = None
@@ -203,13 +225,19 @@ class CardTimeline:
                 self.render_empty_placeholder()
             return
 
-        with self.message_container:
-            for m in messages:
-                msg_id = m.get("id", "")
-                is_streaming = bool(msg_id) and msg_id in streaming
+        for m in messages:
+            msg_id = m.get("id", "")
+            is_streaming = bool(msg_id) and msg_id in streaming
+            with self._container_for(m, live=False):
                 handles = self._render_card(m, streaming=is_streaming)
-                if is_streaming:
-                    self._active_streams[msg_id] = handles
+            self._join_group(m, handles)
+            if is_streaming:
+                self._active_streams[msg_id] = handles
+
+        # 불러온 화면의 접힘 (끝난 턴은 모두 접고, 진행 중인 턴은 마지막 묶음만 펼칩니다).
+        live_last = next((key for key in reversed(list(self._groups)) if key[0] == live_turn_id), None)
+        for key, group in self._groups.items():
+            self._set_group_open(group, key == live_last or self._group_streaming(group))
 
         # 방금 그린 화면입니다. 펼친 카드가 있을 수 없으므로 그냥 맨 아래로.
         self.scroll_to_bottom(force=True)
@@ -227,11 +255,17 @@ class CardTimeline:
         if existing is not None and existing["card"].is_deleted is False:
             self._restart_card(existing, msg)
             self._active_streams[msg_id] = existing
+            # 접힌 묶음 안의 발언을 다시 실행하면, 흐르는 글이 보이게 그 묶음을 폅니다.
+            group = self._groups.get(self._card_group.get(msg_id))
+            if group is not None:
+                self._set_group_open(group, True)
             return
 
         self._drop_placeholder()
-        with self.message_container:
-            self._active_streams[msg_id] = self._render_card(msg, streaming=True)
+        with self._container_for(msg, live=True):
+            handles = self._render_card(msg, streaming=True)
+        self._active_streams[msg_id] = handles
+        self._join_group(msg, handles)
         self.scroll_to_bottom()
 
     def _restart_card(self, info: Dict[str, Any], msg: Dict[str, Any]) -> None:
@@ -241,7 +275,7 @@ class CardTimeline:
         info["started_at"] = msg.get("started_at")
         info["msg_type"] = msg.get("msg_type", "agent")
         info["card"].classes(
-            replace=f"w-full p-3.5 rounded-xl border {_card_classes(info['msg_type'], msg.get('sender_key', ''))} shadow-md"
+            replace=card_class_string(info['msg_type'], msg.get('sender_key', ''))
         )
         info["failed_badge"].set_visibility(False)
         self._set_fallback(info, None)
@@ -298,8 +332,9 @@ class CardTimeline:
             return
 
         self._drop_placeholder()
-        with self.message_container:
-            self._render_card(msg)
+        with self._container_for(msg, live=True):
+            handles = self._render_card(msg)
+        self._join_group(msg, handles)
         self.scroll_to_bottom()
 
     def _finalize_streaming_message(self, msg: Dict[str, Any]) -> None:
@@ -340,10 +375,7 @@ class CardTimeline:
         if msg_type != info.get("msg_type"):
             card = info.get("card")
             if card is not None and not card.is_deleted:
-                card.classes(
-                    replace=f"w-full p-3.5 rounded-xl border "
-                            f"{_card_classes(msg_type, msg.get('sender_key', ''))} shadow-md"
-                )
+                card.classes(replace=card_class_string(msg_type, msg.get('sender_key', '')))
             failed_badge = info.get("failed_badge")
             if failed_badge is not None and not failed_badge.is_deleted:
                 failed_badge.set_visibility(msg_type == "error")
@@ -360,6 +392,7 @@ class CardTimeline:
             with info["tool_container"]:
                 for tc in tool_calls:
                     self._render_tool_accordion(tc)
+        self._count_in_group(msg_id, msg)
 
         # 발언이 끝났으므로 접습니다. 여기가 이 기능이 실제로 걸리는 자리입니다 —
         # 스트리밍 중에는 확장 렌더링하고, 작성이 완료되면 간략히 축소합니다. 단, 사용자가
@@ -392,7 +425,7 @@ class CardTimeline:
 
         둘 다 아니면 볼 것이 흐름뿐이므로 따라갑니다.
         """
-        return not self._user_expanded and not self._scroll_detached
+        return not self._user_expanded and not self._user_expanded_groups and not self._scroll_detached
 
     def handle_manual_scroll(self, _event=None) -> None:
         """휠이나 터치로 스크롤을 움직였습니다. 방향은 보지 않습니다.
@@ -448,7 +481,7 @@ class CardTimeline:
         움직여서라면 이 버튼이 풀어 줍니다. 곁의 "카드 모두 접기" 도 같은 장부를 보므로
         여기서 함께 맞춥니다.
         """
-        expanded = len(self._user_expanded)
+        expanded = len(self._user_expanded) + len(self._user_expanded_groups)
         collapse_all = self.collapse_all_button
         if collapse_all is not None and not collapse_all.is_deleted:
             collapse_all.set_visibility(expanded > 0)
@@ -514,9 +547,7 @@ class CardTimeline:
         # 채우지만, 핸들러는 클릭될 때 읽으므로 지금 비어 있어도 됩니다.
         info: Dict[str, Any] = {}
 
-        card = ui.card().classes(
-            f"w-full p-3.5 rounded-xl border {_card_classes(msg_type, sender_key)} shadow-md"
-        )
+        card = ui.card().classes(card_class_string(msg_type, sender_key))
         # 색을 직접 정한 에이전트는 말풍선 테두리도 그 색으로 칠합니다. 실패
         # 안내(붉은 테두리)만은 덮지 않습니다 — 그 색이 곧 내용이기 때문입니다.
         if style.get("custom") and msg_type != "error":
@@ -746,7 +777,7 @@ class CardTimeline:
         msg_type = version.get("msg_type", "agent")
         info["msg_type"] = msg_type
         info["card"].classes(
-            replace=f"w-full p-3.5 rounded-xl border {_card_classes(msg_type, info.get('sender_key', ''))} shadow-md"
+            replace=card_class_string(msg_type, info.get('sender_key', ''))
         )
         info["failed_badge"].set_visibility(msg_type == "error")
         self._set_fallback(info, version.get("llm_meta"))
@@ -848,15 +879,163 @@ class CardTimeline:
         card = info.get("card") if info else None
         if card is None or card.is_deleted:
             return False
+        # 접힌 라운드 묶음 안의 카드면 묶음부터 폅니다. 검색, 다시 실행, 인용 링크가 모두 이 길을 씁니다.
+        group = self._groups.get(self._card_group.get(message_id))
+        if group is not None:
+            self._set_group_open(group, True)
         if info.get("collapsed"):
             self._toggle_card(info)
         # 사용자가 선택한 발언 카드로 이동합니다. 신규 발언 스트리밍 시에도 뷰포트가 최하단으로 강제 스크롤되지 않도록 자동 추적을 일시 해제합니다.
         self._scroll_detached = True
         self.refresh_follow_button()
         card.classes(add="ring-2 ring-amber-400")
-        ui.run_javascript(f'getHtmlElement({card.id})?.scrollIntoView({{block: "center", behavior: "smooth"}})')
+        # 막 편 묶음은 Vue 가 DOM 을 고치기 전이라 아직 보이지 않습니다. 두 프레임 기다린 뒤 스크롤합니다 (`reveal_js`).
+        ui.run_javascript(reveal_js(card.id, "center"))
         ui.timer(2.5, lambda: card.is_deleted or card.classes(remove="ring-2 ring-amber-400"), once=True)
         return True
+
+    def reveal_round(self, turn_id: str, round_number: int) -> bool:
+        """그 라운드 묶음을 펴고 머리줄이 보이게 스크롤합니다 (장부 요약 띠의 라운드 칩). 묶음이 없으면 False."""
+        group = self._groups.get((turn_id, int(round_number)))
+        expansion = group.get("expansion") if group else None
+        if expansion is None or expansion.is_deleted:
+            return False
+        self._set_group_open(group, True)
+        self._scroll_detached = True
+        self.refresh_follow_button()
+        ui.run_javascript(reveal_js(expansion.id, "start"))
+        return True
+
+    def set_round_summaries(self, summaries: Dict[Tuple[str, int], Dict[str, Any]]) -> None:
+        """라운드마다의 장부 변화량 (`ledger_history.round_deltas`). 타임라인은 DB 를 모르므로 화면이 넘깁니다."""
+        self._round_summaries = dict(summaries or {})
+        for key in self._groups:
+            self._refresh_group_header(key)
+
+    # ------------------------------------------------------------ 라운드 묶음 (P3)
+
+    def _forget_groups(self) -> None:
+        self._groups.clear()
+        self._card_group.clear()
+        self._user_expanded_groups.clear()
+        self._latest_group = None
+
+    def _container_for(self, msg: Dict[str, Any], *, live: bool) -> ui.element:
+        """이 카드를 놓을 자리. 묶지 않는 카드는 타임라인 끝, 묶는 카드는 그 묶음의 본문입니다.
+
+        묶음은 그 열쇠의 첫 카드(스트리밍 시작이든 완성된 기록이든)가 올 때 타임라인 끝에 만듭니다. 그래서 묶음과 묶지
+        않는 카드가 도착 순서대로 놓이고, 지난 묶음에 늦게 온 카드(라운드가 끝난 뒤 적힌 메모 등)는 그 묶음에 들어갑니다.
+        """
+        key = round_group_key(msg) if self.group_rounds else None
+        if key is None:
+            return self.message_container
+        group = self._groups.get(key)
+        if group is None:
+            if kind_of(msg) in JOIN_ONLY_KINDS:
+                return self.message_container
+            group = self._open_group(key, msg, live=live)
+        return group["body"]
+
+    def _open_group(self, key: Tuple[str, int], msg: Dict[str, Any], *, live: bool) -> Dict[str, Any]:
+        """새 묶음을 늘 펼친 채로 만듭니다. 방금 시작한 발언이 접힌 칸 안에서 흐르는 일이 없게 하려는 것입니다.
+
+        실시간이면 직전 묶음을 접습니다. 다만 피드를 따라가는 중이고, 사용자가 그 묶음을 직접 펴지 않았고, 그 안에
+        생성 중인 카드가 없을 때만입니다. 읽고 있는 글이 위로 사라지지 않게 하려는 것입니다. 접으면 피드 높이가 크게
+        줄어 브라우저가 스크롤을 새 바닥으로 당기지만, `scroll_to_bottom` 으로 배치가 끝난 뒤 한 번 더 맞춥니다.
+        """
+        collapsed_previous = False
+        previous = self._groups.get(self._latest_group) if live and self._latest_group != key else None
+        if (
+            previous is not None and self.following and not previous.get("user_expanded")
+            and not self._group_streaming(previous)
+        ):
+            self._set_group_open(previous, False)
+            collapsed_previous = True
+
+        word = "Step" if msg.get("graph_node_id") else "Round"
+        with self.message_container:
+            # 펼침 애니메이션은 끕니다 (duration=0). 약 300ms 동안 높이가 바뀌는 사이에 스크롤하면 목표 위치가 아직
+            # 없고, 카드 수십 장이 든 묶음의 높이를 프레임마다 바꾸면 스트리밍 중에 배치 계산이 계속 일어납니다.
+            expansion = ui.expansion(value=True).props("dense").classes(
+                "round-group w-full rounded-xl border border-slate-800 bg-slate-950/30"
+            )
+            # 문자열 "0" 이 아니라 숫자로 넘깁니다 (Quasar 의 `duration` 은 Number 입니다).
+            expansion.props["duration"] = 0
+            with expansion.add_slot("header"):
+                with ui.row().classes("items-center gap-2 flex-nowrap min-w-0 w-full"):
+                    header = ui.label("").classes("text-xs font-semibold text-slate-300 truncate min-w-0")
+            with expansion:
+                body = ui.column().classes("w-full gap-3 px-2 pb-2")
+        group: Dict[str, Any] = {
+            "key": key, "expansion": expansion, "header": header, "body": body, "word": word,
+            "cards": set(), "speeches": {}, "tools": {}, "user_expanded": False, "programmatic": False,
+        }
+        expansion.on_value_change(lambda e, g=group: self._on_group_toggled(g, bool(e.value)))
+        self._groups[key] = group
+        self._latest_group = key
+        self._refresh_group_header(key)
+        if collapsed_previous:
+            self.scroll_to_bottom()
+        return group
+
+    def _join_group(self, msg: Dict[str, Any], info: Dict[str, Any]) -> None:
+        """그려진 카드를 그 묶음의 셈에 넣습니다. 묶음이 없으면(묶지 않는 카드, 묶음을 열지 않는 개입) 넘어갑니다."""
+        key = round_group_key(msg) if self.group_rounds else None
+        group = self._groups.get(key) if key else None
+        msg_id = info.get("id") or ""
+        if group is None or not msg_id:
+            return
+        group["cards"].add(msg_id)
+        self._card_group[msg_id] = key
+        self._count_in_group(msg_id, msg)
+
+    def _count_in_group(self, msg_id: str, msg: Dict[str, Any]) -> None:
+        key = self._card_group.get(msg_id)
+        group = self._groups.get(key) if key else None
+        if group is None:
+            return
+        group["speeches"][msg_id] = counts_as_speech(msg)
+        group["tools"][msg_id] = len(msg.get("tool_calls") or [])
+        self._refresh_group_header(key)
+
+    def _refresh_group_header(self, key: Tuple[str, int]) -> None:
+        group = self._groups.get(key)
+        header = group.get("header") if group else None
+        if header is None or header.is_deleted:
+            return
+        header.set_text(round_group_header(
+            group["word"], key[1], sum(group["speeches"].values()), sum(group["tools"].values()),
+            self._round_summaries.get(key),
+        ))
+
+    def _group_streaming(self, group: Dict[str, Any]) -> bool:
+        """생성 중인 카드가 든 묶음은 접지 않습니다 (지난 라운드 발언을 다시 실행하는 경우 포함)."""
+        return any(msg_id in self._active_streams for msg_id in group["cards"])
+
+    def _set_group_open(self, group: Dict[str, Any], value: bool) -> None:
+        """코드가 묶음을 여닫습니다. 사람이 연 것으로 세지 않습니다 (`_on_group_toggled`)."""
+        expansion = group.get("expansion")
+        if expansion is None or expansion.is_deleted or bool(expansion.value) == value:
+            return
+        group["programmatic"] = True
+        try:
+            expansion.set_value(value)
+        finally:
+            group["programmatic"] = False
+
+    def _on_group_toggled(self, group: Dict[str, Any], opened: bool) -> None:
+        """사람이 묶음을 여닫았습니다. 펼치면 카드를 펼칠 때와 같이 자동 스크롤을 놓습니다."""
+        if group.get("programmatic"):
+            return
+        key = group["key"]
+        group["user_expanded"] = opened
+        if opened:
+            self._user_expanded_groups[key] = group
+        else:
+            self._user_expanded_groups.pop(key, None)
+        self.refresh_follow_button()
+        if not opened and self.following and self._active_streams:
+            self.scroll_to_bottom()
 
     def set_turn_actions(self, message_id: Optional[str], turn_id: str, changed: Optional[int] = None) -> None:
         """결론 카드에 해당 턴의 액션을 연결합니다 (세션 분기, 스킬 생성, 작업 공간 변경 파일 칩, 토큰·시간 패널)."""
@@ -992,6 +1171,11 @@ class CardTimeline:
         for info in list(self._user_expanded.values()):
             self._apply_clamp(info, collapsed=True)
         self._user_expanded.clear()
+        # 직접 펼친 라운드 묶음도 접습니다. 생성 중인 카드가 든 묶음은 그대로 둡니다.
+        for group in list(self._user_expanded_groups.values()):
+            if not self._group_streaming(group):
+                self._set_group_open(group, False)
+        self._user_expanded_groups.clear()
         self.refresh_follow_button()
         if self.following and self._active_streams:
             self.scroll_to_bottom()

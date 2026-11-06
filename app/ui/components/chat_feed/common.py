@@ -1,9 +1,10 @@
 """토론 피드의 상수와 순수 함수 (카드 시각 표기, 접기 기준, 승인 카드 모양, 다시 불러온 도구 출력 자르기)."""
 
 import logging
-from typing import Any, Callable, Coroutine, Dict, List, Tuple
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
 
 from app.agents.llm_usage import Usage, format_tokens, usage_line
+from app.orchestration import turns
 from app.orchestration.speech_retry import live_number
 from app.timestamps import format_duration, speech_time_text, speech_timing, to_local
 
@@ -110,17 +111,108 @@ CLAMP_MIN_NEWLINES = 3
 SCROLL_TO_BOTTOM_PX = 10_000_000
 
 
-def reveal_js(element_id: int, block: str = "center", delay_ms: int = 0) -> str:
-    """요소가 보이게 스크롤하는 스크립트. 펼친 직후에도 위치가 맞도록 DOM 갱신 뒤에 돕니다.
+# ---------------------------------------------------------------- 라운드 묶음 (전문가 화면, docs/feature_ui_upgrade.md P3)
+
+# 묶지 않는 기록. 턴을 여닫는 것(요청·계획·승인·그래프 설계·결론)과 턴 밖의 기록(직접 수정, 일반 안내)입니다. 사용자 요청과
+# 결론 카드가 묶음 밖에 있어야 묶음을 다 접어도 무엇을 묻고 무엇을 얻었는지 보입니다.
+UNGROUPED_KINDS = frozenset({
+    turns.KIND_OPENING, turns.KIND_PLAN, turns.KIND_APPROVAL, turns.KIND_PLAN_REVISION, turns.KIND_GRAPH_DRAFT,
+    turns.KIND_SYNTHESIS, turns.KIND_LEDGER_EDIT, turns.KIND_NOTE, turns.KIND_KERNEL_REPLAY,
+})
+# 묶음을 새로 열지 않고, 열린 묶음에만 들어가는 기록. 합성 뒤로 미룬 개입이 발언 없는 묶음을 만들지 않게 합니다.
+JOIN_ONLY_KINDS = frozenset({turns.KIND_INTERJECTION})
+# 머리줄의 "발언 n" 에 세는 기록.
+GROUP_SPEECH_KINDS = frozenset({
+    turns.KIND_SPEECH, turns.KIND_MERGE, turns.KIND_SUBDEBATE_SPEECH, turns.KIND_SUBDEBATE_CONCLUSION,
+})
+# 머리줄에 이름을 적을 쟁점 수. 넘치면 "외 n".
+GROUP_HEADER_ISSUES = 3
+
+
+def round_group_key(msg: Dict[str, Any]) -> Optional[Tuple[str, int]]:
+    """이 기록이 들어갈 라운드 묶음의 열쇠 (턴 id, 라운드). 묶지 않으면 None.
+
+    라운드 0 과 턴 id 가 없는 옛 기록도 묶지 않습니다.
+    """
+    turn_id = msg.get("turn_id")
+    round_number = int(msg.get("round_number") or 0)
+    if not turn_id or round_number <= 0:
+        return None
+    if turns.kind_of(msg) in UNGROUPED_KINDS:
+        return None
+    return turn_id, round_number
+
+
+def counts_as_speech(msg: Dict[str, Any]) -> bool:
+    """묶음 머리줄의 발언 수에 드는가. 실패한 발언은 세지 않습니다."""
+    if msg.get("msg_type") == "error":
+        return False
+    kind = turns.kind_of(msg)
+    if kind is None:
+        return msg.get("sender_key") not in ("user", "system") and msg.get("msg_type") in ("agent", "orchestrator")
+    return kind in GROUP_SPEECH_KINDS
+
+
+def _issue_list(numbers: List[int]) -> str:
+    shown = ", ".join(f"I-{n}" for n in numbers[:GROUP_HEADER_ISSUES])
+    rest = len(numbers) - GROUP_HEADER_ISSUES
+    return shown + (f" 외 {rest}" if rest > 0 else "")
+
+
+def round_group_header(
+    word: str, number: int, speeches: int, tools: int, delta: Optional[Dict[str, Any]] = None,
+) -> str:
+    """묶음 머리줄. 예: `Round 2 · 발언 3 · 결정 +1 · 닫힘 I-3 · 새 I-5 · 도구 4회`.
+
+    `delta` 는 `ledger_history.round_deltas` 의 한 칸입니다. 마지막 라운드는 최종 합성 개정 기준이라 그렇게 적습니다.
+    """
+    parts = [f"{word} {number}", f"발언 {speeches}"]
+    if delta:
+        if delta.get("decided"):
+            parts.append(f"결정 {int(delta['decided']):+d}")
+        if delta.get("closed"):
+            parts.append(f"닫힘 {_issue_list(list(delta['closed']))}")
+        if delta.get("opened"):
+            parts.append(f"새 {_issue_list(list(delta['opened']))}")
+    if tools:
+        parts.append(f"도구 {tools}회")
+    text = " · ".join(parts)
+    if delta and delta.get("final"):
+        text += " (최종 합성 반영)"
+    return text
+
+
+# `reveal_js` 가 배치를 기다리는 최대 프레임 수 (60fps 에서 약 0.75초). 넘으면 그때의 자리로 스크롤합니다.
+REVEAL_MAX_FRAMES = 45
+
+
+def reveal_js(element_id: int, block: str = "center") -> str:
+    """요소가 보이게 스크롤하는 스크립트. 막 펼친 칸이 제 높이를 찾은 뒤에 스크롤합니다.
 
     NiceGUI 는 요소 갱신과 `run_javascript` 를 같은 메시지 묶음으로 보내고, 브라우저는 Vue 가 DOM 을 고치기 전에
-    스크립트를 실행합니다(`CardTimeline.scroll_to_bottom` 의 현상과 같음). 그때 막 펼친 칸은 아직 `display: none` 이라
-    `scrollIntoView` 가 아무 일도 하지 않습니다. 그래서 `requestAnimationFrame` 을 두 번 기다립니다. 펼침 애니메이션이
-    있는 칸(로스터의 접이식 칸)은 `delay_ms` 로 애니메이션이 끝나기를 기다립니다.
+    스크립트를 실행합니다(`CardTimeline.scroll_to_bottom` 의 현상과 같음). 게다가 Quasar 의 접이식 칸은 펼친 뒤에도
+    슬라이드 전환이 끝날 때까지 본문에 `height` 를 인라인으로 붙잡아 둡니다(처음에는 0). 애니메이션을 꺼도(`duration` 0)
+    그렇고, 그동안 칸은 움직이지 않아 멈춘 것처럼 보입니다. 프레임 수만 기다리면 아직 낮은 칸을 기준으로 스크롤해,
+    스크롤이 옛 바닥에서 멈췄습니다.
+
+    그래서 목표와 그 위의 접이식 칸 어디에도 붙잡힌 높이가 없고, 목표의 위치와 크기가 두 프레임 연속 그대로일 때
+    스크롤합니다 (최대 `REVEAL_MAX_FRAMES`). 펼침 애니메이션이 있는 칸(로스터의 접이식 칸)도 같은 길로 기다립니다.
     """
-    scroll = f'getHtmlElement({int(element_id)})?.scrollIntoView({{block: "{block}", behavior: "smooth"}})'
-    frames = f"requestAnimationFrame(() => requestAnimationFrame(() => {scroll}))"
-    return f"setTimeout(() => {frames}, {int(delay_ms)})" if delay_ms > 0 else frames
+    return (
+        "(() => { let last = '', still = 0, frames = 0;"
+        " const held = (el) => { for (let n = el; n; n = n.parentElement) {"
+        " if (n.classList && n.classList.contains('q-expansion-item')) {"
+        " const c = n.querySelector(':scope > .q-expansion-item__container > .q-expansion-item__content');"
+        " if (c && c.style.height) return true; } } return false; };"
+        " const tick = () => {"
+        f" const el = getHtmlElement({int(element_id)}); if (!el) return;"
+        " const box = el.getBoundingClientRect(); const now = `${box.top}:${box.height}`;"
+        " still = (now === last && !held(el)) ? still + 1 : 0; last = now;"
+        f" if (still >= 2 || ++frames > {REVEAL_MAX_FRAMES})"
+        f' el.scrollIntoView({{block: "{block}", behavior: "smooth"}});'
+        " else requestAnimationFrame(tick); };"
+        " requestAnimationFrame(tick); })()"
+    )
 
 
 def is_clampable(content: str) -> bool:
@@ -366,6 +458,14 @@ def version_caption(version: Dict[str, Any], total: int) -> str:
     elif not version.get("live") or int(version.get("n") or 0) == 1:
         parts.append("처음 발언")
     return " · ".join(parts)
+
+
+def card_class_string(msg_type: str, sender_key: str) -> str:
+    """발언 카드의 클래스 전부. `mado-card` 는 화면 밖 카드의 배치를 건너뛰는 규칙(`theme.py`)이 찾는 이름입니다.
+
+    카드가 라운드 묶음 안에 들어가 타임라인의 직계 자식이 아니게 되어, 자리가 아니라 이름으로 찾습니다.
+    """
+    return f"mado-card w-full p-3.5 rounded-xl border {_card_classes(msg_type, sender_key)} shadow-md"
 
 
 def _card_classes(msg_type: str, sender_key: str) -> str:

@@ -183,6 +183,8 @@ class _Speech:
                 "round_number": self.round_number,
                 "msg_type": self.msg_type,
                 "started_at": self.started_at,
+                # 라운드 묶음의 열쇠 (턴, 라운드). 첫 조각 전에 카드를 놓을 묶음을 정합니다.
+                "turn_id": self.state.turn_id,
                 "graph_node_id": self.graph_node_id,
                 "graph_port": self.graph_port,
                 "turn_meta": self.turn_meta,
@@ -948,6 +950,7 @@ class SpeechRunner:
             content=content,
             round_number=speech.round_number,
             msg_type=final_type,
+            turn_id=speech.state.turn_id,
             # 발언이 실패로 끝나면 `call_agent` 는 도구 기록을 돌려주지 못합니다.
             # 그전에 실제로 실행된 것은 남아 있어야 합니다.
             tool_calls=tool_logs or speech.executed_tools,

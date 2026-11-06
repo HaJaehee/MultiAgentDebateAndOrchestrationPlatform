@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
+from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 from nicegui import ui
 
@@ -299,21 +299,18 @@ class AgentRosterControl:
     def set_decision_ledger(self, ledger: str) -> None:
         self.ledger.set_ledger(ledger)
 
-    def open_ledger(self) -> Tuple[Optional[ui.element], bool]:
-        """결정 장부 칸을 보이게 펼칩니다. (스크롤할 요소, 접혀 있던 칸을 펼쳤는가).
+    def open_ledger(self) -> Optional[ui.element]:
+        """결정 장부 칸을 보이게 펼치고, 스크롤할 요소를 돌려줍니다.
 
         로스터는 왼쪽 열 맨 위의 접이식 칸이고, 결정 장부는 그 안 스크롤 칸 맨 아래에 있어 로스터가 펼쳐져 있어도 대개
-        보이지 않습니다. 둘 다 펼치고, 스크롤은 부르는 쪽이 DOM 갱신 뒤에 합니다 (`chat_feed.common.reveal_js`).
-        펼친 칸이 있으면 펼침 애니메이션이 끝난 뒤에 스크롤해야 위치가 맞습니다.
+        보이지 않습니다. 둘 다 펼치고, 스크롤은 부르는 쪽이 칸이 제 자리를 찾은 뒤에 합니다 (`chat_feed.common.reveal_js`).
         """
         if not self.alive or self.ledger.expansion is None or self.ledger.expansion.is_deleted:
-            return None, False
-        expanded = False
+            return None
         for expansion in (self.expansion, self.ledger.expansion):
             if not expansion.value:
                 expansion.set_value(True)
-                expanded = True
-        return self.ledger.expansion, expanded
+        return self.ledger.expansion
 
     def set_graph_run(self, tracker: Optional[Any], active: bool) -> None:
         self.graph.set_run(tracker, active)

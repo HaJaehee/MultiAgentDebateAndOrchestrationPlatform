@@ -27,7 +27,7 @@ def _rule(selector: str) -> str:
 
 
 def test_offscreen_cards_skip_layout():
-    body = _rule(".debate-timeline > .q-card")
+    body = _rule(".debate-timeline .mado-card")
     assert "content-visibility: auto" in body
     # auto 가 빠지면 한 번 그린 카드의 실제 높이를 기억하지 못해 스크롤 막대가 튑니다.
     assert re.search(r"contain-intrinsic-size:\s*auto\s+\d+px", body)

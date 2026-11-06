@@ -294,6 +294,7 @@ class TurnRecorder:
             msg_type="user",
             started_at=now,
             finished_at=now,
+            turn_id=state.turn_id,
             turn_meta=turns.meta(kind),
         )
         state.messages.append(message)
@@ -377,6 +378,7 @@ class TurnRecorder:
             finished_at=now,
             graph_node_id=graph_node_id,
             graph_port=graph_port,
+            turn_id=state.turn_id,
             turn_meta=turn_meta,
         )
         state.messages.append(message)
@@ -502,6 +504,7 @@ class TurnRecorder:
                 turn_started_at=pm.turn_started_at,
                 graph_node_id=pm.graph_node_id,
                 graph_port=pm.graph_port,
+                turn_id=pm.turn_id,
                 turn_meta=pm.turn_meta if isinstance(pm.turn_meta, dict) else None,
                 llm_meta=pm.llm_meta if isinstance(pm.llm_meta, dict) else None,
             ))

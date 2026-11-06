@@ -45,6 +45,8 @@ class DebateMessage(BaseModel):
     finished_at: Optional[datetime] = None
     # 이 발언이 턴을 마무리한 합성 발언이면 그 턴이 시작된 시각 (`MessageModel.turn_started_at`).
     turn_started_at: Optional[datetime] = None
+    # 이 기록이 속한 턴 (`MessageModel.turn_id`). 화면이 라운드 묶음의 열쇠(턴, 라운드)로 씁니다.
+    turn_id: Optional[str] = None
     # 그래프 토론에서 이 발언을 낸 노드 (`MessageModel.graph_node_id`).
     graph_node_id: Optional[str] = None
     # 노드의 출력으로 나간 핀 (`MessageModel.graph_port`). 출력이 아닌 기록은 None.

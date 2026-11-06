@@ -9,6 +9,7 @@ from typing import Any, Callable, Coroutine, Dict, Iterable, List, Optional
 
 from nicegui import ui
 
+from app.orchestration import ledger_history
 from app.ui.components.chat_feed.approvals import ApprovalCards, PlanApprovalCard
 from app.ui.components.chat_feed.cards import CardTimeline
 from app.ui.components.chat_feed.common import (
@@ -66,6 +67,7 @@ class ChatFeed:
         show_ledger_strip: bool = False,
         on_open_ledger: Optional[OpenLedger] = None,
         on_reveal_round: Optional[RevealRound] = None,
+        group_rounds: bool = False,
     ):
         self.on_send_message = on_send_message
         # 토론 실행 도중 전달된 개입 입력 및 정지 요청 핸들러. 미지정 시
@@ -107,6 +109,7 @@ class ChatFeed:
             on_restore_version=on_restore_version,
             on_delete_comment=on_delete_comment,
             render_turn_usage=render_turn_usage,
+            group_rounds=group_rounds,
         )
         self.speech_actions = SpeechActions(
             alive=lambda: self.alive,
@@ -133,7 +136,10 @@ class ChatFeed:
             alive=lambda: self.alive, input_field=lambda: self.input_field, mention_provider=mention_provider,
             on_upload_file=on_upload_file, upload_destination=upload_destination,
         )
-        # 결정 장부 요약 띠. 전문가 화면만 켭니다 (초급자·체험 화면은 지금 그대로입니다).
+        # 결정 장부 요약 띠. 전문가 화면만 켭니다 (초급자·체험 화면은 지금 그대로입니다). 라운드 묶음을 켰으면 띠의
+        # 라운드 칩이 이 타임라인의 그 묶음으로 이동합니다.
+        if on_reveal_round is None and group_rounds:
+            on_reveal_round = self.timeline.reveal_round
         self.ledger_strip: Optional[LedgerStrip] = (
             LedgerStrip(on_open_ledger=on_open_ledger, on_reveal_round=on_reveal_round)
             if show_ledger_strip else None
@@ -475,8 +481,13 @@ class ChatFeed:
 
     # ------------------------------------------------------------ 타임라인
 
-    def render_all(self, messages: List[Dict[str, Any]], streaming_ids: Optional[Iterable[str]] = None) -> None:
-        self.timeline.render_all(messages, streaming_ids)
+    def render_all(
+        self,
+        messages: List[Dict[str, Any]],
+        streaming_ids: Optional[Iterable[str]] = None,
+        live_turn_id: Optional[str] = None,
+    ) -> None:
+        self.timeline.render_all(messages, streaming_ids, live_turn_id=live_turn_id)
 
     def start_streaming_message(self, msg: Dict[str, Any]) -> None:
         self.timeline.start_streaming_message(msg)
@@ -492,6 +503,12 @@ class ChatFeed:
 
     def reveal_message(self, message_id: str) -> bool:
         return self.timeline.reveal_message(message_id)
+
+    def reveal_round(self, turn_id: str, round_number: int) -> bool:
+        return self.timeline.reveal_round(turn_id, round_number)
+
+    def set_round_summaries(self, summaries: Dict[Any, Dict[str, Any]]) -> None:
+        self.timeline.set_round_summaries(summaries)
 
     def set_turn_actions(self, message_id: Optional[str], turn_id: str, changed: Optional[int] = None) -> None:
         self.timeline.set_turn_actions(message_id, turn_id, changed)
@@ -512,10 +529,17 @@ class ChatFeed:
     ) -> None:
         if self.ledger_strip is not None:
             self.ledger_strip.set_revisions(revisions, ledger, converged)
+        self._refresh_round_summaries()
 
     def add_ledger_revision(self, revision: Optional[Dict[str, Any]]) -> None:
         if self.ledger_strip is not None:
             self.ledger_strip.add_revision(revision)
+        self._refresh_round_summaries()
+
+    def _refresh_round_summaries(self) -> None:
+        """라운드 묶음 머리줄의 장부 변화량. 띠가 들고 있는 개정 이력에서 계산합니다 (타임라인은 개정 이력을 모릅니다)."""
+        if self.ledger_strip is not None and self.timeline.group_rounds:
+            self.timeline.set_round_summaries(ledger_history.round_deltas(self.ledger_strip.revisions))
 
     def set_ledger_synthesizing(self, turn_id: Optional[str]) -> None:
         if self.ledger_strip is not None:

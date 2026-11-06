@@ -396,8 +396,7 @@ def test_opening_the_ledger_unfolds_the_roster_and_the_ledger(roster):
     control.expansion.set_value(False)
     assert control.ledger.expansion.value is False
 
-    target, expanded = control.open_ledger()
+    target = control.open_ledger()
 
-    assert target is control.ledger.expansion and expanded is True
+    assert target is control.ledger.expansion
     assert control.expansion.value is True and control.ledger.expansion.value is True
-    assert control.open_ledger() == (control.ledger.expansion, False), "이미 펼쳐져 있으면 애니메이션을 기다리지 않습니다"

@@ -419,8 +419,10 @@ div.mado-math-fallback {
    카드가 늘어도 거의 늘지 않습니다. 화면 밖 카드의 글은 DOM 에 그대로 있어 복사와 찾기
    (Ctrl+F)는 달라지지 않습니다.
    `contain-intrinsic-size: auto 220px` — 아직 한 번도 그리지 않은 카드는 220px 로 치고,
-   한 번 그린 카드는 실제 높이를 기억합니다. 그래야 스크롤 막대가 덜 튑니다. */
-.debate-timeline > .q-card {
+   한 번 그린 카드는 실제 높이를 기억합니다. 그래야 스크롤 막대가 덜 튑니다.
+   전문가 화면에서는 카드가 라운드 묶음 안에 들어가 타임라인의 직계 자식이 아니므로, 자리가 아니라 이름
+   (`mado-card`, `common.card_class_string`)으로 찾습니다. */
+.debate-timeline .mado-card {
     content-visibility: auto;
     contain-intrinsic-size: auto 220px;
 }

@@ -919,9 +919,8 @@ The plan is `docs/feature_ui_upgrade.md` §3.
 - **Chips.** An issue chip's tooltip has the full text and when its current open stretch began (`Round 2 (이번 턴)`,
   `직접 수정`). A click, on a chip or on the counts, opens the ledger: `ExpertPage.open_ledger` unfolds the roster
   expansion and the ledger panel (`AgentRosterControl.open_ledger`) and scrolls to the ledger with
-  `chat_feed.common.reveal_js`. That script waits two animation frames so the DOM is updated, plus 350 ms when it had
-  to unfold something, since Quasar animates the roster expansion. Round chips take `on_reveal_round`; nothing passes
-  it yet (round groups, P3).
+  `chat_feed.common.reveal_js`, which waits until the unfolded panels have their height (§1.3.14). A round chip opens that round's group and scrolls to
+  it (`CardTimeline.reveal_round`, §1.3.14); `ChatFeed` wires this when round groups are on.
 - **Wiring.** `ChatFeed(show_ledger_strip=True, on_open_ledger=...)` only on the expert page; trial and beginner pages
   show the ledger as before. `load_session_state` reads `ledger_history.load_revisions` and the turns that ended on
   convergence. Revisions are saved during the turn, so a page opened mid-turn has this turn's rounds too, and a
@@ -936,6 +935,64 @@ database; with the roster folded, an issue chip unfolded the roster and the ledg
 the roster's scroll box; at strip widths of 540px and below the trend was hidden and the height did not change; closing
 `I-5` in the direct editor left `미해결 1 · I-4`. With the roster open in a 1000px-high window the feed's scroll area is
 44px, 32px less than before; folding the roster gives it the space back. Real provider responses were not used.
+
+### 1.3.14. Round groups (expert page)
+
+With more than two agents and rounds, the feed used to be one flat column of cards, each with a `Round N` badge and
+each folding on its own. On the expert page (`ChatFeed(group_rounds=True)`) a turn's cards now sit in one collapsible
+group per round ([cards.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/chat_feed/cards.py),
+`CardTimeline._container_for`). The plan is `docs/feature_ui_upgrade.md` §4.
+
+```
+▸ Round 2 · 발언 3 · 결정 +1 · 닫힘 I-3 · 새 I-5 · 도구 4회
+```
+
+- **Key and membership** (`common.round_group_key`). A group is `(turn_id, round_number)`; graph turns read `Step N`.
+  `DebateMessage.turn_id`, the stream-start event, notes, user messages, `load_history` and the page's message dicts all
+  carry the turn, so a streaming card finds its group before its first chunk. Round 0, records without a turn, and the
+  kinds that open or close a turn or sit outside one (`opening`, `plan`, `plan_approval`, `plan_revision`,
+  `graph_draft`, `synthesis`, `ledger_edit`, `note`, `kernel_replay`) stay outside, so the request and the conclusion
+  are visible with every group folded. Nominations, assignments, merges, sub-debates, failure, stagnation and early-end
+  notes go inside. An interjection joins an open group but never opens one, so one deferred past synthesis does not make
+  an empty round.
+- **Placement.** A group is created at the end of the timeline when the first card of its key arrives, so groups and
+  ungrouped cards keep arrival order. A late card for an earlier round goes into that round's group; only its header
+  numbers change.
+- **Header.** Speeches (failed ones excluded) and tool calls are counted by the timeline. The ledger change comes from
+  `ledger_history.round_deltas`, computed by the feed from the strip's revision history and passed to
+  `set_round_summaries`, so the timeline knows nothing about the database. The last round's change is the `final`
+  revision's and says `(최종 합성 반영)`. At most three issue numbers are named, then `외 n`.
+- **Folding.** A new group always opens expanded, so a speech never streams inside a folded one. When the first card of a
+  new round arrives, the previous group folds, but only while the feed is following, the person has not opened that
+  group themselves, and no card in it is streaming (a retried earlier speech counts too, and its folded group opens
+  when the retry starts). After folding, `scroll_to_bottom()` asks `settle_scroll` for one more pass; tracking is not
+  released, because that is decided by wheel and touch events only. On load, finished turns are folded and a running
+  turn keeps its last group open (`render_all(live_turn_id=...)`). Opening a group by hand stops auto-scroll like an
+  expanded card, and `카드 모두 접기` folds those groups too.
+- **No animation** (`duration` 0). Quasar's expansion grows for about 300 ms; a scroll during that time has no target,
+  and resizing a group of dozens of cards every frame while text streams keeps the browser laying out.
+- **Revealing.** `reveal_message` opens the card's group first (search, retry and, later, citation links use it), and
+  `reveal_round(turn_id, round)` serves the ledger strip's round chips. Both scroll through `chat_feed.common.reveal_js`.
+  NiceGUI sends the element update and the script together, so the script runs before Vue has shown the opened group;
+  and after that, Quasar's slide transition keeps an inline `height` (0 at first) on the content until its own timer
+  ends, even with `duration` 0, during which the group sits still at its header height. A script that waited a fixed
+  number of frames scrolled against the short group and stopped at the old bottom (576 px off in the browser check).
+  The script now waits, frame by frame, until no expansion on the target's path holds an inline height and the
+  target's position and size have stayed the same for two frames (at most `REVEAL_MAX_FRAMES` = 45), then scrolls.
+  The roster's animated expansion goes through the same wait.
+- **Off-screen layout.** Cards now carry `mado-card` (`common.card_class_string`), and the `content-visibility` rule
+  in `theme.py` matches `.debate-timeline .mado-card` instead of direct children, since cards are no longer direct
+  children of the timeline.
+- Text inside a folded group is not found by the browser's Ctrl+F; the app's search opens it through `reveal_message`.
+  Trial and beginner pages keep the flat timeline.
+
+**Verified in a browser** with a scripted LLM and a scratch database (two three-round turns): while following, each
+new round folded the previous one and the feed stayed at the bottom; after a wheel scroll in round 1 nothing folded and
+`맨 아래로 · 따라가기 재개` appeared; a reload showed every group folded with its ledger change and each turn as
+request → plan → three groups → conclusion; the strip's round chips opened their group and put its header at the top
+of the feed (0 px). The browser pane was hidden during the check, which pauses animation frames and smooth scrolling,
+so for the chip check `requestAnimationFrame` was replaced by a 16 ms timer and scrolling made instant in the page.
+Real provider responses were not used.
 
 ### 1.4. Artifact Viewer ([app/ui/components/artifact_viewer.py](file:///d:/MultiAgentDebateOrchestration/app/ui/components/artifact_viewer.py))
 - **Tabs accumulate across turns.** `add_artifacts()` appends a finished turn's artifacts (skipping ids

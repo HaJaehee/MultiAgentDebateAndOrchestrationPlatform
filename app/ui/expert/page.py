@@ -63,9 +63,6 @@ from app.workspace_files import (
 
 logger = logging.getLogger(__name__)
 
-# 로스터 칸을 펼친 뒤 장부까지 스크롤하기 전에 기다리는 시간. Quasar 펼침 애니메이션(약 300ms)보다 깁니다.
-LEDGER_REVEAL_DELAY_MS = 350
-
 
 def create_ui() -> None:
     """전문가 화면(`/`)을 등록합니다."""
@@ -129,6 +126,7 @@ class ExpertPage:
             render_turn_usage=self.render_turn_usage,
             show_ledger_strip=True,
             on_open_ledger=self.open_ledger,
+            group_rounds=True,
         )
         # 결론으로 스킬 초안을 만드는 창. 초안은 토론과 같은 호출기로 씁니다 (바꿔 끼운 호출기도 그대로).
         self.skill_draft = SkillDraftDialog(
@@ -511,10 +509,10 @@ class ExpertPage:
 
     def open_ledger(self) -> None:
         """요약 띠의 쟁점 칩·개수를 눌렀을 때. 로스터와 결정 장부 칸을 펼치고 장부가 보이는 곳까지 스크롤합니다."""
-        target, expanded = self.roster_control.open_ledger()
+        target = self.roster_control.open_ledger()
         if target is not None:
-            # 로스터 칸은 펼침 애니메이션(약 300ms)이 있습니다. 펼쳤으면 끝난 뒤에 스크롤합니다.
-            ui.run_javascript(reveal_js(target.id, "start", LEDGER_REVEAL_DELAY_MS if expanded else 0))
+            # 로스터 칸은 펼침 애니메이션이 있습니다. 스크립트가 칸이 제 자리를 찾을 때까지 기다립니다 (`reveal_js`).
+            ui.run_javascript(reveal_js(target.id, "start"))
 
     async def on_decision(self, extra: int, request_id: str) -> None:
         """한도에 닿은 에이전트에게 확장 여부를 알려 줍니다 (도구 상한·컨텍스트 공통).
@@ -980,6 +978,8 @@ class ExpertPage:
                     "turn_started_at": m.turn_started_at,
                     "graph_node_id": m.graph_node_id,
                     "graph_port": m.graph_port,
+                    # 라운드 묶음의 열쇠 (턴, 라운드).
+                    "turn_id": m.turn_id,
                     "turn_meta": m.turn_meta,
                     "llm_meta": m.llm_meta,
                     "revisions": revisions.get(m.id),
@@ -1076,7 +1076,10 @@ class ExpertPage:
         if running and snapshot.get("phase") == "synthesizing":
             self.chat_feed.set_ledger_synthesizing(snapshot.get("turn_id"))
         if formatted_msgs:
-            self.chat_feed.render_all(formatted_msgs, streaming_ids=streaming_ids)
+            # 끝난 턴의 라운드 묶음은 접고, 진행 중인 턴은 마지막 묶음만 펼칩니다.
+            self.chat_feed.render_all(
+                formatted_msgs, streaming_ids=streaming_ids, live_turn_id=run.turn_id if running else None,
+            )
             # 결론 카드마다 그 턴이 작업 공간에서 바꾼 파일 수 (`TurnModel.checkpoint`).
             for message_id, turn_id, changed in turn_change_counts:
                 self.chat_feed.set_turn_actions(message_id, turn_id, changed)
