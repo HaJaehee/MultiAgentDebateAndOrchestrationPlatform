@@ -133,7 +133,7 @@ def test_the_report_column_carries_the_class():
 
 
 def test_the_ledger_strip_hides_its_trend_by_the_feed_width_not_the_screen():
-    """요약 띠는 한 줄을 지키고, 스플리터로 좁아진 피드 폭에 맞춰 추이만 숨깁니다 (컨테이너 질의)."""
+    """요약 띠는 단일 행 레이아웃을 유지하며, 스플리터 조절로 피드 너비가 좁아지면 컨테이너 쿼리를 통해 추이 영역만 숨깁니다."""
     assert "container-type: inline-size" in _rule(".ledger-strip")
     query = re.search(r"@container \(max-width: (\d+)px\)\s*\{\s*\.ledger-strip-trend\s*\{([^}]*)\}", CUSTOM_CSS)
     assert query and int(query.group(1)) == 560 and "display: none" in query.group(2)

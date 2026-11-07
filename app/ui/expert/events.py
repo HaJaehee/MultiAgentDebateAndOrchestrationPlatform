@@ -39,7 +39,7 @@ class ExpertEventView:
         self.graph_tracker: Optional[GraphRunTracker] = None
 
     def _turn_id(self) -> Optional[str]:
-        """이 화면이 붙어 있는 토론의 턴."""
+        """현재 UI 화면에 연결된 토론 턴 ID를 반환합니다."""
         run = self.page.runner.get(self.page.current_session_id)
         return getattr(run, "turn_id", None) if run is not None else None
 
@@ -77,7 +77,7 @@ class ExpertEventView:
         round_info = f"Round {round_num}" if round_num else "Debating"
         self.page.chat_feed.set_busy(True, label, round_info)
         if status == "synthesizing":
-            # 장부 띠에 흐린 `합성 …` 을 둡니다. 최종 개정이 오면 값으로 바뀝니다.
+            # 결정 장부 요약 띠에 대기 상태의 `합성 …` 칩을 표시합니다. 최종 개정이 수신되면 실제 값으로 전환됩니다.
             self.page.chat_feed.set_ledger_synthesizing(self._turn_id())
 
     @_handles(EventType.RUNTIME_QUEUED)
@@ -429,7 +429,7 @@ class ExpertEventView:
 
     @_handles(EventType.LEDGER_UPDATE_FAILED)
     async def _on_ledger_update_failed(self, event: Event) -> None:
-        # 최종 갱신이 실패하면 합성 값이 오지 않습니다. 추이는 마지막 라운드에서 끝납니다.
+        # 최종 장부 갱신이 실패하면 종합 수치가 산출되지 않으므로, 쟁점 추이를 마지막 라운드 지점에서 종결합니다.
         self.page.chat_feed.set_ledger_synthesizing(None)
         ui.notify(
             f"결정 장부를 갱신하지 못하여 기존 장부를 유지합니다 ({event.get('reason', '')}): "

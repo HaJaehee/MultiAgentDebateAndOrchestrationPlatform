@@ -220,7 +220,7 @@ def test_a_well_formed_yes_names_the_two_and_the_issue():
 
 
 def test_the_issue_is_named_by_its_fixed_number():
-    """쟁점은 `issue_id` 로 고정 번호를 받습니다 (ADR-051). 지금 열린 쟁점의 번호만 받습니다."""
+    """서브 토론 쟁점은 `issue_id`를 통해 고정 번호를 지정받습니다 (ADR-051). 현재 장부에 등록된 미해결 쟁점 번호만 유효하게 처리합니다."""
     agents = [a for a in _pool().list_all() if a.key != "orchestrator"]
     open_issues = {3: "인증 토큰을 어디에 저장할지"}
 
@@ -230,9 +230,9 @@ def test_the_issue_is_named_by_its_fixed_number():
         return found and (found[1], found[3])
 
     assert parse(issue_id="I-3", issue="토큰 저장 위치") == ("토큰 저장 위치", 3)
-    assert parse(issue="[I-3] 토큰 저장 위치") == ("토큰 저장 위치", 3), "글 앞의 태그도 번호로 읽습니다"
-    assert parse(issue_id="I-3") == ("인증 토큰을 어디에 저장할지", 3), "글을 빠뜨리면 장부의 글로 채웁니다"
-    assert parse(issue_id="I-9", issue="없는 쟁점") == ("없는 쟁점", None), "열려 있지 않은 번호는 버립니다"
+    assert parse(issue="[I-3] 토큰 저장 위치") == ("토큰 저장 위치", 3), "쟁점 본문 앞의 번호 태그도 정상적으로 파싱하여 추출합니다"
+    assert parse(issue_id="I-3") == ("인증 토큰을 어디에 저장할지", 3), "쟁점 텍스트가 생략된 경우 장부에 등록된 원본 문구로 자동 보완합니다"
+    assert parse(issue_id="I-9", issue="없는 쟁점") == ("없는 쟁점", None), "현재 미해결 상태가 아닌 쟁점 번호는 무시합니다"
     assert parse(issue_id="I-9") is None
 
 
@@ -252,7 +252,7 @@ async def test_a_numbered_issue_names_the_note_the_conclusion_and_its_ledger_rev
     conclusion = next(m for m in rows if turns.kind_of(m) == turns.KIND_SUBDEBATE_CONCLUSION)
     assert conclusion.content.startswith("[서브 토론 결론 · I-1 · 토큰 저장 위치]")
     assert "쟁점: I-1 · 토큰 저장 위치" in llm.side_prompts()[0]
-    assert turns.sub_debate_at(rows, 1).issue_no == 1, "끊긴 서브 토론을 이어 갈 때도 번호를 압니다"
+    assert turns.sub_debate_at(rows, 1).issue_no == 1, "중단되었던 서브 토론을 재개할 때도 기존 쟁점 번호가 유지됩니다"
 
     async with get_session_factory(DB_URL)() as db:
         kinds = [r.kind for r in (await db.execute(

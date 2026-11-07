@@ -45,9 +45,9 @@ class DebateMessage(BaseModel):
     finished_at: Optional[datetime] = None
     # 이 발언이 턴을 마무리한 합성 발언이면 그 턴이 시작된 시각 (`MessageModel.turn_started_at`).
     turn_started_at: Optional[datetime] = None
-    # 이 기록이 속한 턴 (`MessageModel.turn_id`). 화면이 라운드 묶음의 열쇠(턴, 라운드)로 씁니다.
+    # 메시지가 속한 턴 ID (`MessageModel.turn_id`). UI에서 라운드 묶음 식별 키(턴 ID, 라운드 번호)로 사용합니다.
     turn_id: Optional[str] = None
-    # 발언 번호 (`MessageModel.speech_no`, ADR-052). 유저 발언·메모는 None.
+    # 발언 일련번호 (`MessageModel.speech_no`, ADR-052). 사용자 발언 및 시스템 메모는 None입니다.
     speech_no: Optional[int] = None
     # 그래프 토론에서 이 발언을 낸 노드 (`MessageModel.graph_node_id`).
     graph_node_id: Optional[str] = None
@@ -70,14 +70,14 @@ class DebateMessage(BaseModel):
 
     @property
     def tag(self) -> str:
-        """발언 번호 라벨 `S14`. 번호가 없으면 빈 문자열."""
+        """발언 번호 라벨 (예: `S14`). 발언 번호가 없으면 빈 문자열을 반환합니다."""
         return f"S{self.speech_no}" if self.speech_no else ""
 
     @property
     def speaker_label(self) -> str:
-        """프롬프트 머리줄의 발언자 — "System Architect (High-Level …) · S14" (ADR-052).
+        """프롬프트 헤더에 표기될 발언자 라벨 — 예: "System Architect (High-Level …) · S14" (ADR-052).
 
-        번호는 이 발언에 저장된 값이라 라운드가 바뀌어도 같은 글입니다. 프롬프트 캐시의 앞부분이 그대로입니다 (ADR-045).
+        발언 번호는 메시지 레코드에 불변으로 저장되므로 후속 라운드에서도 동일한 텍스트가 유지되어 프롬프트 캐시 접두부를 온전히 활용할 수 있습니다 (ADR-045).
         """
         return f"{self.speaker} · {self.tag}" if self.tag else self.speaker
 
@@ -153,11 +153,11 @@ class DebateState(BaseModel):
     # 결정 장부와, 장부에 반영된 발언의 수 (`messages[:ledger_through]`).
     decision_ledger: str = ""
     ledger_through: int = 0
-    # 세션의 쟁점 색인 (`ledger_history.IssueIndex`, ADR-051). 턴에서 처음 장부를 갱신할 때 개정 이력에서 한 번 세우고, 그
-    # 뒤로는 메모리에서 갱신합니다. 직렬화하지 않습니다.
+    # 세션의 쟁점 색인 (`ledger_history.IssueIndex`, ADR-051). 턴 내 최초 장부 갱신 시 DB 개정 이력으로부터 한 번 구축하며,
+    # 이후에는 메모리 상에서 갱신합니다. 직렬화에서 제외됩니다.
     issue_index: Optional[Any] = Field(default=None, exclude=True)
-    # 발언 번호 계수기 (ADR-052). 마지막으로 내준 번호입니다. 턴에서 처음 번호를 낼 때 DB 의 최대값과 이 턴 초안의 예약
-    # 번호로 한 번 맞추고(`turns.ensure_speech_counter`), 그 뒤로는 여기서만 늘어납니다.
+    # 발언 번호 카운터 (ADR-052). 가장 최근에 발급된 번호입니다. 턴 내 최초 발급 시 DB 최댓값 및 현재 턴 초안의 예약
+    # 번호와 동기화하며(`turns.ensure_speech_counter`), 이후에는 인메모리에서 순차 증가합니다.
     speech_counter: int = 0
     speech_counter_ready: bool = Field(default=False, exclude=True)
     # 앞선 기록의 누적 요약과, 요약이 덮는 발언의 수 (`messages[:summary_through]`).

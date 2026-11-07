@@ -489,16 +489,16 @@ def test_the_first_turn_trend_starts_at_its_first_round_and_ends_at_synthesis():
         _rev("t1", 1, "round", [1, 2, 3]), _rev("t1", 2, "round", [1, 2]), _rev("t1", 3, "final", []),
     ])
     assert turn == "t1"
-    assert [p.text for p in points] == ["R1 3", "R2 2", "합성 0"], "첫 턴은 직전 값이 없습니다"
+    assert [p.text for p in points] == ["R1 3", "R2 2", "합성 0"], "첫 턴에는 직전 개정 값이 존재하지 않습니다"
     assert trend_text(points) == "추이 R1 3 → R2 2 → 합성 0 ✓"
 
 
 def test_a_later_turn_starts_from_the_previous_turns_last_revision():
     revisions = [
         _rev("t1", 1, "round", [1]), _rev("t1", 1, "final", [1, 2, 3]),
-        _rev(None, 0, "edit", [1, 2]),                                        # 턴 사이의 직접 수정
-        _rev("t2", 1, "round", [2]), _rev("t2", 1, "subdebate", []),          # 같은 라운드는 마지막 것
-        _rev("t1", 1, "retry", [9]),                                          # 옛 턴의 재실행은 추이 밖
+        _rev(None, 0, "edit", [1, 2]),                                        # 턴 간 직접 편집
+        _rev("t2", 1, "round", [2]), _rev("t2", 1, "subdebate", []),          # 동일 라운드는 마지막 개정을 사용
+        _rev("t1", 1, "retry", [9]),                                          # 이전 턴 재실행 개정은 현재 턴 추이에서 제외
     ]
     turn, points = trend_points(revisions)
     assert turn == "t2"
@@ -517,7 +517,7 @@ def test_synthesis_in_progress_is_a_pending_point_until_its_value_arrives():
     _turn, points = trend_points(revisions, synthesizing="t2")
     assert [p.text for p in points] == ["1", "R1 2", "합성 …"] and points[-1].pending
     _turn, points = trend_points(revisions, synthesizing="t3")
-    assert [p.text for p in points] == ["2", "합성 …"], "라운드 개정이 없는 새 턴(한 라운드)도 합성 중이 보입니다"
+    assert [p.text for p in points] == ["2", "합성 …"], "라운드 개정이 없는 단일 라운드 새 턴에서도 합성 중 상태가 표시됩니다"
 
 
 def test_counts_fall_back_to_the_ledger_text_without_revisions():
@@ -539,13 +539,13 @@ def test_the_strip_is_one_line_of_fixed_height_and_hides_when_there_is_no_ledger
     strip = _built_strip()
     classes = set(strip.row._classes)
     assert {"ledger-strip", "h-7", "flex-nowrap", "overflow-hidden", "min-w-0", "whitespace-nowrap"} <= classes
-    assert strip.row.visible is False, "새 대화처럼 장부가 비어 있으면 숨깁니다"
+    assert strip.row.visible is False, "신규 세션처럼 장부가 비어 있으면 요약 띠를 숨깁니다"
 
     strip.set_revisions([_rev("t1", 1, "round", [1, 2, 3, 4, 5, 6], decided=5, rejected=2)])
     assert strip.row.visible is True
     labels = _labels(strip)
     assert labels[0] == "결정 5 · 기각 2 · 미해결 6"
-    assert labels[1:6] == ["I-1", "I-2", "I-3", "I-4", "외 2"], "칩은 최대 4개, 칩 글은 번호만"
+    assert labels[1:6] == ["I-1", "I-2", "I-3", "I-4", "외 2"], "쟁점 칩은 최대 4개까지 표시되며, 레이블에는 번호만 표기합니다"
     trend = next(el for el in strip.row.descendants() if "ledger-strip-trend" in el._classes)
     assert "ml-auto" in trend._classes
 
@@ -571,9 +571,9 @@ def test_the_synthesis_chip_appears_turns_into_a_value_and_is_withdrawn_on_failu
 
     strip.add_revision(_rev("t2", 1, "round", [3]))
     strip.set_synthesizing("t2")
-    strip.set_synthesizing(None)   # 최종 갱신 실패 또는 그 값 없이 끝난 턴
+    strip.set_synthesizing(None)   # 최종 합성 실패 또는 개정 없이 종료된 턴
     labels = _labels(strip)
-    assert "합성 …" not in labels and labels[-1] == "R1 1", "추이는 마지막 라운드에서 끝납니다"
+    assert "합성 …" not in labels and labels[-1] == "R1 1", "추이 표시는 마지막 라운드 지점에서 종료됩니다"
 
 
 def test_a_converged_turn_says_so():
@@ -620,23 +620,23 @@ def test_only_the_feed_that_asks_for_it_has_the_strip():
     assert feed.ledger_strip.row.visible is True
     feed.clear()
     assert feed.ledger_strip.revisions == [] and feed.ledger_strip.row.visible is False
-    ChatFeed(_noop).add_ledger_revision(_rev("t1", 1, "round", [1]))   # 띠가 없으면 조용히 넘어갑니다
+    ChatFeed(_noop).add_ledger_revision(_rev("t1", 1, "round", [1]))   # 요약 띠가 비활성화된 경우 조용히 무시합니다
 
 
 def test_the_reveal_script_waits_until_the_target_stops_moving():
-    """Quasar 의 접이식 칸은 펼친 뒤에도 잠깐 `height: 0` 입니다. 정해 둔 프레임 수가 아니라 자리가 그대로일 때 스크롤합니다."""
+    """Quasar의 q-expansion-item은 펼쳐진 직후 일시적으로 height: 0 상태를 유지합니다. 고정된 프레임 수가 아니라 레이아웃 높이가 안정된 시점에 스크롤합니다."""
     from app.ui.components.chat_feed.common import REVEAL_MAX_FRAMES, reveal_js
 
     script = reveal_js(42, "start")
     assert "getHtmlElement(42)" in script and 'block: "start"' in script
     assert "still >= 2" in script and f"++frames > {REVEAL_MAX_FRAMES}" in script
     assert "getBoundingClientRect" in script and "requestAnimationFrame(tick)" in script
-    assert "q-expansion-item__content" in script and "style.height" in script, "붙잡힌 높이가 풀리기를 기다립니다"
+    assert "q-expansion-item__content" in script and "style.height" in script, "애니메이션 중 일시 고정된 높이가 해제되기를 대기합니다"
 
 
 @pytest.mark.asyncio
 async def test_debate_events_drive_the_strip_on_the_expert_page(ui_page, monkeypatch):
-    """전문가 화면의 이벤트 처리가 띠를 움직입니다: 개정 추가, 합성 중 칩, 실패 시 거둠, 수렴."""
+    """전문가 뷰의 이벤트 처리가 요약 띠 상태를 제어합니다: 개정 추가, 합성 진행 중 칩 표시, 실패 시 롤백, 수렴 완료 처리."""
     from unittest.mock import AsyncMock, MagicMock
 
     from app.events import EventType
@@ -672,7 +672,7 @@ async def test_debate_events_drive_the_strip_on_the_expert_page(ui_page, monkeyp
     await view.apply({"type": EventType.DEBATE_ENDED_EARLY, "reason": "converged", "round": 2, "max_rounds": 4})
     assert strip.converged == {"t2": 2}
     await view.apply({"type": EventType.DEBATE_ENDED_EARLY, "reason": "budget", "round": 1, "max_rounds": 4})
-    assert strip.converged == {"t2": 2}, "예산 종료는 수렴이 아닙니다"
+    assert strip.converged == {"t2": 2}, "턴 예산 소진에 따른 종료는 조기 수렴으로 처리하지 않습니다"
 
 
 def test_a_reattached_page_knows_the_turn_is_synthesizing():
@@ -707,7 +707,7 @@ def _grouped_timeline() -> CardTimeline:
 
 
 def _top_level(timeline: CardTimeline) -> List[str]:
-    """타임라인 바로 아래에 놓인 것: 카드는 그 발언 id, 묶음은 "group:턴:라운드"."""
+    """타임라인 직하위 요소 구성: 일반 카드는 발언 ID, 라운드 그룹은 "group:턴:라운드" 식별자를 사용합니다."""
     by_card = {id(info["card"]): mid for mid, info in timeline._cards_by_id.items()}
     by_group = {id(g["expansion"]): f"group:{k[0]}:{k[1]}" for k, g in timeline._groups.items()}
     out = []
@@ -733,12 +733,12 @@ def test_cards_go_into_round_groups_and_turn_boundaries_stay_outside():
         _gm("a1", 1, tools=2), _gm("c1", 1, sender="critic", tools=1),
         _gm("a2", 2), _gm("fail2", 2, turn_kinds.KIND_FAILURE, sender="critic", msg_type="error"),
         _gm("syn", 3, turn_kinds.KIND_SYNTHESIS, sender="orchestrator", msg_type="orchestrator"),
-        _gm("old", 1, None, turn=None),                                   # 턴 id 없는 옛 기록
+        _gm("old", 1, None, turn=None),                                   # 턴 ID가 없는 레거시 기록
     ])
     assert _top_level(timeline) == ["req", "plan", "group:t1:1", "group:t1:2", "syn", "old"]
     assert timeline._groups[("t1", 1)]["cards"] == {"nom1", "a1", "c1"}
     assert timeline._groups[("t1", 1)]["header"].text == "Round 1 · 발언 2 · 도구 3회"
-    assert timeline._groups[("t1", 2)]["header"].text == "Round 2 · 발언 1", "실패한 발언은 세지 않습니다"
+    assert timeline._groups[("t1", 2)]["header"].text == "Round 2 · 발언 1", "실패한 발언은 발언 카운트에 포함하지 않습니다"
 
 
 def test_an_interjection_joins_an_open_group_but_never_opens_one():
@@ -748,7 +748,7 @@ def test_an_interjection_joins_an_open_group_but_never_opens_one():
     timeline.append_message(_gm("late", 4, turn_kinds.KIND_INTERJECTION, sender="user", msg_type="user"))
     assert "u1" in timeline._groups[("t1", 1)]["cards"]
     assert ("t1", 4) not in timeline._groups and _top_level(timeline)[-1] == "late", \
-        "합성 뒤로 미룬 개입이 발언 없는 묶음을 만들지 않습니다"
+        "합성 이후로 지연된 유저 개입 카드가 발언 없는 빈 라운드 그룹을 생성하지 않습니다"
 
 
 def test_a_new_group_opens_expanded_without_animation_and_folds_the_previous_one():
@@ -761,35 +761,35 @@ def test_a_new_group_opens_expanded_without_animation_and_folds_the_previous_one
 
     timeline.start_streaming_message(_gm("a2", 2))
 
-    assert timeline._groups[("t1", 2)]["expansion"].value is True, "방금 시작한 발언이 접힌 칸 안에서 흐르지 않습니다"
-    assert first.value is False, "따라가는 중이면 직전 묶음을 접습니다"
-    assert timeline._scroll_settle_pending is True, "접은 뒤 바닥을 다시 맞춥니다"
+    assert timeline._groups[("t1", 2)]["expansion"].value is True, "새로 시작된 발언이 접힌 그룹 내에서 숨겨진 채 스트리밍되지 않도록 그룹을 자동 전개합니다"
+    assert first.value is False, "자동 스크롤(following) 상태에서는 직전 라운드 그룹을 접습니다"
+    assert timeline._scroll_settle_pending is True, "그룹을 접은 후 하단 스크롤 위치를 재조정합니다"
 
 
 def test_the_previous_group_stays_open_when_the_reader_is_elsewhere():
     timeline = _grouped_timeline()
     timeline.append_message(_gm("a1", 1))
-    timeline.handle_manual_scroll()           # 위로 스크롤해 읽는 중
+    timeline.handle_manual_scroll()           # 사용자가 위로 스크롤하여 이전 내용을 읽는 중
     timeline.append_message(_gm("a2", 2))
     assert timeline._groups[("t1", 1)]["expansion"].value is True
 
     timeline.release_scroll()
-    timeline._groups[("t1", 2)]["expansion"].set_value(False)   # 사람이 접었다가
-    timeline._groups[("t1", 2)]["expansion"].set_value(True)    # 다시 폄
-    assert timeline.following is False, "직접 편 묶음은 펼친 카드처럼 자동 스크롤을 멈춥니다"
+    timeline._groups[("t1", 2)]["expansion"].set_value(False)   # 사용자가 수동으로 접었다가
+    timeline._groups[("t1", 2)]["expansion"].set_value(True)    # 다시 펼침
+    assert timeline.following is False, "사용자가 수동으로 펼친 그룹은 개별 카드 전개와 마찬가지로 자동 스크롤을 비활성화합니다"
     timeline.release_scroll()
     timeline.append_message(_gm("a3", 3))
-    assert timeline._groups[("t1", 2)]["expansion"].value is True, "사람이 편 묶음은 접지 않습니다"
+    assert timeline._groups[("t1", 2)]["expansion"].value is True, "사용자가 수동으로 펼친 그룹은 자동 접기 대상에서 제외합니다"
 
 
 def test_a_group_with_a_streaming_card_is_never_folded():
     timeline = _grouped_timeline()
-    timeline.start_streaming_message(_gm("a1", 1))       # 아직 흐르는 중
+    timeline.start_streaming_message(_gm("a1", 1))       # 스트리밍 진행 중
     timeline.append_message(_gm("c2", 2))
     assert timeline._groups[("t1", 1)]["expansion"].value is True
 
     timeline.render_all([_gm("a1", 1), _gm("a2", 2)], streaming_ids=["a1"])
-    assert timeline._groups[("t1", 1)]["expansion"].value is True, "불러올 때도 흐르는 카드의 묶음은 펼칩니다"
+    assert timeline._groups[("t1", 1)]["expansion"].value is True, "전체 기록 로드 시에도 스트리밍 중인 카드가 포함된 라운드 그룹은 펼친 상태를 유지합니다"
 
 
 def test_loading_folds_finished_turns_and_keeps_the_live_turns_last_group_open():
@@ -800,7 +800,7 @@ def test_loading_folds_finished_turns_and_keeps_the_live_turns_last_group_open()
 
     timeline.render_all(messages, live_turn_id="t2")
     assert [g["expansion"].value for g in timeline._groups.values()] == [False, False, False, True]
-    assert timeline.following is True, "불러온 접힘은 사람이 연 것이 아닙니다"
+    assert timeline.following is True, "기록 로드 시 자동 접힘은 사용자가 수동 조작한 것이 아니므로 자동 스크롤 상태를 유지합니다"
 
 
 def test_a_late_card_goes_into_its_own_round_and_keeps_its_fold():
@@ -820,7 +820,7 @@ def test_headers_carry_the_ledger_change_of_their_round():
     })
     assert timeline._groups[("t1", 1)]["header"].text == "Round 1 · 발언 1 · 결정 +1 · 닫힘 I-3 · 새 I-5, I-6, I-7 외 1"
     assert timeline._groups[("t1", 2)]["header"].text == "Round 2 · 발언 1 (최종 합성 반영)"
-    assert timeline._groups[("g", 1)]["header"].text.startswith("Step 1"), "그래프 토론은 단계입니다"
+    assert timeline._groups[("g", 1)]["header"].text.startswith("Step 1"), "그래프 토론에서는 'Round' 대신 'Step' 단위를 사용합니다"
 
 
 def test_revealing_a_card_in_a_folded_group_opens_it_first_and_waits_for_layout(monkeypatch):
@@ -843,7 +843,7 @@ def test_revealing_a_card_in_a_folded_group_opens_it_first_and_waits_for_layout(
 def test_collapse_all_also_folds_groups_the_person_opened():
     timeline = _grouped_timeline()
     timeline.render_all([_gm("a1", 1), _gm("a2", 2)])
-    timeline._groups[("t1", 1)]["expansion"].set_value(True)        # 사람이 폄
+    timeline._groups[("t1", 1)]["expansion"].set_value(True)        # 사용자가 수동으로 펼침
     assert timeline.collapse_all_button.visible is True
 
     timeline.collapse_all_cards()
@@ -857,7 +857,7 @@ def test_retrying_a_speech_in_a_folded_group_opens_that_group():
     timeline.start_streaming_message(_gm("a1", 1))
     assert timeline._groups[("t1", 1)]["expansion"].value is True
     timeline.append_message(_gm("a2b", 2))
-    assert timeline._groups[("t1", 1)]["expansion"].value is True, "다시 실행 중인 묶음은 접지 않습니다"
+    assert timeline._groups[("t1", 1)]["expansion"].value is True, "발언 재실행이 진행 중인 라운드 그룹은 자동으로 접지 않습니다"
 
 
 def test_the_feed_wires_round_chips_to_its_groups():

@@ -705,7 +705,7 @@ class TurnRun:
             "session_id": self.session_id,
             "turn_id": self.turn_id,
             "status": self.status,
-            # 턴의 단계 (`STATUS_CHANGED` 의 status). 다시 붙은 화면이 합성 중임을 알아야 장부 띠에 `합성 …` 을 둡니다.
+            # 턴 실행 단계 (`STATUS_CHANGED` 이벤트의 status). 새로 연결된 UI 클라이언트가 종합 단계임을 인지해야 결정 장부 요약 띠에 '종합 중…' 상태를 표시할 수 있습니다.
             "phase": self.phase,
             "error": self.error,
             "retry_target": self.retry_target,

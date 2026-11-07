@@ -420,8 +420,8 @@ div.mado-math-fallback {
    (Ctrl+F)는 달라지지 않습니다.
    `contain-intrinsic-size: auto 220px` — 아직 한 번도 그리지 않은 카드는 220px 로 치고,
    한 번 그린 카드는 실제 높이를 기억합니다. 그래야 스크롤 막대가 덜 튑니다.
-   전문가 화면에서는 카드가 라운드 묶음 안에 들어가 타임라인의 직계 자식이 아니므로, 자리가 아니라 이름
-   (`mado-card`, `common.card_class_string`)으로 찾습니다. */
+   전문가 피드에서는 카드가 라운드 묶음 아코디언 내부에 중첩되어 타임라인의 직계 자식이 아니므로, 구조 셀렉터 대신 클래스 이름
+   (`.mado-card`, `common.card_class_string`)으로 지정합니다. */
 .debate-timeline .mado-card {
     content-visibility: auto;
     contain-intrinsic-size: auto 220px;
@@ -580,7 +580,7 @@ div.mado-math-fallback {
     background: rgba(99, 102, 241, 0.08);
 }
 
-/* 인용 링크 (ADR-052). 발언 카드 본문의 `[S14]`·`[I-3]` 은 작은 칩처럼 보입니다 (`math_markdown.link_refs`). */
+/* 인용 링크 스타일 (ADR-052). 발언 카드 본문의 `[S14]`, `[I-3]` 링크를 컴팩트한 모노스페이스 칩 형태로 스타일링합니다 (`math_markdown.link_refs`). */
 .nicegui-markdown a[href^="#mado-ref-"] {
     display: inline-block;
     padding: 0 0.3em;
@@ -596,9 +596,9 @@ div.mado-math-fallback {
     background: rgba(100, 116, 139, 0.6);
 }
 
-/* 결정 장부 요약 띠 (`chat_feed/ledger_strip.py`). 한 줄을 지키고, 좁으면 추이를 숨깁니다. 화면 폭이 아니라
-   스플리터로 좁아진 피드 폭을 따라야 하므로 미디어 질의가 아니라 컨테이너 질의입니다. 숨긴 추이는 개수 쪽 툴팁에
-   있습니다. */
+/* 결정 장부 요약 띠 (`chat_feed/ledger_strip.py`). 단일 행 고정 레이아웃을 유지하며 폭이 좁을 때 추이 영역을 숨깁니다. 창 전체 너비가 아니라
+   스플리터로 조절된 피드 컨테이너 너비를 기준으로 반응해야 하므로 미디어 쿼리 대신 Container Query를 적용합니다. 숨겨진 추이는 통계 레이블 툴팁에서
+   확인 가능합니다. */
 .ledger-strip {
     container-type: inline-size;
     flex-shrink: 0;

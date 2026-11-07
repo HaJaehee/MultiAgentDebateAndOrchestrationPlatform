@@ -460,7 +460,7 @@ def collect_round_attempts(
             if not attempt.active_failure_signatures and attempt.modified_files and not diag_ran:
                 files_key = ",".join(sorted(os.path.basename(p).lower() for p in attempt.modified_files[:3]))
                 for issue in issues[:3]:
-                    # 쟁점에 고정 번호가 있으면 번호로 서명합니다(ADR-051). 장부를 다시 쓰며 문장이 바뀌어도 같은 쟁점입니다.
+                    # 쟁점에 고정 번호가 부여되어 있다면 번호를 서명 키로 활용합니다 (ADR-051). 장부 재생성 시 문장 표현이 바뀌더라도 동일한 쟁점으로 정확히 인식합니다.
                     no, text = ledger_history.split_issue_tag(issue)
                     norm = ledger_history.issue_label(no) if no is not None else ledger_history.normalize_issue(text)
                     if norm:

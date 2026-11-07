@@ -86,7 +86,7 @@ ADR은 **기존 내용을 수정하지 않고 불변의 문서로 누적 보존�
 | [049](ADR-049-execution-grounded-diagnostician-and-stagnation-observer.md) | 실행 기반 진단(Diagnostician) 에이전트·구조화된 시도 이력·외부 정체 관찰자 기반 재설계 에스컬레이션을 도입한다 | 11-03 | 채택됨 |
 | [050](ADR-050-build-workflows-by-conversation.md) | 대화로 실행 그래프와 새 에이전트를 함께 설계하고, 쓰기 전에 모든 검사를 끝낸 뒤 한 번에 저장한다 | 11-04 | 채택됨 |
 | [051](ADR-051-fixed-issue-ids-and-ledger-revisions.md) | 미해결 쟁점에 서버가 고정 번호를 붙이고, 장부가 바뀔 때마다 개정 이력을 바로 저장한다 | 11-06 | 채택됨 |
-| [052](ADR-052-round-groups-and-citation-labels.md) | 전문가 피드를 라운드 묶음으로 접고, 발언·쟁점을 `[S14]`·`[I-3]` 으로 가리킨다 | 11-07 | 채택됨 |
+| [052](ADR-052-round-groups-and-citation-labels.md) | 전문가 피드를 라운드 묶음으로 그룹화하고, 발언·쟁점을 `[S14]`·`[I-3]` 인용 링크로 연결한다 | 11-07 | 채택됨 |
 
 날짜는 모두 2026년 기준입니다.
 

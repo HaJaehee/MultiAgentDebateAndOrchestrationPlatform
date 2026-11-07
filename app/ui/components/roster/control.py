@@ -44,8 +44,8 @@ class AgentRosterControl:
         self.on_tool_rules_changed: Optional[
             Callable[[List[str], List[str]], Coroutine[None, None, None]]
         ] = None
-        # 고친 결정 장부를 저장하는 쪽 (읽었던 장부, 고친 장부). 화면이 채웁니다.
-        # 저장한 장부를 돌려줍니다 (새 쟁점에 번호가 붙어 고친 글과 다를 수 있습니다, ADR-051).
+        # 수정된 결정 장부 저장 핸들러 (수정 전 원본 장부, 수정한 장부). 페이지 레벨에서 주입합니다.
+        # 최종 저장된 장부 본문을 반환합니다 (신규 쟁점에 번호가 부여되어 입력 텍스트와 다를 수 있음, ADR-051).
         self.on_ledger_edited: Optional[Callable[[str, str], Coroutine[None, None, Optional[str]]]] = None
         # 이 화면이 서버 PC 에서 열렸는가와 보안 감사에서 고른 호출의 대화를 여는 쪽 (화면이 채웁니다).
         # 채우지 않으면 원격으로 봅니다 — 전역 규칙을 고치지 못하는 쪽이 안전합니다.
@@ -240,7 +240,7 @@ class AgentRosterControl:
             await self.on_tool_rules_changed(grants, denials)
 
     async def _save_ledger(self, expected: str, ledger: str) -> Optional[str]:
-        """저장한 장부를 돌려줍니다 (새 쟁점에 번호가 붙어 고친 글과 다를 수 있습니다)."""
+        """저장 완료된 결정 장부 본문을 반환합니다 (신규 쟁점에 번호가 발급되어 입력 내용과 일부 다를 수 있습니다)."""
         if self.on_ledger_edited is not None:
             return await self.on_ledger_edited(expected, ledger)
         return None
@@ -300,10 +300,10 @@ class AgentRosterControl:
         self.ledger.set_ledger(ledger)
 
     def open_ledger(self) -> Optional[ui.element]:
-        """결정 장부 칸을 보이게 펼치고, 스크롤할 요소를 돌려줍니다.
+        """결정 장부 패널을 화면에 노출되도록 펼치고, 포커스를 맞출 UI 엘리먼트를 반환합니다.
 
-        로스터는 왼쪽 열 맨 위의 접이식 칸이고, 결정 장부는 그 안 스크롤 칸 맨 아래에 있어 로스터가 펼쳐져 있어도 대개
-        보이지 않습니다. 둘 다 펼치고, 스크롤은 부르는 쪽이 칸이 제 자리를 찾은 뒤에 합니다 (`chat_feed.common.reveal_js`).
+        로스터는 좌측 사이드바 최상단의 접이식 패널이며, 결정 장부는 패널 스크롤 영역 최하단에 위치하여 로스터가 열려 있어도 가려질 수 있습니다.
+        이에 따라 두 아코디언을 모두 펼치며, 스크롤 이동은 호출처에서 레이아웃이 안정화된 후 실행합니다 (`chat_feed.common.reveal_js`).
         """
         if not self.alive or self.ledger.expansion is None or self.ledger.expansion.is_deleted:
             return None

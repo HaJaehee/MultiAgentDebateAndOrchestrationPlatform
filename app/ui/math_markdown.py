@@ -218,16 +218,16 @@ _SINGLE_VARIABLE = re.compile(r"[A-Za-z](?:'|_?\d{1,2})?")
 _NUMERIC = re.compile(r"[\d\s.,%]+")
 _TOKEN = re.compile(r"MADOMATH[0-9a-f]{6}X\d+Z")
 
-# 인용 라벨 (ADR-052). 앞이 `[`·`\`·글자이면 바꾸지 않습니다 — 위키 링크 `[[S14]]`, 이스케이프 `\[S14\]`, `ab[S14]`.
-# 뒤가 `]`·`(` 이면 바꾸지 않습니다 — 모델이 직접 쓴 링크 `[S14](https://…)`. 뒤의 `[` 는 막지 않습니다(`[S14][S15]`
-# 둘 다 링크). 뒤의 `:` 도 막지 않습니다. 줄 첫머리의 `[S14]: 동의합니다` 는 그대로 두면 markdown2 가 참조 정의로
+# 인용 라벨 정규식 (ADR-052). 앞 문자가 '[', '\\', 단어 문자(\w)인 경우 제외합니다 — 위키 링크 `[[S14]]`, 이스케이프 `\[S14\]`, 접두사 `ab[S14]`.
+# 뒷 문자가 ']', '('인 경우 제외합니다 — 모델이 직접 작성한 일반 마크다운 링크 `[S14](https://…)`. 단, 뒤따르는 '['는 허용합니다 (`[S14][S15]` 연속 인용).
+# 뒤따르는 콜론(':')도 변환합니다. 행 머리의 `[S14]: 동의합니다`를 방치하면 markdown2가 이를 링크 참조 정의(reference definition)로 오인하여 행 전체를 삭제하기 때문입니다.
 # 보고 줄을 통째로 지웁니다.
 REF_LINK = re.compile(r"(?<![\[\\\w])\[(S\d{1,5}|I-\d{1,5})\](?![\](])")
 REF_HREF_PREFIX = "#mado-ref-"
 
 
 def link_refs(segment: str) -> str:
-    """글 구간의 `[S14]`·`[I-3]` 을 `#mado-ref-…` 링크로 바꿉니다 (보이는 글은 `S14`)."""
+    """텍스트 영역 내의 `[S14]`, `[I-3]` 표기를 `#mado-ref-…` 링크로 변환합니다 (표시 텍스트는 `S14` 형태 유지)."""
     return REF_LINK.sub(lambda m: f"[{m.group(1)}]({REF_HREF_PREFIX}{m.group(1)})", segment)
 
 
@@ -249,7 +249,7 @@ def _accept_math(body: str) -> bool:
 def protect_math(text: str, link_citations: bool = False) -> Tuple[str, Dict[str, str]]:
     """수식 구간을 자리표시자로 바꾸고 (자리표시자 → HTML) 표를 돌려줍니다. 맨몸 명령도 여기서 바꿉니다.
 
-    `link_citations` 면 글 구간의 인용 라벨도 링크로 바꿉니다 (`link_refs`). 코드 구간은 건너뜁니다.
+    `link_citations`가 True인 경우 일반 텍스트 영역의 인용 라벨도 링크로 변환합니다 (`link_refs`). 코드 블록 구간은 제외됩니다.
     """
     nonce = hashlib.sha1(text.encode("utf-8", "surrogatepass")).hexdigest()[:6]
     found: Dict[str, str] = {}
@@ -284,7 +284,7 @@ def protect_math(text: str, link_citations: bool = False) -> Tuple[str, Dict[str
 def render_markdown(content: str, extras: str, link_citations: bool = False) -> str:
     """마크다운 → HTML, 수식은 MathML. NiceGUI 의 변환(`prepare_content`)을 그대로 쓰고 수식만 끼웁니다.
 
-    캐시 열쇠에 `link_citations` 가 들어갑니다. 같은 글을 링크 없이 그리는 화면(초급자·체험)과 섞이지 않습니다.
+    LRU 캐시 키에 `link_citations` 플래그가 포함되므로, 동일 본문을 링크 없이 렌더링하는 다른 화면(초급자/체험)과 캐시 충돌이 발생하지 않습니다.
     """
     protected, found = protect_math(content, link_citations)
     try:
@@ -323,11 +323,11 @@ class MathMarkdown(ui.markdown):
     # 백그라운드 렌더링 완료 후 호출되는 콜백입니다. 컴포넌트 높이 변경에 맞춰 피드 스크롤 위치를 재조정합니다.
     on_rendered: Optional[Callable[[], None]] = None
     _rendering = False
-    # 본문의 `[S14]`·`[I-3]` 을 링크로 그릴지 (ADR-052, 전문가 화면의 발언 카드).
+    # 본문 내 [S14], [I-3] 인용 라벨의 링크 변환 활성화 여부 (ADR-052, 전문가 피드 발언 카드 전용).
     link_refs = False
 
     def __init__(self, content: str = "", *, link_refs: bool = False, **kwargs) -> None:
-        # 부모 생성자가 곧바로 내용을 그리므로 그 전에 정합니다.
+        # 부모 클래스 생성자가 즉시 초기 렌더링을 수행하므로, super().__init__ 호출 전에 플래그를 설정합니다.
         self.link_refs = link_refs
         super().__init__(content, **kwargs)
 

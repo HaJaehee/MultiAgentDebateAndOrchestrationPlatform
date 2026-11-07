@@ -1,20 +1,20 @@
-"""결정 장부 요약 띠 — 상태 줄 아래 한 줄 (전문가 화면, docs/feature_ui_upgrade.md P2).
+"""결정 장부 요약 띠 — 상태 영역 하단 고정 단일 행 컴포넌트 (전문가 화면, docs/feature_ui_upgrade.md P2).
 
-결정 장부는 로스터 맨 아래의 접힌 칸에만 있어 토론을 지켜보는 동안 보이지 않았고, 미해결 쟁점이 라운드마다 어떻게
-줄었는지는 어디에도 없었습니다. 이 띠는 스크롤과 상관없이 늘 보이는 상태 칸에 한 줄로 놓입니다.
+기존 결정 장부는 로스터 하단 접이식 패널에만 위치하여 토론 진행 중 실시간 확인이 어려웠고, 라운드를 거치며 미해결 쟁점이
+어떻게 해소되었는지 변화 추이를 확인할 수 없었습니다. 본 요약 띠는 피드 스크롤과 무관하게 상단 상태 영역에 항상 노출되는 단일 행 바 형태로 제공됩니다.
 
     결정 5 · 기각 2 · 미해결 2  I-3 I-5        추이 3 → R1 3 → R2 2 → 합성 0 ✓
 
-* **한 줄, 고정 높이.** 쟁점이 생기고 닫힐 때마다 높이가 바뀌면 스트리밍 중에 피드 스크롤 영역이 라운드마다
-  들썩입니다. 좁으면 개수(항상) → 쟁점 칩(최대 4개) → 추이 순으로 남기고, 추이는 띠 폭에 대한 CSS 컨테이너 질의로
-  숨깁니다(`theme.py` 의 `.ledger-strip`). 화면 폭이 아니라 스플리터로 좁아진 피드 폭을 따라야 하기 때문입니다.
-  숨긴 추이는 개수 쪽 툴팁에 있습니다.
-* **추이는 가장 최근 턴만.** 시작값은 직전 턴의 마지막 개정입니다. 마지막 라운드는 장부를 따로 갱신하지 않으므로
-  (`debate._close_round`) 마지막 값은 "합성" 입니다. 합성 중에는 흐린 `합성 …` 을 두었다가 최종 개정이 오면 값으로
-  바꾸고, 그 값 없이 끝나면 거둡니다.
-* 개정 이력이 없는 옛 대화는 장부 글에서 센 개수만 보여 줍니다.
+* **단일 행 고정 높이:** 쟁점 추가나 종결에 따라 높이가 변하면 실시간 스트리밍 중 피드 스크롤 위치가 흔들리는 현상이 발생합니다.
+  공간이 협소할 경우 [요약 통계(항상 노출)] → [쟁점 칩(최대 4개)] → [추이] 순으로 표시 공간을 확보하며, 추이 영역은 띠 너비 기준의
+  CSS Container Query로 자동 숨김 처리합니다 (`theme.py`의 `.ledger-strip`). 브라우저 창 전체 너비가 아니라 스플리터 조절에 따른 피드 너비를
+  동적으로 반영하기 위함입니다. 숨겨진 추이는 통계 레이블 툴팁에서 확인할 수 있습니다.
+* **가장 최근 턴 기준 추이:** 시작값은 직전 턴의 최종 개정 상태입니다. 마지막 라운드는 장부를 별도 갱신하지 않고 (`debate._close_round`)
+  최종 종합 단계에서 일괄 갱신하므로 마지막 지점은 '합성'입니다. 종합 진행 중에는 반투명한 `합성 …` 칩을 표시하며, 최종 개정이 완료되면 실제 수치로
+  갱신되고, 미완료 종료 시에는 자동으로 제거됩니다.
+* 개정 이력이 없는 기존 레거시 세션의 경우 장부 본문에서 직접 집계한 개수만 표시합니다.
 
-계산은 순수 함수(`strip_counts`, `trend_points`, `issue_opened_label`)이고, 화면은 그 결과를 그리기만 합니다.
+비즈니스 로직 연산은 순수 함수(`strip_counts`, `trend_points`, `issue_opened_label`)로 구성되며, UI 컴포넌트는 해당 결과를 렌더링하는 역할에 집중합니다.
 """
 
 from dataclasses import dataclass
@@ -24,9 +24,9 @@ from nicegui import ui
 
 from app.orchestration import ledger_history
 
-# 쟁점 칩의 최대 개수. 넘치면 "외 n" 으로 줄이고 툴팁에 나머지를 적습니다.
+# 쟁점 칩 최대 표시 개수. 초과 시 '외 n'으로 축약하고 툴팁에 상세 목록을 표시합니다.
 MAX_ISSUE_CHIPS = 4
-# 추이에 보이는 값의 최대 개수. 앞은 "…" 으로 줄입니다.
+# 추이에 표시할 최대 지점 수. 초과 시 앞부분을 '…'으로 축약합니다.
 MAX_TREND_POINTS = 5
 
 STRIP_CLASSES = (
@@ -38,21 +38,21 @@ CHIP_CLASSES = "px-1.5 rounded bg-amber-900/40 text-amber-200 font-mono flex-shr
 POINT_CLASSES = "px-1 rounded bg-slate-800 text-slate-300 flex-shrink-0"
 PENDING_POINT_CLASSES = "px-1 rounded bg-slate-800 text-slate-500 opacity-60 flex-shrink-0"
 
-# 한 턴의 라운드를 이루는 개정 (재실행·직접 수정은 라운드가 아닙니다).
+# 단일 턴 내 라운드 단위를 구성하는 개정 종류 (재생성 및 사용자 직접 편집은 라운드 단위 개정이 아님).
 _ROUND_KINDS = (
     ledger_history.KIND_ROUND, ledger_history.KIND_STEP, ledger_history.KIND_SUBDEBATE, ledger_history.KIND_RESUME,
 )
 _TURN_KINDS = _ROUND_KINDS + (ledger_history.KIND_FINAL,)
 
-# 장부 열기 콜백. 로스터를 아는 페이지가 넘깁니다 (chat_feed 는 roster 를 모릅니다).
+# 결정 장부 패널 열기 콜백. 로스터 컴포넌트를 제어하는 상위 페이지 레벨에서 주입합니다.
 OpenLedger = Callable[[], None]
-# 라운드 칩을 눌렀을 때 (턴 id, 라운드). 라운드 묶음(P3)이 그 묶음으로 이동합니다.
+# 라운드 칩 클릭 콜백 (턴 ID, 라운드 번호). 해당 라운드 묶음 위치로 스크롤 이동합니다.
 RevealRound = Callable[[str, int], Any]
 
 
 @dataclass
 class TrendPoint:
-    """추이의 값 하나. `label` 이 비면 시작값(직전 턴의 마지막 개정)이고, `value` 가 None 이면 합성 중입니다."""
+    """추이 데이터 포인트. `label`이 비어 있으면 시작값(직전 턴의 최종 개정 상태)이며, `value`가 None이면 종합 진행 중 상태입니다."""
 
     label: str
     value: Optional[int]
@@ -74,7 +74,7 @@ def _open_count(revision: Dict[str, Any]) -> int:
 
 
 def strip_counts(revisions: Sequence[Dict[str, Any]], ledger: str) -> Dict[str, Any]:
-    """띠의 개수와 열린 쟁점. 개정이 있으면 마지막 개정, 없으면 장부 글에서 셉니다 (옛 대화)."""
+    """요약 띠에 표시할 카운트와 미해결 쟁점 목록을 추출합니다. 개정 이력이 존재하면 최신 개정을 사용하고, 없으면 장부 본문에서 직접 파싱합니다 (레거시 대화)."""
     if revisions:
         last = revisions[-1]
         return {
@@ -85,7 +85,7 @@ def strip_counts(revisions: Sequence[Dict[str, Any]], ledger: str) -> Dict[str, 
 
 
 def latest_turn(revisions: Sequence[Dict[str, Any]], synthesizing: Optional[str] = None) -> Optional[str]:
-    """추이를 보여 줄 턴. 합성 중인 턴이 있으면 그 턴, 아니면 라운드·합성 개정이 있는 가장 최근 턴."""
+    """추이를 표시할 대상 턴 ID를 결정합니다. 종합 진행 중인 턴이 있다면 해당 턴을 우선하고, 그렇지 않으면 라운드 또는 최종 종합 개정 이력이 존재하는 가장 최근 턴을 반환합니다."""
     if synthesizing:
         return synthesizing
     for revision in reversed(revisions):
@@ -97,7 +97,7 @@ def latest_turn(revisions: Sequence[Dict[str, Any]], synthesizing: Optional[str]
 def trend_points(
     revisions: Sequence[Dict[str, Any]], synthesizing: Optional[str] = None,
 ) -> Tuple[Optional[str], List[TrendPoint]]:
-    """(그 턴, 추이). 시작값 → 라운드마다 마지막 개정 → 합성. 같은 라운드의 개정이 여럿이면 마지막 것을 씁니다."""
+    """(대상 턴 ID, 추이 포인트 목록)을 산출합니다. [시작값] → [라운드별 최종 개정] → [최종 종합] 순으로 구성됩니다. 동일 라운드 내 복수의 개정이 존재할 경우 가장 마지막 개정을 기준으로 채택합니다."""
     turn = latest_turn(revisions, synthesizing)
     if turn is None:
         return None, []
@@ -134,7 +134,7 @@ def trend_points(
 
 
 def trend_text(points: Sequence[TrendPoint], converged: Optional[int] = None) -> str:
-    """추이를 한 줄 글로 (툴팁용, 줄이지 않습니다)."""
+    """추이 전체 경로를 단일 문자열로 서식화합니다 (툴팁 표시용이며 생략 없이 전체를 출력합니다)."""
     if not points:
         return ""
     text = "추이 " + " → ".join(point.text for point in points)
@@ -146,7 +146,7 @@ def trend_text(points: Sequence[TrendPoint], converged: Optional[int] = None) ->
 
 
 def issue_opened_label(revisions: Sequence[Dict[str, Any]], no: int, current_turn: Optional[str]) -> str:
-    """쟁점이 지금 열려 있는 구간이 시작된 개정. 예: "Round 2 (이번 턴)". 모르면 빈 문자열."""
+    """현재 미해결 상태인 쟁점이 최초로 제기되었거나 재개된 시점의 개정 라벨을 반환합니다 (예: "Round 2 (이번 턴)"). 식별 불가 시 빈 문자열을 반환합니다."""
     opened: Optional[Dict[str, Any]] = None
     for revision in reversed(revisions):
         if no not in {item.get("no") for item in revision.get("open") or []}:
@@ -163,13 +163,13 @@ def issue_opened_label(revisions: Sequence[Dict[str, Any]], no: int, current_tur
 
 
 def _tip(element: ui.element, text: str) -> None:
-    """여러 줄 툴팁. `element.tooltip()` 은 줄바꿈을 지키지 않습니다."""
+    """줄바꿈이 보존되는 멀티라인 툴팁을 추가합니다 (`element.tooltip()`은 줄바꿈을 보존하지 않음)."""
     with element:
         ui.tooltip(text).classes("whitespace-pre-line")
 
 
 class LedgerStrip:
-    """상태 칸의 결정 장부 요약 한 줄. 개정 이력(`ledger_history`)으로 그립니다."""
+    """상태 영역에 마운트되는 결정 장부 요약 띠 컴포넌트입니다. 개정 이력(`ledger_history`)을 바탕으로 실시간 렌더링됩니다."""
 
     def __init__(
         self,
@@ -181,13 +181,13 @@ class LedgerStrip:
         self.on_reveal_round = on_reveal_round
         self.row: Optional[ui.row] = None
         self.revisions: List[Dict[str, Any]] = []
-        # 개정 이력이 없을 때 셀 장부 글 (옛 대화).
+        # 개정 이력이 없을 때 직접 파싱할 장부 본문 (레거시 대화).
         self.ledger = ""
-        # 합성 중인 턴. 그 턴의 최종 개정이 오면 비웁니다.
+        # 현재 종합이 진행 중인 턴 ID. 최종 개정이 수신되면 None으로 리셋됩니다.
         self.synthesizing: Optional[str] = None
-        # 턴마다 합의 수렴으로 조기 종료한 라운드.
+        # 턴별 조기 수렴 종료 라운드 번호 매핑.
         self.converged: Dict[str, int] = {}
-        # 지금 그려 둔 쟁점 칩 (번호 → 칩). 본문의 `[I-3]` 링크가 칩을 강조합니다 (ADR-052).
+        # 현재 렌더링된 쟁점 칩 매핑 (쟁점 번호 → UI 레이블 인스턴스). 본문의 `[I-3]` 인용 링크 클릭 시 해당 칩을 강조 표시합니다 (ADR-052).
         self._chips: Dict[int, ui.label] = {}
 
     def build(self) -> None:
@@ -199,7 +199,7 @@ class LedgerStrip:
     def set_revisions(
         self, revisions: Sequence[Dict[str, Any]], ledger: str = "", converged: Optional[Dict[str, int]] = None,
     ) -> None:
-        """대화를 열 때. 지금까지의 개정 이력, 지금 장부, 턴별 수렴 라운드."""
+        """세션 로드 시 전체 상태를 초기화합니다. 지금까지 누적된 개정 이력, 현재 장부 본문, 턴별 조기 수렴 정보를 설정합니다."""
         self.revisions = [dict(r) for r in revisions]
         self.ledger = ledger or ""
         self.converged = dict(converged or {})
@@ -207,7 +207,7 @@ class LedgerStrip:
         self.render()
 
     def add_revision(self, revision: Optional[Dict[str, Any]]) -> None:
-        """장부가 바뀌었습니다 (`ledger_updated`, 직접 수정). 같은 개정이 두 번 와도 한 번만 셉니다."""
+        """장부 갱신 이벤트를 반영합니다 (`ledger_updated`, 직접 수정 등). 중복 수신된 동일 개정 ID는 무시합니다."""
         if not revision:
             return
         if not any(r.get("id") == revision.get("id") for r in self.revisions):
@@ -217,7 +217,7 @@ class LedgerStrip:
         self.render()
 
     def set_synthesizing(self, turn_id: Optional[str]) -> None:
-        """합성을 시작한 턴. None 이면 합성 중 칩을 거둡니다 (최종 갱신 실패, 그 값 없이 끝난 턴)."""
+        """종합 단계가 시작된 턴 ID를 설정합니다. None 전달 시 종합 중 표시 칩을 제거합니다 (최종 갱신 실패 또는 종합 생략 종료)."""
         if turn_id == self.synthesizing:
             return
         self.synthesizing = turn_id
@@ -237,11 +237,11 @@ class LedgerStrip:
 
     @property
     def visible(self) -> bool:
-        """새 대화처럼 장부가 비어 있으면 숨깁니다."""
+        """신규 대화와 같이 표시할 장부 데이터가 전혀 없는 경우 띠를 숨깁니다."""
         return bool(self.revisions) or bool(self.ledger.strip()) or self.synthesizing is not None
 
     def render(self) -> None:
-        # 피드의 `alive` 는 타임라인을 그린 뒤에야 참이고 띠는 그보다 먼저 그립니다. 버려진 화면은 `is_deleted` 로 압니다.
+        # 피드의 `alive` 속성은 타임라인이 초기화된 후에 True가 되며, 요약 띠는 그보다 먼저 빌드될 수 있습니다. 소멸된 컴포넌트는 `is_deleted` 속성으로 방어합니다.
         if self.row is None or self.row.is_deleted:
             return
         self.row.clear()
@@ -311,7 +311,7 @@ class LedgerStrip:
                 )
 
     def highlight_issue(self, no: int) -> bool:
-        """쟁점 칩을 잠깐 강조합니다 (본문의 `[I-3]` 링크). 칩이 없으면(닫힌 쟁점, '외 n' 에 든 쟁점) False."""
+        """쟁점 칩을 일시적으로 강조 표시합니다 (본문의 `[I-3]` 링크 클릭 시 호출). 대상 칩이 화면에 없으면(종결된 쟁점 또는 '외 n'에 포함된 경우) False를 반환합니다."""
         chip = self._chips.get(int(no))
         if chip is None or chip.is_deleted:
             return False

@@ -131,7 +131,7 @@ class _Speech:
         # 끝난 발언을 다시 실행하는 중이면 그 발언의 자리입니다 (ADR-036). 새 행을 넣지 않고 그 행을 고칩니다.
         self.revision = revision
         self.id = revision.message_id if revision else (draft["id"] if draft else str(uuid.uuid4()))
-        # 발언 번호 (ADR-052). `SpeechRunner.speak` 이 정합니다.
+        # 발언 번호 (ADR-052). `SpeechRunner.speak`에서 확정합니다.
         self.speech_no = speech_no
         extra_meta = (
             {"stance": agent.debate_stance}
@@ -186,7 +186,7 @@ class _Speech:
                 "round_number": self.round_number,
                 "msg_type": self.msg_type,
                 "started_at": self.started_at,
-                # 라운드 묶음의 열쇠 (턴, 라운드). 첫 조각 전에 카드를 놓을 묶음을 정합니다.
+                # 라운드 묶음 식별 키 (턴 ID, 라운드 번호). 첫 번째 스트리밍 청크 수신 전에 카드가 속할 라운드 묶음을 지정합니다.
                 "turn_id": self.state.turn_id,
                 "speech_no": self.speech_no,
                 "graph_node_id": self.graph_node_id,
@@ -235,7 +235,7 @@ class _Speech:
     async def checkpoint(self, loop_state: Dict[str, Any]) -> None:
         payload = json.loads(json.dumps(
             {**loop_state, "tool_record_ids": self.prior_record_ids + list(self.recorded_tools.values()),
-             # 예약한 발언 번호. 이어 가는 발언이 같은 번호를 씁니다 (ADR-052).
+             # 사전에 예약된 발언 번호. 중단 후 이어가는 발언에서 동일한 번호를 유지합니다 (ADR-052).
              turns.DRAFT_SPEECH_NO: self.speech_no},
             ensure_ascii=False, default=str,
         ))
@@ -573,9 +573,9 @@ class SpeechRunner:
         `revision` 을 주면 끝난 발언 하나를 다시 실행하는 것입니다 (ADR-036). 새 행을 넣지 않고 그 발언의 값을
         바꾸며, 실패로 끝나면 지금 발언은 그대로 둡니다 (`SpeechRevision.apply`).
 
-        `speech_no` 는 미리 잡아 둔 발언 번호입니다 (ADR-052). 동시에 도는 발언(병렬 지시, 그래프 단계)은 배정·활성화
-        순서대로 미리 잡습니다. 주지 않으면 여기서 다음 번호를 냅니다. 다시 실행하는 발언은 원래 번호를, 초안에서
-        이어 가는 발언은 초안에 적힌 번호를 씁니다.
+        `speech_no`는 사전에 할당된 발언 번호입니다 (ADR-052). 병렬 실행 발언(병렬 라운드, 동시 활성화 그래프 노드 등)은 배정 및 활성화
+        순서에 따라 사전에 번호를 예약합니다. 전달되지 않은 경우 본 메서드에서 다음 번호를 새로 발급합니다. 재생성 발언은 기존 번호를 유지하고, 초안에서
+        이어가는 발언은 초안에 기록된 번호를 그대로 사용합니다.
 
         `created_at` 을 주면 그 시각으로 기록합니다. 병렬 라운드에서는 발언이 끝나는
         순서가 제각각이라, 커밋 시각을 그대로 쓰면 새로고침한 화면의 발언 순서가
@@ -666,7 +666,7 @@ class SpeechRunner:
         db, db_lock: Optional[asyncio.Lock], state: DebateState, revision: Optional[SpeechRevision],
         draft: Optional[Dict[str, Any]], reserved: Optional[int],
     ) -> Optional[int]:
-        """이 발언의 번호 (ADR-052). 다시 실행은 원래 번호, 초안에서 이어 가면 초안의 번호, 미리 잡았으면 그 번호."""
+        """발언 번호를 산출합니다 (ADR-052). 재생성 발언은 기존 번호, 초안에서 이어가는 발언은 초안 내 예약 번호, 사전 할당된 번호가 전달된 경우 해당 번호를 우선 사용합니다."""
         if revision is not None:
             return revision.speech_no
         drafted = ((draft or {}).get("state") or {}).get(turns.DRAFT_SPEECH_NO)

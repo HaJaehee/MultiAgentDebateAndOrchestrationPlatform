@@ -104,15 +104,15 @@ SUB_DEBATE_LABELS = {
 
 # ---------------------------------------------------------------- 발언 번호 (ADR-052)
 
-# 발언 초안의 상태(`SpeechDraftModel.state`)에 적어 두는 예약 번호의 열쇠. 초안에서 이어 가는 발언은 이 번호를 그대로 씁니다.
+# 발언 초안 상태(`SpeechDraftModel.state`)에 저장되는 예약 발언 번호 키. 초안에서 이어가는 발언은 이 번호를 그대로 사용합니다.
 DRAFT_SPEECH_NO = "speech_no"
 
 
 async def speech_no_floor(db, session_id: str, turn_id: Optional[str]) -> int:
-    """이 대화에서 이미 쓴 가장 큰 발언 번호. 기록된 발언과 이 턴의 발언 초안에 예약해 둔 번호 중 큰 것.
+    """해당 세션에서 이미 사용된 가장 높은 발언 번호를 조회합니다. 저장된 발언과 현재 턴의 발언 초안에 예약된 번호 중 최댓값을 반환합니다.
 
-    초안에서 이어 가는 발언은 초안의 번호를 그대로 쓰므로, 새 번호는 그보다 커야 겹치지 않습니다. 예약만 하고 저장되지
-    않은 번호(초안도 없이 끊긴 발언)는 다시 쓰여도 됩니다. 그 번호는 어떤 프롬프트에도 실린 적이 없습니다.
+    초안에서 이어가는 발언은 초안의 예약 번호를 그대로 유지하므로, 신규 발언 번호는 이보다 커야 번호 충돌이 발생하지 않습니다. 예약만 되고 저장되지
+    않은 번호(초안 생성 전 중단된 발언 등)는 어떤 프롬프트에도 노출된 적이 없으므로 재사용되어도 안전합니다.
     """
     recorded = await db.scalar(
         select(func.max(MessageModel.speech_no)).where(MessageModel.session_id == session_id)
@@ -129,16 +129,16 @@ async def speech_no_floor(db, session_id: str, turn_id: Optional[str]) -> int:
 
 
 async def ensure_speech_counter(db, state: Any) -> None:
-    """턴에서 처음 번호를 낼 때 계수기를 DB 에 맞춥니다 (새 턴·재개·재실행 모두 이 길). 읽지 못하면 메모리의 값으로 이어 갑니다."""
+    """턴 내에서 최초로 발언 번호를 발급할 때 카운터를 DB 상태와 동기화합니다 (신규 턴, 세션 재개, 발언 재생성 모두 동일). 조회 실패 시 메모리 내 카운터 값을 유지합니다."""
     if state.speech_counter_ready:
         return
     try:
         floor = await speech_no_floor(db, state.session_id, state.turn_id)
-        # 읽은 트랜잭션을 닫아 연결을 돌려줍니다 (ADR-041). 바로 뒤에 LLM 응답을 기다리는 호출(그래프 판정 등)이 옵니다.
+        # 조회가 끝난 트랜잭션을 즉시 커밋하여 커넥션을 풀에 반환합니다 (ADR-041). 직후에 LLM 응답 대기(그래프 라우팅 판정 등)가 이어지기 때문입니다.
         await db.commit()
     except asyncio.CancelledError:
         raise
-    except Exception as exc:  # noqa: BLE001 - 번호를 못 맞춰도 발언은 합니다
+    except Exception as exc:  # noqa: BLE001 - 발언 번호 조회에 실패하더라도 발언 생성은 계속 진행합니다
         logger.warning(f"Could not read the speech numbers of session {state.session_id}: {type(exc).__name__}: {exc}")
         floor = 0
     state.speech_counter = max(int(state.speech_counter or 0), floor)
@@ -146,7 +146,7 @@ async def ensure_speech_counter(db, state: Any) -> None:
 
 
 def reserve_speech_no(state: Any) -> int:
-    """다음 발언 번호를 냅니다. 한 세션에서는 턴이 하나씩만 돌므로 경쟁은 없습니다."""
+    """다음 발언 번호를 발급합니다. 세션당 하나의 턴만 순차적으로 실행되므로 동시성 충돌(경쟁 상태)은 발생하지 않습니다."""
     state.speech_counter = int(state.speech_counter or 0) + 1
     return state.speech_counter
 
@@ -419,7 +419,7 @@ class SubDebateRecord:
     agents: List[str]
     speeches: List[Any] = field(default_factory=list)
     concluded: bool = False
-    # 쟁점의 고정 번호 (ADR-051). 번호 없는 쟁점이나 이 칸이 생기기 전의 기록은 None.
+    # 쟁점의 고정 번호 (ADR-051). 번호가 부여되지 않은 쟁점이나 해당 필드 도입 이전의 레코드는 None입니다.
     issue_no: Optional[int] = None
 
 

@@ -1,15 +1,12 @@
 """발언 번호와 인용 라벨 (ADR-052).
 
-지키려는 것.
+핵심 원칙:
 
-1. **번호** — 에이전트·오케스트레이터 발언에만 대화 안에서 1부터 늘어나는 번호가 붙는다. 유저 발언·메모에는 없다.
-   병렬 지시는 끝나는 순서가 아니라 배정 순서로 번호를 받는다. 다시 실행은 원래 번호를, 초안에서 이어 간 발언은 초안의
-   번호를 쓰고, 새 번호는 초안의 번호보다 크다. 다음 턴은 이어 센다.
-2. **프롬프트** — 기록의 머리줄은 `[이름 (역할) · S14]:` 이고, 라운드가 바뀌어도 같은 글이다(캐시). 다시 연 대화의
-   기록(`load_history`)도 번호를 싣는다. 인용 지시(`CITE_INSTRUCTION`)는 요지 지시 앞에 온다.
-3. **그 밖의 길** — 새 대화로 이어 가면 장부에서 `[S…]` 를 지운다. 내보내기 머리줄에 `S14` 를 붙인다.
-4. **화면** — 본문의 `[S14]`·`[I-3]` 은 링크가 되고(코드·수식·직접 쓴 링크는 그대로), 누르면 그 카드로 가거나 쟁점 칩을
-   강조한다. 이 대화에 없는 번호는 알린다.
+1. **번호 부여** — 에이전트 및 오케스트레이터의 발언에만 대화 세션 내에서 1부터 순차 증가하는 고정 번호가 부여됩니다. 유저 발언 및 시스템 메모에는 번호가 부여되지 않습니다.
+   병렬 디스패치 발언은 완료 시점이 아닌 호출 배정 순서대로 번호를 발급받습니다. 발언 재실행 시에는 기존 번호를 유지하고, 초안에서 재개된 발언은 초안 번호를 유지하며 이후 신규 발언은 그보다 큰 번호를 부여받습니다. 다음 턴에서도 이전 번호에 이어 누적 카운트됩니다.
+2. **프롬프트 반영** — 히스토리 헤더는 `[이름 (역할) · S14]:` 형식으로 구성되며, 라운드가 변경되어도 동일 문구를 유지하여 프롬프트 캐시 효율을 극대화합니다. 대화 재개 시의 기록(`load_history`)에도 번호가 포함되며, 인용 지침(`CITE_INSTRUCTION`)은 요지 작성 지침 앞에 배치됩니다.
+3. **연계 동작** — 새 세션으로 이어갈 때는 장부 내 발언 인용 태그(`[S…]`)를 자동으로 정리합니다. 마크다운 내보내기 헤더에도 `S14` 번호가 표기됩니다.
+4. **UI 인터랙션** — 본문의 `[S14]` 및 `[I-3]` 태그는 클릭 가능한 인용 링크로 자동 변환되며(인라인 코드, 수식, 기존 마크다운 링크 내부 제외), 클릭 시 해당 발언 카드로 자동 스크롤되거나 장부 요약 띠의 쟁점 칩을 강조 표시합니다. 존재하지 않는 번호는 알림 메시지로 안내합니다.
 """
 
 from typing import List
@@ -40,7 +37,7 @@ def _numbered(rows) -> List[tuple]:
     return [(r.sender_key, turns.kind_of(r), r.speech_no) for r in rows]
 
 
-# =============================================================== 1. 번호
+# =============================================================== 1. 발언 번호 부여
 
 
 @pytest.mark.asyncio
@@ -51,7 +48,7 @@ async def test_speeches_are_numbered_and_notes_and_users_are_not():
 
     rows = await _rows(sid)
     speeches = [r for r in rows if r.speech_no is not None]
-    assert [r.speech_no for r in speeches] == list(range(1, len(speeches) + 1)), "빈 번호 없이 1부터"
+    assert [r.speech_no for r in speeches] == list(range(1, len(speeches) + 1)), "누락 없이 1부터 순차적으로 부여"
     assert {turns.kind_of(r) for r in speeches} <= {turns.KIND_PLAN, turns.KIND_SPEECH, turns.KIND_SYNTHESIS}
     assert all(r.speech_no is None for r in rows if r.sender_key == "user" or r.msg_type == "system")
     assert turns.kind_of(speeches[0]) == turns.KIND_PLAN and turns.kind_of(speeches[-1]) == turns.KIND_SYNTHESIS
@@ -59,7 +56,7 @@ async def test_speeches_are_numbered_and_notes_and_users_are_not():
 
     second = await engine.run_turn(session_id=sid, user_prompt="이어서")
     later = [m.speech_no for m in second.messages[second.turn_message_start:] if m.speech_no]
-    assert later and later[0] == speeches[-1].speech_no + 1, "다음 턴은 이어 셉니다"
+    assert later and later[0] == speeches[-1].speech_no + 1, "다음 턴에서도 발언 번호가 연속으로 누적 카운트됩니다"
 
 
 @pytest.mark.asyncio
@@ -79,7 +76,7 @@ async def test_parallel_speeches_are_numbered_in_dispatch_order_not_finish_order
     rows = await _run(llm)
     numbers = {r.sender_key: r.speech_no for r in rows if r.msg_type == "agent"}
     assert numbers["architect"] < numbers["coder"] < numbers["critic"]
-    assert sorted(llm.spans, key=lambda k: llm.spans[k][1]) == ["critic", "coder", "architect"], "실제로 반대로 끝났습니다"
+    assert sorted(llm.spans, key=lambda k: llm.spans[k][1]) == ["critic", "coder", "architect"], "병렬 실행 완료 순서가 디스패치 순서와 역순임을 확인"
 
 
 @pytest.mark.asyncio
@@ -91,7 +88,7 @@ async def test_a_resumed_speech_keeps_its_drafted_number_and_new_ones_come_after
     turn_id = await _cut(sid)
     (draft,) = await _drafts(turn_id)
     drafted = draft.state[turns.DRAFT_SPEECH_NO]
-    assert isinstance(drafted, int), "초안에 예약 번호를 적어 둡니다"
+    assert isinstance(drafted, int), "초안 메시지에 사전 예약된 발언 번호를 저장해 둡니다"
 
     async with get_session_factory(RESUME_DB)() as db:
         assert await turns.speech_no_floor(db, sid, turn_id) >= drafted
@@ -104,7 +101,7 @@ async def test_a_resumed_speech_keeps_its_drafted_number_and_new_ones_come_after
     coder = next(r for r in rows if r.sender_key == "coder")
     assert coder.id == draft.id and coder.speech_no == drafted
     later = [r.speech_no for r in rows if r.speech_no and r.created_at > coder.created_at]
-    assert later and min(later) > drafted, "새 번호는 초안의 번호보다 큽니다"
+    assert later and min(later) > drafted, "초안 이후에 새로 배정된 발언 번호는 초안 번호보다 큽니다"
 
 
 @pytest.mark.asyncio
@@ -121,7 +118,7 @@ async def test_retrying_a_speech_keeps_its_number():
     assert after.content == "NEW" and after.speech_no == before
 
 
-# =============================================================== 2. 프롬프트
+# =============================================================== 2. 프롬프트 생성 및 캐시
 
 
 def _msg(key: str, no=None, content="발언") -> DebateMessage:
@@ -132,7 +129,7 @@ def _msg(key: str, no=None, content="발언") -> DebateMessage:
 def test_labels_and_the_cite_instruction():
     assert _msg("architect", 14).tag == "S14" and _msg("architect").tag == ""
     assert _msg("architect", 14).speaker_label == "Architect (Role) · S14"
-    assert _msg("architect").speaker_label == "Architect (Role)", "옛 발언은 번호 없이"
+    assert _msg("architect").speaker_label == "Architect (Role)", "발언 번호가 없는 기존 레거시 발언은 번호 없이 라벨 생성"
     assert memory.render_message(_msg("coder", 3)).startswith("### Coder (Role) · S3 · Round 1")
     assert "[S14]" in memory.CITE_INSTRUCTION and "[I-3]" in memory.CITE_INSTRUCTION
 
@@ -151,9 +148,9 @@ async def test_speakers_see_numbered_headers_that_stay_put_between_rounds():
     assert any(header in str(part.get("content")) for part in critic_round_one)
 
     last = critic_round_one[-1]["content"]
-    assert last.index(memory.CITE_INSTRUCTION) < last.index(memory.DIGEST_INSTRUCTION), "인용 지시는 요지 지시 앞"
+    assert last.index(memory.CITE_INSTRUCTION) < last.index(memory.DIGEST_INSTRUCTION), "인용 지침은 요약 지침 앞에 배치됩니다"
 
-    # 같은 발언자의 1·2 라운드 요청에서 앞부분(마지막 메시지 앞)이 같습니다 — 번호는 발언에 저장된 값입니다.
+    # 동일 발언자의 1·2라운드 요청 프롬프트 접두부(마지막 메시지 직전까지)가 동일합니다 — 발언 번호는 메시지 객체에 영속화된 값을 활용합니다.
     critic = [m for a, m, _l in speeches if a.key == "critic"]
     first, second = critic[0], critic[1]
     shared = len(first) - 1
@@ -175,7 +172,7 @@ async def test_a_reopened_conversation_reads_the_numbers_back():
     assert any(m.speech_no for m in history)
 
 
-# =============================================================== 3. 그 밖의 길
+# =============================================================== 3. 세션 연계 및 내보내기
 
 
 @pytest.mark.asyncio
@@ -186,7 +183,7 @@ async def test_continuing_a_conversation_drops_speech_numbers_from_the_ledger():
         await db.commit()
         new = await db.get(SessionModel, result["session_id"])
     assert new.decision_ledger == "## 결정 사항\n- 캐시는 메모리 에 둔다\n\n## 미해결 쟁점\n- [I-2] 만료"
-    assert strip_speech_refs("[S1] 앞 [I-1]") == " 앞 [I-1]", "쟁점 번호는 남깁니다"
+    assert strip_speech_refs("[S1] 앞 [I-1]") == " 앞 [I-1]", "발언 인용만 제거하고 쟁점 번호([I-n])는 그대로 유지합니다"
 
 
 def test_the_export_header_carries_the_speech_number():
@@ -204,7 +201,7 @@ def test_the_export_header_carries_the_speech_number():
     assert "User · S" not in md
 
 
-# =============================================================== 4. 화면
+# =============================================================== 4. UI 렌더링 및 인터랙션
 
 
 @pytest.mark.parametrize("text, links", [
@@ -222,12 +219,12 @@ def test_the_export_header_carries_the_speech_number():
 ])
 def test_citations_become_links_outside_code_math_and_written_links(text, links):
     assert render_markdown(text, "fenced-code-blocks", True).count('href="#mado-ref-') == links
-    assert "mado-ref" not in render_markdown(text, "fenced-code-blocks", False), "링크를 켠 화면에서만"
+    assert "mado-ref" not in render_markdown(text, "fenced-code-blocks", False), "인용 링크 기능이 활성화된 화면에서만 변환"
 
 
 def test_the_line_start_citation_survives_markdown():
     html = render_markdown("[S14]: 동의합니다", "fenced-code-blocks", True)
-    assert "동의합니다" in html, "참조 정의로 읽혀 줄이 사라지지 않습니다"
+    assert "동의합니다" in html, "마크다운 참조 정의 링크 문법([id]: text)으로 오인되어 행 전체가 누락되지 않아야 합니다"
 
 
 def test_the_citation_script_stops_the_hash_jump_first():
@@ -270,7 +267,7 @@ def test_cards_carry_their_number_and_render_links(monkeypatch):
     plain = ChatFeed(noop)
     plain.build_ui()
     plain.render_all([_card_msg("m1", 3, content="[S3]")])
-    assert "mado-ref" not in plain.timeline._cards_by_id["m1"]["markdown"]._props["innerHTML"], "초급자·체험은 글자로만"
+    assert "mado-ref" not in plain.timeline._cards_by_id["m1"]["markdown"]._props["innerHTML"], "초급자 모드 및 라이트 뷰에서는 링크 변환 없이 일반 텍스트로 표시"
 
 
 def test_following_a_citation_reveals_the_card_or_the_issue_or_says_it_is_missing(monkeypatch):
@@ -286,7 +283,7 @@ def test_following_a_citation_reveals_the_card_or_the_issue_or_says_it_is_missin
     assert group_one.value is False
 
     assert feed.follow_citation("S3") is True
-    assert group_one.value is True and "getHtmlElement" in scripts[-1], "접힌 묶음을 펴고 그 카드로"
+    assert group_one.value is True and "getHtmlElement" in scripts[-1], "접힌 라운드 그룹을 전개한 후 해당 카드로 스크롤 이동"
     assert feed.follow_citation("I-5") is True
     assert "ring-2" in feed.ledger_strip._chips[5]._classes
 

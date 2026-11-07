@@ -38,8 +38,8 @@ logger = logging.getLogger(__name__)
 
 QuestionKind = Literal["noul", "choice", "score"]
 
-# 결정 장부 미해결 쟁점 앞의 고정 번호 (`app.orchestration.ledger_history.ISSUE_TAG` 와 같은 모양). 이 층은 orchestration 을
-# 가져올 수 없어 따로 둡니다.
+# 결정 장부 미해결 쟁점 머리의 고정 번호 패턴 (`app.orchestration.ledger_history.ISSUE_TAG`와 동일한 정규식).
+# 순환 참조 방지를 위해 app.agents 계층에 독립적으로 정의합니다.
 _ISSUE_TAG = re.compile(r"^\[I-(\d{1,5})\]\s*")
 
 # 단일 패스 입력 텍스트 상한 (과도한 프롬프트로 인한 결정 모델 컨텍스트 초과 방지)
@@ -489,8 +489,8 @@ class DecisionCaller:
     ) -> Optional[Tuple[List[Agent], str, str, Optional[int]]]:
         """라운드 경계에서 서브 토론 개시 여부, 핵심 쟁점, 당사자 2인을 단일 패스로 결정합니다.
 
-        돌려주는 값은 (두 전문가, 쟁점 글, 사유, 쟁점 번호)입니다. 장부의 미해결 쟁점은 `[I-3] 내용` 모양이라(ADR-051), 고른
-        항목에서 태그를 떼어 번호로 따로 돌려줍니다.
+        반환값은 (선정된 두 전문가, 쟁점 본문, 선정 사유, 쟁점 번호) 튜플입니다. 장부의 미해결 쟁점은 `[I-3] 내용` 형태이므로(ADR-051),
+        선정된 항목에서 식별 태그를 분리하여 번호와 순수 본문 텍스트를 각각 반환합니다.
         """
         if len(candidates) < 2 or not issues:
             return None

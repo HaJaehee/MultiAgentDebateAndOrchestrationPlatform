@@ -275,8 +275,8 @@ async def discard_turn(
             SpeechDraftModel.turn_id == turn_id,
             SpeechDraftModel.session_id == session_id,
         ))
-        # 그 턴의 장부 개정 이력도 지웁니다 (ADR-051). 장부는 턴 끝에만 저장되므로 지워진 쟁점 번호를 가리키는 글이 남지
-        # 않고, 그 번호는 다시 쓰여도 됩니다.
+        # 해당 턴의 결정 장부 개정 이력도 함께 삭제합니다 (ADR-051). 장부 본문은 턴 종료 시에만 세션에 저장되므로
+        # 삭제된 쟁점 번호를 참조하는 본문이 남지 않으며, 해당 번호는 향후 재사용될 수 있습니다.
         await db.execute(delete(LedgerRevisionModel).where(
             LedgerRevisionModel.turn_id == turn_id,
             LedgerRevisionModel.session_id == session_id,
@@ -408,13 +408,13 @@ def build_handoff_note(
     return "\n".join(lines)
 
 
-# 발언 번호 인용 (`[S14]`, ADR-052). 새 대화로 이어 가면 발언 번호가 1부터 다시 시작하므로 넘겨받는 장부에서 지웁니다.
-# 쟁점 번호(`[I-3]`)는 그대로 둡니다. 새 대화의 쟁점 색인이 장부 글에서 이어 셉니다 (ADR-051).
+# 발언 번호 인용 태그 (`[S14]`, ADR-052). 새 세션으로 대화를 이어갈 때는 발언 번호가 1부터 다시 시작하므로 인계되는 장부 본문에서 발언 인용 태그를 제거합니다.
+# 쟁점 식별 번호(`[I-3]`)는 유지합니다. 새 세션의 쟁점 색인이 인계된 장부 본문으로부터 번호 체계를 연속하여 계승하기 때문입니다 (ADR-051).
 _SPEECH_REF = re.compile(r"\s?\[S\d{1,5}\]")
 
 
 def strip_speech_refs(text: str) -> str:
-    """글에서 `[S14]` 인용을 뗍니다."""
+    """텍스트 내의 `[S14]` 발언 인용 태그를 모두 제거합니다."""
     return _SPEECH_REF.sub("", text or "")
 
 

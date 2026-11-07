@@ -319,9 +319,9 @@ class ConversationMemory:
         새 발언이 없거나 실패하면 이전 장부를 그대로 둡니다. 장부는 토론의 부산물이라,
         장부를 못 써서 토론이 멈추면 안 됩니다.
 
-        미해결 쟁점에는 서버가 고정 번호를 붙이고(`ledger_history.assign_issue_ids`), 갱신할 때마다 개정 이력을 바로
-        저장합니다(`kind` 는 `ledger_history.REVISION_KINDS` 중 하나, ADR-051). 쟁점 색인은 턴에서 처음 갱신할 때
-        세션의 개정 이력으로 한 번 세웁니다. 재개하면 상태를 새로 세우므로 이 턴의 앞선 개정까지 다시 읽습니다.
+        미해결 쟁점에는 서버가 고유 식별 번호를 부여하며(`ledger_history.assign_issue_ids`), 갱신 시마다 개정 이력을 데이터베이스에
+        즉시 저장합니다(`kind`는 `ledger_history.REVISION_KINDS` 중 하나, ADR-051). 쟁점 색인은 턴 내 최초 갱신 시점에 세션의 기존 개정 이력으로부터
+        구축됩니다. 세션 재개 시에는 상태를 다시 초기화하므로 해당 턴의 이전 개정 이력까지 모두 다시 읽어 색인을 완성합니다.
         """
         start, upto = state.ledger_through, len(state.messages)
         fresh = [
@@ -335,7 +335,7 @@ class ConversationMemory:
         if state.issue_index is None:
             state.issue_index = await ledger_history.load_index(db, state.session_id)
         issues: ledger_history.IssueIndex = state.issue_index
-        # 개정 이력 없이 글만 넘어온 장부(`continue_session`)와 저장에 실패한 개정의 번호도 이어 셉니다.
+        # 개정 이력 없이 텍스트만 인계된 세션(`continue_session`)이나 저장에 실패했던 개정의 번호도 누락 없이 이어받아 관리합니다.
         issues.absorb(state.decision_ledger)
         closed_issues = ledger_history.recently_closed_block(issues, state.decision_ledger)
 
@@ -549,7 +549,7 @@ class ConversationMemory:
                         "content": f"[User]:\n{placeholders.get(index, msg.content)}"
                     })
                 else:
-                    # 발언 번호는 이 발언에 저장된 값이라 라운드가 바뀌어도 같은 머리줄입니다 (ADR-052, ADR-045).
+                    # 발언 번호는 발언 레코드에 불변으로 저장되므로 후속 라운드에서도 동일한 헤더 텍스트를 유지합니다 (ADR-052, ADR-045).
                     role_label = f"[{msg.speaker_label}]"
                     context.append({
                         "role": "assistant" if msg.sender_key == agent.key else "user",

@@ -49,7 +49,7 @@ RECENT_CHARS = 600
 
 
 def issue_heading(issue: str, issue_no: Optional[int]) -> str:
-    """서브 토론 안내·결론 머리줄의 쟁점. 고정 번호가 있으면 `I-3 · 쟁점` (ADR-051)."""
+    """서브 토론 안내 및 결론 헤더에 표시할 쟁점 텍스트를 반환합니다. 고정 번호가 있으면 `I-3 · 쟁점` 형식입니다 (ADR-051)."""
     return f"{ledger_history.issue_label(issue_no)} · {issue}" if issue_no else issue
 
 
@@ -339,7 +339,7 @@ class SubDebateRunner(PhaseExecutor):
         control: Optional[TurnControl],
         on_event: Optional[EventCallback],
     ) -> None:
-        """오케스트레이터가 결론을 쓰고 장부에 반영합니다. 받은 발언이 없으면 결론 없이 닫습니다."""
+        """오케스트레이터가 서브 토론 결론을 작성하고 결정 장부에 반영합니다. 전문가 응답이 없으면 결론 없이 종료합니다."""
         heading = issue_heading(issue, issue_no)
         spoken = [m for m in exchange if m.msg_type != "error"]
         if not spoken:

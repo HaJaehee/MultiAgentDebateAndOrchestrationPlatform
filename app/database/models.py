@@ -117,7 +117,7 @@ class SessionModel(Base):
     speech_comments: Mapped[List["SpeechCommentModel"]] = relationship(
         "SpeechCommentModel", back_populates="session", cascade="all, delete-orphan", lazy="select"
     )
-    # 결정 장부의 개정 이력 (ADR-051). 체험 서버가 세션을 ORM 으로 지울 때 함께 지워지도록 둡니다.
+    # 결정 장부의 개정 이력 (ADR-051). 세션 삭제 시 ORM cascade를 통해 함께 삭제됩니다.
     ledger_revisions: Mapped[List["LedgerRevisionModel"]] = relationship(
         "LedgerRevisionModel", back_populates="session", cascade="all, delete-orphan", lazy="select"
     )
@@ -269,8 +269,9 @@ class MessageModel(Base):
     graph_port: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     # 이 기록이 속한 턴 (`TurnModel`). 이 컬럼이 생기기 전의 기록은 NULL.
     turn_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
-    # 발언 번호 (ADR-052). 에이전트와 오케스트레이터의 발언에만 붙고 대화 안에서 1부터 늘어납니다. 프롬프트와 화면이
-    # `[S14]` 로 가리킵니다. 유저 발언·메모와 이 컬럼이 생기기 전의 발언은 NULL. 실패한 발언도 번호를 지킵니다(빈 번호 허용).
+    # 발언 일련번호 (ADR-052). 전문가 및 오케스트레이터의 실제 발언에만 부여되며 대화 세션 내에서 1부터 단조 증가합니다.
+    # 프롬프트와 UI에서 `[S14]` 형태로 참조합니다. 사용자 발언, 시스템 메모 및 해당 컬럼 추가 이전의 발언은 NULL입니다.
+    # 실패한 발언도 번호를 보존하여 번호 연속성이 유지됩니다 (결번 허용).
     speech_no: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # 이 기록이 턴의 흐름에서 맡은 자리 (`app/orchestration/turns.py` 의 KIND_*). 끊긴 턴을 다시
     # 세울 때 기록을 문장이 아니라 이것으로 읽습니다 — 지명·분배는 누가 불렸고 무엇을 맡았는지를
@@ -325,40 +326,39 @@ class SpeechCommentModel(Base):
 
 
 class LedgerRevisionModel(Base):
-    """결정 장부가 바뀔 때마다 남기는 한 행 (`app/orchestration/ledger_history.py`, ADR-051).
+    """결정 장부가 갱신될 때마다 기록되는 개정 이력 모델 (`app/orchestration/ledger_history.py`, ADR-051).
 
-    장부 자체는 `sessions.decision_ledger` 에 턴이 끝날 때만 저장되고, 라운드마다의 장부는 턴 실행 중 메모리에만 있다가
-    사라졌습니다. 이 표가 있어야 미해결 쟁점이 라운드마다 어떻게 줄었는지 보여 주고, 쟁점의 고정 번호를 세션 전체에서
-    대조할 수 있습니다. 쟁점 목록은 표를 따로 두지 않고 `open_issues` JSON 칸에 둡니다.
+    장부 자체는 `sessions.decision_ledger`에 턴 종료 시에만 영속화되고, 라운드별 중간 장부는 턴 실행 중 메모리에만 유지되다 소멸되었습니다.
+    본 테이블을 통해 라운드별 미해결 쟁점의 해결/추가 추이를 추적하고, 세션 전반에 걸쳐 쟁점 고정 번호의 연속성을 보장할 수 있습니다.
+    쟁점 목록은 별도 테이블 대신 `open_issues` JSON 컬럼에 구조화하여 보관합니다.
 
-    행의 값은 모두 기록하는 쪽이 정합니다(`id`·`seq`·`created_at`). 커밋 뒤에 행을 다시 읽지 않습니다.
+    레코드의 모든 값(`id`, `seq`, `created_at`)은 기록 주체가 직접 생성하며, 커밋 후 재조회하지 않습니다.
     """
 
     __tablename__ = "ledger_revisions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str] = mapped_column(String(36), ForeignKey("sessions.id", ondelete="CASCADE"), index=True)
-    # 이 개정을 낸 턴. 턴 밖의 직접 수정은 NULL. 외래키는 두지 않습니다(`messages.turn_id` 와 같은 방식).
+    # 해당 개정을 생성한 턴 ID. 턴 외부에서의 사용자 직접 편집은 NULL입니다. 외래 키 제약 조건은 두지 않습니다(`messages.turn_id`와 동일한 방식).
     turn_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
-    # 세션 안의 순번. 정렬 키입니다. `created_at` 은 Windows 의 시계 해상도(약 15ms)로 같은 값이 나올 수 있습니다.
+    # 세션 내 개정 순번(정렬 키). Windows 환경의 타이머 해상도(약 15ms)로 인해 created_at이 동일할 수 있어 정렬 안정성을 위해 사용합니다.
     seq: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    # 라운드 번호 (그래프는 단계 번호). 턴 밖의 직접 수정은 0.
+    # 라운드 번호 (그래프 워크플로의 경우 스텝 번호). 턴 외부에서의 직접 편집은 0입니다.
     round_number: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     # round · step · subdebate · final · resume · retry · edit (`ledger_history.REVISION_KINDS`).
     kind: Mapped[str] = mapped_column(String(16), default="round", nullable=False)
     # 이벤트의 `reason` (예: "Round 2").
     reason: Mapped[str] = mapped_column(String(120), default="", nullable=False)
-    # 그 시점의 장부 전문.
+    # 해당 시점의 결정 장부 전체 본문.
     ledger: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    # 열린 쟁점 `[{"no": 3, "text": "…"}]`. 글에는 태그를 넣지 않습니다. 장부 글에서도 꺼낼 수 있지만, 쟁점 색인과 닫힘·새 쟁점
-    # 비교가 장부를 매번 파싱하지 않도록 따로 둡니다.
+    # 미해결 쟁점 목록 (`[{"no": 3, "text": "…"}]`). 본문 텍스트에는 태그를 제외합니다. 장부 본문에서도 파싱할 수 있으나 색인 조회 및 상태 변화량 계산 시 매번 본문을 파싱하지 않도록 별도 보관합니다.
     open_issues: Mapped[Any] = mapped_column(JSON, default=list)
-    # 결정 사항·기각된 대안의 **개수**. 항목은 같은 행의 `ledger` 에서 다시 꺼냅니다.
+    # 결정 사항 및 기각된 대안의 개수. 세부 항목 텍스트는 동일 레코드의 `ledger` 본문에서 파싱합니다.
     decided: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     rejected: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    # 지금까지 쓴 가장 큰 쟁점 번호. 번호를 재사용하지 않는 근거입니다.
+    # 지금까지 발급된 최대 쟁점 번호. 번호 중복 발급 방지 및 연속성 유지의 기준이 됩니다.
     issue_high: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    # 직접 수정(`kind=edit`)이 남긴 안내 메모의 id.
+    # 직접 수정(`kind=edit`) 시 생성된 시스템 안내 메시지의 ID.
     message_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 

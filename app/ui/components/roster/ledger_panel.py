@@ -33,8 +33,8 @@ class LedgerPanelComponent:
     ):
         self.state = state
         self.service = service
-        # 고친 장부를 저장하는 쪽 (편집을 시작할 때 읽은 장부, 고친 장부). 저장한 장부를 돌려줍니다. 새로 넣은 쟁점이
-        # 번호를 받아 고친 글과 다를 수 있습니다 (ADR-051). 아무것도 돌려주지 않으면 고친 글을 그대로 씁니다.
+        # 수정된 장부 저장 핸들러 (편집 시작 시점의 원본 장부, 수정된 장부). 저장 완료된 장부 본문을 반환합니다.
+        # 신규 추가된 쟁점은 서버에서 번호가 새로 발급되므로 입력 텍스트와 일부 다를 수 있습니다 (ADR-051). 반환값이 없으면 입력 텍스트를 그대로 유지합니다.
         self.on_save = on_save
         self.expansion: Optional[ui.expansion] = None
         self.view: Optional[ui.markdown] = None
@@ -154,11 +154,11 @@ class LedgerPanelComponent:
             if closable:
                 check = ui.checkbox(value=True).props("dense dark size=sm color=indigo-4").classes("mt-1")
                 check.tooltip("체크를 풀면 저장할 때 이 쟁점을 닫습니다")
-                # 쟁점의 고정 번호는 고칠 수 없습니다 (ADR-051). 새로 넣은 쟁점은 저장할 때 번호를 받습니다.
+                # 쟁점 고정 번호는 임의 수정이 불가능합니다 (ADR-051). 신규 추가된 쟁점은 저장 시점에 번호가 발급됩니다.
                 if item.issue_no is not None:
                     ui.label(ledger_history.issue_label(item.issue_no)).classes(
                         "mt-1.5 px-1.5 rounded bg-slate-700 text-[10px] font-mono text-slate-300 shrink-0"
-                    ).tooltip("쟁점 번호 — 고칠 수 없습니다")
+                    ).tooltip("쟁점 고유 번호 (수정 불가)")
             box = ui.textarea(
                 value=item.text, on_change=lambda e: self._on_text(item, e.value),
             ).props("outlined dark dense autogrow rows=1").classes("flex-grow min-w-0 text-xs")

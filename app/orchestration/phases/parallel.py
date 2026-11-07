@@ -110,7 +110,7 @@ class ParallelRoundRunner(PhaseExecutor):
         db_lock = asyncio.Lock()
         semaphore = asyncio.Semaphore(parallel_limit)
         start_index = len(state.messages)
-        # 발언 번호는 배정 순서대로 미리 잡습니다 (ADR-052). 동시에 도는 발언은 시작하는 순서가 제각각입니다.
+        # 발언 번호는 작업 배정 순서에 따라 사전에 예약합니다 (ADR-052). 병렬로 실행되는 발언들은 실제 시작 시점이 비동기적으로 엇갈릴 수 있기 때문입니다.
         await turns.ensure_speech_counter(db, state)
         numbers = {index: turns.reserve_speech_no(state) for index in todo}
 

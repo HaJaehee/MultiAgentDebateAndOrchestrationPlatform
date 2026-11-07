@@ -98,19 +98,19 @@ class CardTimeline:
         self.follow_button: Optional[ui.button] = None
         # 그려 둔 코멘트 줄 (코멘트 id → {row, badge, delete}). 전달되면 그 줄만 고칩니다.
         self._comment_rows: Dict[str, Dict[str, Any]] = {}
-        # 라운드 묶음 (전문가 화면만, docs/feature_ui_upgrade.md P3). 열쇠는 (턴 id, 라운드)입니다.
+        # 라운드 묶음 활성화 여부 (전문가 피드 전용, docs/feature_ui_upgrade.md P3). 묶음 키는 (턴 ID, 라운드 번호)입니다.
         self.group_rounds = group_rounds
-        # 인용 라벨 (전문가 화면만, ADR-052). 카드에 `S14` 칩을 달고 본문의 `[S14]`·`[I-3]` 을 링크로 그립니다.
+        # 인용 라벨 활성화 여부 (전문가 피드 전용, ADR-052). 카드에 `S14` 칩을 표시하고 본문의 `[S14]` 및 `[I-3]`을 링크로 렌더링합니다.
         self.link_citations = link_citations
-        # 발언 번호 → 카드 상태. 인용 링크가 그 카드를 찾습니다.
+        # 발언 번호 매핑 (발언 번호 → 카드 상태). 인용 링크 클릭 시 대상 카드를 탐색하는 데 사용됩니다.
         self._cards_by_speech_no: Dict[int, Dict[str, Any]] = {}
         self._groups: Dict[Tuple[str, int], Dict[str, Any]] = {}
         self._card_group: Dict[str, Tuple[str, int]] = {}
-        # 가장 최근에 연 묶음. 새 라운드의 첫 카드가 오면 이것을 접습니다.
+        # 가장 최근에 열린 라운드 묶음 키. 새로운 라운드의 첫 카드가 도착하면 이전 묶음을 자동으로 접습니다.
         self._latest_group: Optional[Tuple[str, int]] = None
-        # 사용자가 직접 펼친 묶음. 펼친 카드처럼 자동 스크롤을 멈춥니다.
+        # 사용자가 수동으로 펼친 라운드 묶음 목록. 개별 카드를 펼쳤을 때와 마찬가지로 자동 스크롤 고정을 해제합니다.
         self._user_expanded_groups: Dict[Tuple[str, int], Dict[str, Any]] = {}
-        # 라운드마다의 장부 변화량 (`ledger_history.round_deltas`). 화면이 넘깁니다.
+        # 라운드별 결정 장부 상태 변화량 (`ledger_history.round_deltas`). 페이지 레벨에서 전달받아 묶음 헤더에 요약 표시합니다.
         self._round_summaries: Dict[Tuple[str, int], Dict[str, Any]] = {}
 
     @property
@@ -204,13 +204,13 @@ class CardTimeline:
         streaming_ids: Optional[Iterable[str]] = None,
         live_turn_id: Optional[str] = None,
     ) -> None:
-        """피드를 통째로 다시 그립니다.
+        """피드 전체를 다시 렌더링합니다.
 
-        `streaming_ids` 는 아직 생성 중인 발언입니다. 새로고침 뒤에 다시 붙었을 때
-        이어지는 청크가 갈 곳을 만들어 두기 위해 스트리밍 카드로 등록해 둡니다.
+        `streaming_ids`는 현재 실시간 생성 중인 발언 ID 목록입니다. 브라우저 새로고침 후 재연결 시
+        후속 청크를 정상 수신할 수 있도록 스트리밍 카드로 등록합니다.
 
-        라운드 묶음을 켰으면 끝난 턴의 묶음은 모두 접습니다. `live_turn_id` 는 진행 중인 턴이고, 그 턴의 마지막
-        묶음과 스트리밍 중인 카드가 든 묶음만 펼쳐 둡니다.
+        라운드 묶음 기능이 활성화된 경우, 완료된 이전 턴의 라운드 묶음은 모두 접힌 상태로 렌더링합니다.
+        `live_turn_id`는 현재 진행 중인 턴 ID이며, 해당 턴의 마지막 라운드 묶음 및 스트리밍 카드가 포함된 묶음만 펼쳐진 상태로 유지합니다.
         """
         if not self.alive:
             return
@@ -911,12 +911,12 @@ class CardTimeline:
         return True
 
     def reveal_speech(self, speech_no: int) -> bool:
-        """발언 번호로 카드를 찾아 보여 줍니다 (본문의 `[S14]` 링크, ADR-052). 이 대화에 없으면 False."""
+        """발언 번호로 카드를 탐색하여 표시합니다 (본문의 `[S14]` 인용 링크 클릭 시 호출, ADR-052). 세션 내에 없으면 False를 반환합니다."""
         info = self._cards_by_speech_no.get(int(speech_no))
         return bool(info and info.get("id")) and self.reveal_message(info["id"])
 
     def reveal_round(self, turn_id: str, round_number: int) -> bool:
-        """그 라운드 묶음을 펴고 머리줄이 보이게 스크롤합니다 (장부 요약 띠의 라운드 칩). 묶음이 없으면 False."""
+        """해당 라운드 묶음을 펼치고 헤더가 보이도록 스크롤합니다 (결정 장부 요약 띠의 라운드 칩 클릭 시 호출). 묶음이 없으면 False를 반환합니다."""
         group = self._groups.get((turn_id, int(round_number)))
         expansion = group.get("expansion") if group else None
         if expansion is None or expansion.is_deleted:
@@ -980,7 +980,7 @@ class CardTimeline:
             expansion = ui.expansion(value=True).props("dense").classes(
                 "round-group w-full rounded-xl border border-slate-800 bg-slate-950/30"
             )
-            # 문자열 "0" 이 아니라 숫자로 넘깁니다 (Quasar 의 `duration` 은 Number 입니다).
+            # 문자열 "0"이 아닌 숫자 0으로 전달합니다 (Quasar QExpansionItem의 `duration` 속성은 Number 타입입니다).
             expansion.props["duration"] = 0
             with expansion.add_slot("header"):
                 with ui.row().classes("items-center gap-2 flex-nowrap min-w-0 w-full"):
@@ -1000,7 +1000,7 @@ class CardTimeline:
         return group
 
     def _join_group(self, msg: Dict[str, Any], info: Dict[str, Any]) -> None:
-        """그려진 카드를 그 묶음의 셈에 넣습니다. 묶음이 없으면(묶지 않는 카드, 묶음을 열지 않는 개입) 넘어갑니다."""
+        """생성된 카드를 해당 라운드 묶음의 발언 및 도구 집계에 반영합니다. 속한 묶음이 없으면(비대상 카드 또는 묶음을 생성하지 않는 이벤트) 무시합니다."""
         key = round_group_key(msg) if self.group_rounds else None
         group = self._groups.get(key) if key else None
         msg_id = info.get("id") or ""
@@ -1030,11 +1030,11 @@ class CardTimeline:
         ))
 
     def _group_streaming(self, group: Dict[str, Any]) -> bool:
-        """생성 중인 카드가 든 묶음은 접지 않습니다 (지난 라운드 발언을 다시 실행하는 경우 포함)."""
+        """현재 스트리밍 생성 중인 카드가 포함된 묶음은 자동으로 접히지 않도록 보호합니다 (이전 라운드 발언 재생성 포함)."""
         return any(msg_id in self._active_streams for msg_id in group["cards"])
 
     def _set_group_open(self, group: Dict[str, Any], value: bool) -> None:
-        """코드가 묶음을 여닫습니다. 사람이 연 것으로 세지 않습니다 (`_on_group_toggled`)."""
+        """프로그래밍 방식으로 라운드 묶음을 열거나 닫습니다. 사용자 인터랙션에 의한 수동 조작으로 기록되지 않습니다 (`_on_group_toggled`)."""
         expansion = group.get("expansion")
         if expansion is None or expansion.is_deleted or bool(expansion.value) == value:
             return
@@ -1045,7 +1045,7 @@ class CardTimeline:
             group["programmatic"] = False
 
     def _on_group_toggled(self, group: Dict[str, Any], opened: bool) -> None:
-        """사람이 묶음을 여닫았습니다. 펼치면 카드를 펼칠 때와 같이 자동 스크롤을 놓습니다."""
+        """사용자가 수동으로 라운드 묶음을 열거나 닫았을 때의 핸들러입니다. 묶음을 펼치면 개별 카드를 펼칠 때와 마찬가지로 자동 스크롤 고정을 해제합니다."""
         if group.get("programmatic"):
             return
         key = group["key"]
@@ -1192,7 +1192,7 @@ class CardTimeline:
         for info in list(self._user_expanded.values()):
             self._apply_clamp(info, collapsed=True)
         self._user_expanded.clear()
-        # 직접 펼친 라운드 묶음도 접습니다. 생성 중인 카드가 든 묶음은 그대로 둡니다.
+        # 사용자가 수동으로 펼친 라운드 묶음도 다시 접습니다. 현재 스트리밍 중인 카드가 포함된 묶음은 열린 상태를 유지합니다.
         for group in list(self._user_expanded_groups.values()):
             if not self._group_streaming(group):
                 self._set_group_open(group, False)

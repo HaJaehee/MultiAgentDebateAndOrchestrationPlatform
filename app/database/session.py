@@ -40,7 +40,7 @@ _ADDED_COLUMNS = {
         "llm_meta": "JSON",
         # 발언 하나만 다시 실행했을 때의 지난 버전들 (ADR-036). 다시 실행한 적 없으면 NULL.
         "revisions": "JSON",
-        # 발언 번호 (ADR-052). 유저 발언·메모와 옛 발언은 NULL.
+        # 발언 번호 (ADR-052). 사용자 발언, 시스템 메모 및 기존 레거시 발언은 NULL.
         "speech_no": "INTEGER",
     },
     "sessions": {

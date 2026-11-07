@@ -1,26 +1,26 @@
 """결정 장부의 쟁점 고정 번호와 개정 이력 (ADR-051).
 
-장부는 LLM 이 라운드마다 통째로 다시 씁니다(`context_memory.ledger_prompt`). 그래서 예전에는 미해결 쟁점에 정체성이
-없었습니다. 같은 쟁점이 라운드마다 다른 문장으로 적히고, 서브 토론과 정체 관찰자는 쟁점을 목록 위치나 글로 찾아야
-했습니다. 화면도 "미해결 쟁점이 라운드마다 어떻게 줄었는지" 를 보여 줄 근거가 없었습니다.
+장부는 라운드마다 LLM이 전체를 새로 작성합니다(`context_memory.ledger_prompt`). 이에 따라 기존에는 미해결 쟁점에 고유 식별자(정체성)가
+없었습니다. 같은 쟁점이라도 라운드마다 표현이 달라져 서브 토론이나 정체 관찰자가 쟁점을 목록 내 위치(인덱스)나 본문 텍스트로만 식별해야
+했습니다. 또한 UI에서도 라운드를 거치며 미해결 쟁점이 어떻게 해소되었는지 변화 추이를 보여줄 근거가 부족했습니다.
 
 ## 번호 규칙
 
-* 미해결 쟁점 항목은 `- [I-3] 내용` 으로 씁니다. 번호는 **서버가** 붙입니다. LLM 에게는 이전 장부의 `[I-n]` 을 그대로
-  두고 새 쟁점은 번호 없이 쓰라고만 지시합니다.
-* 해결된 쟁점은 목록에서 지웁니다. 사라지면 닫힌 것이고, 옛 번호를 다시 쓰면 같은 쟁점이 다시 열린 것입니다.
-* 번호를 대조하는 범위는 **세션 전체**입니다(`IssueIndex`). 닫힌 쟁점을 번호 없이 같은 글로 다시 쓰면 옛 번호를 받습니다.
-  글을 바꿔 쓴 경우는 장부 프롬프트에 보여 주는 "최근에 닫힌 쟁점" 으로만 잡힙니다.
-* 번호는 재사용하지 않습니다. 다음 번호는 개정 이력의 `issue_high`, 지금 장부 글의 최대 번호, 메모리의 값 중 가장 큰
-  것에 1 을 더한 값입니다. 긴급 종료나 버린 턴의 번호는 그 턴의 개정 이력과 함께 지워지므로 다시 쓰여도 됩니다.
+* 미해결 쟁점 항목은 `- [I-3] 내용` 형식으로 작성합니다. 번호는 **서버가** 부여합니다. LLM에게는 직전 장부의 `[I-n]` 태그를 그대로
+  유지하고, 신규 쟁점은 번호 없이 작성하도록 안내합니다.
+* 해결된 쟁점은 목록에서 제거합니다. 목록에서 사라지면 해결(종결)된 것으로 간주하며, 이전 번호가 다시 나타나면 동일한 쟁점이 재개된 것으로 처리합니다.
+* 번호를 대조하는 범위는 **세션 전체**입니다(`IssueIndex`). 종결된 쟁점을 번호 없이 동일한 본문으로 다시 작성하더라도 이전 번호가 다시 부여됩니다.
+  문구가 변경된 경우에는 장부 프롬프트에 제공되는 '최근 종결된 쟁점' 목록을 바탕으로 번호를 유지합니다.
+* 번호는 재사용하지 않습니다. 다음 번호는 개정 이력의 `issue_high`, 현재 장부 본문의 최대 번호, 메모리 내 값 중 최댓값에 1을 더해 결정합니다.
+  단, 비정상 종료되거나 폐기된 턴의 번호는 해당 턴의 개정 이력과 함께 삭제되므로 재사용될 수 있습니다.
 
 ## 개정 이력
 
-장부를 바꿀 때마다(라운드·그래프 단계·서브 토론·최종 합성·재개·발언 교체·직접 수정) `ledger_revisions` 에 한 행을
-남깁니다. 저장에 실패해도 토론은 멈추지 않습니다. 이 저장소의 다른 쓰기와 같이 넣은 즉시 커밋하고, 실패하면 롤백합니다.
-엔진의 모든 쓰기가 그 자리에서 커밋하므로 롤백은 이 행 하나만 버립니다.
+장부가 갱신될 때마다(라운드 종료, 그래프 단계 완료, 서브 토론 결론, 최종 종합, 세션 재개, 발언 재생성, 사용자 직접 편집 등) `ledger_revisions` 테이블에
+개정 이력을 기록합니다. 저장에 실패하더라도 토론 진행이 중단되지는 않습니다. 본 저장소의 다른 저장 로직과 마찬가지로 레코드 삽입 즉시 커밋하며, 실패 시 롤백합니다.
+오케스트레이션 엔진의 모든 저장은 즉시 커밋을 수행하므로, 롤백 시 해당 개정 이력 행 하나만 취소됩니다.
 
-이 모듈의 앞부분은 순수 함수이고, DB 를 만지는 것은 `load_revisions`·`load_index`·`record_revision` 뿐입니다.
+이 모듈 전반부는 순수 함수로 구성되어 있으며, 데이터베이스와 직접 상호작용하는 함수는 `load_revisions`, `load_index`, `record_revision`뿐입니다.
 """
 
 from __future__ import annotations
@@ -44,16 +44,16 @@ DECIDED = "결정 사항"
 REJECTED = "기각된 대안"
 
 # 개정 종류 (`LedgerRevisionModel.kind`).
-KIND_ROUND = "round"          # 라운드 끝 (`debate._close_round`)
-KIND_STEP = "step"            # 그래프 단계 끝 (`graph.after_graph_step`)
-KIND_SUBDEBATE = "subdebate"  # 서브 토론 결론 뒤
-KIND_FINAL = "final"          # 최종 합성 뒤
-KIND_RESUME = "resume"        # 끊긴 턴을 이어 갈 때
-KIND_RETRY = "retry"          # 발언 하나를 다시 실행하거나 되돌린 뒤 (`retry._correct_ledger`)
-KIND_EDIT = "edit"            # 사람이 장부를 직접 고침 (`ledger_edit.save_edit`)
+KIND_ROUND = "round"          # 라운드 종료 시점 (`debate._close_round`)
+KIND_STEP = "step"            # 그래프 단계 완료 시점 (`graph.after_graph_step`)
+KIND_SUBDEBATE = "subdebate"  # 서브 토론 결론 도출 후
+KIND_FINAL = "final"          # 최종 종합 후
+KIND_RESUME = "resume"        # 중단된 턴을 재개할 때
+KIND_RETRY = "retry"          # 특정 발언을 재생성하거나 되돌린 후 (`retry._correct_ledger`)
+KIND_EDIT = "edit"            # 사용자가 장부를 직접 수정한 경우 (`ledger_edit.save_edit`)
 REVISION_KINDS = (KIND_ROUND, KIND_STEP, KIND_SUBDEBATE, KIND_FINAL, KIND_RESUME, KIND_RETRY, KIND_EDIT)
 
-# 장부 프롬프트에 보여 줄 최근에 닫힌 쟁점의 수와 한 줄의 글자 상한.
+# 장부 프롬프트에 포함할 최근 종결된 쟁점 최대 개수 및 한 줄당 글자 수 제한.
 RECENTLY_CLOSED_LIMIT = 5
 RECENTLY_CLOSED_CHARS = 80
 
@@ -75,7 +75,7 @@ def issue_tag(no: int) -> str:
 
 
 def split_issue_tag(text: str) -> Tuple[Optional[int], str]:
-    """항목 앞의 `[I-n]` 을 떼어 (번호, 나머지 글). 태그가 없으면 (None, 글)."""
+    """항목 앞의 `[I-n]` 태그를 분리하여 (번호, 본문 텍스트) 튜플로 반환합니다. 태그가 없으면 (None, 본문 텍스트)를 반환합니다."""
     text = (text or "").strip()
     match = ISSUE_TAG.match(text)
     if match is None:
@@ -84,12 +84,12 @@ def split_issue_tag(text: str) -> Tuple[Optional[int], str]:
 
 
 def strip_issue_tags(text: str) -> str:
-    """글 안의 `[I-n]` 태그를 모두 뗍니다."""
+    """문자열 내의 모든 `[I-n]` 태그를 제거합니다."""
     return _WS_RE.sub(" ", _ANY_ISSUE_TAG.sub("", text or "")).strip()
 
 
 def parse_issue_label(value: Any) -> Optional[int]:
-    """`"I-3"`·`"[I-3]"`·`3` 을 번호로. 알아볼 수 없으면 None."""
+    """`"I-3"`, `"[I-3]"`, `3` 등의 입력을 정수 번호로 파싱합니다. 식별할 수 없으면 None을 반환합니다."""
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
@@ -102,9 +102,9 @@ def parse_issue_label(value: Any) -> Optional[int]:
 
 
 def normalize_issue(issue: str) -> str:
-    """쟁점 글을 비교용으로 다듬습니다. 태그·괄호 속 설명·문장부호를 빼고 소문자로, 앞 80자.
+    """쟁점 텍스트를 비교에 적합하도록 정규화합니다. 태그, 괄호 안 설명, 문장부호를 제거하고 소문자로 변환하여 앞 80자까지 반환합니다.
 
-    같은 쟁점을 번호 없이 다시 쓴 경우를 알아보는 데(`assign_issue_ids`)와 정체 관찰자의 서명(`diagnostic_loop`)에 씁니다.
+    동일한 쟁점이 번호 없이 다시 작성된 경우를 식별(`assign_issue_ids`)하거나 정체 관찰자의 상태 서명(`diagnostic_loop`)을 생성할 때 사용합니다.
     """
     text = re.sub(r"\([^)]*\)", "", strip_issue_tags(issue))
     text = re.sub(r"[^\w가-힣./_-]+", " ", text.lower())
@@ -116,10 +116,10 @@ def normalize_issue(issue: str) -> str:
 
 @dataclass
 class IssueIndex:
-    """세션에서 지금까지 나온 쟁점의 색인.
+    """세션 내에서 지금까지 등장한 쟁점들을 추적하는 색인 구조체.
 
-    `texts` 는 번호마다 마지막 글, `by_text` 는 정규화한 글마다 가장 최근 번호, `last_open` 은 쟁점마다 마지막으로 열려 있던
-    개정의 순번(`seq`)입니다. `high` 는 지금까지 쓴 가장 큰 번호입니다.
+    `texts`는 쟁점 번호별 최신 본문, `by_text`는 정규화된 텍스트별 가장 최근 번호, `last_open`은 쟁점 번호별 마지막으로 미해결 상태였던
+    개정 순번(`seq`)을 매핑합니다. `high`는 지금까지 발급된 가장 높은 쟁점 번호입니다.
     """
 
     texts: Dict[int, str] = field(default_factory=dict)
@@ -137,7 +137,7 @@ class IssueIndex:
         self.high = max(self.high, no)
 
     def observe(self, open_issues: Iterable[Dict[str, Any]], high: int = 0) -> None:
-        """개정 하나의 열린 쟁점을 더합니다 (DB 에서 읽은 것이든 방금 번호를 붙인 것이든)."""
+        """단일 개정 이력의 미해결 쟁점 목록을 색인에 반영합니다 (DB에서 조회한 항목 또는 방금 번호를 부여한 항목)."""
         self.seq += 1
         for item in open_issues or ():
             no = item.get("no") if isinstance(item, dict) else None
@@ -146,9 +146,9 @@ class IssueIndex:
         self.high = max(self.high, int(high or 0))
 
     def absorb(self, ledger: str) -> None:
-        """장부 글에 적힌 태그를 더합니다. 개정 이력 없이 글만 넘어온 장부(`continue_session`)나 저장에 실패한 개정을 덮습니다.
+        """장부 본문에 포함된 태그들을 색인에 반영합니다. 개정 이력 없이 텍스트만 전달된 세션(`continue_session`)이나 저장이 누락된 개정을 보완합니다.
 
-        이미 아는 번호의 글은 바꾸지 않습니다. 개정 이력이 더 정확합니다.
+        이미 등록된 번호의 텍스트는 덮어쓰지 않습니다. 개정 이력의 기록이 더 정확하기 때문입니다.
         """
         for no, text in tagged_open_issues(ledger):
             if no not in self.texts:
@@ -156,7 +156,7 @@ class IssueIndex:
             self.high = max(self.high, no)
 
     def recently_closed(self, open_now: Iterable[int], limit: int = RECENTLY_CLOSED_LIMIT) -> List[Tuple[int, str]]:
-        """지금 열려 있지 않은 쟁점을 최근에 열려 있던 순으로 `limit` 개까지."""
+        """현재 미해결 상태가 아닌 종결된 쟁점들을 최근 종결된 순서대로 최대 `limit`개까지 반환합니다."""
         current = set(open_now)
         closed = [no for no in self.texts if no not in current]
         closed.sort(key=lambda no: (self.last_open.get(no, 0), no), reverse=True)
@@ -164,7 +164,7 @@ class IssueIndex:
 
 
 def _section_bounds(lines: Sequence[str], title: str) -> Optional[Tuple[int, int]]:
-    """`## title` 칸의 (첫 줄, 끝 줄 다음) 자리. 없으면 None. `ledger_items` 와 같이 처음 나온 칸만 봅니다."""
+    """`## title` 섹션의 (시작 줄 번호, 종료 줄 번호) 범위를 반환합니다. 섹션이 없으면 None을 반환하며, `ledger_items`와 동일하게 첫 번째로 매칭된 섹션만 탐색합니다."""
     start: Optional[int] = None
     for index, line in enumerate(lines):
         if line.startswith("## "):
@@ -180,12 +180,12 @@ def _is_item(line: str) -> bool:
 
 
 def _skippable(text: str) -> bool:
-    """빈 표시(`- 없음`)와 장부를 자를 때 붙는 생략 표시 줄은 쟁점이 아닙니다."""
+    """빈 항목 표시(`- 없음`)나 장부 축약 시 삽입되는 생략 표시 줄은 쟁점 파싱 대상에서 제외합니다."""
     return not text or text.lower() in memory.EMPTY_ITEMS or text == memory.LEDGER_CLIP_NOTE
 
 
 def tagged_open_issues(ledger: str) -> List[Tuple[int, str]]:
-    """미해결 쟁점 중 태그가 붙은 것의 (번호, 글)."""
+    """미해결 쟁점 중 식별 태그가 부여된 항목들의 (번호, 본문 텍스트) 튜플 목록을 반환합니다."""
     out: List[Tuple[int, str]] = []
     for item in memory.ledger_items(ledger, OPEN_ISSUES) or []:
         no, text = split_issue_tag(item)
@@ -195,15 +195,15 @@ def tagged_open_issues(ledger: str) -> List[Tuple[int, str]]:
 
 
 def assign_issue_ids(ledger: str, index: IssueIndex) -> Tuple[str, List[Dict[str, Any]]]:
-    """미해결 쟁점에 번호를 붙인 장부와 열린 쟁점 목록 `[{"no", "text"}]`. `index` 를 그 자리에서 갱신합니다.
+    """미해결 쟁점에 고유 번호를 부여한 장부 본문과 미해결 쟁점 목록(`[{"no", "text"}]`)을 반환합니다. 전달받은 `index`를 인플레이스로 갱신합니다.
 
-    항목마다 다음 순서로 번호를 정합니다.
+    각 항목의 번호는 다음 순서에 따라 결정됩니다:
 
-    1. 태그가 있고 그 번호가 `high` 이하이며 이번 장부에서 아직 쓰이지 않았으면 그대로 둡니다(다시 연 쟁점도 이 경우).
-    2. 정규화한 글이 색인의 쟁점과 같으면 그 번호를 다시 씁니다. 닫힌 쟁점도 대상입니다. 이미 이번 장부에서 쓰였으면 3.
-    3. 둘 다 아니면 새 번호를 줍니다.
+    1. 유효한 태그가 존재하고 그 번호가 기존 최대 번호(`high`) 이하이며, 현재 장부에서 아직 사용되지 않았다면 기존 번호를 유지합니다 (재개된 쟁점 포함).
+    2. 정규화된 텍스트가 색인 내 기존 쟁점과 일치하면 해당 번호를 재사용합니다 (종결된 쟁점 포함). 단, 현재 장부에서 이미 사용된 번호라면 3번으로 넘어갑니다.
+    3. 위 조건에 해당하지 않으면 신규 번호를 순차적으로 발급합니다.
 
-    다른 칸의 항목 앞에 붙은 태그는 뗍니다. 번호는 미해결 쟁점에만 붙습니다(결정 사항으로 옮겨 간 쟁점 등).
+    미해결 쟁점 외 다른 섹션(예: 결정 사항으로 이전된 항목 등)의 항목 머리에 붙은 태그는 제거됩니다. 고유 번호는 미해결 쟁점 섹션에만 유지됩니다.
     """
     lines = (ledger or "").splitlines()
     bounds = _section_bounds(lines, OPEN_ISSUES)
@@ -239,7 +239,7 @@ def assign_issue_ids(ledger: str, index: IssueIndex) -> Tuple[str, List[Dict[str
 
 
 def summarize(ledger: str) -> Dict[str, Any]:
-    """`{"open": [{"no", "text"}], "decided": n, "rejected": n}`. 태그가 없는 옛 쟁점은 `no` 가 None 입니다."""
+    """장부의 현황을 집계하여 `{"open": [{"no", "text"}], "decided": n, "rejected": n}` 형태로 반환합니다. 태그가 없는 기존 쟁점은 `no`가 None으로 설정됩니다."""
     open_items = []
     for item in memory.ledger_items(ledger, OPEN_ISSUES) or []:
         no, text = split_issue_tag(item)
@@ -252,7 +252,7 @@ def summarize(ledger: str) -> Dict[str, Any]:
 
 
 def recently_closed_block(index: IssueIndex, ledger: str) -> str:
-    """장부 프롬프트의 "최근에 닫힌 쟁점" 칸. 없으면 빈 문자열."""
+    """장부 작성 프롬프트에 삽입될 '최근 종결된 쟁점' 텍스트 블록을 생성합니다. 대상이 없으면 빈 문자열을 반환합니다."""
     open_now = {no for no, _text in tagged_open_issues(ledger)}
     closed = index.recently_closed(open_now)
     if not closed:
@@ -274,7 +274,7 @@ def _open_nos(revision: Optional[Dict[str, Any]]) -> set:
 
 
 def revision_delta(before: Optional[Dict[str, Any]], after: Dict[str, Any]) -> Dict[str, Any]:
-    """두 개정 사이의 변화. `before` 가 없으면 빈 장부에서 시작한 것으로 봅니다."""
+    """두 개정 이력 사이의 상태 변화를 계산합니다. `before`가 없으면 초기 상태(빈 장부)에서 시작한 것으로 간주합니다."""
     old, new = _open_nos(before), _open_nos(after)
     return {
         "decided": int(after.get("decided") or 0) - int((before or {}).get("decided") or 0),
@@ -288,11 +288,11 @@ def revision_delta(before: Optional[Dict[str, Any]], after: Dict[str, Any]) -> D
 
 
 def round_deltas(revisions: Sequence[Dict[str, Any]]) -> Dict[Tuple[str, int], Dict[str, Any]]:
-    """(턴, 라운드)마다 그 라운드의 마지막 개정을 라운드 직전의 개정과 비교한 변화량.
+    """(턴 ID, 라운드 번호)별로 해당 라운드의 최종 개정과 직전 개정을 비교한 상태 변화량을 산출합니다.
 
-    `revisions` 는 순서대로 놓인 개정 dict 입니다(`load_revisions`·`LEDGER_UPDATED` 의 `revision`). 발언 교체(`retry`)와 턴 밖의
-    직접 수정(`edit`)은 라운드가 아니므로 묶음을 만들지 않지만, 장부를 바꿨으므로 다음 라운드의 기준은 됩니다. 같은 라운드에
-    개정이 여럿이면(라운드 끝 + 서브 토론, 조기 수렴 + 최종 합성) 마지막 것을 씁니다.
+    `revisions`는 시간순으로 정렬된 개정 딕셔너리 목록입니다(`load_revisions` 및 `LEDGER_UPDATED` 이벤트의 `revision`). 발언 재생성(`retry`)이나 턴 외부에서의
+    직접 수정(`edit`)은 라운드 단위 작업이 아니므로 별도 묶음 카드를 생성하지 않으나, 장부 변경 사항은 다음 라운드의 비교 기준(baseline)으로 반영됩니다. 동일 라운드 내에
+    복수의 개정이 존재하는 경우(라운드 종료 + 서브 토론 결론, 조기 수렴 + 최종 종합 등)에는 가장 마지막 개정을 기준으로 집계합니다.
     """
     base: Dict[Tuple[str, int], Optional[Dict[str, Any]]] = {}
     last: Dict[Tuple[str, int], Dict[str, Any]] = {}
@@ -333,7 +333,7 @@ def revision_payload(
     closed: Sequence[int] = (),
     message_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """화면과 이벤트가 쓰는 개정 하나의 모양."""
+    """UI 및 이벤트 통신에 사용되는 개정 데이터 딕셔너리를 생성합니다."""
     return {
         "id": revision_id,
         "turn_id": turn_id,
@@ -360,7 +360,7 @@ def _row_payload(row: LedgerRevisionModel) -> Dict[str, Any]:
 
 
 async def load_revisions(db, session_id: str) -> List[Dict[str, Any]]:
-    """세션의 개정 이력을 순서대로. `opened`·`closed` 는 바로 앞 개정과 비교해 채웁니다."""
+    """세션의 전체 개정 이력을 순서대로 조회합니다. `opened` 및 `closed` 필드는 직전 개정과 비교하여 산출합니다."""
     rows = (await db.execute(
         select(LedgerRevisionModel)
         .where(LedgerRevisionModel.session_id == session_id)
@@ -378,10 +378,10 @@ async def load_revisions(db, session_id: str) -> List[Dict[str, Any]]:
 
 
 async def load_index(db, session_id: str) -> IssueIndex:
-    """세션의 개정 이력으로 쟁점 색인을 세웁니다. 읽지 못하면 빈 색인(번호는 장부 글에서 이어 셉니다).
+    """세션의 기존 개정 이력을 바탕으로 쟁점 색인(`IssueIndex`)을 구축합니다. 조회가 실패할 경우 빈 색인을 반환하며, 번호는 장부 본문에서 이어 부여됩니다.
 
-    읽은 뒤 트랜잭션을 닫아 연결을 풀로 돌려줍니다 (ADR-041). 부르는 쪽(`update_ledger`)이 곧 LLM 응답을 몇 분씩 기다리기
-    때문입니다. 부르는 시점에는 커밋 안 된 변경이 없으므로 이 커밋은 아무것도 쓰지 않습니다.
+    조회 완료 후 즉시 트랜잭션을 커밋·종료하여 커넥션을 풀에 반환합니다 (ADR-041). 호출처(`update_ledger`)가 이후 장시간 소요되는 LLM 호출을 대기하기 때문입니다.
+    호출 시점에 커밋되지 않은 변경 사항이 없으므로 이 커밋은 실제 쓰기 동작 없이 트랜잭션을 안전하게 마무리합니다.
     """
     index = IssueIndex()
     try:
@@ -393,7 +393,7 @@ async def load_index(db, session_id: str) -> IssueIndex:
         await db.commit()
     except asyncio.CancelledError:
         raise
-    except Exception as exc:  # noqa: BLE001 - 색인을 못 읽어도 장부는 갱신합니다
+    except Exception as exc:  # noqa: BLE001 - 색인 조회가 실패하더라도 장부 갱신은 계속 진행합니다
         logger.warning(f"Could not read the ledger revisions of session {session_id}: {type(exc).__name__}: {exc}")
         try:
             await db.rollback()
@@ -420,10 +420,10 @@ async def record_revision(
     message_id: Optional[str] = None,
     on_event: Optional[EventCallback] = None,
 ) -> Dict[str, Any]:
-    """개정 한 행을 넣고 바로 커밋합니다. 돌려주는 값은 이벤트에 실을 개정이고, 저장에 실패해도 돌려줍니다.
+    """개정 이력 1건을 데이터베이스에 삽입하고 즉시 커밋합니다. 반환값은 이벤트 브로드캐스트에 사용될 개정 페이로드이며, DB 저장이 실패하더라도 반환됩니다.
 
-    값은 모두 여기서 정하고(`id`·`created_at`·`seq`), 커밋 뒤에 행을 다시 읽지 않습니다. 실패해 롤백하면 세션의 ORM 객체가
-    만료되는데, 그 뒤에 만료된 객체를 비동기 문맥에서 읽는 일이 없게 하려는 것입니다.
+    모든 식별자 및 타임스탬프(`id`, `created_at`, `seq`)는 애플리케이션 레벨에서 직접 확정하며, 커밋 후 행을 다시 조회하지 않습니다. 저장 실패로 롤백될 때
+    세션 내 ORM 인스턴스가 만료(expire)되더라도, 비동기 컨텍스트에서 만료된 인스턴스를 재조회하려다 발생하는 예외를 방지하기 위함입니다.
     """
     counts = summarize(ledger)
     before = {item["no"] for item in summarize(previous_ledger)["open"] if item["no"] is not None}
@@ -451,7 +451,7 @@ async def record_revision(
         await db.commit()
     except asyncio.CancelledError:
         raise
-    except Exception as exc:  # noqa: BLE001 - 이력을 못 적어도 토론은 계속됩니다
+    except Exception as exc:  # noqa: BLE001 - 개정 이력 기록에 실패하더라도 토론 진행은 중단하지 않습니다
         logger.error(
             f"Could not record a ledger revision for session {session_id}: {type(exc).__name__}: {exc}",
             exc_info=True,

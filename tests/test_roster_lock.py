@@ -391,7 +391,7 @@ def test_the_chip_follows_a_runtime_that_starts_mid_debate(roster, monkeypatch):
 
 
 def test_opening_the_ledger_unfolds_the_roster_and_the_ledger(roster):
-    """요약 띠의 쟁점 칩이 부릅니다. 결정 장부는 로스터 칸 안 스크롤 칸 맨 아래라, 둘 다 펼쳐야 보입니다."""
+    """요약 띠의 쟁점 칩 클릭 시 호출됩니다. 결정 장부는 로스터 패널 하단에 위치하므로, 로스터와 장부 패널을 모두 전개해야 사용자에게 표시됩니다."""
     control, _, _ = roster
     control.expansion.set_value(False)
     assert control.ledger.expansion.value is False

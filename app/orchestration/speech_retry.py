@@ -168,7 +168,7 @@ class SpeechRevision:
     position: str
     # 이 발언에 달린, 아직 전달되지 않은 코멘트. 이번 시도에 함께 실립니다.
     comments: List[Dict[str, Any]] = field(default_factory=list)
-    # 발언 번호 (ADR-052). 다시 실행해도 원래 번호를 그대로 씁니다.
+    # 발언 번호 (ADR-052). 발언을 재생성하더라도 기존 발언 번호를 그대로 유지합니다.
     speech_no: Optional[int] = None
 
     @classmethod

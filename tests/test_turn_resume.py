@@ -176,12 +176,12 @@ async def test_a_turn_is_recorded_and_every_record_points_to_it():
     assert kinds[:2] == [turns.KIND_OPENING, turns.KIND_PLAN]
     assert kinds[2:6] == [turns.KIND_SPEECH] * 4, "두 라운드 × 두 전문가"
     assert kinds[-1] == turns.KIND_SYNTHESIS
-    assert {m.turn_id for m in state.messages} == {turn.id}, "메모리의 기록도 턴을 압니다"
+    assert {m.turn_id for m in state.messages} == {turn.id}, "인메모리 메시지 객체에도 턴 ID가 정상 설정됩니다"
 
 
 @pytest.mark.asyncio
 async def test_live_cards_know_their_turn_before_the_first_chunk():
-    """전문가 화면의 라운드 묶음은 (턴, 라운드)로 카드를 놓습니다. 스트리밍 시작에 턴이 있어야 첫 조각 전에 자리를 정합니다."""
+    """전문가 뷰의 라운드 그룹은 (턴 ID, 라운드 번호)를 기준으로 카드를 배치합니다. 스트리밍 시작 시점에 턴 ID가 전달되어야 첫 청크 도착 전에 올바른 그룹 위치를 결정할 수 있습니다."""
     sid = await _session(max_rounds=1)
     events: List[Dict[str, Any]] = []
 
@@ -193,7 +193,7 @@ async def test_live_cards_know_their_turn_before_the_first_chunk():
     started = [e["message"] for e in events if e["type"] == "message_stream_start"]
     added = [e["message"] for e in events if e["type"] == "message_added"]
     assert started and {m["turn_id"] for m in started} == {state.turn_id}
-    assert added and {m["turn_id"] for m in added} == {state.turn_id}, "유저 발언·메모·발언 모두"
+    assert added and {m["turn_id"] for m in added} == {state.turn_id}, "유저 발언, 시스템 메모, 에이전트 발언 모두에 턴 ID가 부여됩니다"
 
 
 @pytest.mark.asyncio

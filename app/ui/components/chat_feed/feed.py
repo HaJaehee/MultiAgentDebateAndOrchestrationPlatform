@@ -140,8 +140,8 @@ class ChatFeed:
             alive=lambda: self.alive, input_field=lambda: self.input_field, mention_provider=mention_provider,
             on_upload_file=on_upload_file, upload_destination=upload_destination,
         )
-        # 결정 장부 요약 띠. 전문가 화면만 켭니다 (초급자·체험 화면은 지금 그대로입니다). 라운드 묶음을 켰으면 띠의
-        # 라운드 칩이 이 타임라인의 그 묶음으로 이동합니다.
+        # 결정 장부 요약 띠 컴포넌트 (전문가 화면 전용). 라운드 묶음이 활성화된 경우 띠의
+        # 라운드 칩 클릭 시 해당 라운드 묶음 위치로 스크롤합니다.
         if on_reveal_round is None and group_rounds:
             on_reveal_round = self.timeline.reveal_round
         self.ledger_strip: Optional[LedgerStrip] = (
@@ -200,7 +200,7 @@ class ChatFeed:
                 self.unfinished.build_bar()
                 self.approvals.build()
                 self.plan.build()
-                # 상태 칸은 스크롤 영역 밖(flex-shrink-0)이라 띠는 늘 보이고, 자리를 차지할 뿐 카드를 덮지 않습니다.
+                # 상태 영역은 고정 레이아웃(flex-shrink-0)이므로 요약 띠가 항상 상단에 노출되며 카드를 가리지 않습니다.
                 if self.ledger_strip is not None:
                     self.ledger_strip.build()
 
@@ -262,7 +262,7 @@ class ChatFeed:
 
             self.unfinished.build_dialog()
             self.speech_actions.build()
-            # 본문의 인용 링크 (ADR-052). 스크립트(`CITATION_JS`)는 화면이 머리에 붙입니다.
+            # 본문 인용 링크 이벤트 리스너 등록 (ADR-052). 클라이언트 스크립트(`CITATION_JS`)는 페이지 헤더에 주입됩니다.
             if self.timeline.link_citations:
                 ui.on(CITATION_EVENT, self._on_citation)
 
@@ -515,12 +515,12 @@ class ChatFeed:
         return self.timeline.reveal_round(turn_id, round_number)
 
     def _on_citation(self, event: Any) -> None:
-        """본문의 `[S14]`·`[I-3]` 을 눌렀습니다. 발언은 그 카드로(묶음을 펴고 테두리), 쟁점은 요약 띠의 칩으로."""
+        """본문 내 `[S14]`, `[I-3]` 인용 링크 클릭 이벤트 핸들러입니다. 발언은 해당 카드로(필요 시 묶음 확장), 쟁점은 요약 띠의 칩 강조로 연결합니다."""
         ref = str((getattr(event, "args", None) or {}).get("ref") or "")
         self.follow_citation(ref)
 
     def follow_citation(self, ref: str) -> bool:
-        """인용 라벨 하나를 따라갑니다. 이 대화에 없으면 알리고 False."""
+        """전달된 인용 식별자 대상을 탐색하여 화면을 이동합니다. 현재 대화에 없으면 안내 후 False를 반환합니다."""
         speech = re.fullmatch(r"S(\d{1,5})", ref)
         issue = re.fullmatch(r"I-(\d{1,5})", ref)
         if speech is not None and self.timeline.reveal_speech(int(speech.group(1))):
@@ -566,7 +566,7 @@ class ChatFeed:
         self._refresh_round_summaries()
 
     def _refresh_round_summaries(self) -> None:
-        """라운드 묶음 머리줄의 장부 변화량. 띠가 들고 있는 개정 이력에서 계산합니다 (타임라인은 개정 이력을 모릅니다)."""
+        """라운드 묶음 헤더에 표시할 결정 장부 상태 변화량입니다. 요약 띠가 보유한 개정 이력을 바탕으로 산출하여 타임라인에 전달합니다."""
         if self.ledger_strip is not None and self.timeline.group_rounds:
             self.timeline.set_round_summaries(ledger_history.round_deltas(self.ledger_strip.revisions))
 

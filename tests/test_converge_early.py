@@ -137,7 +137,7 @@ async def test_a_converged_ledger_skips_the_remaining_rounds():
     assert "[주의]" not in caller.synthesis_prompt
     assert turn.config["converge_early"] is True
 
-    # 수렴한 라운드에는 라운드 끝 개정과 최종 합성 개정이 함께 남습니다. 라운드 변화량은 마지막 것을 씁니다 (ADR-051).
+    # 조기 수렴된 라운드에는 라운드 종료 개정과 최종 합성 개정이 함께 기록됩니다. 라운드별 변화량은 마지막 개정을 기준으로 계산합니다 (ADR-051).
     revisions = [e["revision"] for e in events if e["type"] == "ledger_updated"]
     assert [(r["kind"], r["round"]) for r in revisions] == [("round", 1), ("round", 2), ("final", 2)]
     deltas = ledger_history.round_deltas(revisions)

@@ -422,7 +422,7 @@ class GraphRunner(PhaseExecutor):
         db_lock = asyncio.Lock()
         semaphore = asyncio.Semaphore(max(1, parallel_limit))
         start_index = len(state.messages)
-        # 발언 번호는 활성화 순서대로 미리 잡습니다 (ADR-052). 판정 노드는 발언이 아니라 번호가 없습니다.
+        # 발언 번호는 노드 활성화 순서에 따라 사전에 예약합니다 (ADR-052). 조건 판정(gate) 노드는 발언을 생성하지 않으므로 번호를 할당하지 않습니다.
         await turns.ensure_speech_counter(db, state)
         numbers = {a.node.id: turns.reserve_speech_no(state) for a in activations if a.node.type != "gate"}
 

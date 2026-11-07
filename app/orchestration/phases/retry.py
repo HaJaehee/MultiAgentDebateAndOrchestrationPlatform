@@ -237,7 +237,7 @@ class SpeechRevisionExecutor(PhaseExecutor):
             "decision_ledger": current,
             "ledger_through": _cut(state, message),
         })
-        # 개정 이력은 다시 실행한 발언의 턴(`state.turn_id`)으로 남습니다. 라운드 변화량에서는 빠집니다(`kind=retry`).
+        # 개정 이력은 재생성된 발언이 속한 턴(`state.turn_id`)으로 기록됩니다. 라운드별 상태 변화량 집계에서는 제외됩니다 (`kind=retry`).
         if await self.conversation.update_ledger(
             db=db, state=view, orchestrator=setup.orchestrator, on_event=on_event, reason="발언 교체",
             kind=ledger_history.KIND_RETRY,

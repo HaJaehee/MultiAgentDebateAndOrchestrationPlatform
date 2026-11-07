@@ -47,7 +47,7 @@ sessions ─────┬──▶ messages ──────▶ tool_calls
 
 **턴 외부에서 결정 장부를 갱신하는 경우는 사용자의 직접 편집 및 발언 재생성에 따른 장부 교정뿐입니다.** 직접 편집은 토론이 유휴 상태일 때만 수행 가능하며, 낙관적 락을 통해 편집 시작 시점의 장부가 불변일 때만 안전하게 저장됩니다. `sessions.decision_ledger`와 마지막 턴의 `turns.memory`를 동시 갱신하며, 반영 기준 ID(`ledger_through_id`)는 보존하고 대화 타임라인에 `turn_meta.kind = ledger_edit` 안내 레코드를 영구 기록합니다 (ADR-038).
 
-**장부 개정 이력(`ledger_revisions`)은 턴 도중에도 즉시 저장합니다 (ADR-051).** 장부 본문(`sessions.decision_ledger`)과 달리, 장부가 갱신될 때마다 그 시점의 장부 전문, 고정 번호가 붙은 미해결 쟁점 목록(`open_issues`), 결정·기각 개수, 지금까지 쓴 가장 큰 쟁점 번호(`issue_high`)를 한 행으로 남깁니다. 종류(`kind`)는 `round`·`step`·`subdebate`·`final`·`resume`·`retry`·`edit` 이고, 정렬은 세션 안 순번(`seq`)으로 합니다. 요청 되돌리기로 턴을 버리면 그 턴의 개정 이력도 함께 지워지고, 세션 삭제 시에도 함께 지워지며, 세션 분기(Fork) 시에는 분기 시점까지의 이력이 복사됩니다.
+**결정 장부 개정 이력(`ledger_revisions`)은 턴 실행 중에도 즉시 영속화됩니다 (ADR-051).** 턴 종료 시점에만 갱신되는 세션 장부 본문(`sessions.decision_ledger`)과 달리, 장부가 갱신될 때마다 해당 시점의 장부 전문, 고정 식별 번호가 부여된 미해결 쟁점 목록(`open_issues`), 결정·기각 안건 수, 최대 쟁점 번호(`issue_high`)를 단일 레코드로 기록합니다. 개정 종류(`kind`)는 `round`·`step`·`subdebate`·`final`·`resume`·`retry`·`edit`로 분류되며, 세션 내 순번(`seq`)을 기준으로 안정적으로 정렬됩니다. 턴 폐기(되돌리기) 시에는 해당 턴의 개정 이력도 함께 롤백/삭제되며, 세션 삭제 시 연쇄 삭제(CASCADE), 세션 분기(Fork) 시에는 분기 시점까지의 개정 이력이 안전하게 복제됩니다.
 
 ### `messages` 테이블
 
@@ -62,7 +62,7 @@ sessions ─────┬──▶ messages ──────▶ tool_calls
 | `turn_started_at` | **턴을 마무리한 최종 합성 발언에만 기록**: 해당 턴을 시작한 사용자 요청이 등록된 시각 |
 | `created_at` | **대화 기록 정렬 기준 타임스탬프** (실제 발언 시각이 아님, 하단 설명 참고) |
 | `turn_id` | 이 기록이 속한 턴 (`turns.id`). 기능 도입 이전의 기록은 NULL |
-| `speech_no` | 발언 번호 (`S14`, ADR-052). 에이전트·오케스트레이터 발언에만 대화 안에서 1부터 붙고, 유저 발언·메모와 기능 도입 이전의 발언은 NULL. 실패한 발언도 번호를 지키며, 다시 실행해도 번호는 그대로입니다 |
+| `speech_no` | 발언 일련번호 (`S14`, ADR-052). 전문가 및 오케스트레이터의 실제 발언에만 세션 내에서 1부터 순차 부여되며, 사용자 입력, 시스템 메모 및 기능 도입 이전 레코드는 NULL. 실패한 발언도 번호를 보존하며, 발언을 재생성하더라도 기존 번호가 유지됩니다 |
 | `turn_meta` | 해당 기록이 턴의 흐름에서 맡은 역할 (JSON). `kind`는 `opening` · `interjection` · `plan` · `speech` · `merge` · `gate` · `nomination` · `assignment` · `note` · `failure` · `interrupted` · `synthesis` 중 하나이며, 지명(`speakers`)과 병렬 분배(`tasks`)는 결과를 값으로 함께 기록합니다 |
 | `revisions` | 현재 활성화되지 않은 이전 발언 리비전 이력 (JSON, [ADR-036](../../../lectures/05-adr/ADR-036-retry-one-speech-and-inline-comments.md)). 재생성 이력이 없으면 NULL이며, 본 행에는 항상 최신 활성 버전이 저장됩니다 |
 

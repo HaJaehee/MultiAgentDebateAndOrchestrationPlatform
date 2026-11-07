@@ -625,7 +625,7 @@ def test_signature_normalization_survives_line_shifts_and_attempt_history_surviv
 
 
 def test_a_numbered_issue_keeps_its_signature_when_the_ledger_rewords_it():
-    """장부를 다시 쓰며 쟁점 문장이 바뀌어도 고정 번호가 같으면 같은 정체로 봅니다 (ADR-051)."""
+    """장부를 갱신하며 쟁점 문구가 수정되더라도 고정 번호가 동일하면 동일한 쟁점으로 식별합니다 (ADR-051)."""
     def patch(round_number: int) -> DebateMessage:
         return DebateMessage(
             sender_key="coder", sender_name="Coder", sender_role="Impl", content="패치했습니다",
@@ -645,7 +645,7 @@ def test_a_numbered_issue_keeps_its_signature_when_the_ledger_rewords_it():
     ]
     untagged = diagnostic_loop.collect_round_attempts([patch(1)], ledger_by_round={1: _open_ledger()})
     assert untagged[0].active_failure_signatures == ["patch:cache.py|issue:캐시 세대 토큰 무효화 불일치"], \
-        "번호가 없는 옛 쟁점은 예전처럼 글로 서명합니다"
+        "고정 번호가 없는 기존 쟁점은 기존 방식대로 본문 텍스트를 기반으로 시그니처를 생성합니다"
 
 
 def test_pure_conceptual_debate_without_tools_leaves_attempt_history_and_stagnation_empty():

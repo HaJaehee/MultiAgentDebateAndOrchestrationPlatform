@@ -505,7 +505,7 @@ class TurnRecorder:
                 graph_node_id=pm.graph_node_id,
                 graph_port=pm.graph_port,
                 turn_id=pm.turn_id,
-                # 번호를 싣지 않으면 다시 연 뒤 첫 턴의 기록 머리줄이 달라져 프롬프트 캐시가 깨집니다 (ADR-052).
+                # 발언 번호를 복원하지 않으면 세션을 다시 연 뒤 첫 턴의 프롬프트 헤더 텍스트가 달라져 프롬프트 캐시가 무효화됩니다 (ADR-052).
                 speech_no=pm.speech_no,
                 turn_meta=pm.turn_meta if isinstance(pm.turn_meta, dict) else None,
                 llm_meta=pm.llm_meta if isinstance(pm.llm_meta, dict) else None,

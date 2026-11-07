@@ -108,12 +108,12 @@ NUMBERED = LEDGER.replace("- 캐시 키 형식", "- [I-1] 캐시 키 형식").re
 
 
 def test_issue_numbers_are_kept_apart_from_the_text_and_written_back():
-    """편집기는 쟁점 번호를 글과 따로 들고, 저장할 때 그대로 되씁니다 (ADR-051)."""
+    """편집기는 쟁점 번호를 본문 텍스트와 분리하여 관리하며, 저장 시 원래 번호를 유지하여 다시 기록합니다 (ADR-051)."""
     sections = ledger_edit.parse_sections(NUMBERED)
     issues = next(s for s in sections if s.title == ledger_edit.OPEN_ISSUES).items
     assert [(i.issue_no, i.text) for i in issues] == [(1, "캐시 키 형식"), (2, "장애 시 동작")]
     decided = next(s for s in sections if s.title == "결정 사항").items
-    assert all(i.issue_no is None for i in decided), "번호는 미해결 쟁점에만 있습니다"
+    assert all(i.issue_no is None for i in decided), "쟁점 번호는 '미해결 쟁점' 섹션의 항목에만 부여됩니다"
     assert ledger_edit.render_sections(sections) == NUMBERED
 
 
@@ -124,7 +124,7 @@ def test_open_issues_are_compared_by_their_number():
         "- 미해결 쟁점 [I-1] 고침: 캐시 키는 sha1 로",
         "- 담당·다음 할 일에 넣음: 새 쟁점",
     ]
-    assert ledger_edit.describe_changes(LEDGER, NUMBERED) == [], "번호만 붙은 것은 바뀐 것이 아닙니다"
+    assert ledger_edit.describe_changes(LEDGER, NUMBERED) == [], "번호 태그만 부여된 것은 실질적인 내용 변경으로 간주하지 않습니다"
 
 
 @pytest.mark.asyncio
@@ -134,11 +134,11 @@ async def test_a_saved_edit_numbers_new_issues_and_records_an_edit_revision():
     sid = await _finished_turn()
     await _set_ledger(sid)
     first = await _save(sid, LEDGER.replace("- 만료는 10분", "- 만료는 5분"))
-    assert first.ledger == NUMBERED.replace("- 만료는 10분", "- 만료는 5분"), "번호 없던 쟁점도 저장할 때 번호를 받습니다"
+    assert first.ledger == NUMBERED.replace("- 만료는 10분", "- 만료는 5분"), "기존에 번호가 없던 쟁점도 저장 시 고정 번호가 자동 할당됩니다"
 
     closed = await _save(sid, first.ledger.replace("- [I-2] 장애 시 동작\n", "").replace(
         "- [I-1] 캐시 키 형식", "- [I-1] 캐시 키 형식\n- 인증 토큰 위치"), expected=first.ledger)
-    assert "- [I-3] 인증 토큰 위치" in closed.ledger, "새로 넣은 쟁점은 저장할 때 번호를 받습니다"
+    assert "- [I-3] 인증 토큰 위치" in closed.ledger, "새로 추가된 쟁점은 저장 시 신규 고정 번호가 할당됩니다"
     assert "미해결 쟁점에 넣음: [I-3] 인증 토큰 위치" in closed.note["content"]
     assert closed.revision["kind"] == "edit" and closed.revision["closed"] == [2] and closed.revision["opened"] == [3]
 
@@ -146,7 +146,7 @@ async def test_a_saved_edit_numbers_new_issues_and_records_an_edit_revision():
         sid, closed.ledger.replace("- [I-3] 인증 토큰 위치", "- [I-3] 인증 토큰 위치\n- 장애 시 동작"),
         expected=closed.ledger,
     )
-    assert "- [I-2] 장애 시 동작" in reopened.ledger, "닫았던 쟁점을 같은 글로 다시 넣으면 옛 번호를 받습니다"
+    assert "- [I-2] 장애 시 동작" in reopened.ledger, "닫힌 쟁점을 동일한 문구로 다시 추가하면 기존 번호가 복원됩니다"
 
     async with get_session_factory(DB_URL)() as db:
         rows = (await db.execute(
@@ -202,7 +202,7 @@ async def _rows(sid: str) -> List[MessageModel]:
 
 
 FIXED = LEDGER.replace("캐시는 Redis 로 둔다 — 빠르다", "캐시는 메모리에 둔다").replace("- 캐시 키 형식\n", "")
-# 저장하면 남은 쟁점이 고정 번호를 받습니다 (ADR-051).
+# 저장 시 미해결 쟁점에 고정 번호가 할당됩니다 (ADR-051).
 FIXED_SAVED = FIXED.replace("- 장애 시 동작", "- [I-1] 장애 시 동작")
 
 
@@ -538,13 +538,13 @@ async def test_editing_a_decision_and_unchecking_an_issue_saves_the_ledger(notes
 
 @pytest.mark.asyncio
 async def test_issue_numbers_show_as_fixed_chips_and_the_saved_ledger_comes_back(notes, make_panel):
-    """번호는 고칠 수 없는 칩으로 보이고, 저장한 쪽이 번호를 붙여 돌려준 장부로 돌아갑니다 (ADR-051)."""
+    """쟁점 번호는 수정 불가능한 고정 칩으로 렌더링되며, 저장이 완료되면 번호가 부여된 최신 장부 내용으로 갱신됩니다 (ADR-051)."""
     numbered_saved = NUMBERED + "\n- [I-3] 새 쟁점"
     panel, _service, saved = make_panel(NUMBERED, returns=numbered_saved)
     panel.open_editor()
     chips = [el.text for el in _elements(panel.editor, ui.label) if el.text.startswith("I-")]
     assert chips == ["I-1", "I-2"]
-    assert all(not b.value.startswith("[I-") for b in _elements(panel.editor, ui.textarea)), "글 칸에는 번호가 없습니다"
+    assert all(not b.value.startswith("[I-") for b in _elements(panel.editor, ui.textarea)), "텍스트 편집 영역 본문에는 쟁점 번호 태그가 노출되지 않습니다"
     _elements(panel.editor, ui.checkbox)[1].set_value(False)
 
     await panel.save()

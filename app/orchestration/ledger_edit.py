@@ -44,16 +44,16 @@ class LedgerItem:
     text: str
     # 목록 표시. 비어 있으면 모델이 목록 밖에 쓴 줄(문단, 소제목)이고, 표시 없이 그대로 되돌립니다.
     marker: str = "- "
-    # 저장할 때 뺍니다 — 화면에서 쟁점의 체크를 풀었거나 항목을 지웠습니다.
+    # 저장 시 제외할 항목 여부 — UI에서 쟁점 체크박스를 해제했거나 항목을 삭제한 경우입니다.
     dropped: bool = False
-    # 미해결 쟁점의 고정 번호 (ADR-051). `text` 에는 태그를 넣지 않습니다. 편집기에서 새로 넣은 항목은 None 이고, 저장할 때
-    # 번호를 받습니다(`save_edit`).
+    # 미해결 쟁점의 고정 번호 (ADR-051). `text` 필드에는 태그를 제외한 본문만 유지합니다. 편집기에서 새로 추가한 항목은
+    # 초기에 None이며, 저장 시점에 번호가 발급됩니다(`save_edit`).
     issue_no: Optional[int] = None
 
 
 @dataclass
 class SavedEdit:
-    """직접 수정을 저장한 결과. `note` 는 피드에 올릴 안내, `ledger` 는 번호까지 붙여 저장한 장부, `revision` 은 개정 이력."""
+    """장부 직접 수정 저장 결과. `note`는 피드에 표시할 안내 메시지, `ledger`는 번호가 부여되어 저장된 장부 본문, `revision`은 개정 이력 정보입니다."""
 
     note: Dict[str, Any]
     ledger: str
@@ -152,10 +152,10 @@ def _issue_text(no: Optional[int], text: str) -> str:
 def _issue_changes(
     old: List[Tuple[Optional[int], str]], new: List[Tuple[Optional[int], str]],
 ) -> Tuple[List[str], List[Tuple[Optional[int], str]], List[Tuple[Optional[int], str]]]:
-    """미해결 쟁점을 번호로 비교합니다 (ADR-051). (고친 줄, 닫은 쟁점, 넣은 쟁점).
+    """미해결 쟁점을 식별 번호 기반으로 비교합니다 (ADR-051). (수정된 항목 목록, 종결된 쟁점 목록, 추가된 쟁점 목록) 튜플을 반환합니다.
 
-    번호가 같으면 같은 쟁점이고 글이 달라졌으면 고친 것입니다. 한쪽에만 번호가 있는 쟁점(옛 장부, 저장하며 번호를 받은 새
-    항목)은 글로 맞춰 봅니다. 글이 같으면 번호만 붙은 것이라 바뀐 것이 없습니다.
+    번호가 동일하면 동일 쟁점이며, 본문이 달라진 경우 수정된 것으로 판단합니다. 한쪽에만 번호가 존재하는 쟁점(구버전 장부 항목,
+    저장 중 번호가 새로 부여된 신규 항목 등)은 텍스트 일치 여부로 비교합니다. 본문이 동일하다면 번호만 부여된 것이므로 내용상 변경이 없는 것으로 처리합니다.
     """
     old_by_no = {no: text for no, text in old if no is not None}
     new_by_no = {no: text for no, text in new if no is not None}
@@ -175,7 +175,7 @@ def _issue_changes(
 
 
 def describe_changes(before: str, after: str) -> List[str]:
-    """바뀐 항목을 한 줄씩. 글자 배치만 달라졌으면 빈 목록입니다. 미해결 쟁점은 고정 번호로 비교합니다."""
+    """변경된 항목 목록을 한 줄씩 생성합니다. 공백이나 서식만 달라진 경우 빈 목록을 반환합니다. 미해결 쟁점은 고정 번호로 비교합니다."""
     old, new = _items_by_section(before), _items_by_section(after)
     lines: List[str] = []
     for title in [*new, *(t for t in old if t not in new)]:
@@ -202,16 +202,16 @@ def char_limit(agents: Iterable[Agent]) -> int:
 async def save_edit(
     db, session_id: str, expected: str, ledger: str, *, on_event: Optional[EventCallback] = None,
 ) -> Optional[SavedEdit]:
-    """장부를 사람이 고친 값으로 바꾸고 안내를 남깁니다. 바뀐 항목이 없으면 None.
+    """사용자가 직접 편집한 장부 내용으로 갱신하고 변경 안내 시스템 메시지를 기록합니다. 변경 사항이 없으면 None을 반환합니다.
 
-    `expected` 는 편집을 시작할 때 읽은 장부입니다. 그 사이 다른 탭이나 턴이 장부를 바꿨으면 저장하지 않습니다.
+    `expected`는 편집을 시작할 당시의 장부 본문입니다. 그 사이 다른 탭이나 턴에서 장부를 변경했다면 충돌 방지를 위해 저장하지 않습니다.
 
-    장부에 반영된 지점(`ledger_through_id`)은 그대로 둡니다. 안내는 그 뒤에 놓이므로 다음 갱신이 함께 읽습니다. 마지막 턴의
-    기억(`TurnModel.memory`)도 맞춥니다. 다음 턴은 고친 장부로 시작하는데, 그 턴에서 발언을 다시 실행하거나 이 턴에서
-    갈라지면 그 기억을 읽고, 안내도 그 자리에 함께 있습니다.
+    장부 반영 기준 위치(`ledger_through_id`)는 변경하지 않고 유지합니다. 안내 메시지는 그 뒤에 배치되므로 다음 장부 갱신 시 함께 고려됩니다.
+    마지막 턴의 메모리(`TurnModel.memory`)도 동기화합니다. 다음 턴은 수정된 장부로 시작하며, 발언 재생성이나 세션 분기(fork) 시에도
+    해당 메모리와 안내 메시지가 정확히 참조됩니다.
 
-    편집기에서 새로 넣은 쟁점은 세션의 쟁점 색인으로 번호를 받습니다(ADR-051). 옛 쟁점의 글을 그대로 다시 넣으면 옛 번호를
-    받습니다. 저장한 뒤 개정 이력(`kind=edit`)을 안내 id 와 함께 남깁니다.
+    편집기에서 새로 추가된 쟁점은 세션의 쟁점 색인을 통해 번호를 발급받습니다 (ADR-051). 이전 쟁점의 본문을 동일하게 다시 입력한 경우 이전 번호가
+    유지됩니다. 저장이 완료되면 개정 이력(`kind=edit`)을 생성된 안내 메시지 ID와 함께 기록합니다.
     """
     index = await ledger_history.load_index(db, session_id)
     index.absorb(expected)

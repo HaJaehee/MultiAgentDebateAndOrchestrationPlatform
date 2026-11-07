@@ -497,7 +497,7 @@ class ExpertPage:
     async def on_ledger_edited(self, expected: str, ledger: str) -> Optional[str]:
         """로스터에서 수정한 결정 장부를 저장하고, 변경 요약 안내를 피드에 발행합니다 (ADR-038).
 
-        돌려주는 값은 저장한 장부입니다. 새로 넣은 쟁점이 번호를 받으므로(ADR-051) 화면이 고친 글과 다를 수 있습니다.
+        반환값은 저장 완료된 결정 장부 본문입니다. 신규 추가된 쟁점에 고정 번호가 새로 부여되므로(ADR-051) 입력한 텍스트와 다를 수 있습니다.
         """
         if not self.current_session_id:
             return None
@@ -510,10 +510,10 @@ class ExpertPage:
         return saved.ledger
 
     def open_ledger(self) -> None:
-        """요약 띠의 쟁점 칩·개수를 눌렀을 때. 로스터와 결정 장부 칸을 펼치고 장부가 보이는 곳까지 스크롤합니다."""
+        """요약 띠의 쟁점 칩 또는 요약 통계를 클릭했을 때 호출됩니다. 로스터 및 결정 장부 패널을 펼치고 장부 위치로 부드럽게 스크롤합니다."""
         target = self.roster_control.open_ledger()
         if target is not None:
-            # 로스터 칸은 펼침 애니메이션이 있습니다. 스크립트가 칸이 제 자리를 찾을 때까지 기다립니다 (`reveal_js`).
+            # 로스터 아코디언은 펼침 전환 애니메이션이 있으므로, 레이아웃이 완전히 정돈된 후 스크롤을 수행합니다 (`reveal_js`).
             ui.run_javascript(reveal_js(target.id, "start"))
 
     async def on_decision(self, extra: int, request_id: str) -> None:
@@ -980,9 +980,9 @@ class ExpertPage:
                     "turn_started_at": m.turn_started_at,
                     "graph_node_id": m.graph_node_id,
                     "graph_port": m.graph_port,
-                    # 라운드 묶음의 열쇠 (턴, 라운드).
+                    # 라운드 묶음 식별 키 (턴 ID, 라운드 번호).
                     "turn_id": m.turn_id,
-                    # 발언 번호 (ADR-052). 카드의 `S14` 칩과 인용 링크가 씁니다.
+                    # 발언 번호 (ADR-052). 카드의 `S14` 칩 렌더링 및 본문 인용 링크 연결에 사용됩니다.
                     "speech_no": m.speech_no,
                     "turn_meta": m.turn_meta,
                     "llm_meta": m.llm_meta,
@@ -1018,7 +1018,7 @@ class ExpertPage:
                 if m.turn_id in checkpoints and kind_of(m) == KIND_SYNTHESIS
             ]
 
-            # 결정 장부 요약 띠 (ADR-051). 개정은 턴 도중에도 바로 저장되므로 진행 중인 턴의 라운드까지 들어 있습니다.
+            # 결정 장부 요약 띠 데이터 로드 (ADR-051). 개정 이력은 턴 도중에도 즉시 영속화되므로 진행 중인 턴의 라운드별 개정까지 모두 포함됩니다.
             ledger_revisions = await ledger_history.load_revisions(db, sid)
             converged_rounds = {
                 m.turn_id: int((m.turn_meta or {}).get("round") or m.round_number or 0)
@@ -1080,7 +1080,7 @@ class ExpertPage:
         if running and snapshot.get("phase") == "synthesizing":
             self.chat_feed.set_ledger_synthesizing(snapshot.get("turn_id"))
         if formatted_msgs:
-            # 끝난 턴의 라운드 묶음은 접고, 진행 중인 턴은 마지막 묶음만 펼칩니다.
+            # 완료된 이전 턴의 라운드 묶음은 접은 상태로, 현재 진행 중인 턴은 마지막 라운드 묶음만 펼친 상태로 초기화합니다.
             self.chat_feed.render_all(
                 formatted_msgs, streaming_ids=streaming_ids, live_turn_id=run.turn_id if running else None,
             )

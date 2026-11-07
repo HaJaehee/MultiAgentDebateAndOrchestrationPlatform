@@ -592,8 +592,8 @@ class OrchestratorEngine:
                         on_event=on_event, control=control,
                     )
                 await self.recorder.set_turn(db, state, phase="debating")
-                # 끊기기 전의 발언까지 장부에 접어 두고 이어 갑니다 (라운드 중간에 끊겼으면 장부가
-                # 그 라운드를 모릅니다). 새 발언이 없으면 부르지 않습니다.
+                # 중단되기 전의 발언들을 장부에 먼저 반영하고 재개합니다 (라운드 도중 중단되었을 경우
+                # 해당 라운드 내용이 아직 장부에 없을 수 있습니다). 신규 발언이 없다면 호출하지 않습니다.
                 await self.conversation.update_ledger(
                     db=db, state=state, orchestrator=setup.orchestrator, on_event=on_event, reason="재개",
                     kind=ledger_history.KIND_RESUME,

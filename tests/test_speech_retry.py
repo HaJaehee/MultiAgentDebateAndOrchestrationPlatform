@@ -379,7 +379,7 @@ async def test_the_decision_ledger_is_corrected_for_the_new_version():
             .order_by(LedgerRevisionModel.seq.desc()).limit(1)
         )).scalar_one()
     assert (last.kind, last.turn_id, last.round_number) == ("retry", target.turn_id, target.round_number), \
-        "고친 장부는 다시 실행한 발언의 턴으로 남고, 라운드 변화량에서는 빠집니다"
+        "정정된 장부 개정은 재실행 대상 발언의 턴에 귀속되며, 일반 라운드 변화량 집계에서는 제외됩니다"
     assert last.ledger == session.decision_ledger
 
 

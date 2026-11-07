@@ -178,7 +178,7 @@ def build_session_markdown(
         header = f"#### {label} · {name}"
         if role:
             header += f" ({role})"
-        # 발언 번호 (ADR-052). 본문의 `[S14]` 가 어느 발언인지 저장 문서에서도 찾을 수 있게 합니다.
+        # 발언 번호 (ADR-052). 내보낸 마크다운 문서에서도 본문의 `[S14]` 인용 대상 발언을 즉시 식별할 수 있도록 헤더에 표기합니다.
         if msg.get("speech_no"):
             header += f" · S{msg['speech_no']}"
         node_badge = badges.observe(msg)

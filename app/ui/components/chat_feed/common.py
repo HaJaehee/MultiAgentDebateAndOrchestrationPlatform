@@ -58,9 +58,9 @@ def clip_reloaded_output(text: str, limit: int = MAX_RELOADED_TOOL_OUTPUT) -> st
     )
 
 
-# 인용 링크 (ADR-052). 발언 카드 본문의 `[S14]`·`[I-3]` 은 `#mado-ref-…` 링크로 그려집니다 (`math_markdown.link_refs`).
-# 누르면 브라우저의 해시 이동(주소창 `#` 변경, 스크롤 점프)을 먼저 막고 서버에 알립니다. 이동은 서버의 `reveal` 길 하나로만
-# 일어납니다. 링크가 카드마다 다시 그려지므로 리스너는 document 에 하나만 둡니다 (`speech_actions.SPEECH_COMMENT_JS` 와 같은 방식).
+# 인용 링크 이벤트 핸들러 (ADR-052). 발언 카드 본문의 `[S14]`, `[I-3]` 표기는 `#mado-ref-…` 앵커 링크로 렌더링됩니다 (`math_markdown.link_refs`).
+# 클릭 시 브라우저 기본 해시 이동(URL '#' 변경 및 급격한 스크롤 점프)을 차단하고 커스텀 이벤트를 서버로 전송합니다. 화면 이동은 서버의 `reveal` 로직으로 단일화되어 일관되게 처리됩니다.
+# 카드가 동적으로 재렌더링되더라도 이벤트가 유실되지 않도록 전역 document 레벨에 단일 리스너를 등록합니다 (`speech_actions.SPEECH_COMMENT_JS`와 동일한 방식).
 CITATION_EVENT = "mado_cite"
 CITATION_JS = """
 (function () {
@@ -131,26 +131,26 @@ SCROLL_TO_BOTTOM_PX = 10_000_000
 
 # ---------------------------------------------------------------- 라운드 묶음 (전문가 화면, docs/feature_ui_upgrade.md P3)
 
-# 묶지 않는 기록. 턴을 여닫는 것(요청·계획·승인·그래프 설계·결론)과 턴 밖의 기록(직접 수정, 일반 안내)입니다. 사용자 요청과
-# 결론 카드가 묶음 밖에 있어야 묶음을 다 접어도 무엇을 묻고 무엇을 얻었는지 보입니다.
+# 라운드 묶음에서 제외할 메시지 유형 집합. 턴 시작 및 종료 이벤트(사용자 요청, 계획 제안, 계획 승인, 그래프 설계, 최종 결론)와 턴 외부 작업(장부 직접 수정, 일반 안내 등)입니다.
+# 사용자 요청과 최종 결론 카드가 항상 외부에 노출되어야 모든 묶음이 접힌 상태에서도 전체 흐름의 목표와 결과를 한눈에 파악할 수 있습니다.
 UNGROUPED_KINDS = frozenset({
     turns.KIND_OPENING, turns.KIND_PLAN, turns.KIND_APPROVAL, turns.KIND_PLAN_REVISION, turns.KIND_GRAPH_DRAFT,
     turns.KIND_SYNTHESIS, turns.KIND_LEDGER_EDIT, turns.KIND_NOTE, turns.KIND_KERNEL_REPLAY,
 })
-# 묶음을 새로 열지 않고, 열린 묶음에만 들어가는 기록. 합성 뒤로 미룬 개입이 발언 없는 묶음을 만들지 않게 합니다.
+# 독립적인 묶음을 생성하지 않고, 이미 열려 있는 기존 묶음에만 편입되는 메시지 유형입니다. 종합 단계 이후로 연기된 사용자 개입이 빈 묶음을 생성하는 문제를 방지합니다.
 JOIN_ONLY_KINDS = frozenset({turns.KIND_INTERJECTION})
-# 머리줄의 "발언 n" 에 세는 기록.
+# 묶음 헤더의 '발언 n' 카운트에 포함할 메시지 유형 집합.
 GROUP_SPEECH_KINDS = frozenset({
     turns.KIND_SPEECH, turns.KIND_MERGE, turns.KIND_SUBDEBATE_SPEECH, turns.KIND_SUBDEBATE_CONCLUSION,
 })
-# 머리줄에 이름을 적을 쟁점 수. 넘치면 "외 n".
+# 묶음 헤더에 직접 표시할 최대 쟁점 식별자 개수 (초과 시 '외 n' 표기).
 GROUP_HEADER_ISSUES = 3
 
 
 def round_group_key(msg: Dict[str, Any]) -> Optional[Tuple[str, int]]:
-    """이 기록이 들어갈 라운드 묶음의 열쇠 (턴 id, 라운드). 묶지 않으면 None.
+    """해당 메시지가 속할 라운드 묶음 식별 키 (턴 ID, 라운드 번호)를 반환합니다. 묶음 대상이 아닌 경우 None을 반환합니다.
 
-    라운드 0 과 턴 id 가 없는 옛 기록도 묶지 않습니다.
+    라운드 0이거나 턴 ID가 누락된 레거시 기록도 묶음에서 제외합니다.
     """
     turn_id = msg.get("turn_id")
     round_number = int(msg.get("round_number") or 0)
@@ -162,7 +162,7 @@ def round_group_key(msg: Dict[str, Any]) -> Optional[Tuple[str, int]]:
 
 
 def counts_as_speech(msg: Dict[str, Any]) -> bool:
-    """묶음 머리줄의 발언 수에 드는가. 실패한 발언은 세지 않습니다."""
+    """묶음 헤더의 발언 카운트에 포함되는지 여부를 판별합니다. 실패한 오류 메시지는 집계에서 제외합니다."""
     if msg.get("msg_type") == "error":
         return False
     kind = turns.kind_of(msg)
@@ -180,9 +180,9 @@ def _issue_list(numbers: List[int]) -> str:
 def round_group_header(
     word: str, number: int, speeches: int, tools: int, delta: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """묶음 머리줄. 예: `Round 2 · 발언 3 · 결정 +1 · 닫힘 I-3 · 새 I-5 · 도구 4회`.
+    """라운드 묶음 헤더 텍스트를 생성합니다. (예: `Round 2 · 발언 3 · 결정 +1 · 닫힘 I-3 · 새 I-5 · 도구 4회`).
 
-    `delta` 는 `ledger_history.round_deltas` 의 한 칸입니다. 마지막 라운드는 최종 합성 개정 기준이라 그렇게 적습니다.
+    `delta`는 `ledger_history.round_deltas`의 라운드별 상태 변화량 딕셔너리입니다. 마지막 라운드의 경우 최종 종합 개정까지 반영되어 표기됩니다.
     """
     parts = [f"{word} {number}", f"발언 {speeches}"]
     if delta:
@@ -200,21 +200,16 @@ def round_group_header(
     return text
 
 
-# `reveal_js` 가 배치를 기다리는 최대 프레임 수 (60fps 에서 약 0.75초). 넘으면 그때의 자리로 스크롤합니다.
+# `reveal_js` 스크롤 애니메이션 대기 최대 프레임 수 (60fps 기준 약 0.75초). 타임아웃 시 현재 위치로 스크롤합니다.
 REVEAL_MAX_FRAMES = 45
 
 
 def reveal_js(element_id: int, block: str = "center") -> str:
-    """요소가 보이게 스크롤하는 스크립트. 막 펼친 칸이 제 높이를 찾은 뒤에 스크롤합니다.
+    """대상 요소를 화면 중앙으로 부드럽게 스크롤하는 자바스크립트 코드를 생성합니다. 방금 펼쳐진 아코디언이 완전한 레이아웃 높이를 확보한 후 스크롤을 실행합니다.
 
-    NiceGUI 는 요소 갱신과 `run_javascript` 를 같은 메시지 묶음으로 보내고, 브라우저는 Vue 가 DOM 을 고치기 전에
-    스크립트를 실행합니다(`CardTimeline.scroll_to_bottom` 의 현상과 같음). 게다가 Quasar 의 접이식 칸은 펼친 뒤에도
-    슬라이드 전환이 끝날 때까지 본문에 `height` 를 인라인으로 붙잡아 둡니다(처음에는 0). 애니메이션을 꺼도(`duration` 0)
-    그렇고, 그동안 칸은 움직이지 않아 멈춘 것처럼 보입니다. 프레임 수만 기다리면 아직 낮은 칸을 기준으로 스크롤해,
-    스크롤이 옛 바닥에서 멈췄습니다.
-
-    그래서 목표와 그 위의 접이식 칸 어디에도 붙잡힌 높이가 없고, 목표의 위치와 크기가 두 프레임 연속 그대로일 때
-    스크롤합니다 (최대 `REVEAL_MAX_FRAMES`). 펼침 애니메이션이 있는 칸(로스터의 접이식 칸)도 같은 길로 기다립니다.
+    NiceGUI는 DOM 요소 갱신과 `run_javascript` 호출을 단일 웹소켓 프레임에 묶어 전송하므로, Vue가 가상 DOM을 실제 브라우저 DOM에 반영하기 전에 스크립트가 실행될 수 있습니다.
+    또한 Quasar의 QExpansionItem은 애니메이션 종료 시까지 인라인 height 스타일을 유지하므로, 즉시 스크롤하면 잘못된 위치로 이동할 위험이 있습니다.
+    따라서 대상 요소와 상위 아코디언 컨테이너의 크기 및 위치가 2프레임 연속 안정화될 때까지 대기한 후 정확하게 스크롤을 수행합니다 (최대 `REVEAL_MAX_FRAMES`).
     """
     return (
         "(() => { let last = '', still = 0, frames = 0;"
@@ -479,9 +474,9 @@ def version_caption(version: Dict[str, Any], total: int) -> str:
 
 
 def card_class_string(msg_type: str, sender_key: str) -> str:
-    """발언 카드의 클래스 전부. `mado-card` 는 화면 밖 카드의 배치를 건너뛰는 규칙(`theme.py`)이 찾는 이름입니다.
+    """발언 카드 컨테이너의 전체 CSS 클래스 문자열을 생성합니다. `mado-card` 클래스는 화면 밖 카드의 렌더링 연산을 최적화하는 CSS 규칙(`theme.py`)의 셀렉터입니다.
 
-    카드가 라운드 묶음 안에 들어가 타임라인의 직계 자식이 아니게 되어, 자리가 아니라 이름으로 찾습니다.
+    카드가 라운드 묶음 아코디언 내부로 중첩되면서 타임라인의 직계 자식이 아니게 되었으므로, 계층 구조 대신 클래스 셀렉터로 스타일을 적용합니다.
     """
     return f"mado-card w-full p-3.5 rounded-xl border {_card_classes(msg_type, sender_key)} shadow-md"
 
