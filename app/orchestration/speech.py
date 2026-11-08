@@ -390,7 +390,7 @@ class SpeechRunner:
         notice = (
             f"> ⚠️ **연결 끊김 — {agent.name} 의 발언을 받지 못했습니다.**\n"
             f">\n"
-            f"> - 모델: `{agent.model}`\n"
+            f"> - 모델: `{exc.model}`\n"
             f"> - 엔드포인트: `{exc.endpoint}`\n"
             f"> - 원인: `{exc.reason}`\n"
             f">\n"

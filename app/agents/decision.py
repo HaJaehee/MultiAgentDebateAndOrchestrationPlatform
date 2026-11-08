@@ -44,6 +44,8 @@ _ISSUE_TAG = re.compile(r"^\[I-(\d{1,5})\]\s*")
 
 # 단일 패스 입력 텍스트 상한 (과도한 프롬프트로 인한 결정 모델 컨텍스트 초과 방지)
 MAX_DECISION_STATE_CHARS = 32_000
+# choice 선택지 하나에 붙이는 설명의 길이 상한. 쟁점 본문 전체는 state 에 이미 들어 있습니다.
+MAX_CHOICE_NOTE_CHARS = 300
 
 
 class DecisionHTTPStatusError(RuntimeError):
@@ -56,18 +58,35 @@ class DecisionHTTPStatusError(RuntimeError):
 
 @dataclass(frozen=True)
 class DecisionQuestion:
-    """`/v1/systemone` 의 단일 질문 명세."""
+    """`/v1/systemone` 의 단일 질문 명세.
+
+    `criteria` 는 질문 종류에 따라 뜻이 다릅니다.
+
+    - `score`: 낮은 단계부터 적은 단계 이름 목록. 목록 그대로 보냅니다.
+    - `choice`: 선택지 이름. 답의 `choice` 와 `probabilities` 키가 이 이름으로 돌아옵니다.
+      Jev 는 choice 의 criteria 를 `{이름: 설명}` 사전으로만 받고, 목록을 보내면 422 로 거절합니다.
+      설명은 `choice_notes` 에 같은 순서로 적고, 비워 두면 이름을 그대로 설명으로 씁니다.
+    """
 
     type: QuestionKind
     instructions: str
     criteria: Optional[Tuple[str, ...]] = None
+    choice_notes: Optional[Tuple[str, ...]] = None
 
     def to_payload(self) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "type": self.type,
             "instructions": self.instructions,
         }
-        if self.type in ("choice", "score") and self.criteria:
+        if not self.criteria:
+            return payload
+        if self.type == "choice":
+            notes = self.choice_notes or ()
+            payload["criteria"] = {
+                name: (notes[i] if i < len(notes) and notes[i] else name)
+                for i, name in enumerate(self.criteria)
+            }
+        elif self.type == "score":
             payload["criteria"] = list(self.criteria)
         return payload
 
@@ -93,6 +112,11 @@ class DecisionResponse:
     answers: Dict[str, DecisionAnswer]
     input_tokens: int = 0
     output_tokens: int = 0
+
+
+def _decision_model_label(cfg: DecisionLLMConfig) -> str:
+    """실패 안내에 적을 결정 모델 이름 (`Agent.display_model` 과 같은 `백엔드/모델` 모양)."""
+    return f"{cfg.backend}/{cfg.effective_model}"
 
 
 def build_systemone_urls(api_base: str, backend: str) -> Tuple[str, Optional[str]]:
@@ -292,7 +316,7 @@ class DecisionCaller:
                 f"또는 conf.json 의 decision_llm 설정을 확인하세요."
             )
             if agent is not None:
-                raise LLMUnavailableError(agent, reason)
+                raise LLMUnavailableError(agent, reason, model=_decision_model_label(cfg), endpoint=cfg.endpoint_label)
             raise RuntimeError(reason)
 
         try:
@@ -311,7 +335,12 @@ class DecisionCaller:
                     "Decision LLM call failed for %s (backend=%s, model=%s, endpoint=%s): %s",
                     agent.name, cfg.backend, cfg.effective_model, cfg.endpoint_label, exc,
                 )
-                raise LLMUnavailableError(agent, f"{type(exc).__name__}: {exc}") from exc
+                raise LLMUnavailableError(
+                    agent,
+                    f"{type(exc).__name__}: {exc}",
+                    model=_decision_model_label(cfg),
+                    endpoint=cfg.endpoint_label,
+                ) from exc
             raise
 
         if record_usage and (response.input_tokens or response.output_tokens):
@@ -510,6 +539,8 @@ class DecisionCaller:
                 type="choice",
                 instructions="가장 시급히 두 전문가가 맞대어 해결해야 할 미해결 쟁점 번호를 고르세요.",
                 criteria=tuple(issue_labels),
+                # 번호만 보내면 모델이 번호와 쟁점을 짝지을 수 없으므로 쟁점 본문을 설명으로 붙입니다.
+                choice_notes=tuple(issue.strip()[:MAX_CHOICE_NOTE_CHARS] for issue in issues),
             )
         for cand in candidates:
             questions[f"cand_{cand.key}"] = DecisionQuestion(
@@ -565,12 +596,14 @@ class DecisionCaller:
             "대체로 타당·부분 개선",
             "우수·즉시 채택 가능",
         )
-        action_choices = (
-            "승인 및 합의 진행",
-            "구체적 보완 후 진행",
-            "핵심 쟁점 재검토 필요",
-            "대안 설계 채택 권고",
-        )
+        # 선택지 이름은 짧은 영문 키로 보내고 화면에는 설명(한국어)을 씁니다. Jev 문서의 예시가
+        # 이 모양이고, 답의 `choice`·`probabilities` 는 키로 돌아옵니다.
+        action_choices: Dict[str, str] = {
+            "approve": "승인 및 합의 진행",
+            "revise": "구체적 보완 후 진행",
+            "reexamine": "핵심 쟁점 재검토 필요",
+            "alternative": "대안 설계 채택 권고",
+        }
         questions: Dict[str, DecisionQuestion] = {
             "approval": DecisionQuestion(
                 type="noul",
@@ -587,7 +620,8 @@ class DecisionCaller:
             "action": DecisionQuestion(
                 type="choice",
                 instructions=f"{role_context} 로서 다음 단계에 권고할 조치를 선택하세요.",
-                criteria=action_choices,
+                criteria=tuple(action_choices),
+                choice_notes=tuple(action_choices.values()),
             ),
         }
 
@@ -606,9 +640,9 @@ class DecisionCaller:
         quality_label = quality_rubric[clamped_idx]
 
         recommended = (
-            act_ans.choice
+            action_choices.get(act_ans.choice, act_ans.choice)
             if (act_ans and act_ans.choice)
-            else ("승인 및 합의 진행" if passed else "구체적 보완 후 진행")
+            else action_choices["approve" if passed else "revise"]
         )
         conf_parts: List[str] = []
         if qual_ans and qual_ans.confidence is not None:
@@ -626,8 +660,8 @@ class DecisionCaller:
         ]
         if act_ans and act_ans.probabilities:
             dist = ", ".join(
-                f"{label} {p:.0%}"
-                for label, p in sorted(act_ans.probabilities.items(), key=lambda kv: -kv[1])
+                f"{action_choices.get(key, key)} {p:.0%}"
+                for key, p in sorted(act_ans.probabilities.items(), key=lambda kv: -kv[1])
             )
             lines.append(f"- **선택지 확률 분포**: {dist}")
 

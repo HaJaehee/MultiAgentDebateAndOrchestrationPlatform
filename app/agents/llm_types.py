@@ -3,7 +3,7 @@
 `LLMUnavailableError` — 호출이 실패했다는 사실. 대신 답을 지어내지 않고, 부른 쪽이 실패 발언으로 기록합니다.
 """
 
-from typing import Any, Awaitable, Callable, Dict
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 from app.agents.base import Agent
 
@@ -17,13 +17,22 @@ class LLMUnavailableError(RuntimeError):
     모르는 것은 모른다고 말하는 편이 낫습니다.
     """
 
-    def __init__(self, agent: Agent, reason: str):
+    def __init__(
+        self,
+        agent: Agent,
+        reason: str,
+        *,
+        model: Optional[str] = None,
+        endpoint: Optional[str] = None,
+    ):
+        # 실패한 것이 System 1 결정 모델이면 그 모델과 주소를 적어야 합니다. 오케스트레이터는
+        # 두 모델을 함께 쓰므로 어느 쪽이 실패했는지 호출한 쪽이 `model`·`endpoint` 로 알려 줍니다.
         self.agent_key = agent.key
         self.agent_name = agent.name
-        self.model = agent.model
-        self.endpoint = agent.endpoint_label
+        self.model = model or agent.display_model
+        self.endpoint = endpoint or agent.endpoint_label
         self.reason = reason.strip() or "원인을 확인할 수 없습니다"
-        super().__init__(f"{agent.name} ({agent.model} @ {self.endpoint}): {self.reason}")
+        super().__init__(f"{agent.name} ({self.model} @ {self.endpoint}): {self.reason}")
 
 
 class ToolCallLog(dict):

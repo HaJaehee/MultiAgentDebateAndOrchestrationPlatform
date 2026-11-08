@@ -31,6 +31,7 @@ from app.agents.base import Agent
 from app.agents.connection import AUTH, MODEL, OK, RATE_LIMITED, SERVER_ERROR, classify
 from app.agents.decision import DecisionCaller, DecisionHTTPStatusError, DecisionQuestion
 from app.agents.llm import LLMCaller
+from app.agents.llm_types import LLMUnavailableError
 from app.agents.pool import AgentPool, get_agent_pool
 from app.config import (
     PROJECT_ROOT,
@@ -258,6 +259,92 @@ async def test_decision_caller_jev_http_and_usage_metering(clean_decision_env, m
     assert meter.completion_tokens == 6
 
 
+def test_choice_criteria_go_out_as_a_name_to_note_dict_and_score_levels_as_a_list():
+    """Jev 는 choice 의 criteria 를 `{이름: 설명}` 사전으로만 받습니다. 목록이면 HTTP 422 입니다."""
+    choice = DecisionQuestion(type="choice", instructions="골라 주세요", criteria=("a", "b"), choice_notes=("첫째", ""))
+    assert choice.to_payload()["criteria"] == {"a": "첫째", "b": "b"}, "설명이 비면 이름을 설명으로 씁니다"
+    bare = DecisionQuestion(type="choice", instructions="골라 주세요", criteria=("a", "b"))
+    assert bare.to_payload()["criteria"] == {"a": "a", "b": "b"}
+    score = DecisionQuestion(type="score", instructions="점수", criteria=("낮음", "높음"))
+    assert score.to_payload()["criteria"] == ["낮음", "높음"], "score 는 낮은 단계부터 적은 목록입니다"
+    noul = DecisionQuestion(type="noul", instructions="예/아니오", criteria=("x",))
+    assert "criteria" not in noul.to_payload()
+
+
+@pytest.mark.asyncio
+async def test_decision_failure_names_the_system1_model_and_endpoint(clean_decision_env):
+    """오케스트레이터는 두 모델을 함께 씁니다. Jev 가 실패했으면 안내에도 Jev 가 적혀야 합니다."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"detail": [{"type": "dict_type", "msg": "Input should be a valid dictionary"}]})
+
+    orchestrator = Agent.from_config(
+        "orchestrator",
+        AgentConfig(
+            name="Orchestrator",
+            role="Moderator",
+            model="deepseek/deepseek-v4-flash",
+            api_key="sk-s2",
+            decision_llm=DecisionLLMConfig(enabled=True, backend="jev", api_key="jev-key", model="jev-1.13.0"),
+        ),
+    )
+    caller = DecisionCaller(http_transport=httpx.MockTransport(handler))
+    with pytest.raises(LLMUnavailableError) as raised:
+        await caller.evaluate(
+            orchestrator.decision_llm,
+            "상태",
+            {"gate": DecisionQuestion(type="noul", instructions="넘어갈까요?")},
+            agent=orchestrator,
+        )
+    assert raised.value.model == "jev/jev-1.13.0"
+    assert raised.value.endpoint == "https://api.typesafe.ai/v1"
+    assert "HTTP 422" in raised.value.reason
+
+
+@pytest.mark.asyncio
+async def test_sub_debate_issue_choice_carries_issue_text_and_maps_back(clean_decision_env):
+    seen: List[Dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        seen.append(body)
+        return httpx.Response(
+            200,
+            json={
+                "model": "jev-1.13.0",
+                "answers": {
+                    "open": {"type": "noul", "noul": 0.9},
+                    "issue_idx": {"type": "choice", "choice": "1", "probabilities": {"0": 0.2, "1": 0.8}},
+                    "cand_architect": {"type": "noul", "noul": 0.9},
+                    "cand_critic": {"type": "noul", "noul": 0.7},
+                },
+            },
+        )
+
+    jev = DecisionLLMConfig(enabled=True, backend="jev", api_key="jev-key")
+    orchestrator = Agent.from_config(
+        "orchestrator",
+        AgentConfig(name="Orchestrator", role="Moderator", model="openai/gpt-4o", api_key="sk", decision_llm=jev),
+    )
+    architect = Agent.from_config("architect", AgentConfig(name="Architect", role="Design", model="openai/gpt-4o", api_key="sk"))
+    critic = Agent.from_config("critic", AgentConfig(name="Critic", role="Review", model="openai/gpt-4o", api_key="sk"))
+
+    caller = DecisionCaller(http_transport=httpx.MockTransport(handler))
+    picked = await caller.evaluate_sub_debate(
+        orchestrator,
+        "상태",
+        ["[I-1] 캐시 무효화 시점", "[I-2] 인증 토큰 보관 위치"],
+        [architect, critic],
+    )
+
+    criteria = seen[0]["questions"]["issue_idx"]["criteria"]
+    assert criteria == {"0": "[I-1] 캐시 무효화 시점", "1": "[I-2] 인증 토큰 보관 위치"}, "번호마다 쟁점 본문이 붙어야 합니다"
+    assert picked is not None
+    pair, issue_text, _reason, issue_no = picked
+    assert [a.key for a in pair] == ["architect", "critic"]
+    assert (issue_text, issue_no) == ("인증 토큰 보관 위치", 2)
+
+
 @pytest.mark.asyncio
 async def test_decision_caller_laya_http_falls_back_to_predict_and_local_router(clean_decision_env, monkeypatch):
     paths_called: List[str] = []
@@ -330,7 +417,11 @@ def test_decision_http_errors_classify_into_mado_connection_buckets():
 async def test_specialist_agent_speaks_with_system1_and_supports_fallback(clean_decision_env, monkeypatch):
     llm_fallback.get_fallback_breaker().reset()
 
+    sent_questions: List[Dict[str, Any]] = []
+
     def ok_handler(request: httpx.Request) -> httpx.Response:
+        sent_questions.append(json.loads(request.content.decode("utf-8"))["questions"])
+        # Jev 는 choice 답을 보낸 선택지 이름(키)으로 돌려줍니다.
         return httpx.Response(
             200,
             json={
@@ -340,8 +431,8 @@ async def test_specialist_agent_speaks_with_system1_and_supports_fallback(clean_
                     "quality": {"type": "score", "score": 2.7, "confidence": 0.9},
                     "action": {
                         "type": "choice",
-                        "choice": "승인 및 합의 진행",
-                        "probabilities": {"승인 및 합의 진행": 0.82, "구체적 보완 후 진행": 0.18},
+                        "choice": "approve",
+                        "probabilities": {"approve": 0.82, "revise": 0.18},
                     },
                 },
             },
@@ -369,7 +460,12 @@ async def test_specialist_agent_speaks_with_system1_and_supports_fallback(clean_
     assert logs == []
     assert chunks and "".join(chunks) == text
     assert "충족 (승인)" in text
-    assert "승인 및 합의 진행" in text
+    assert "**승인 및 합의 진행**" in text, "답의 키를 화면용 한국어 설명으로 바꿔 적습니다"
+    assert "승인 및 합의 진행 82%" in text and "구체적 보완 후 진행 18%" in text
+    assert "approve" not in text
+    action_criteria = sent_questions[0]["action"]["criteria"]
+    assert isinstance(action_criteria, dict) and action_criteria["approve"] == "승인 및 합의 진행"
+    assert isinstance(sent_questions[0]["quality"]["criteria"], list)
     assert memory.extract_digest(text), "다음 라운드 압축이 쓸 ## 요지 섹션이 반드시 포함되어야 합니다"
 
     # Jev 인증 실패(401) 시 전역 System 2 모델로 폴백하는지 검증
