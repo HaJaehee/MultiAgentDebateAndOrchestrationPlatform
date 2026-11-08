@@ -338,7 +338,8 @@ A working example to copy is [consensus_voting.py](../../docs/examples/plugins/s
    `parallel_limit`, interim merge) instead of the one-speaker-at-a-time loop.
 4. If a built-in strategy key is retired while sessions may hold it, add it to
    `LEGACY_STRATEGY_ALIASES` so those conversations keep running. A removed plugin falls back to the default strategy,
-   logged once; the conversation keeps the name, so restoring the plugin restores its strategy.
+   logged once. The stored name survives only until the web UI saves that conversation's settings: opening it, changing
+   a setting or sending a message can write the default name back, so after restoring the plugin, pick the strategy again.
 
 **When a strategy fails.** The engine asks through `speakers_for_round` and `instruction_for_turn`, not directly. If
 `get_speakers_for_round` raises or names nobody in this debate, the round runs in priority order and the timeline records
