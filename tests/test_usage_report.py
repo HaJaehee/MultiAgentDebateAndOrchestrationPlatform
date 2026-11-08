@@ -372,6 +372,18 @@ async def test_show_only_reads_the_total_while_closed(ui_page):
 
 
 @pytest.mark.asyncio
+async def test_a_panel_that_opens_upward_points_its_arrow_up(ui_page):
+    """사이드바 맨 아래 패널은 위로 펼쳐지므로 접힌 상태의 화살표가 위를 가리킵니다."""
+    with ui_page:
+        upward = UsagePanel(get_session_factory(), UsageDialog(get_session_factory()), title="t", opens_upward=True)
+        upward.build()
+        downward = UsagePanel(get_session_factory(), UsageDialog(get_session_factory()), title="t")
+        downward.build()
+    assert upward.expansion.props.get("expand-icon") == "keyboard_arrow_up"
+    assert "expand-icon" not in downward.expansion.props, "결론 카드의 패널은 아래로 펼쳐지므로 기본 화살표를 씁니다"
+
+
+@pytest.mark.asyncio
 async def test_an_empty_conversation_says_so(ui_page):
     await init_db("sqlite+aiosqlite:///:memory:")
     with ui_page:

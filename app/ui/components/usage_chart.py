@@ -348,11 +348,14 @@ class UsagePanel:
         session_id: Optional[str] = None,
         turn_id: Optional[str] = None,
         body_classes: str = "",
+        opens_upward: bool = False,
     ) -> None:
         self.session_factory = session_factory
         self.dialog = dialog
         self.title = title
         self.body_classes = body_classes
+        # 사이드바 맨 아래에 붙은 패널은 펼치면 위로 자랍니다. 화살표도 그 방향을 가리켜야 합니다.
+        self.opens_upward = opens_upward
         self.session_id = session_id
         self.turn_id = turn_id
         self.view = "agent"
@@ -366,7 +369,9 @@ class UsagePanel:
         return self.body is not None and not self.body.is_deleted
 
     def build(self) -> None:
-        with ui.expansion(on_value_change=self._on_toggle).props("dense dark").classes(
+        # Quasar 는 펼치면 expand-icon 을 180° 돌립니다. 위쪽 화살표로 두면 접혔을 때 ▲, 펼쳤을 때 ▼ 입니다.
+        props = "dense dark expand-icon=keyboard_arrow_up" if self.opens_upward else "dense dark"
+        with ui.expansion(on_value_change=self._on_toggle).props(props).classes(
             "w-full text-xs bg-slate-800/40 rounded-lg border border-slate-800"
         ) as self.expansion:
             with self.expansion.add_slot("header"):

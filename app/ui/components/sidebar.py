@@ -341,7 +341,7 @@ class SessionSidebar:
             if self.usage_dialog is not None:
                 self.usage_panel = UsagePanel(
                     self.session_factory, self.usage_dialog, title="이 대화의 토큰·시간",
-                    body_classes="max-h-[45vh] overflow-y-auto",
+                    body_classes="max-h-[45vh] overflow-y-auto", opens_upward=True,
                 )
                 self.usage_panel.build()
 
