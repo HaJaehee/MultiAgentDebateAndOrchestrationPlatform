@@ -96,6 +96,21 @@ REQUIRED_IMPORTS = [
     ("jupyter_client", "샌드박스 커널"),
     ("ipykernel", "샌드박스 커널"),
 ]
+# litellm 은 tools 를 넘긴 호출에서만 자기 MCP 연동 모듈을 늦게 불러옵니다. mcp 버전이 맞지
+# 않으면 `import litellm` 은 통과하고 첫 발언에서야 "연결 끊김" 으로 터지므로, 닫힌 로컬 포트로
+# 도구를 넘긴 호출을 한 번 해 봅니다. 연결 거부는 정상이고 import 실패만 잡습니다.
+LITELLM_TOOLS_PROBE = (
+    "import litellm\n"
+    "tools = [{'type': 'function', 'function': {'name': 'probe', "
+    "'parameters': {'type': 'object', 'properties': {}}}}]\n"
+    "try:\n"
+    "    litellm.completion(model='openai/probe', messages=[{'role': 'user', 'content': 'x'}],\n"
+    "                       tools=tools, api_key='probe', api_base='http://127.0.0.1:9',\n"
+    "                       num_retries=0, timeout=5)\n"
+    "except Exception as exc:\n"
+    "    if isinstance(exc, ImportError) or 'cannot import name' in str(exc):\n"
+    "        raise SystemExit(str(exc)[:300])\n"
+)
 SANDBOX_EXCLUDE = shutil.ignore_patterns(
     # `.devvenv` 는 샌드박스 레포의 개발용 가상환경입니다. 경로가 개발 PC 를 가리켜
     # 번들에서는 쓰지도 못하면서, 심사받을 서드파티 코드만 수백 MB 늘립니다.
@@ -523,6 +538,19 @@ def verify_runtime() -> list[str]:
             tail = (result.stderr or "").strip().splitlines()
             if tail:
                 print(f"             {tail[-1][:120]}")
+
+    probe = subprocess.run(
+        [str(python), "-c", LITELLM_TOOLS_PROBE],
+        capture_output=True, text=True, cwd=str(STAGING_DIR), timeout=180,
+    )
+    if probe.returncode == 0:
+        print("      [OK  ] litellm 도구 호출 경로")
+    else:
+        missing.append("litellm (도구 호출)")
+        print("      [실패] litellm 도구 호출 경로  (litellm 과 mcp 버전이 맞지 않음)")
+        tail = (probe.stderr or "").strip().splitlines()
+        if tail:
+            print(f"             {tail[-1][:200]}")
     return missing
 
 

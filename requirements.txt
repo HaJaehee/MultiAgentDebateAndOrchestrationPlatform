@@ -10,7 +10,10 @@ sqlalchemy>=2.0.30
 aiosqlite>=0.20.0
 # app.db_url 설정이 postgresql+asyncpg:// 일 때만 로드됩니다. 폐쇄망 휠 번들에 함께 동봉됩니다.
 asyncpg>=0.30.0
-litellm>=1.40.0
+# litellm 은 tools 를 넘긴 호출마다 자기 MCP 연동 모듈을 불러옵니다. 1.108 계열은 이 모듈이
+# mcp>=2.3 의 CacheableResult 를 요구해, 아래 mcp<2 고정과 함께 쓰면 도구를 가진 에이전트의
+# 발언이 전부 "연결 끊김" 으로 끝납니다. 1.98.0 에서 확인했으므로 그 계열까지만 허용합니다.
+litellm>=1.40.0,<1.99
 # 발언·결론의 LaTeX 수식을 MathML 로 그립니다 (app/ui/math_markdown.py). 순수 파이썬이라
 # 폐쇄망 휠 묶음에 그대로 들어갑니다. 없어도 화면은 뜨고, 그때는 기호만 유니코드로 바꿉니다.
 latex2mathml>=3.77
