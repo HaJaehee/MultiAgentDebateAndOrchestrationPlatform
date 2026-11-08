@@ -211,12 +211,12 @@ def test_the_easy_pages_are_mounted_before_nicegui():
     assert source.index("setup_easy()") < source.index("ui.run_with(")
 
 
-def test_the_expert_header_links_to_the_easy_pages_left_of_the_stack_badge():
+def test_the_expert_header_links_to_the_easy_pages_left_of_the_model_status():
     source = (ROOT / "app" / "ui" / "expert" / "chrome.py").read_text(encoding="utf-8")
     link = source.find('ui.button("쉬운 화면"')
     assert link != -1, "전문가 화면 머리말에 '쉬운 화면' 버튼이 있어야 합니다"
     assert "ui.navigate.to(EASY_HOME)" in source[link:link + 200], "버튼은 /trial/easy 로 이동해야 합니다"
-    assert link < source.index('ui.badge("FastAPI + NiceGUI"'), "버튼은 FastAPI + NiceGUI 배지 왼쪽에 놓여야 합니다"
+    assert link < source.index("build_model_status_button("), "버튼은 모델 연결 상태 버튼 왼쪽에 놓여야 합니다"
 
 
 def test_the_trial_header_links_to_the_easy_pages_for_everyone():

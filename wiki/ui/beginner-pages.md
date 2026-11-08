@@ -15,8 +15,8 @@ There are three touch points outside the package:
 
 - `setup_easy()` in [app/main.py](file:///d:/MultiAgentDebateOrchestration/app/main.py).
 - A `쉬운 화면` button in the expert page header
-  ([app/ui/expert/chrome.py](file:///d:/MultiAgentDebateOrchestration/app/ui/expert/chrome.py)), left of the `FastAPI + NiceGUI`
-  badge.
+  ([app/ui/expert/chrome.py](file:///d:/MultiAgentDebateOrchestration/app/ui/expert/chrome.py)), first on the right side,
+  left of the model status button.
 - A `쉬운 화면` button in the trial header (`header()` in
   [app/trial/pages/common.py](file:///d:/MultiAgentDebateOrchestration/app/trial/pages/common.py)), shown to
   visitors and the owner alike. The way back is the `체험 화면` button in `easy_header`.

@@ -20,9 +20,25 @@ from app.ui.clipboard import copy_to_clipboard
 from app.ui.components.access_token import build_access_buttons
 from app.ui.components.model_status import build_model_status_button
 
+# 정보 창 `Tech Stack` 행의 배지 (이름, Quasar 색).
+TECH_STACK_BADGES = (
+    ("FastAPI + NiceGUI", "indigo-8"),
+    ("MCP Host", "teal-8"),
+    ("LiteLLM Multi-Model", "purple-8"),
+)
+
+
+def _info_row(label: str, icon: str) -> ui.row:
+    """정보 창 본문의 한 행: 아이콘과 이름표까지 그리고, 값은 호출한 쪽이 `with` 안에서 채웁니다."""
+    row = ui.row().classes("items-center gap-2.5 w-full flex-nowrap")
+    with row:
+        ui.icon(icon, size="xs").classes("text-slate-500")
+        ui.label(label).classes("text-[11px] uppercase tracking-wider text-slate-500 w-20 shrink-0")
+    return row
+
 
 def build_about_dialog() -> ui.dialog:
-    """만든 사람·버전 창.
+    """만든 사람·버전·기술 스택 창.
 
     다이얼로그는 페이지를 만들 때 **한 번만** 짓고, 버튼은 열기만 합니다. 누를 때마다 새로
     만들면 그때의 슬롯 컨텍스트에 붙어 화면에 뜨지 않거나 눌린 횟수만큼 DOM 에 쌓입니다.
@@ -32,7 +48,7 @@ def build_about_dialog() -> ui.dialog:
         ui.notify("정보를 복사하였습니다.", type="positive", position="bottom-right")
 
     with ui.dialog() as about_dialog, ui.card().classes(
-        "bg-slate-900 border border-slate-700 rounded-xl p-0 w-[420px] max-w-[92vw]"
+        "bg-slate-900 border border-slate-700 rounded-xl p-0 w-[480px] max-w-[92vw]"
     ):
         with ui.column().classes("w-full gap-0"):
             # 머리
@@ -52,15 +68,18 @@ def build_about_dialog() -> ui.dialog:
                     ("Author", AUTHOR, "person"),
                     ("Email", AUTHOR_EMAIL, "mail"),
                     ("Version", APP_VERSION_LABEL, "sell"),
+                    ("Tech Stack", None, "layers"),
                     ("License", LICENSE_NAME, "gavel"),
                 ):
-                    with ui.row().classes("items-center gap-2.5 w-full flex-nowrap"):
-                        ui.icon(_icon, size="xs").classes("text-slate-500")
-                        ui.label(_label).classes(
-                            "text-[11px] uppercase tracking-wider text-slate-500 w-16 shrink-0")
-                        # select-all: 마우스로 한 번 눌러 전체를 집을 수 있게.
-                        ui.label(_value).classes(
-                            "text-sm text-slate-200 font-medium select-all break-all")
+                    with _info_row(_label, _icon):
+                        if _value is None:
+                            with ui.row().classes("items-center gap-1 flex-wrap"):
+                                for _name, _color in TECH_STACK_BADGES:
+                                    ui.badge(_name, color=_color).props("dense")
+                        else:
+                            # select-all: 마우스로 한 번 눌러 전체를 집을 수 있게.
+                            ui.label(_value).classes(
+                                "text-sm text-slate-200 font-medium select-all break-all")
 
             # 꼬리 — 한 줄 복사
             with ui.row().classes(
@@ -95,12 +114,9 @@ def build_header(drawer: ui.left_drawer, about_dialog: ui.dialog) -> None:
             # 설정에 있는 모델이 지금 응답하는지 (app/agents/model_status.py). 이 화면은 주인만
             # 열므로 주소와 오류 원문까지 보여 줍니다.
             build_model_status_button(detail=True)
-            ui.badge("FastAPI + NiceGUI", color="indigo-8").props("dense")
-            ui.badge("MCP Host", color="teal-8").props("dense")
-            ui.badge("LiteLLM Multi-Model", color="purple-8").props("dense")
             DesktopAlertButton()
             info_btn = ui.button(icon="info", on_click=about_dialog.open)
             info_btn.props("flat dense round color=grey-4")
-            info_btn.tooltip(f"만든 사람 · 버전 — {APP_VERSION_LABEL}")
+            info_btn.tooltip(f"만든 사람 · 버전 · 기술 스택 — {APP_VERSION_LABEL}")
             # 정보 버튼 오른쪽: 서버 PC 화면이면 토큰 버튼, 원격 화면이면 로그아웃.
             build_access_buttons()
