@@ -167,11 +167,17 @@ class TurnRecorder:
         fallback_body: str,
         on_event: Optional[EventCallback],
         before_commit: Optional[Callable[[], Awaitable[None]]] = None,
+        state: Optional[DebateState] = None,
     ) -> bool:
         """행을 기록합니다. 실패하면 간격을 두고 다시 시도하고, 끝내 실패하면 파일로 남깁니다.
 
         `before_commit` 은 행을 넣은 뒤 같은 트랜잭션에서 돌릴 문장입니다 (이미 기록된 도구 호출을
         이 발언에 잇는 UPDATE). 다시 시도할 때마다 다시 돕니다.
+
+        `state` 를 주면 같은 커밋에서 턴 기록의 누적 사용량(`turns.usage`)도 지금 값으로 고칩니다.
+        단계가 바뀔 때만 적으면, 토론 단계 도중 서버가 끊겼을 때 재개가 그 앞 저장값부터 다시 세어
+        그 사이 발언과 보조 호출의 사용량을 통째로 잃습니다. 기록마다 함께 적으면 잃는 양이 진행
+        중이던 발언 하나로 줄어듭니다.
 
         `build` 는 **시도할 때마다 새 행을 만들어** 돌려줘야 합니다. 실패한 커밋을 롤백하면
         그 트랜잭션에 넣었던 객체는 세션에서 떨어져 나가, 같은 객체를 다시 넣는 것보다
@@ -190,6 +196,8 @@ class TurnRecorder:
             try:
                 if before_commit is not None:
                     await before_commit()
+                if state is not None:
+                    await self._save_turn_usage(db, state)
                 await db.commit()
                 if attempt > 1:
                     logger.info(f"Persisted {what} on attempt {attempt}/{attempts}")
@@ -233,6 +241,18 @@ class TurnRecorder:
             except Exception:  # noqa: BLE001 - 알리다 실패해도 토론은 계속됩니다
                 logger.debug("persist_failed notification failed", exc_info=True)
         return False
+
+    @staticmethod
+    async def _save_turn_usage(db, state: DebateState) -> None:
+        """턴 기록의 누적 사용량을 지금 값으로 고칩니다. 커밋은 부른 쪽이 합니다.
+
+        `state.usage` 는 그 턴의 누적 측정값일 때만 비어 있지 않습니다 (새 턴·재개·다시 실행이 채움).
+        `set_turn` 과 같은 규칙으로, 비어 있으면 적지 않아 남의 값을 지우지 않습니다.
+        """
+        if state.turn_id and not state.usage.empty:
+            await db.execute(
+                update(TurnModel).where(TurnModel.id == state.turn_id).values(usage=state.usage.as_meta())
+            )
 
     async def record_user_message(
         self,
@@ -282,6 +302,7 @@ class TurnRecorder:
             fallback_title=f"User — Round {round_number}",
             fallback_body=content,
             on_event=on_event,
+            state=state,
         )
 
         message = DebateMessage(
@@ -363,6 +384,7 @@ class TurnRecorder:
             fallback_body=content,
             on_event=on_event,
             before_commit=(lambda: before_commit(msg_id)) if before_commit is not None else None,
+            state=state,
         )
 
         message = DebateMessage(

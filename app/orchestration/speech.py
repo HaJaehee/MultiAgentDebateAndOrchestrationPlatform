@@ -957,6 +957,7 @@ class SpeechRunner:
                 fallback_body=content,
                 on_event=speech.on_event,
                 before_commit=after_rows,
+                state=speech.state,
             )
 
     @staticmethod

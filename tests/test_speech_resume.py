@@ -330,6 +330,43 @@ async def test_the_usage_report_does_not_count_the_time_a_speech_was_cut():
     assert next(r for r in report.by_agent if r.key == "coder").elapsed < 60
 
 
+async def _turn_and_spoken(sid: str, turn_id: str):
+    """턴 기록의 누적 사용량과, 그 턴에 기록된 발언들의 사용량 합."""
+    async with get_session_factory(DB_URL)() as db:
+        turn = await db.get(TurnModel, turn_id)
+        rows = (await db.execute(
+            select(MessageModel.llm_meta).where(MessageModel.turn_id == turn_id)
+        )).scalars().all()
+    spoken = llm_usage.Usage()
+    for meta in rows:
+        if isinstance(meta, dict):
+            spoken.add(llm_usage.Usage.of(meta.get("usage")))
+    return llm_usage.Usage.of(turn.usage), spoken
+
+
+@pytest.mark.asyncio
+async def test_a_turn_cut_mid_debate_keeps_the_usage_of_what_was_already_recorded():
+    """턴 사용량을 단계가 바뀔 때만 적으면, 토론 도중 끊긴 턴은 재개가 토론 시작 시점의 값부터 다시 셉니다.
+
+    번들 샘플 토론에서 턴 기록이 28회·94만 토큰으로 남고 발언 합계는 148회·594만이던 일입니다. 발언이
+    기록될 때마다 같은 커밋에 턴 사용량도 적으므로, 끊기기 전에 끝난 발언의 몫은 턴 합계에 남습니다.
+    """
+    sid = await _session(max_rounds=1)
+    with pytest.raises(asyncio.CancelledError):
+        await _engine(_MeteredStepLLM()).run_turn(session_id=sid, user_prompt=REQUEST)
+    async with get_session_factory(DB_URL)() as db:
+        await turns.mark_interrupted_turns(db)
+        turn_id = (await turns.unfinished_turn(db, sid)).turn_id
+
+    saved, spoken = await _turn_and_spoken(sid, turn_id)
+    assert spoken.calls >= 2, "계획과 끊기기 전에 끝난 발언이 기록되어 있어야 이 시험이 뜻이 있습니다"
+    assert saved.calls >= spoken.calls, "끊기기 전에 기록된 발언의 사용량이 턴 기록에 이미 들어 있어야 합니다"
+
+    await _engine(_MeteredStepLLM()).resume_turn(session_id=sid, turn_id=turn_id, mode="continue")
+    saved, spoken = await _turn_and_spoken(sid, turn_id)
+    assert saved.calls >= spoken.calls, "재개 뒤에도 앞선 발언의 몫이 턴 합계에서 빠지지 않습니다"
+
+
 @pytest.mark.asyncio
 async def test_finishing_turns_the_draft_into_an_interruption_note():
     sid = await _session(max_rounds=1)
