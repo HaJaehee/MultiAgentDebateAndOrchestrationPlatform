@@ -222,6 +222,44 @@ Measured by a test (three specialists, three rounds, each speech ≈ 1,100 token
 code block + a digest): the critic's last prompt is about **54 %** of what sending the eight earlier
 speeches verbatim would cost. Four of them arrive as digests; code is sent for the two new ones only.
 
+#### 2.4.0. What the app saw: the `[앱 기록]` block
+
+A speech's text is the speaker's claim. The app also knows what the speaker actually did: which tools it ran and what came
+back, and which @mentioned files went into its request as content (`app/agents/media.py`). Until v2.0 only the speaker's own
+request carried that. In a 2026-11-09 run with deepseek-v4-flash, Architect correctly quoted a tool result and the text inside
+an attached image; Critic rejected both as hallucinations ("no raw trace", "the user message says the content was not
+attached"), and Orchestrator concluded "lookup failed" / "not received".
+
+`app/orchestration/observed.py` now hands those facts on:
+
+- **Recorded at the end of each speech** in `llm_meta["observed"]` (`observed_meta`): up to 8 tool calls (name, arguments
+  clipped to 160 characters, status, output clipped to 200 characters, a flag for outside sources) plus a count of the rest,
+  and the attachments the model accepted. `media.recording_sent` collects the latter: `_complete_once` reports the
+  attachment blocks of every request the model answered, filtered by agent key so a peer consultation inside the speech does
+  not mix in. Files dropped for size or context share, or replaced after the model rejected them, are not recorded.
+  `tools__load_tools`, `skills__load_skill` and the sequential-thinking server are left out. A speaker with MCP servers that
+  ran nothing gets `"tools": []`, rendered "실행한 도구: 없음", so a claim to have read a file without a read shows up too.
+  An @mentioned attachment is rendered with the notice its receiver got ("같은 파일을 도구로 다시 읽지 말라고 안내했습니다",
+  `media.ATTACHMENT_HEADER`): without it, a peer called the receiver's "I did not re-read it, as instructed" an invented
+  rule. A file a tool returned (`from_tool`, stored under `.mado/tool_media/`) is listed separately, without that notice.
+  `llm_meta` follows a re-run or restored version together with the text (`speech_retry.version_entry`), and it is stored, so
+  the next turn and a reopened conversation render the same block and keep the prompt prefix (§2.5). The raw `tool_calls`
+  are loaded only for the turn being resumed.
+- **Rendered for others** by `peer_view` after the body: speech context (§2.4 tiers), synthesis transcript, ledger and summary
+  input (`render_message`), graph inputs and sub-debate speeches and conclusions. Not for the agent's own speeches: in the
+  assistant slot the model starts imitating the block. A speech this agent has already answered gets the short form (tool
+  name → status, no arguments or output), like the digest; graph inputs carried as a digest too.
+- **Not forgeable from the text.** `neutralize` replaces `[앱 기록]` (also full-width brackets, spaces and zero-width
+  characters) inside speech bodies and tool outputs with "(발언자가 적은 '앱 기록' 표시)". Outside-source outputs are wrapped in
+  `<untrusted_content>` (ADR-047).
+
+The planning roster gives the matching facts before anyone speaks (`format_roster`, `PhaseExecutor.roster`): tool names inside
+each MCP server — `probe(lookup_code)`, at most 6 then "등 N개", "(지금 부를 수 있는 도구 없음)" when the server offers none
+— and the input formats an expert receives directly, with a note that other experts do not get that content. With only the
+server name, Orchestrator read `probe` as the tool name and planned that `lookup_code` did not exist. The shared reference
+block of an @mention now says that experts with the format enabled get the content separately and that their speech's
+`[앱 기록]` lists it (`build_reference_block`).
+
 #### 2.4.1. Speech numbers and citations (ADR-052)
 
 Every agent and orchestrator speech gets a number that is fixed for the conversation (`messages.speech_no`,

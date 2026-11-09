@@ -13,11 +13,13 @@
 
 import asyncio
 import base64
+import contextvars
 import logging
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from app.config import INPUT_MODALITIES
 from app.mcp.client import MAX_TOOL_OUTPUT_CHARS, clip_tool_output
@@ -380,6 +382,56 @@ def _materialize(agent: Any, messages: List[Dict[str, Any]]) -> List[Dict[str, A
             msg = {**msg, "content": [_read_block(agent, b) if is_attachment(b) else b for b in content]}
         out.append(msg)
     return out
+
+
+# ---------------------------------------------------------------------------
+# 실제로 보낸 첨부 (발언 기록용)
+# ---------------------------------------------------------------------------
+
+# 이 발언에서 모델이 받아들인 요청에 실려 간 첨부. 다른 에이전트는 이 발언자가 무엇을 직접 받았는지 알 길이
+# 없어, 발언 기록에 남겨 함께 넘깁니다 (`app/orchestration/observed.py`). 크기·컨텍스트 한도로 빠진 것과
+# 모델이 거절해 안내로 바뀐 것은 요청에 실리지 않으므로 여기 오지 않습니다.
+_SENT: "contextvars.ContextVar[Optional[Tuple[str, List[Dict[str, Any]]]]]" = contextvars.ContextVar(
+    "mado_sent_attachments", default=None
+)
+
+
+@contextmanager
+def recording_sent(agent_key: str, sink: List[Dict[str, Any]]) -> Iterator[None]:
+    """이 블록 안에서 `agent_key` 의 요청에 실려 간 첨부를 `sink` 에 `{name, kind}` 로 모읍니다.
+
+    에이전트 키로 거르는 것은, 동료 자문처럼 같은 흐름 안에서 다른 에이전트가 부르는 요청을 섞지 않기
+    위해서입니다. 기본 모델이 대신 답하는 사본(`llm_fallback.substitute_for`)은 키가 같아 함께 모입니다.
+    """
+    token = _SENT.set((agent_key, sink))
+    try:
+        yield
+    finally:
+        _SENT.reset(token)
+
+
+def note_sent(agent: Any, messages: Iterable[Dict[str, Any]]) -> None:
+    """모델이 응답한 요청에 실려 있던 첨부를 기록합니다 (`recording_sent` 밖이면 아무것도 하지 않습니다).
+
+    도구가 돌려준 파일(`store_tool_media`)은 `from_tool` 로 가립니다. @언급 첨부와 달리 "도구로 다시 읽지
+    말라" 는 안내(`ATTACHMENT_HEADER`)가 붙지 않기 때문입니다.
+    """
+    current = _SENT.get()
+    if current is None or current[0] != getattr(agent, "key", None):
+        return
+    sink = current[1]
+    seen = {item["name"] for item in sink}
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if is_attachment(block) and block.get("name") not in seen:
+                seen.add(block["name"])
+                item = {"name": str(block["name"]), "kind": str(block.get("kind") or "")}
+                if TOOL_MEDIA_DIR.as_posix() in Path(str(block.get("path") or "")).as_posix():
+                    item["from_tool"] = True
+                sink.append(item)
 
 
 async def materialize_attachments(agent: Any, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

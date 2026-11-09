@@ -20,7 +20,6 @@ from app.agents.reasoning import strip_reasoning_trace
 from app.config import ORCHESTRATOR_KEY
 from app.events import EventCallback, EventType
 from app.orchestration import context_memory as memory, diagnostic_loop, ledger_history, turns
-from app.orchestration.artifacts import format_roster
 from app.orchestration.control import TurnControl
 from app.orchestration.phases.base import PhaseExecutor
 from app.orchestration.phases.graph import GraphRunner
@@ -469,7 +468,7 @@ class DebatePhaseExecutor(PhaseExecutor):
         )
         attempt_history = diagnostic_loop.format_attempt_history(attempts, max_chars=attempt_cap)
         specialists = [a for a in setup.active_agents if a.key != ORCHESTRATOR_KEY]
-        roster_block = format_roster(specialists) if specialists else "(전문가 없음)"
+        roster_block = self.roster(specialists, state) if specialists else "(전문가 없음)"
 
         redesigned = await self.speech.speak(
             db=db,
@@ -584,7 +583,7 @@ class DebatePhaseExecutor(PhaseExecutor):
         """오케스트레이터에게 이번 라운드의 발언 대상자 지명 및 순서 결정을 요청합니다."""
         selector = self.conversation.tool_less(orchestrator)
 
-        roster = format_roster(candidates, with_keys=True)
+        roster = self.roster(candidates, state, with_keys=True)
         recent = [
             f"{m.speaker}: {self.conversation.snippet(m, 300)}"
             for m in state.messages if m.msg_type != "error" and turns.in_main_record(m)

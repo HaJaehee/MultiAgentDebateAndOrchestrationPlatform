@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from app.agents.base import Agent
+from app.agents.media import MODALITY_LABELS
 from app.agents.reasoning import NATIVE_REASONING_HEADER, strip_reasoning_trace
 from app.agents.skills import visible_skill_names
 from app.mermaid_lint import diagram_kind, STYLE_LINE_RE
@@ -264,18 +265,66 @@ _NOTICE_LINE = re.compile(r"^\s*>\s*⚠️")
 MAX_DEBATE_CODE_ARTIFACTS = 12
 
 
-def format_roster(agents: List[Agent], *, with_keys: bool = False) -> str:
-    """오케스트레이터에게 제공할 전문가 목록입니다."""
+# 참여자 목록에 적는 서버별 도구 이름의 최대 수. 넘치면 "등 N개" 로 줄입니다.
+ROSTER_TOOLS_PER_SERVER = 6
+
+ROSTER_MODALITY_NOTE = (
+    "(직접 받는 입력: 유저가 @언급한 그 형식의 파일은 앱이 그 전문가의 요청에 내용을 직접 실어 줍니다. "
+    "파일 도구로 다시 읽게 할 필요가 없고, 다른 전문가는 그 내용을 받지 않습니다.)"
+)
+
+
+def _server_label(server: str, names: Optional[Sequence[str]]) -> str:
+    """`probe(lookup_code)` — 서버 이름과 그 안에서 부를 수 있는 도구 이름."""
+    if names is None:
+        return server
+    prefix = f"{server}__"
+    tails = [name[len(prefix):] for name in names if name.startswith(prefix)]
+    if not tails:
+        return f"{server}(지금 부를 수 있는 도구 없음)"
+    shown = ", ".join(tails[:ROSTER_TOOLS_PER_SERVER])
+    if len(tails) > ROSTER_TOOLS_PER_SERVER:
+        shown += f" 등 {len(tails)}개"
+    return f"{server}({shown})"
+
+
+def format_roster(
+    agents: List[Agent],
+    *,
+    with_keys: bool = False,
+    tools_of: Optional[Callable[[Agent], Optional[Sequence[str]]]] = None,
+) -> str:
+    """오케스트레이터에게 제공할 전문가 목록입니다.
+
+    도구는 MCP 서버 이름과 그 안의 도구 이름을 함께 적습니다. 서버 이름만 있으면 오케스트레이터가 서버 이름을
+    도구 이름으로 읽어, 유저가 말한 도구(`lookup_code`)를 "목록에 없다" 고 계획하고 서버 이름을 파일 도구로
+    짐작합니다 (2026-11-09 실험). `tools_of` 는 이 에이전트가 발언에서 실제로 부를 수 있는 도구의 전체 이름을
+    돌려줍니다 (`PhaseExecutor.roster`). 모르면(None) 서버 이름만 적습니다.
+
+    직접 받는 입력 형식(`allowed_modalities`)도 적습니다. 유저가 @언급한 그 형식의 파일은 앱이 그 전문가의
+    요청에 내용째 실어 주므로(`app/agents/media.py`), 도구로 읽으라고 지시할 일도, 다른 전문가가 같은 내용을
+    받았다고 여길 일도 아닙니다.
+    """
     lines = []
+    modal = False
     for agent in agents:
         thinking_server = agent.sequential_thinking.mcp_server
         servers = [s for s in agent.allowed_mcp_servers if s != thinking_server]
         head = f"{agent.key}: {agent.name}" if with_keys else agent.name
-        tools = f" · 도구: {', '.join(servers)}" if servers else " · 도구: 없음"
+        names = tools_of(agent) if tools_of is not None else None
+        tools = (
+            f" · 도구: {', '.join(_server_label(s, names) for s in servers)}" if servers else " · 도구: 없음"
+        )
         skills = visible_skill_names(agent)
         if skills:
             tools += f" · 스킬: {', '.join(skills)}"
+        modalities = [MODALITY_LABELS.get(m, m) for m in getattr(agent, "allowed_modalities", None) or []]
+        if modalities:
+            modal = True
+            tools += f" · 직접 받는 입력: {'·'.join(modalities)}"
         lines.append(f"- {head} ({agent.role}){tools}")
+    if modal:
+        lines.append(ROSTER_MODALITY_NOTE)
     return "\n".join(lines)
 
 

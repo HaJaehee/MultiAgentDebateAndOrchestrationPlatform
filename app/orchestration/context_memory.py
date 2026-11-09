@@ -73,7 +73,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from app.agents.llm_context import estimate_tokens
 from app.agents.llm_tools import is_file_writing_call
 from app.agents.reasoning import strip_reasoning_trace
-from app.orchestration import plan_gate, turns
+from app.orchestration import observed, plan_gate, turns
 from app.orchestration.artifacts import iter_code_fences
 from app.orchestration.state import DebateMessage, DebateState
 
@@ -168,10 +168,11 @@ def render_message(msg: DebateMessage, body: Optional[str] = None) -> str:
     """
     if msg.sender_key == "user":
         return f"### [User] · Round {msg.round_number}\n{body or msg.content}"
-    return (
-        f"### {msg.speaker_label} · Round {msg.round_number}\n"
-        f"{body or reference_code_blocks(strip_reasoning_trace(msg.content), msg.tool_calls)}"
-    )
+    if body:
+        return f"### {msg.speaker_label} · Round {msg.round_number}\n{body}"
+    # 장부·요약도 발언자의 말만 보고 결정·기각을 적지 않게 앱 기록을 함께 줍니다 (`observed`).
+    text = reference_code_blocks(strip_reasoning_trace(msg.content), msg.tool_calls)
+    return f"### {msg.speaker_label} · Round {msg.round_number}\n{observed.peer_view(msg, text)}"
 
 
 # ---------------------------------------------------------------- 코드는 참조로

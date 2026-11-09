@@ -23,8 +23,7 @@ from app.agents.reasoning import strip_reasoning_trace
 from app.config import DEFAULT_PEER_TOOL_ITERATIONS, PEERS_TOOL_PREFIX
 from app.events import EventCallback, EventType
 from app.orchestration import context_memory as memory
-from app.orchestration import ledger_history, turns
-from app.orchestration.artifacts import format_roster
+from app.orchestration import ledger_history, observed, turns
 from app.orchestration.control import TurnControl
 from app.orchestration.phases.base import PhaseExecutor
 from app.orchestration.phases.routing import parse_sub_debate
@@ -171,7 +170,7 @@ class SubDebateRunner(PhaseExecutor):
             + self.conversation.routing_record(state, selector) +
             "[미해결 쟁점]\n" + "\n".join(f"- {item}" for item in issues) + "\n\n"
             "[지금까지의 토론]\n" + ("\n".join(recent) or "(아직 없음)") + "\n\n"
-            f"[부를 수 있는 전문가]\n{format_roster(candidates, with_keys=True)}\n\n"
+            f"[부를 수 있는 전문가]\n{self.roster(candidates, state, with_keys=True)}\n\n"
             "두 전문가의 의견이 실제로 부딪히거나, 두 분야를 함께 봐야 풀리는 **구체적인 쟁점 하나**가 있을 때만 "
             "여세요. 다음 차례에 자연히 다룰 일, 한 사람이 혼자 답할 수 있는 일, 유저에게 물어야 풀리는 일에는 "
             "열지 마세요. 확신이 없으면 열지 마세요.\n\n"
@@ -319,9 +318,12 @@ class SubDebateRunner(PhaseExecutor):
         for message in exchange:
             if message.msg_type == "error":
                 continue
+            own = message.sender_key == speaker.key
+            body = strip_reasoning_trace(message.content)
             context.append({
-                "role": "assistant" if message.sender_key == speaker.key else "user",
-                "content": f"[{message.speaker_label}]:\n{strip_reasoning_trace(message.content)}",
+                "role": "assistant" if own else "user",
+                # 상대가 실행한 도구와 직접 받은 첨부를 함께 넘깁니다 (`observed`).
+                "content": f"[{message.speaker_label}]:\n{body if own else observed.peer_view(message, body)}",
             })
         context.append({"role": "user", "content": instruction})
         return context
@@ -368,7 +370,8 @@ class SubDebateRunner(PhaseExecutor):
             state, model=judge.model, token_cap=int(self.conversation.speech_budget(judge, state) * memory.ROUTING_RECORD_SHARE)
         )
         body = "\n\n".join(
-            f"[{m.speaker_label}]:\n{memory.reference_code_blocks(strip_reasoning_trace(m.content), m.tool_calls)}"
+            f"[{m.speaker_label}]:\n"
+            f"{observed.peer_view(m, memory.reference_code_blocks(strip_reasoning_trace(m.content), m.tool_calls))}"
             for m in spoken
         )
         prompt = [{"role": "user", "content": (

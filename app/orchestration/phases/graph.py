@@ -17,7 +17,7 @@ from app.agents.llm_context import context_budget
 from app.agents.reasoning import strip_reasoning_trace
 from app.database.models import SessionModel, utc_now
 from app.events import EventCallback, EventType
-from app.orchestration import context_memory as memory, ledger_history, turns
+from app.orchestration import context_memory as memory, ledger_history, observed, turns
 from app.orchestration.control import TurnControl
 from app.orchestration.graph import (
     CARRY_LABELS,
@@ -519,14 +519,20 @@ class GraphRunner(PhaseExecutor):
         if pinned:
             return f"{label}:\n{pinned}"
         body = strip_reasoning_trace(message.content)
-        if carry == "digest" and message.sender_key != "user":
+        if message.sender_key == "user":
+            return f"{label}:\n{memory.reference_code_blocks(body, message.tool_calls) if carry == 'refs' else body}"
+        # 앞 노드의 발언자가 실행한 도구와 직접 받은 첨부를 함께 넘깁니다 (`observed`).
+        if carry == "digest":
             digest = memory.extract_digest(message.content)
             if digest:
-                return f"{label} {memory.DIGEST_HEADING} (전문 {len(body):,}자 중 요지만):\n{digest}"
-            return f"{label}:\n{memory.reference_code_blocks(body, message.tool_calls)}"
+                return (
+                    f"{label} {memory.DIGEST_HEADING} (전문 {len(body):,}자 중 요지만):\n"
+                    f"{observed.peer_view(message, digest, compact=True)}"
+                )
+            return f"{label}:\n{observed.peer_view(message, memory.reference_code_blocks(body, message.tool_calls))}"
         if carry == "refs":
-            return f"{label}:\n{memory.reference_code_blocks(body, message.tool_calls)}"
-        return f"{label}:\n{body}"
+            return f"{label}:\n{observed.peer_view(message, memory.reference_code_blocks(body, message.tool_calls))}"
+        return f"{label}:\n{observed.peer_view(message, body)}"
 
     async def context_for_node(
         self,

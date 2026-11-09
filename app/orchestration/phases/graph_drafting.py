@@ -19,7 +19,6 @@ from app.agents.reasoning import strip_reasoning_trace
 from app.events import EventCallback, EventType
 from app.graph_store import load_graph
 from app.orchestration import graph_draft, turns
-from app.orchestration.artifacts import format_roster
 from app.orchestration.graph import GraphSpec, parse_graph
 from app.orchestration.phases.base import PhaseExecutor
 from app.orchestration.phases.graph import freeze_graph
@@ -134,7 +133,7 @@ class GraphDrafter(PhaseExecutor):
                         goal=state.user_prompt,
                         record=self.conversation.routing_record(state, drafter),
                         plan=plan,
-                        roster=format_roster(candidates, with_keys=True),
+                        roster=self.roster(candidates, state, with_keys=True),
                         max_rounds=setup.max_rounds,
                         parallel_limit=setup.parallel_limit,
                         base=base,

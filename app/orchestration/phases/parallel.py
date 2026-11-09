@@ -12,7 +12,6 @@ from app.agents.llm_types import LLMUnavailableError
 from app.database.models import utc_now
 from app.events import EventCallback, EventType
 from app.orchestration import turns
-from app.orchestration.artifacts import format_roster
 from app.orchestration.control import TurnControl
 from app.orchestration.phases.base import PhaseExecutor
 from app.orchestration.phases.routing import parse_assignments
@@ -289,7 +288,7 @@ class ParallelRoundRunner(PhaseExecutor):
         """오케스트레이터에게 이번 라운드의 에이전트별 태스크 분배를 요청합니다."""
         planner = self.conversation.tool_less(orchestrator)
 
-        roster = format_roster(candidates, with_keys=True)
+        roster = self.roster(candidates, state, with_keys=True)
         recent = [
             f"{m.speaker}: {self.conversation.snippet(m, 300)}"
             for m in state.messages if m.msg_type != "error" and turns.in_main_record(m)

@@ -41,6 +41,11 @@ Every speech of that turn carries them: plan, debate, graph node, sub-debate, sy
 
 The sender sees a toast for each file that goes to someone, and a warning for one over the limit.
 
+The other agents never see the content, only the shared `[@참조]` block, which says that experts with the format enabled
+get it separately. When the receiver's speech is handed to them, it carries an `[앱 기록]` block listing the files the
+model actually accepted (`media.recording_sent`), so they do not mistake a correct reading for a hallucination. See
+[Conversation Memory §2.4.0](../orchestration/context-memory.md#240-what-the-app-saw-the-앱-기록-block).
+
 | Limit | Value | When exceeded |
 | :--- | :--- | :--- |
 | One file | 20 MB (`MAX_ATTACHMENT_BYTES`) | Replaced by a note telling the model it did not get the content |

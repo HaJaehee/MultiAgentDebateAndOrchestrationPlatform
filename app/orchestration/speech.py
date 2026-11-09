@@ -18,12 +18,12 @@ from app.agents import llm_fallback, llm_usage
 from app.agents.ask_user import QUESTION_WAIT_SECONDS, Asker, asking
 from app.agents.base import Agent
 from app.agents.llm_types import LLMUnavailableError
-from app.agents.media import attachments_for
+from app.agents.media import attachments_for, recording_sent
 from app.agents.skills import with_designated_skills
 from app.config import ORCHESTRATOR_KEY, TOOL_ITERATION_CEILING
 from app.database.models import MessageModel, SpeechDraftModel, ToolCallRecordModel, utc_now
 from app.events import EventCallback, EventType
-from app.orchestration import diagnostic_loop, session_title, speech_comments, turns
+from app.orchestration import diagnostic_loop, observed, session_title, speech_comments, turns
 from app.orchestration.context import EngineContext
 from app.orchestration.control import TurnControl, asks_human
 from app.orchestration.recording import TurnRecorder
@@ -173,6 +173,8 @@ class _Speech:
         # 개별 발언의 소모 토큰 및 호출 소요 시간 (`llm_usage`). 다이어그램 보정 등 후처리 호출도 해당 발언 통계에 포함됩니다.
         # 중단된 발언을 재개하는 경우 재개 이후 호출분만 측정합니다 (이전 사용량은 턴 누적 합계에 보존됨).
         self.usage = llm_usage.Usage()
+        # 이 발언의 요청에 실려 간 첨부 (`media.recording_sent`). 다른 에이전트에게 넘길 앱 기록이 됩니다.
+        self.sent_attachments: List[Dict[str, Any]] = []
 
     def start_event(self) -> Dict[str, Any]:
         return {
@@ -283,13 +285,26 @@ class _Speech:
             self.state.fallback_agent_keys.append(self.agent.key)
         return self.fallback_notices[-1].as_meta()
 
-    def llm_meta(self, final_type: str) -> Optional[Dict[str, Any]]:
-        """발언 기록의 `llm_meta`: 기본 모델이 대신 답한 사실과 이 발언의 사용량. 둘 다 없으면 None."""
+    def llm_meta(
+        self, final_type: str, tool_logs: Optional[List[Dict[str, Any]]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """발언 기록의 `llm_meta`: 기본 모델이 대신 답한 사실, 이 발언의 사용량, 앱이 확인한 도구·첨부.
+        모두 없으면 None.
+
+        도구·첨부는 다른 에이전트에게 이 발언을 넘길 때 `[앱 기록]` 으로 붙습니다 (`observed.peer_view`).
+        실패한 발언은 맥락에 들어가지 않으므로 남기지 않습니다.
+        """
         meta = dict(self.fallback_meta(final_type) or {})
         if not self.usage.empty:
             meta["usage"] = self.usage.as_meta()
             if self.resumed_at is not None:
                 meta["resumed_at"] = self.resumed_at.isoformat()
+        if final_type != "error":
+            seen = observed.observed_meta(
+                self.agent, tool_logs or self.executed_tools, self.sent_attachments,
+            )
+            if seen is not None:
+                meta[observed.OBSERVED_KEY] = seen
         return meta or None
 
     def message_rows(
@@ -622,14 +637,18 @@ class SpeechRunner:
             await on_event(speech.start_event())
 
         await self._release_connection(db, db_lock)
-        with llm_usage.measuring(speech.usage), self._asking(state, control, on_event):
+        with (
+            llm_usage.measuring(speech.usage),
+            self._asking(state, control, on_event),
+            recording_sent(agent.key, speech.sent_attachments),
+        ):
             content, tool_logs, final_type = await self._receive_speech(
                 speech, prompt_messages, custom_instructions, designated, control, post_process,
             )
         # 실패로 끝났어도 예약된 조각이 확정본 뒤에 도착하면 안 됩니다.
         await speech.stream.drain()
 
-        llm_meta = speech.llm_meta(final_type)
+        llm_meta = speech.llm_meta(final_type, tool_logs)
         # 응답이 끝난 시각. 실패로 끝난 발언도 여기서 잽니다 — 언제 포기했는지는
         # 그 자체로 쓸모 있는 기록입니다 (엔드포인트가 몇 초 만에 끊었는지, 한도까지
         # 버텼는지). 기록 락을 기다린 시간이 섞이지 않도록 락 **밖에서** 잽니다.

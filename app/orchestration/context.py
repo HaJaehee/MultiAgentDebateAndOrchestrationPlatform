@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from app.agents.host_tools import host_tools_for
 from app.agents.skills import with_designated_skills
@@ -53,6 +53,21 @@ class EngineContext:
         거치지 않고 엔진을 직접 부르는 테스트가 그 경로를 씁니다.
         """
         return get_runtime_pool().get(state.workspace_dir)
+
+    def reachable_tool_names(self, agent: "Agent", state: Optional[DebateState] = None) -> Optional[List[str]]:
+        """이 에이전트가 발언에서 부를 수 있는 도구의 전체 이름 (지연 로딩 대기 포함). 모르면 None.
+
+        참여자 목록(`format_roster`)이 서버 이름 옆에 도구 이름을 적는 데 씁니다.
+        """
+        shelf = self.tool_shelf(agent, state)
+        if shelf is None:
+            return None
+        names: List[str] = []
+        for tool in shelf.reachable():
+            name = (tool.get("function") or {}).get("name") if isinstance(tool, dict) else None
+            if name:
+                names.append(str(name))
+        return names
 
     def tool_shelf(self, agent: "Agent", state: Optional[DebateState] = None) -> Optional[ToolShelf]:
         """에이전트 요청에 포함될 도구 모음(`ToolShelf`). `LLMCaller.call_agent`와 동일한 방식으로 구성하며, 조회 실패 시 None을 반환합니다.

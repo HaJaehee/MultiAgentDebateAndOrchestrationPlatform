@@ -15,7 +15,7 @@ from app.agents.llm_tools import memory_search_tool
 from app.agents.reasoning import strip_reasoning_trace
 from app.database.models import SessionModel, TurnModel
 from app.events import EventCallback, EventType
-from app.orchestration import context_memory as memory, diagnostic_loop, ledger_history, plan_gate, turns
+from app.orchestration import context_memory as memory, diagnostic_loop, ledger_history, observed, plan_gate, turns
 from app.orchestration.context import EngineContext
 from app.orchestration.state import DebateMessage, DebateState
 from app.workspace_files import mention_token
@@ -551,12 +551,18 @@ class ConversationMemory:
                 else:
                     # 발언 번호는 발언 레코드에 불변으로 저장되므로 후속 라운드에서도 동일한 헤더 텍스트를 유지합니다 (ADR-052, ADR-045).
                     role_label = f"[{msg.speaker_label}]"
+                    own = msg.sender_key == agent.key
+                    body = body_for(index, msg)
+                    if not own and index not in placeholders:
+                        # 다른 발언자가 실행한 도구와 직접 받은 첨부를 앱이 확인한 사실로 함께 넘깁니다 (`observed`).
+                        # 이미 응답한 발언은 기록도 짧게 — 원문을 요지로 줄이는 것과 같은 이유입니다.
+                        body = observed.peer_view(msg, body, compact=index < fresh_start)
                     context.append({
-                        "role": "assistant" if msg.sender_key == agent.key else "user",
+                        "role": "assistant" if own else "user",
                         # 사고 과정은 히스토리 로그와 UI 표시에만 유지하고 프롬프트에는 주입하지 않습니다.
                         # 자기 발언도 동일합니다 — `show_steps`는 사용자의 UI 열람 여부를
                         # 제어하는 설정이지, 모델 프롬프트 주입 여부를 결정하는 옵션이 아닙니다.
-                        "content": f"{role_label}:\n{body_for(index, msg)}",
+                        "content": f"{role_label}:\n{body}",
                     })
 
             context.append({"role": "user", "content": turn_prompt})

@@ -565,9 +565,12 @@ def build_reference_block(report: MentionReport, root: Path) -> str:
             parts.append(f"- {rel} ({format_size(size)}{note})")
         for rel in report.dirs:
             parts.append(f"- {rel}/ (폴더)")
+        # 이 글은 모든 참여자가 함께 봅니다. "붙이지 않았다" 만 있으면, 받을 형식을 켠 전문가가 내용을 직접
+        # 받았어도 다른 참여자는 그 사실을 몰라 그 전문가의 인용을 지어낸 것으로 봅니다 (2026-11-09 실험).
         parts.append(
-            "이 글에는 파일 내용을 붙이지 않았습니다. 앱이 내용을 따로 실어 주지 않았다면 그 형식을 다루는 "
-            "파일 도구로 이 경로를 직접 읽으세요."
+            "이 글에는 파일 내용을 붙이지 않았습니다. 받을 입력 형식을 켠 전문가에게는 앱이 그 형식의 파일 "
+            "내용을 그 전문가의 요청에 따로 실어 주고, 그 전문가의 발언 끝 [앱 기록] 에 받은 첨부를 적습니다. "
+            "내용을 받지 못했다면 그 형식을 다루는 파일 도구로 이 경로를 직접 읽으세요."
         )
     if report.agents:
         if len(parts) > 1:

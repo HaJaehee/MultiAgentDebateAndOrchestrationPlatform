@@ -189,7 +189,8 @@ async def test_a_turn_without_reported_usage_leaves_no_usage_rows():
         metas = (await db.execute(select(MessageModel.llm_meta).where(MessageModel.session_id == sid))).scalars().all()
         turn = (await db.execute(select(TurnModel).where(TurnModel.session_id == sid))).scalar_one()
         totals = await turns.usage_by_session(db)
-    assert all(meta is None for meta in metas)
+    # `llm_meta` 에는 사용량 말고 앱 기록(`observed`)도 남을 수 있습니다 — 보는 것은 사용량뿐입니다.
+    assert all("usage" not in (meta or {}) for meta in metas)
     assert turn.usage is None and sid not in totals
 
 

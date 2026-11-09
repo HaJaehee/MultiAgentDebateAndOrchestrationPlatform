@@ -34,7 +34,9 @@ from app.agents.llm_request import RequestBuilderMixin
 from app.agents.llm_tool_calls import ToolCallMixin
 from app.agents.llm_tools import memory_search_tool
 from app.agents.llm_types import BudgetArbiter, ContextArbiter, LLMUnavailableError, SpeechCheckpoint
-from app.agents.media import fit_attachments, materialize_attachments, with_attachments, without_attachments
+from app.agents.media import (
+    fit_attachments, materialize_attachments, note_sent, with_attachments, without_attachments,
+)
 from app.agents.tool_loading import plan_shelf
 from app.config import ORCHESTRATOR_KEY
 from app.mcp.manager import MCPManager
@@ -484,6 +486,8 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
             raise
         if progress is not None:
             progress.rounds += 1
+        # 모델이 받아들인 요청이니, 실려 있던 첨부는 이 발언자에게 간 것입니다 (발언 기록에 남깁니다).
+        note_sent(agent, messages)
         return result
 
     async def _complete_unthrottled(

@@ -20,7 +20,6 @@ from app.database.models import TurnModel
 from app.events import EventCallback, EventType
 from app.orchestration import context_memory as memory
 from app.orchestration import plan_gate, turns
-from app.orchestration.artifacts import format_roster
 from app.orchestration.control import TurnControl, asks_human
 from app.orchestration.phases.base import PhaseExecutor
 from app.orchestration.state import DebateMessage, DebateState
@@ -59,7 +58,7 @@ class PlanningPhaseExecutor(PhaseExecutor):
 
         specialists = [a for a in setup.active_agents if a.key != "orchestrator"]
         roster_block = (
-            f"[이번 토론 참여 전문가]\n{format_roster(specialists)}\n\n"
+            f"[이번 토론 참여 전문가]\n{self.roster(specialists, state)}\n\n"
             if specialists else ""
         )
         assign_rule = (
@@ -338,7 +337,7 @@ class PlanningPhaseExecutor(PhaseExecutor):
         prompt = [{"role": "user", "content": plan_gate.tasks_prompt(
             state.user_prompt,
             strip_reasoning_trace(plan_message.content).strip(),
-            format_roster(specialists, with_keys=True),
+            self.roster(specialists, state, with_keys=True),
         )}]
         content, _ = await self.ctx.llm_caller.call_agent(
             planner,

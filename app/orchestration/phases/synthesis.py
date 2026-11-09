@@ -20,7 +20,7 @@ from app.database.models import TURN_COMPLETED, ArtifactModel, utc_now
 from app.events import EventCallback, EventType
 from app.mermaid_lint import format_issues, lint_mermaid
 from app.orchestration import context_memory as memory
-from app.orchestration import ledger_history, plan_gate, turns
+from app.orchestration import ledger_history, observed, plan_gate, turns
 from app.orchestration.artifacts import (
     CODE_LANGUAGES,
     MAX_DEBATE_CODE_ARTIFACTS,
@@ -300,8 +300,13 @@ class SynthesisPhaseExecutor(PhaseExecutor):
 
         def render(index: int, msg: DebateMessage) -> str:
             prefix = "### [User]" if msg.sender_key == "user" else f"### {msg.speaker_label}"
-            body = msg.content if msg.sender_key == "user" else strip_reasoning_trace(msg.content)
-            return f"{prefix}:\n{placeholders.get(index) or body}\n"
+            pinned = placeholders.get(index)
+            if pinned:
+                return f"{prefix}:\n{pinned}\n"
+            if msg.sender_key == "user":
+                return f"{prefix}:\n{msg.content}\n"
+            # 발언자가 실행한 도구와 직접 받은 첨부 — 결론이 발언자의 말만 보고 판정하지 않게 합니다 (`observed`).
+            return f"{prefix}:\n{observed.peer_view(msg, strip_reasoning_trace(msg.content))}\n"
 
         summary = memory.summary_block(state) if agent is not None else ""
         start = 0
