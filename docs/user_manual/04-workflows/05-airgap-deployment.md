@@ -37,8 +37,8 @@ Windows 에서 실행하는 것을 전제로 합니다 — 포터블 런타임�
 ```text
 MultiAgentDebateOrchestration_bundle/
 ├── app/                    애플리케이션 소스
-├── conf.json               설정 (번들 폴더에 이미 있으면 그대로 둠, 없을 때만 conf.json·conf.example.json 에서 복사)
-├── conf.example.json       설정 템플릿 (빌드할 때마다 개발 저장소 것으로 덮음)
+├── conf.json               설정 (번들 폴더에 이미 있으면 기존 설정 유지, 없을 때만 conf.json 또는 conf.example.json에서 복사)
+├── conf.example.json       설정 템플릿 (빌드할 때마다 최신 개발 저장소 파일로 덮어씀)
 ├── LICENSE.md              라이선스 (LGPL-3.0 전문 + 제3자 고지)
 ├── wheels/                 오프라인 pip wheel
 ├── python_runtime/         포터블 CPython

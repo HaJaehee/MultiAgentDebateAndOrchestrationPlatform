@@ -55,9 +55,9 @@ class EngineContext:
         return get_runtime_pool().get(state.workspace_dir)
 
     def reachable_tool_names(self, agent: "Agent", state: Optional[DebateState] = None) -> Optional[List[str]]:
-        """이 에이전트가 발언에서 부를 수 있는 도구의 전체 이름 (지연 로딩 대기 포함). 모르면 None.
+        """해당 에이전트가 발언 중 호출 가능한 전체 도구 이름 목록(지연 로딩 대기 포함)을 반환합니다. 조회할 수 없으면 None을 반환합니다.
 
-        참여자 목록(`format_roster`)이 서버 이름 옆에 도구 이름을 적는 데 씁니다.
+        참여자 목록(`format_roster`)에서 서버 이름 옆에 세부 도구 이름을 표기할 때 활용됩니다.
         """
         shelf = self.tool_shelf(agent, state)
         if shelf is None:

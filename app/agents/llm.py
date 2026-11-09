@@ -486,7 +486,7 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
             raise
         if progress is not None:
             progress.rounds += 1
-        # 모델이 받아들인 요청이니, 실려 있던 첨부는 이 발언자에게 간 것입니다 (발언 기록에 남깁니다).
+        # 모델이 정상 수신한 요청이므로, 포함된 첨부 파일은 해당 발언자에게 정상 전달된 것으로 처리합니다 (발언 기록에 반영).
         note_sent(agent, messages)
         return result
 

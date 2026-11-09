@@ -173,7 +173,7 @@ class _Speech:
         # 개별 발언의 소모 토큰 및 호출 소요 시간 (`llm_usage`). 다이어그램 보정 등 후처리 호출도 해당 발언 통계에 포함됩니다.
         # 중단된 발언을 재개하는 경우 재개 이후 호출분만 측정합니다 (이전 사용량은 턴 누적 합계에 보존됨).
         self.usage = llm_usage.Usage()
-        # 이 발언의 요청에 실려 간 첨부 (`media.recording_sent`). 다른 에이전트에게 넘길 앱 기록이 됩니다.
+        # 해당 발언 요청에 포함되어 전달된 첨부 파일 목록 (`media.recording_sent`). 다른 에이전트에게 전달될 앱 기록의 기초 데이터가 됩니다.
         self.sent_attachments: List[Dict[str, Any]] = []
 
     def start_event(self) -> Dict[str, Any]:
@@ -288,11 +288,11 @@ class _Speech:
     def llm_meta(
         self, final_type: str, tool_logs: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """발언 기록의 `llm_meta`: 기본 모델이 대신 답한 사실, 이 발언의 사용량, 앱이 확인한 도구·첨부.
-        모두 없으면 None.
+        """발언 기록의 `llm_meta`: 기본 모델의 대체 응답 여부, 해당 발언의 리소스 사용량, 앱이 확인한 도구 실행 내역 및 첨부 파일 목록.
+        모두 없으면 None을 반환합니다.
 
-        도구·첨부는 다른 에이전트에게 이 발언을 넘길 때 `[앱 기록]` 으로 붙습니다 (`observed.peer_view`).
-        실패한 발언은 맥락에 들어가지 않으므로 남기지 않습니다.
+        도구 및 첨부 파일 내역은 다른 에이전트에게 해당 발언을 전달할 때 `[앱 기록]` 블록으로 첨부됩니다 (`observed.peer_view`).
+        실패한 발언은 토론 컨텍스트에 포함되지 않으므로 기록을 남기지 않습니다.
         """
         meta = dict(self.fallback_meta(final_type) or {})
         if not self.usage.empty:

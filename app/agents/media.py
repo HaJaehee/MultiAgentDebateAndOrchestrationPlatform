@@ -388,9 +388,9 @@ def _materialize(agent: Any, messages: List[Dict[str, Any]]) -> List[Dict[str, A
 # 실제로 보낸 첨부 (발언 기록용)
 # ---------------------------------------------------------------------------
 
-# 이 발언에서 모델이 받아들인 요청에 실려 간 첨부. 다른 에이전트는 이 발언자가 무엇을 직접 받았는지 알 길이
-# 없어, 발언 기록에 남겨 함께 넘깁니다 (`app/orchestration/observed.py`). 크기·컨텍스트 한도로 빠진 것과
-# 모델이 거절해 안내로 바뀐 것은 요청에 실리지 않으므로 여기 오지 않습니다.
+# 해당 발언에서 모델이 정상 수신한 요청에 포함된 첨부 파일 목록입니다. 다른 에이전트는 발언자가 무엇을 직접 받았는지
+# 확인할 수 없으므로, 발언 기록에 보관하여 함께 전달합니다 (`app/orchestration/observed.py`). 크기나 컨텍스트 한도로 제외된 파일 및
+# 모델 거절로 대체 안내문으로 전환된 파일은 실제 요청에 포함되지 않으므로 여기에 수집되지 않습니다.
 _SENT: "contextvars.ContextVar[Optional[Tuple[str, List[Dict[str, Any]]]]]" = contextvars.ContextVar(
     "mado_sent_attachments", default=None
 )
@@ -398,10 +398,10 @@ _SENT: "contextvars.ContextVar[Optional[Tuple[str, List[Dict[str, Any]]]]]" = co
 
 @contextmanager
 def recording_sent(agent_key: str, sink: List[Dict[str, Any]]) -> Iterator[None]:
-    """이 블록 안에서 `agent_key` 의 요청에 실려 간 첨부를 `sink` 에 `{name, kind}` 로 모읍니다.
+    """해당 블록 내에서 `agent_key`의 요청에 포함되어 전달된 첨부 파일을 `sink`에 `{name, kind}` 형태로 수집합니다.
 
-    에이전트 키로 거르는 것은, 동료 자문처럼 같은 흐름 안에서 다른 에이전트가 부르는 요청을 섞지 않기
-    위해서입니다. 기본 모델이 대신 답하는 사본(`llm_fallback.substitute_for`)은 키가 같아 함께 모입니다.
+    에이전트 키로 필터링하는 이유는 동료 자문처럼 동일한 실행 흐름 내에서 다른 에이전트가 호출하는 요청과 혼선이 생기지 않도록
+    하기 위함입니다. 기본 모델이 대체 응답하는 사본(`llm_fallback.substitute_for`)은 키가 동일하므로 함께 수집됩니다.
     """
     token = _SENT.set((agent_key, sink))
     try:
@@ -411,10 +411,10 @@ def recording_sent(agent_key: str, sink: List[Dict[str, Any]]) -> Iterator[None]
 
 
 def note_sent(agent: Any, messages: Iterable[Dict[str, Any]]) -> None:
-    """모델이 응답한 요청에 실려 있던 첨부를 기록합니다 (`recording_sent` 밖이면 아무것도 하지 않습니다).
+    """모델이 응답한 요청에 포함되어 있던 첨부 파일을 기록합니다 (`recording_sent` 컨텍스트 외부에서는 아무 작업도 하지 않습니다).
 
-    도구가 돌려준 파일(`store_tool_media`)은 `from_tool` 로 가립니다. @언급 첨부와 달리 "도구로 다시 읽지
-    말라" 는 안내(`ATTACHMENT_HEADER`)가 붙지 않기 때문입니다.
+    도구가 반환한 미디어 파일(`store_tool_media`)은 `from_tool` 플래그로 구분합니다. @언급 첨부와 달리 "도구로 다시 읽지
+    말라"는 안내문(`ATTACHMENT_HEADER`)이 붙지 않기 때문입니다.
     """
     current = _SENT.get()
     if current is None or current[0] != getattr(agent, "key", None):

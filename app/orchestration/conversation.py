@@ -554,8 +554,8 @@ class ConversationMemory:
                     own = msg.sender_key == agent.key
                     body = body_for(index, msg)
                     if not own and index not in placeholders:
-                        # 다른 발언자가 실행한 도구와 직접 받은 첨부를 앱이 확인한 사실로 함께 넘깁니다 (`observed`).
-                        # 이미 응답한 발언은 기록도 짧게 — 원문을 요지로 줄이는 것과 같은 이유입니다.
+                        # 다른 발언자가 실행한 도구 및 직접 수신한 첨부 파일 정보를 앱이 확인한 실행 사실(`observed`)로 함께 전달합니다.
+                        # 이미 응답이 완료된 이전 발언은 기록을 간략히 축약합니다 (원문을 요약본으로 줄이는 것과 동일한 원리).
                         body = observed.peer_view(msg, body, compact=index < fresh_start)
                     context.append({
                         "role": "assistant" if own else "user",

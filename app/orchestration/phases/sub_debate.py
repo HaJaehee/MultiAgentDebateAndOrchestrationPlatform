@@ -322,7 +322,7 @@ class SubDebateRunner(PhaseExecutor):
             body = strip_reasoning_trace(message.content)
             context.append({
                 "role": "assistant" if own else "user",
-                # 상대가 실행한 도구와 직접 받은 첨부를 함께 넘깁니다 (`observed`).
+                # 상대 발언자가 실행한 도구 및 직접 수신한 첨부 파일 정보를 함께 전달합니다 (`observed`).
                 "content": f"[{message.speaker_label}]:\n{body if own else observed.peer_view(message, body)}",
             })
         context.append({"role": "user", "content": instruction})

@@ -84,14 +84,14 @@ MCP SDK 버전을 `mcp>=1.29.0,<2`로 고정한 데에는 명확한 기술적 �
 ```text
 fastapi>=0.115.0
 uvicorn>=0.30.0
-nicegui>=3.16,<4             # 동봉된 Mermaid 11.x 로 다이어그램 판정표를 확인한 범위
+nicegui>=3.16,<4             # 동봉된 Mermaid 11.x로 다이어그램 판정표를 검증한 버전 범위
 pydantic>=2.8.0
 pydantic-settings>=2.4.0
-sqlalchemy[asyncio]>=2.0.30  # 2.1 부터 비동기 엔진에 필요한 greenlet 이 asyncio extra 로 빠졌습니다
+sqlalchemy[asyncio]>=2.0.30  # 2.1부터 비동기 엔진에 필요한 greenlet이 asyncio extra로 분리되었습니다
 aiosqlite>=0.20.0
-asyncpg>=0.30.0              # db_url 이 postgresql+asyncpg:// 일 때만 불러옵니다
-litellm>=1.105.1,<1.106      # 1.106+ 는 mcp>=2.3 요구, 1.99 이하는 DeepSeek 로 가는 이미지를 버림
-latex2mathml>=3.77           # 발언·결론의 LaTeX 수식을 MathML 로
+asyncpg>=0.30.0              # db_url이 postgresql+asyncpg:// 일 때만 불러옵니다
+litellm>=1.105.1,<1.106      # 1.106+는 mcp>=2.3 요구, 1.99 이하는 DeepSeek로 전달되는 이미지가 누락됨
+latex2mathml>=3.77           # 발언 및 결론의 LaTeX 수식을 MathML로 변환
 mcp>=1.29.0,<2
 
 mcp-server-git>=2025.1.14   # git MCP 서버

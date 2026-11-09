@@ -4,8 +4,8 @@
 
     MultiAgentDebateOrchestration_bundle/
     ├── app/                 애플리케이션 소스
-    ├── conf.json            설정 (번들에 이미 있으면 그대로, 없을 때만 복사)
-    ├── conf.example.json    설정 템플릿 (빌드할 때마다 개발 저장소 것으로 덮음)
+    ├── conf.json            설정 (번들에 이미 있으면 기존 설정 유지, 없을 때만 복사)
+    ├── conf.example.json    설정 템플릿 (빌드할 때마다 최신 개발 저장소 파일로 덮어씀)
     ├── LICENSE.md           라이선스 (LGPL-3.0 전문 + 제3자 고지)
     ├── wheels/              오프라인 pip wheel (앱 + MCP 서버 + 샌드박스 서버)
     ├── python_runtime/      포터블 CPython
@@ -184,20 +184,20 @@ def stage_sources() -> None:
 
     # open_browser.py 는 실행 스크립트가 백그라운드로 띄웁니다 (서버가 응답하면 브라우저 열기).
     # LICENSE.md 는 배포물과 반드시 함께 다녀야 합니다 (LGPL-3.0 제4조 고지 의무).
-    # conf.example.json 은 번들에서 고쳐 쓰는 파일이 아니라 새 설정 항목을 옮겨 올 때 보는
-    # 기준이라, conf.json 과 달리 항상 개발 저장소 것으로 덮습니다.
+    # conf.example.json은 번들에서 직접 수정하는 파일이 아니라 새 설정 항목을 반영할 때 참고하는
+    # 기준 템플릿이므로, conf.json과 달리 항상 최신 개발 저장소 파일로 덮어씁니다.
     for fname in [".env.example", "conf.example.json", "requirements.txt", "README.md",
                   "LICENSE.md", "open_browser.py"]:
         src = ROOT_DIR / fname
         if src.exists():
             shutil.copy2(src, STAGING_DIR / fname)
 
-    # 번들 폴더에 이미 있는 conf.json 은 그 번들을 돌리며 맞춘 설정이라 덮어쓰지 않습니다.
-    # 처음 만드는 번들에만 채웁니다 — 앱은 conf.json 없이 뜨지 않습니다. conf.json 은
-    # gitignore 대상이라 신규 클론에는 없으므로 그때는 템플릿으로 대체합니다.
+    # 번들 폴더에 이미 존재하는 conf.json은 해당 환경에 맞추어 개별 구성한 설정이므로 덮어쓰지 않습니다.
+    # 번들을 처음 생성할 때만 복사합니다 (앱 구동 시 conf.json이 필수입니다). conf.json은
+    # gitignore 대상이라 새로 클론한 환경에는 없으므로, 이때는 템플릿으로 대체하여 복사합니다.
     staged_conf = STAGING_DIR / "conf.json"
     if staged_conf.exists():
-        print("      번들의 conf.json 이 이미 있어 그대로 둡니다.")
+        print("      번들에 기존 conf.json이 이미 존재하므로 유지합니다.")
     else:
         conf_src = ROOT_DIR / "conf.json"
         if not conf_src.exists():

@@ -521,7 +521,7 @@ class GraphRunner(PhaseExecutor):
         body = strip_reasoning_trace(message.content)
         if message.sender_key == "user":
             return f"{label}:\n{memory.reference_code_blocks(body, message.tool_calls) if carry == 'refs' else body}"
-        # 앞 노드의 발언자가 실행한 도구와 직접 받은 첨부를 함께 넘깁니다 (`observed`).
+        # 이전 노드의 발언자가 실행한 도구 및 직접 수신한 첨부 파일 정보를 함께 전달합니다 (`observed`).
         if carry == "digest":
             digest = memory.extract_digest(message.content)
             if digest:

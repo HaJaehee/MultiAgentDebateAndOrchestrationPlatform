@@ -1,33 +1,33 @@
-"""앱이 확인한 발언 사실 — 도구 실행과 직접 받은 첨부를 다른 에이전트에게 함께 넘깁니다.
+"""앱이 검증한 발언 실행 사실 — 도구 실행 내역과 직접 수신한 첨부 파일을 다른 에이전트에게 함께 전달합니다.
 
-## 무엇이 문제였나
+## 배경 및 문제점
 
-다른 에이전트에게 넘어가는 기록에는 발언의 **글**만 있었습니다. 앱은 그 발언이 어느 도구를 불러 무엇을
-받았는지(`DebateMessage.tool_calls`), 유저가 @언급한 파일의 내용을 그 발언자의 요청에 직접 실었는지
-(`app/agents/media.py`) 알고 있었지만, 그 사실은 발언자 자신의 요청에만 있었습니다. 검증하는 쪽에는
-발언자의 말밖에 없었습니다.
+다른 에이전트에게 전달되는 토론 기록에는 발언자의 **본문 텍스트**만 포함되어 있었습니다. 앱 시스템은 해당 발언이
+어떤 도구를 호출하여 어떤 결과를 수신했는지(`DebateMessage.tool_calls`), 사용자가 @언급한 파일 내용을 해당 발언자의
+요청에 직접 포함했는지(`app/agents/media.py`) 알고 있었으나, 이 실행 사실은 발언자 본인의 요청 컨텍스트에만 존재했습니다.
+따라서 이를 검증해야 하는 다른 에이전트 입장에서는 발언자의 진술 외에 진위를 확인할 방법이 없었습니다.
 
-2026-11-09 실험(deepseek-v4-flash)에서 Architect 가 도구로 받은 확인 코드와 첨부 이미지의 글자를 정확히
-적었는데, Critic 은 "원시 트레이스가 없다", "유저 글에 파일 내용을 붙이지 않았다고 적혀 있다" 며 환각으로
-기각했고 Orchestrator 도 그 판정을 따라 결론을 '조회 실패'·'받지 못함' 으로 냈습니다.
+2026-11-09 실험(deepseek-v4-flash)에서 Architect가 도구로 조회한 확인 코드와 첨부 이미지 속 텍스트를 정확하게
+인용했음에도, Critic은 "원시 트레이스가 없다", "사용자 메시지에 파일 본문이 첨부되지 않았다고 명시되어 있다"며 환각으로
+기각했고, Orchestrator 역시 이 판정에 따라 최종 결론을 '조회 실패'·'수신 불가'로 처리하는 문제가 발생했습니다.
 
-## 어떻게
+## 해결 방식
 
-* **남기기** — 발언이 끝나면 앱이 본 것을 `llm_meta["observed"]` 에 남깁니다 (`observed_meta`): 실행한 도구의
-  이름·인자·결과·출력 앞부분과, 모델이 받아들인 요청에 실려 간 첨부(`media.recording_sent`).
-  `llm_meta` 에 두는 것은 발언을 다시 실행하거나 되돌릴 때 글과 함께 버전을 따라가기 때문입니다
-  (`speech_retry.version_entry`). DB 에 남으므로 다음 턴에도, 서버를 다시 연 뒤에도 같은 글로 그려지고
-  프롬프트 캐시의 앞부분도 그대로입니다 (도구 원본은 이어 가는 턴에만 불러옵니다, `TurnRecorder`).
-* **넘기기** — 다른 에이전트에게 그 발언을 넘길 때 글 끝에 `[앱 기록]` 을 붙입니다 (`peer_view`). 자기 발언에는
-  붙이지 않습니다. assistant 자리에 그 모양이 있으면 모델이 흉내 내 자기 글에 적기 시작합니다. 이미 응답한
-  오래된 발언은 요지만 넘기듯 기록도 도구 이름과 결과만 적습니다 (`compact`) — 원문을 요지로 줄여 아낀
-  토큰을 기록이 다시 쓰지 않게 합니다.
-* **꾸미지 못하게** — 발언 글과 도구 출력 안의 `[앱 기록]` 표시는 무력화합니다 (`neutralize`). 발언자가 그 표시를
-  직접 적어 사실처럼 보이게 할 수 없습니다.
-* **외부 내용** — 외부 출처 도구의 출력은 `<untrusted_content>` 로 감쌉니다 (ADR-047).
+* **기록 보관** — 발언이 완료되면 앱이 관측한 실행 사실을 `llm_meta["observed"]`에 기록합니다 (`observed_meta`): 실행한
+  도구의 이름·인자·결과·출력 접두부 및 모델 요청에 정상 포함된 첨부 파일 목록(`media.recording_sent`).
+  `llm_meta`에 저장함으로써 발언을 재실행하거나 롤백할 때 본문과 동일한 버전으로 관리됩니다
+  (`speech_retry.version_entry`). 데이터베이스에 영속화되므로 다음 턴이나 서버 재기동 후에도 동일한 형식으로 렌더링되며,
+  프롬프트 캐시 접두부도 일정하게 유지됩니다 (원시 도구 로그는 중단된 턴을 재개할 때만 로드합니다, `TurnRecorder`).
+* **정보 전달** — 다른 에이전트에게 해당 발언을 전달할 때 본문 끝에 `[앱 기록]` 블록을 첨부합니다 (`peer_view`). 발언자
+  본인의 컨텍스트에는 첨부하지 않습니다 (assistant 메시지 영역에 해당 형식이 포함되면 모델이 이를 모방하여 본문에 직접
+  작성하기 시작하기 때문입니다). 이미 응답이 완료된 이전 발언은 본문을 요약하듯 기록 역시 도구 이름과 실행 결과만 간략히
+  표기합니다 (`compact`) — 본문 요약으로 절약한 컨텍스트 토큰을 부가 기록으로 낭비하지 않도록 방지합니다.
+* **위조 방지** — 발언 본문 및 도구 출력 내의 `[앱 기록]` 표시는 이스케이프하여 무력화합니다 (`neutralize`). 발언자가 해당
+  표시를 임의로 작성하여 증빙된 사실처럼 위장하는 것을 차단합니다.
+* **외부 콘텐츠 격리** — 외부 출처 도구의 출력 결과는 `<untrusted_content>` 태그로 감싸 안전하게 처리합니다 (ADR-047).
 
-도구를 가진 발언자가 아무 도구도 부르지 않았으면 "실행한 도구: 없음" 을 남깁니다. 파일을 읽었다고 적었지만
-읽은 적이 없는 발언도 같은 기록으로 드러납니다.
+도구 권한이 있는 발언자가 도구를 전혀 호출하지 않은 경우에는 "실행한 도구: 없음"을 명시합니다. 파일을 읽었다고 주장하면서도
+실제로는 읽지 않은 거짓 발언 역시 이 기록을 통해 즉시 판별됩니다.
 """
 
 import json
@@ -42,19 +42,19 @@ from app.mcp.policy import wrap_untrusted
 OBSERVED_KEY = "observed"
 
 APP_RECORD_MARK = "[앱 기록]"
-APP_RECORD_HEADING = f"{APP_RECORD_MARK} 발언자가 쓴 글이 아니라 앱이 확인한 사실입니다."
+APP_RECORD_HEADING = f"{APP_RECORD_MARK} 발언자가 작성한 본문이 아니라 앱이 직접 확인한 사실입니다."
 
-# 발언 글·도구 출력에 들어 있는 같은 표시. 전각 괄호·공백·제로폭 문자로 나눈 변형도 잡습니다.
+# 발언 본문 및 도구 출력에 포함된 동일 표시를 감지합니다. 전각 괄호·공백·제로 너비 문자(zero-width)로 분리된 변형도 함께 처리합니다.
 _GAP = r"[\s​-‍⁠﻿]*"
 _MARK_RE = re.compile(rf"[\[［]{_GAP}앱{_GAP}기록{_GAP}[\]］]")
-_NEUTRALIZED_MARK = "(발언자가 적은 '앱 기록' 표시)"
+_NEUTRALIZED_MARK = "(발언자가 작성한 '앱 기록' 표시)"
 
-# 넘길 만큼만. 도구를 많이 부른 발언도 기록이 발언 글보다 길어지지 않게 합니다.
+# 전달할 분량만 제한합니다. 도구를 다수 호출한 발언이어도 앱 기록이 발언 본문보다 비대해지지 않도록 방지합니다.
 MAX_TOOLS_SHOWN = 8
 ARGS_CHARS = 160
 OUTPUT_CHARS = 200
 
-# 기록할 거리가 아닌 호스트 도구 — 도구 스키마 불러오기와 스킬 지침 불러오기.
+# 별도 기록 대상에서 제외할 호스트 도구 — 도구 스키마 로드 및 스킬 지침 로드 도구.
 _QUIET_TOOLS = frozenset({LOAD_TOOLS_TOOL, LOAD_SKILL_TOOL})
 
 OUTSIDE_RESULTS_SOURCE = "peer-tool-results"
@@ -78,7 +78,7 @@ def _args_text(arguments: Any) -> str:
 
 
 def _tool_servers(agent: Any) -> List[str]:
-    """이 발언자가 쓸 수 있던 MCP 서버 (단계적 사고 서버는 뺍니다 — `format_roster` 와 같은 규칙)."""
+    """해당 발언자가 사용할 수 있는 MCP 서버 목록입니다 (단계적 사고 서버는 제외하며, `format_roster`와 동일한 규칙 적용)."""
     thinking = getattr(getattr(agent, "sequential_thinking", None), "mcp_server", None)
     return [s for s in (getattr(agent, "allowed_mcp_servers", None) or []) if s and s != thinking]
 
@@ -86,10 +86,10 @@ def _tool_servers(agent: Any) -> List[str]:
 def observed_meta(
     agent: Any, tool_logs: Sequence[Mapping[str, Any]], sent: Sequence[Mapping[str, Any]],
 ) -> Optional[Dict[str, Any]]:
-    """발언 기록(`llm_meta`)에 남길 앱의 관측. 남길 것이 없으면 None.
+    """발언 기록(`llm_meta`)에 남길 앱의 관측 정보입니다. 기록할 항목이 없으면 None을 반환합니다.
 
-    `tool_logs` 는 이 발언이 실행한 도구(`call_agent` 의 기록), `sent` 는 요청에 실려 간 첨부
-    (`media.recording_sent`) 입니다. 도구가 없는 발언자이고 첨부도 없었으면 넘길 사실이 없습니다.
+    `tool_logs`는 해당 발언 중 실행된 도구 내역(`call_agent` 기록), `sent`는 요청에 포함되어 전달된 첨부 파일 내역
+    (`media.recording_sent`)입니다. 도구 사용 권한이 없고 첨부 파일도 없었던 발언자라면 전달할 관측 사실이 없습니다.
     """
     thinking = getattr(getattr(agent, "sequential_thinking", None), "mcp_server", None)
     thinking_prefix = f"{thinking}__" if thinking else None
@@ -134,7 +134,7 @@ def _file_names(items: Sequence[Mapping[str, Any]]) -> str:
 
 
 def footer(llm_meta: Any, *, compact: bool = False) -> str:
-    """`[앱 기록]` 블록. 기록이 없으면 빈 문자열. `compact` 면 도구는 이름과 결과만 한 줄로 적습니다."""
+    """`[앱 기록]` 블록. 기록이 없으면 빈 문자열을 반환하며, `compact=True`인 경우 도구는 이름과 결과만 한 줄로 간략히 표기합니다."""
     meta = llm_meta.get(OBSERVED_KEY) if isinstance(llm_meta, dict) else None
     if not isinstance(meta, dict):
         return ""
@@ -143,7 +143,7 @@ def footer(llm_meta: Any, *, compact: bool = False) -> str:
     mentioned = [a for a in attachments if not a.get("from_tool")]
     returned = [a for a in attachments if a.get("from_tool")]
     if mentioned:
-        # 받은 쪽에만 보인 안내도 사실로 적습니다. 모르면 "다시 읽지 않았다" 는 말을 지어낸 규칙으로 봅니다
+        # 수신자에게만 전달된 안내문도 사실로 함께 기록합니다. 모르면 "다시 읽지 않았다"는 진술을 지어낸 규칙으로 오인할 수 있습니다
         # (2026-11-09 실험).
         lines.append(
             f"- 직접 받은 첨부: {_file_names(mentioned)} — 앱이 이 발언자의 요청에 내용을 실어 보내며, "
@@ -172,7 +172,7 @@ def footer(llm_meta: Any, *, compact: bool = False) -> str:
 
 
 def peer_view(msg: Any, body: str, *, compact: bool = False) -> str:
-    """다른 에이전트에게 넘길 발언 글: 표시를 무력화한 글 + 앱 기록."""
+    """다른 에이전트에게 전달할 발언 텍스트: 위조 표시를 무력화한 본문 + 앱 기록."""
     text = neutralize(body)
     record = footer(getattr(msg, "llm_meta", None), compact=compact)
     return f"{text}\n\n{record}" if record else text

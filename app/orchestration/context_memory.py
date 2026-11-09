@@ -170,7 +170,7 @@ def render_message(msg: DebateMessage, body: Optional[str] = None) -> str:
         return f"### [User] · Round {msg.round_number}\n{body or msg.content}"
     if body:
         return f"### {msg.speaker_label} · Round {msg.round_number}\n{body}"
-    # 장부·요약도 발언자의 말만 보고 결정·기각을 적지 않게 앱 기록을 함께 줍니다 (`observed`).
+    # 결정 장부와 요약 생성 시에도 발언자의 주장만으로 채택·기각을 결정하지 않도록 앱 기록(`observed`)을 함께 제공합니다.
     text = reference_code_blocks(strip_reasoning_trace(msg.content), msg.tool_calls)
     return f"### {msg.speaker_label} · Round {msg.round_number}\n{observed.peer_view(msg, text)}"
 

@@ -305,7 +305,7 @@ class SynthesisPhaseExecutor(PhaseExecutor):
                 return f"{prefix}:\n{pinned}\n"
             if msg.sender_key == "user":
                 return f"{prefix}:\n{msg.content}\n"
-            # 발언자가 실행한 도구와 직접 받은 첨부 — 결론이 발언자의 말만 보고 판정하지 않게 합니다 (`observed`).
+            # 발언자가 실행한 도구 및 직접 수신한 첨부 파일 정보 — 최종 결론 도출 시 발언자의 주장만으로 판단하지 않도록 보강합니다 (`observed`).
             return f"{prefix}:\n{observed.peer_view(msg, strip_reasoning_trace(msg.content))}\n"
 
         summary = memory.summary_block(state) if agent is not None else ""
