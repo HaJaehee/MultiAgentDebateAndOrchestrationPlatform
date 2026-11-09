@@ -12,10 +12,10 @@
 | :--- | :--- | :--- | :--- |
 | 런타임 | Python | 3.11+ | async/await, TaskGroup 기반의 현대적 비동기 동시성, 강력한 타입 힌팅 제공 |
 | 웹 서버 | FastAPI + Uvicorn | 0.115+ / 0.30+ | 고성능 비동기 HTTP 서빙, 애플리케이션 수명 주기 관리, JSON REST API 제공 |
-| UI | NiceGUI | 2.0+ | 파이썬 코드만으로 반응형 SPA 구현 (Vue/Quasar 렌더링), WebSocket 실시간 양방향 갱신 |
-| LLM 추상화 | LiteLLM | 1.40+ | 100여 개 이상의 다양한 모델 공급자를 OpenAI 호환 단일 인터페이스로 추상화 |
+| UI | NiceGUI | 3.16+, <4 | 파이썬 코드만으로 반응형 SPA 구현 (Vue/Quasar 렌더링), WebSocket 실시간 양방향 갱신 |
+| LLM 추상화 | LiteLLM | 1.105.1+, <1.106 | 100여 개 이상의 다양한 모델 공급자를 OpenAI 호환 단일 인터페이스로 추상화 |
 | 도구 프로토콜 | MCP Python SDK | 1.29+, <2 | 외부 도구 서버 프로세스를 stdio 방식으로 안전하게 기동 및 호출 |
-| 영속화 | SQLAlchemy 2.0 + aiosqlite (기본) / asyncpg (선택) | 2.0.30+ / 0.20+ / 0.30+ | 비동기 ORM 지원. 기본은 로컬 단일 파일 SQLite이고, `db_url`을 바꾸면 PostgreSQL로 동작 |
+| 영속화 | SQLAlchemy 2.0 + aiosqlite (기본) / asyncpg (선택) | 2.0.30+ (`asyncio` extra) / 0.20+ / 0.30+ | 비동기 ORM 지원. 기본은 로컬 단일 파일 SQLite이고, `db_url`을 바꾸면 PostgreSQL로 동작 |
 | 설정·검증 | Pydantic v2 + 표준 `json` | 2.8+ | 선언적 스키마 검증, 환경변수 동적 치환, 주석 보존 원자적 설정 쓰기 |
 | 테스트 | pytest + pytest-asyncio | 8.0+ | 단위 및 통합 자동화 테스트 스위트(Suite) 제공 |
 
@@ -84,13 +84,14 @@ MCP SDK 버전을 `mcp>=1.29.0,<2`로 고정한 데에는 명확한 기술적 �
 ```text
 fastapi>=0.115.0
 uvicorn>=0.30.0
-nicegui>=2.0.0
+nicegui>=3.16,<4             # 동봉된 Mermaid 11.x 로 다이어그램 판정표를 확인한 범위
 pydantic>=2.8.0
 pydantic-settings>=2.4.0
-sqlalchemy>=2.0.30
+sqlalchemy[asyncio]>=2.0.30  # 2.1 부터 비동기 엔진에 필요한 greenlet 이 asyncio extra 로 빠졌습니다
 aiosqlite>=0.20.0
 asyncpg>=0.30.0              # db_url 이 postgresql+asyncpg:// 일 때만 불러옵니다
-litellm>=1.40.0
+litellm>=1.105.1,<1.106      # 1.106+ 는 mcp>=2.3 요구, 1.99 이하는 DeepSeek 로 가는 이미지를 버림
+latex2mathml>=3.77           # 발언·결론의 LaTeX 수식을 MathML 로
 mcp>=1.29.0,<2
 
 mcp-server-git>=2025.1.14   # git MCP 서버

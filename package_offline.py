@@ -90,6 +90,7 @@ PIP_CONSTRAINTS = [
 REQUIRED_IMPORTS = [
     ("nicegui", "웹 UI"),
     ("litellm", "LLM 호출"),
+    ("sqlalchemy.ext.asyncio", "비동기 DB (greenlet 필요 → sqlalchemy[asyncio])"),
     ("mcp", "MCP 클라이언트"),
     ("mcp.server.fastmcp", "샌드박스 MCP 서버 (mcp 2.x 에서는 제거됨 → mcp<2 필요)"),
     ("mcp_server_git", "git MCP 서버"),

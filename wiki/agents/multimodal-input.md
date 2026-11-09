@@ -21,6 +21,11 @@ every model reads text. Any other extension stays a path.
 LiteLLM translates these OpenAI-shaped blocks for each provider. What a model accepts is the provider's business; there
 is no capability check, because LiteLLM's table does not cover private gateways and rarely states audio or video.
 
+A provider adapter can also drop a block without an error, and then §4 never sees a rejection. Up to LiteLLM 1.99 the
+DeepSeek route joined every content list into its text, so images vanished and the model answered without them. From
+1.100 it forwards images to models its model table marks as vision models, and the table built into the package
+(the one an air-gapped install uses) marks `deepseek-v4-flash` from 1.102. `requirements.txt` pins 1.105, checked with a real DeepSeek call that read the image.
+
 ## 2. @mentioned files
 
 1. `expand_mentions()` still appends the `[@참조]` text block with paths. The message text never carries content.
