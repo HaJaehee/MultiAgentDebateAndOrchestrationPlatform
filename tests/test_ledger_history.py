@@ -107,7 +107,7 @@ def test_recently_closed_lists_the_latest_five_and_clips_long_lines():
 
 
 def test_empty_markers_the_clip_note_and_other_sections_are_left_alone():
-    ledger = _ledger("없음") + f"\n- {memory.LEDGER_CLIP_NOTE}"
+    ledger = _ledger("없음") + f"\n- {memory.ledger_clip_note(3)}"
     index = IssueIndex()
     out, issues = assign_issue_ids(ledger, index)
     assert issues == [] and out == ledger

@@ -472,7 +472,8 @@ def ledger_prompt(
         "- 유저 발언과 어긋나는 결정은 유저 발언을 따르세요. 누군가 제안만 했고 합의되지 않은 것은 "
         "결정 사항이 아니라 미해결 쟁점입니다. 없는 사실을 지어내지 마세요.\n"
         "- 파일 경로·함수·인터페이스 이름·수치는 원문 그대로.\n"
-        f"- 전체 {max_chars}자 이내. 머리말이나 설명 없이 아래 다섯 제목을 이 순서대로 쓰고, "
+        f"- 전체 {max_chars}자 이내. 넘칠 것 같으면 기각된 대안부터 줄이고, 해결되지 않은 미해결 쟁점은 길이 때문에 "
+        f"지우지 마세요. 머리말이나 설명 없이 아래 다섯 제목을 이 순서대로 쓰고, "
         f"비어 있는 칸은 `- 없음` 으로 두세요.\n\n{sections}"
     )
     return [{"role": "user", "content": content}]
@@ -488,20 +489,122 @@ def _unfence(text: str) -> str:
 
 
 def parse_ledger(content: str, max_chars: int = LEDGER_MAX_CHARS) -> Optional[str]:
-    """응답에서 장부만 꺼냅니다. `## ` 제목이 하나도 없으면 None (장부가 아닙니다)."""
+    """응답에서 장부만 꺼내 글자 상한에 맞춥니다 (`fit_ledger`). `## ` 제목이 하나도 없으면 None (장부가 아닙니다)."""
     text = _unfence(strip_reasoning_trace(content or ""))
     lines = text.splitlines()
     first = next((i for i, line in enumerate(lines) if line.startswith("## ")), None)
     if first is None:
         return None
     ledger = "\n".join(lines[first:]).strip()
-    return clip_chars(ledger, max_chars, f"- {LEDGER_CLIP_NOTE}")
+    return fit_ledger(ledger, max_chars)
 
 
 # 결정 장부 섹션에서 빈 값(항목 없음)으로 인식할 텍스트 집합. 프롬프트 지침('- 없음') 외 모델 변형 표기를 포괄합니다.
 EMPTY_ITEMS = {"없음", "없음.", "해당 없음", "none", "n/a", "-"}
-# 장부가 글자 수 상한을 초과하여 생략되었음을 알리는 표시 줄 (`parse_ledger`). 글머리 기호 형태이지만 실제 항목이 아니므로 `ledger_items` 집계에서 제외합니다.
-LEDGER_CLIP_NOTE = "…(장부가 길어 뒷부분을 생략했습니다)"
+
+# 장부가 글자 상한을 넘을 때 줄이는 차례 (ADR-051). (칸, 할 일) 이고, `short` 는 항목마다 글자를 줄이며 `drop` 은
+# 뒤에서부터 항목을 뺍니다. 미해결 쟁점은 **빼지 않습니다.** 서버가 잘라 낸 쟁점은 개정 이력에 "닫힘" 으로 남고, 다시
+# 적히면 새 번호를 받아 같은 쟁점이 둘이 됩니다. 지나간 근거인 기각된 대안부터 줄이고, 요구사항은 [유저 발언 기록]에
+# 원문이 따로 고정되므로 결정 사항보다 먼저 뺍니다. 정해진 다섯 칸 밖의 칸(모델이 지어낸 제목)은 맨 먼저 줄입니다.
+LEDGER_TRIM_STEPS = (
+    ("기각된 대안", "short"), ("기각된 대안", "drop"),
+    ("담당·다음 할 일", "short"), ("담당·다음 할 일", "drop"),
+    ("요구사항·제약", "short"), ("결정 사항", "short"), ("미해결 쟁점", "short"),
+    ("요구사항·제약", "drop"), ("결정 사항", "drop"),
+)
+# `short` 가 항목 한 줄에 남기는 글자 수. 그래도 넘치면 쟁점 본문을 한 번 더 줄입니다.
+LEDGER_ITEM_SHORT_CHARS = 120
+LEDGER_ISSUE_TIGHT_CHARS = 80
+_LEDGER_ISSUE_HEAD = re.compile(r"^\[I-\d{1,5}\]\s*")
+# 칸에서 항목을 뺐다는 표시 줄 (`fit_ledger`). 글머리 기호 모양이지만 항목이 아니므로 `ledger_items` 집계에서 뺍니다.
+_LEDGER_CLIP_NOTE_RE = re.compile(r"^…\(장부가 길어 [^)]*생략했습니다\)$")
+
+
+def ledger_clip_note(count: int) -> str:
+    return f"…(장부가 길어 이 칸의 항목 {count}건을 생략했습니다)"
+
+
+def is_ledger_clip_note(text: str) -> bool:
+    return bool(_LEDGER_CLIP_NOTE_RE.match((text or "").strip()))
+
+
+@dataclass
+class _LedgerSection:
+    title: str
+    head: List[str]                                          # `## 제목` 줄과 첫 항목 앞의 줄
+    items: List[List[str]] = field(default_factory=list)     # 항목 줄 + 이어지는(들여 쓴) 줄
+    dropped: int = 0
+
+
+def _ledger_sections(ledger: str) -> Tuple[List[str], List[_LedgerSection]]:
+    preamble: List[str] = []
+    sections: List[_LedgerSection] = []
+    for line in ledger.splitlines():
+        if line.startswith("## "):
+            sections.append(_LedgerSection(line[3:].strip(), [line]))
+        elif not line.strip():
+            continue  # 칸 사이의 빈 줄은 그릴 때 다시 넣습니다
+        elif not sections:
+            preamble.append(line)
+        elif line.startswith(("- ", "* ")):
+            if not is_ledger_clip_note(line[2:]):  # 모델이 옮겨 적은 이전 표시는 버리고 새로 셉니다
+                sections[-1].items.append([line])
+        elif sections[-1].items:
+            sections[-1].items[-1].append(line)
+        else:
+            sections[-1].head.append(line)
+    return preamble, sections
+
+
+def _render_ledger(preamble: Sequence[str], sections: Sequence[_LedgerSection]) -> str:
+    blocks = ["\n".join(preamble)] if preamble else []
+    for section in sections:
+        lines = list(section.head) + [line for item in section.items for line in item]
+        if section.dropped:
+            lines.append(f"- {ledger_clip_note(section.dropped)}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks).strip()
+
+
+def _shorten_item(item: List[str], limit: int) -> List[str]:
+    """항목을 첫 줄 하나로, 그 줄은 `limit` 자로. 쟁점의 `[I-n]` 태그는 글자 수에 넣지 않고 그대로 둡니다."""
+    marker, body = item[0][:2], item[0][2:].strip()
+    tag = _LEDGER_ISSUE_HEAD.match(body)
+    head, text = (body[:tag.end()], body[tag.end():]) if tag else ("", body)
+    if len(text) > limit:
+        text = text[:limit - 1].rstrip() + "…"
+    return [f"{marker}{head}{text}"]
+
+
+def fit_ledger(ledger: str, max_chars: int) -> str:
+    """장부를 글자 상한에 맞춥니다. 칸을 정해진 차례(`LEDGER_TRIM_STEPS`)로 줄이고 미해결 쟁점은 빼지 않습니다.
+
+    쟁점만으로 상한을 넘으면 넘긴 채 돌려줍니다. 상한은 장부가 창을 먹지 않게 하려는 몫이고, 넘친 만큼은 다른 기록이
+    오래된 것부터 접혀 자리를 냅니다 — 쟁점을 잃는 것보다 장부가 조금 긴 편이 낫습니다.
+    """
+    if len(ledger) <= max_chars:
+        return ledger
+    preamble, sections = _ledger_sections(ledger)
+
+    def fits() -> bool:
+        return len(_render_ledger(preamble, sections)) <= max_chars
+
+    known = set(LEDGER_SECTIONS)
+    steps = [(s.title, how) for s in sections if s.title not in known for how in ("short", "drop")]
+    steps += list(LEDGER_TRIM_STEPS)
+    for title, how in steps:
+        for section in (s for s in sections if s.title == title):
+            if how == "short":
+                section.items = [_shorten_item(item, LEDGER_ITEM_SHORT_CHARS) for item in section.items]
+            else:
+                while section.items and not fits():
+                    section.items.pop()
+                    section.dropped += 1
+            if fits():
+                return _render_ledger(preamble, sections)
+    for section in (s for s in sections if s.title == "미해결 쟁점"):
+        section.items = [_shorten_item(item, LEDGER_ISSUE_TIGHT_CHARS) for item in section.items]
+    return _render_ledger(preamble, sections)
 
 
 def ledger_items(ledger: str, title: str) -> Optional[List[str]]:
@@ -520,7 +623,7 @@ def ledger_items(ledger: str, title: str) -> Optional[List[str]]:
         if items is None or not line.startswith(("- ", "* ")):
             continue
         text = line[2:].strip()
-        if text and text.lower() not in EMPTY_ITEMS and text != LEDGER_CLIP_NOTE:
+        if text and text.lower() not in EMPTY_ITEMS and not is_ledger_clip_note(text):
             items.append(text)
     return items
 

@@ -181,7 +181,7 @@ def _is_item(line: str) -> bool:
 
 def _skippable(text: str) -> bool:
     """빈 항목 표시(`- 없음`)나 장부 축약 시 삽입되는 생략 표시 줄은 쟁점 파싱 대상에서 제외합니다."""
-    return not text or text.lower() in memory.EMPTY_ITEMS or text == memory.LEDGER_CLIP_NOTE
+    return not text or text.lower() in memory.EMPTY_ITEMS or memory.is_ledger_clip_note(text)
 
 
 def tagged_open_issues(ledger: str) -> List[Tuple[int, str]]:

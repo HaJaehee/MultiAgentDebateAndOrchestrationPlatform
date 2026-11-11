@@ -92,7 +92,7 @@ def parse_sections(ledger: str) -> List[LedgerSection]:
             continue
         else:
             text, marker = line.strip(), ""
-        if text.lower() not in memory.EMPTY_ITEMS:
+        if text.lower() not in memory.EMPTY_ITEMS and not memory.is_ledger_clip_note(text):
             items.append(LedgerItem(text, marker, issue_no=issue_no))
     return sections
 
