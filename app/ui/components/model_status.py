@@ -10,16 +10,21 @@
 
 `detail` 은 주소와 오류 원문을 보여 줄지입니다. 주인의 화면에서만 켭니다. 꺼져 있으면 그 값들은
 화면으로 가는 자료에 아예 담기지 않습니다 (`describe_row`).
+
+주인의 화면에서는 줄마다 `적합성 점검` 단추가 함께 놓입니다 (ADR-054, `app/agents/model_check.py`). 그 연결에
+짧은 요청 몇 건을 보내 도구 호출·추론 분리·잘림 알림·컨텍스트 창 따위를 확인하고, 결과와 권장 설정을 줄 아래에
+펼칩니다. 요청이 여러 건 나가므로 방문자의 화면에는 단추를 두지 않고, 한 번에 한 연결만 점검합니다.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 from nicegui import ui
 
+from app.agents.model_check import get_model_check_board
 from app.agents.model_status import CACHE_SECONDS, ModelRow, describe_row, get_model_status_board, summarize
-from app.agents.connection import CHECKING
+from app.agents.connection import CHECKING, OK
 
 BUTTON_LABEL = "모델 연결 상태"
 BUTTON_ICON = "network_check"
@@ -45,7 +50,41 @@ def _chip(view: Dict[str, Any]) -> None:
         ui.label(view["label"]).classes("text-xs font-semibold whitespace-nowrap")
 
 
-def _row(view: Dict[str, Any]) -> None:
+CHECK_LABEL = "적합성 점검"
+
+
+def _check_results(profile: Dict[str, Any]) -> None:
+    """점검 결과 — 검사마다 한 줄, 권장 설정은 그 아래에."""
+    with ui.column().classes("w-full gap-1 mt-1 pt-2 border-t border-slate-800").mark(
+        f"model-check-{profile['target_id']}"
+    ):
+        ui.label(f"적합성 점검: {profile['summary']}").classes("text-xs font-semibold text-slate-300")
+        for result in profile["results"]:
+            color, _background, _border, icon = _TONES.get(result["tone"], _TONES["idle"])
+            with ui.row().classes("w-full items-start gap-1.5 flex-nowrap"):
+                ui.icon(icon, size="14px").style(f"color:{color};margin-top:2px")
+                with ui.column().classes("gap-0.5 flex-grow min-w-0"):
+                    ui.label(f"{result['title']} — {result['summary']}").classes(
+                        "text-xs text-slate-300 leading-snug break-words"
+                    )
+                    for suggestion in result["suggestions"]:
+                        ui.label(f"→ {suggestion['text']}").classes("text-[11px] leading-snug break-words").style(
+                            "color:#fcd34d"
+                        )
+                    if result.get("detail"):
+                        ui.label(result["detail"]).classes(
+                            "text-[11px] font-mono text-slate-500 leading-snug break-all bg-slate-900 rounded px-2 py-1"
+                        )
+
+
+def _row(
+    view: Dict[str, Any],
+    *,
+    profile: Optional[Dict[str, Any]] = None,
+    checking: bool = False,
+    can_check: bool = False,
+    on_check: Optional[Callable[[str], None]] = None,
+) -> None:
     with ui.column().classes("w-full gap-1 p-3 rounded-lg border border-slate-800 bg-slate-950").mark(
         f"model-status-{view['id']}"
     ):
@@ -69,18 +108,53 @@ def _row(view: Dict[str, Any]) -> None:
             ui.label(view["error"]).classes(
                 "text-[11px] font-mono text-slate-500 leading-snug break-all bg-slate-900 rounded px-2 py-1"
             )
+        if on_check is not None:
+            with ui.row().classes("w-full items-center gap-2 flex-nowrap"):
+                if checking:
+                    ui.spinner(size="14px", color="grey-4")
+                    ui.label("적합성 점검 중 — 짧은 요청 몇 건을 차례로 보내고 있습니다.").classes("text-xs text-slate-400")
+                else:
+                    button = ui.button(
+                        CHECK_LABEL if profile is None else "다시 점검", icon="fact_check",
+                        on_click=lambda _e, target_id=view["id"]: on_check(target_id),
+                    ).props("flat dense no-caps size=sm color=light-blue-4").mark(f"model-check-button-{view['id']}")
+                    button.set_enabled(can_check)
+                    button.tooltip(
+                        "이 모델로 도구 호출·추론 분리·잘림 알림·컨텍스트 창이 동작하는지 짧은 요청으로 확인합니다"
+                    )
+        if profile is not None:
+            _check_results(profile)
 
 
 def build_model_status_button(*, detail: bool) -> ui.button:
     """머리에 단추를 놓고, 그 단추가 여는 창을 함께 짓습니다. `detail` 은 주인의 화면에서만 켭니다."""
     board = get_model_status_board()
+    checks = get_model_check_board()
+
+    def start_check(target_id: str) -> None:
+        if not checks.start(target_id):
+            ui.notify("다른 연결을 점검하고 있습니다. 끝난 뒤에 다시 눌러 주세요.", type="info", position="bottom-right")
+        render()
+        timer.activate()
 
     @ui.refreshable
     def rows_view(rows: List[ModelRow]) -> None:
         if not rows:
             ui.label("설정에 모델이 없습니다.").classes("text-sm text-slate-400")
         for row in rows:
-            _row(describe_row(row, detail=detail))
+            view = describe_row(row, detail=detail)
+            if not detail:
+                _row(view)
+                continue
+            found = checks.profile(row.target.id)
+            _row(
+                view,
+                profile=found.to_dict(detail=True) if found is not None else None,
+                checking=checks.running_id == row.target.id,
+                # 연결이 안 되는 줄에 여러 건을 보내 봐야 같은 실패만 돌아옵니다.
+                can_check=row.state == OK and not checks.running,
+                on_check=start_check,
+            )
 
     with ui.dialog() as dialog, ui.card().classes(
         "bg-slate-900 border border-slate-700 rounded-xl p-0 w-[620px] max-w-[94vw] text-slate-100"
@@ -115,7 +189,7 @@ def build_model_status_button(*, detail: bool) -> ui.button:
 
     def tick() -> None:
         render()
-        if not board.running:
+        if not board.running and not checks.running:
             timer.deactivate()
 
     timer = ui.timer(0.5, tick, active=False)

@@ -897,3 +897,63 @@ smaller because new speeches go at full price once, and old ones are already red
 
 Tests: `tests/test_prompt_cache.py` passes the real engine's requests through LiteLLM's transformation and a
 model of the cache's prefix rules. Change the prompt assembly and it fails if a marked place stops being stable.
+
+## 8. Checking a Model Before It Joins a Debate (ADR-054)
+
+[app/agents/model_check.py](file:///d:/MultiAgentDebateOrchestration/app/agents/model_check.py) ·
+[app/modelcheck.py](file:///d:/MultiAgentDebateOrchestration/app/modelcheck.py). The connection status dialog
+([UI Components §1.3.8](../ui/components.md#138-model-connection-status)) says whether a model answers. Sections 2
+and 5 of this page are a list of things that went wrong with models that *did* answer: tool calls leaking into the
+text, an answer trapped in `reasoning_content`, a 400 on consecutive `user` turns, a window smaller than the
+setting. Each was found in the middle of a debate. On a closed network a new model arrives without notice and the
+logs have to be carried out by hand, so the same questions are now asked on the day the model arrives.
+
+```bash
+python -m app.modelcheck                  # every connection in conf.json
+python -m app.modelcheck --agent coder    # only the connection that agent uses (repeatable)
+python -m app.modelcheck --json           # for scripts; exit code 1 when any check failed
+```
+
+The same check runs from the `적합성 점검` button on each row of the connection status dialog (owner only, one
+connection at a time, only on a row that is connected). Both write `data/modelcheck/<connection id>.json`.
+
+**What is asked.** Eight short requests per generative connection (`max_tokens` ≤ 512, no retries, through
+`LLMGate`) and one `GET /models`:
+
+| Check | Passes when | Otherwise |
+| :--- | :--- | :--- |
+| 기본 응답 | an answer arrives (usage reported or not is noted) | `fail`, and nothing else is asked |
+| 추론과 본문 | reasoning is absent or arrives apart from the answer | `warn`: the limit went to reasoning (§2.6) → raise `max_tokens`; the answer is only in the reasoning, or `<think>` is in the text → the server's reasoning parser |
+| 스트리밍 | `stream=True` yields text chunks | `warn`: every speech falls back to a second, non-streaming request (§2) |
+| 잘림 알림 | a 16-token cut ends with `finish_reason='length'` | `warn`: continuation and the truncation footers never fire (§2.3, §2.4) |
+| 연속된 user 메시지 | two `user` turns are accepted | `info`: MADO merges them anyway (§5.2) |
+| 도구 호출 | the call arrives in `tool_calls` with readable arguments | `fail` if it leaks into the text (§2.7) or tools are refused; `warn` if the model answers in prose |
+| 도구 결과 뒤 마무리 | the conversation with the tool result is accepted with `tool_choice="none"` (§5.3) and the model does not call again | `fail` / `warn` |
+| 도구 목록에서 불러오기 | the model calls `tools__load_tools`, or the listed tool directly (§5.4) | `warn` → `tool_loading.enabled: false` |
+| 이미지 입력 | a one-colour PNG is read (`red`) | `info`; `warn` when an agent on that connection has the image modality on |
+| 컨텍스트 창 | the server's window (`max_model_len` and the like in `/models`, or LiteLLM's table when there is no `api_base`) is at least every agent's `max_context_window` | `fail` → lower `max_context_window`; `skip` when the server does not say |
+
+A decision LLM gets one request with a `noul`, a `choice` and a `score` question, and one line for each answer's shape.
+
+**Deterministic.** No model judges the result: fields, finish reasons, markers and fixed words (`42`, `red`) only.
+How well a model works is the [bench](../operations/bench.md)'s question.
+
+**The requests are the ones the debate sends.** Connection settings come from `probe_kwargs`, tool calls are read
+with `_parse_tool_call`, the catalog and its standing rule come from `catalog_tool` and `tool_loading_guidance`.
+The assistant turn in the wrap-up check is the model's own, put back with `_assistant_turn`: a hand-written turn
+was refused by DeepSeek's thinking mode (`reasoning_content` must be passed back) and made a working model read as
+failed. When the model made no call, that check is skipped. Usage in the stream is not checked: LiteLLM fills a
+tokenizer count into the last chunk whether or not the server sent one.
+
+**Advice, not behaviour.** A result may carry a `Suggestion` naming the setting and value (`max_context_window`,
+`max_tokens`, `tool_loading.enabled`, `allowed_modalities.image`), or text for what only the server can fix
+(vLLM's `--tool-call-parser`, `--reasoning-parser`). Nothing at run time reads a profile, so the same `conf.json`
+behaves the same whether or not the check was run.
+
+**What it cannot tell.** One request per check: a model that leaks one call in ten can pass. The window is what the
+server says; a gateway that hides `/models` leaves it unknown. LiteLLM splits a paired `<think>…</think>` itself
+(1.98), so reasoning mixed into the text shows only when the opening tag is missing.
+
+Measured 2026-11-11: `deepseek/deepseek-v4-flash` passed all ten checks in 8 requests, `jev/jev-1.13.0` all four in one.
+Tests: `tests/test_model_check.py` (real LiteLLM against a local fake server, one misbehaviour per model name),
+`real_llm_tests/test_05_modelcheck.py`.

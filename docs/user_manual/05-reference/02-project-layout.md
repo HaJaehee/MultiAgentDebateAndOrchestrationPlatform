@@ -77,6 +77,7 @@ app/
 ├── code_versions.py                  96   세션 발언 기반 코드 버전 추출 및 비교 추천 엔진
 ├── session_fork.py                  291   대화 세션 분기(Fork), 비교 데이터 구성 및 결론 평가
 ├── bench.py                         339   전략 벤치마크 하네스 python -m app.bench
+├── modelcheck.py                     75   모델 적합성 점검 명령줄 python -m app.modelcheck (ADR-054)
 ├── graph_store.py                   105   그래프 토론의 그래프 파일 data/graphs/
 │
 ├── config/
@@ -117,7 +118,8 @@ app/
 │   ├── llm_gate.py                  154   서버 전체 LLM 동시 요청 상한
 │   ├── llm_fallback.py              242   전역 기본 모델로 폴백 (ADR-030)
 │   ├── connection.py                174   모델 연결 ID, 실패 분류
-│   └── model_status.py              394   모델 연결 상태 확인
+│   ├── model_status.py              394   모델 연결 상태 확인
+│   └── model_check.py               927   모델 적합성 점검 — 도구 호출·추론 분리·잘림 알림·창 크기 (ADR-054)
 │
 ├── mcp/
 │   ├── client.py                    746   stdio·HTTP 세션 하나, 도구 검색·실행
@@ -198,7 +200,7 @@ app/
     ├── components/sidebar.py        850   세션 목록
     ├── components/artifact_viewer.py   405   산출물 탭, 복사·다운로드
     ├── components/agent_appearance.py   257   카드 색·아이콘 편집기
-    ├── components/model_status.py   143   모델 연결 상태 단추와 창
+    ├── components/model_status.py   217   모델 연결 상태 단추와 창, 줄마다 적합성 점검 단추와 결과
     ├── components/access_token.py   352   원격 접속 토큰 버튼
     ├── components/workspace_download.py   224   작업 공간 파일 다운로드 창
     ├── components/turn_changes.py   221   턴 파일 변경 내역(Diff) 및 롤백 다이얼로그

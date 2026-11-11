@@ -1,6 +1,6 @@
 # ADR-053. 오케스트레이터의 계획 발언은 읽기 도구만 쓰고, 쓰기·실행은 분담받은 전문가에게 둔다
 
-> [ADR 목록](README.md) · 이전: [ADR-052](ADR-052-round-groups-and-citation-labels.md)
+> [ADR 목록](README.md) · 이전: [ADR-052](ADR-052-round-groups-and-citation-labels.md) · 다음: [ADR-054](ADR-054-model-conformance-check.md)
 
 ## 상태 (Status)
 

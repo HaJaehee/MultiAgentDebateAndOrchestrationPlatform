@@ -820,6 +820,13 @@ the address and the provider's error text are not in the data sent to the browse
 model name, the agents using it and the state. The key is never sent, and `safe_detail()` masks keys and
 header values that a provider echoes back in its error message.
 
+**Conformance check (ADR-054).** With `detail` on, each connected row has a `적합성 점검` button. It sends the
+eight short requests of [LLM Integration §8](../agents/llm-integration.md#8-checking-a-model-before-it-joins-a-debate-adr-054)
+to that connection and lists the result under the row: one line per check with its outcome icon, the suggested
+setting in amber, and the masked error text where a request was refused. One connection is checked at a time
+(`ModelCheckBoard`); the last result is read from `data/modelcheck/` after a restart, and the button then reads
+`다시 점검`. Visitors get neither the button nor the results.
+
 **The dialog.** Built once per page (like the about dialog). While a round runs, a 0.5 s timer redraws the rows
 so each one flips from `확인 중` as its answer arrives; the timer stops when the round ends or the dialog closes.
 

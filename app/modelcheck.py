@@ -1,0 +1,75 @@
+"""모델 적합성 점검 명령줄 (ADR-054) — 새 모델을 들인 날, 서버를 띄우기 전에 콘솔에서 돌립니다.
+
+    python -m app.modelcheck                    # conf.json 의 연결 전부
+    python -m app.modelcheck --agent coder      # 그 에이전트가 쓰는 연결만 (여러 번 줄 수 있습니다)
+    python -m app.modelcheck --json             # 기계가 읽을 JSON
+    python -m app.modelcheck --config other.json
+
+연결 하나에 짧은 요청 8건쯤을 차례로 보냅니다. 결과는 화면의 모델 연결 상태 창과 같은 자리
+(`data/modelcheck/<연결 id>.json`)에 남습니다. 검사와 판정은 `app/agents/model_check.py` 에 있습니다.
+
+끝남 값: 실패한 검사가 하나도 없으면 0, 있으면 1, 인자나 설정이 틀렸으면 2.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import sys
+from typing import List
+
+from app.agents import model_check
+from app.agents.model_status import collect_targets
+from app.config import DEFAULT_CONFIG_PATH, get_config
+
+
+async def _main(argv: List[str]) -> int:
+    parser = argparse.ArgumentParser(prog="python -m app.modelcheck", description="MADO 모델 적합성 점검")
+    parser.add_argument("--config", default=DEFAULT_CONFIG_PATH, help="conf.json 경로")
+    parser.add_argument("--agent", action="append", default=[], metavar="KEY",
+                        help="이 에이전트가 쓰는 연결만 점검합니다 (여러 번 줄 수 있습니다)")
+    parser.add_argument("--all", action="store_true", help="모든 연결을 점검합니다 (기본값)")
+    parser.add_argument("--json", action="store_true", help="결과를 JSON 으로 찍습니다")
+    parser.add_argument("--timeout", type=float, default=model_check.CHECK_TIMEOUT_SECONDS,
+                        help="요청 하나를 기다리는 시간(초)")
+    args = parser.parse_args(argv)
+
+    try:
+        config = get_config(reload=True, config_path=args.config)
+    except Exception as exc:  # noqa: BLE001 - 설정을 못 읽은 까닭을 그대로 알립니다
+        print(f"[modelcheck] 설정을 읽지 못했습니다: {exc}", file=sys.stderr)
+        return 2
+
+    if args.agent and not args.all:
+        try:
+            targets = model_check.targets_for_agents(args.agent, config)
+        except KeyError as exc:
+            print(f"[modelcheck] 설정에 없는 에이전트입니다: {exc.args[0]}", file=sys.stderr)
+            return 2
+    else:
+        targets = collect_targets(config)
+    if not targets:
+        print("[modelcheck] 점검할 연결이 없습니다.", file=sys.stderr)
+        return 2
+
+    profiles = []
+    for target in targets:
+        if not args.json:
+            print(f"[modelcheck] {target.model} 점검 중 …", flush=True)
+        profile = await model_check.check_target(target, config, timeout_seconds=args.timeout)
+        model_check.save_profile(profile)
+        profiles.append(profile)
+        if not args.json:
+            print(model_check.format_profile(profile), flush=True)
+            print()
+
+    if args.json:
+        print(json.dumps([p.to_dict(detail=True) for p in profiles], ensure_ascii=False, indent=2))
+    else:
+        print(f"[modelcheck] 기록: {model_check.modelcheck_dir()}")
+    return 1 if any(p.count(model_check.FAIL) for p in profiles) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(_main(sys.argv[1:])))

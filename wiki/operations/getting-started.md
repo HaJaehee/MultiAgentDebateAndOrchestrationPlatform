@@ -90,6 +90,19 @@ Once initialized, open your browser to the URL displayed in the console:
 [INFO] multiagent: Web UI: http://127.0.0.1:8000
 ```
 
+### Checking a new model first
+
+When `conf.json` points at a model this installation has not used before, check it before the first debate:
+
+```bash
+python -m app.modelcheck
+```
+
+It sends a few short requests per connection and prints which MADO features work with that model (tool calls,
+reasoning apart from the answer, truncation reported, context window) and which setting to change. The same
+check is the `적합성 점검` button in the `모델 연결 상태` dialog. See
+[LLM Integration §8](../agents/llm-integration.md#8-checking-a-model-before-it-joins-a-debate-adr-054).
+
 ---
 
 ## 4. Running the Test Suite
