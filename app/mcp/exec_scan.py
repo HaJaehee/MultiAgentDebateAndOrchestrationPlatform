@@ -91,7 +91,9 @@ class ScanResult:
     """코드가 건드리는 것들.
 
     `reads`/`writes`/`deletes` 는 코드에 **글자로 적힌** 경로입니다. 대상이 변수라 알 수
-    없는 삭제는 빈 문자열 하나로 남습니다 — 무엇을 지우는지 모르는 삭제도 삭제입니다.
+    없는 쓰기·삭제는 빈 문자열 하나로 남습니다 — 어디에 쓰는지 모르는 쓰기도 쓰기입니다.
+    그래야 `write(**)` 같은 "모든 쓰기" 규칙이 `(root / "x").write_text(...)` 처럼 경로를
+    만들어 쓰는 코드에도 걸립니다 (ADR-049 의 진단 에이전트 쓰기 금지).
     `hosts` 는 코드에 적힌 URL 의 호스트이고, `network` 는 네트워크 모듈을 쓰는지입니다.
     `flags` 는 판정할 수 없어 사람이 봐야 하는 소견입니다.
     """
@@ -168,14 +170,27 @@ def _literal(node: Optional[ast.AST]) -> Optional[str]:
     return None
 
 
-def _open_mode(call: ast.Call) -> str:
-    """`open(path, mode)` 의 모드. 모르면 읽기로 봅니다."""
-    mode_node: Optional[ast.AST] = call.args[1] if len(call.args) > 1 else None
+def _open_mode(call: ast.Call, position: int = 1) -> Optional[str]:
+    """`open(path, mode)` 의 모드. 적지 않았으면 "r", 글자가 아니라 알 수 없으면 None."""
+    mode_node: Optional[ast.AST] = call.args[position] if len(call.args) > position else None
     for kw in call.keywords:
         if kw.arg == "mode":
             mode_node = kw.value
-    mode = _literal(mode_node) if mode_node is not None else "r"
-    return mode or "r"
+    if mode_node is None:
+        return "r"
+    return _literal(mode_node)
+
+
+def _writes(mode: str) -> bool:
+    return any(c in mode for c in "wax+")
+
+
+# 열기 함수 — (경로, 모드) 를 받습니다. `Path(...).open(모드)` 처럼 받는 쪽이 경로인 메서드는 따로 봅니다.
+OPEN_CALLS = frozenset({"open", "io.open", "codecs.open"})
+# `Path.open` 의 첫 인자로 보이는 모드. 이 모양이 아니면 다른 객체의 `open(이름)` 입니다 (`ZipFile.open` 등).
+_MODE_RE = re.compile(r"^[rwxabtU+]{1,4}$")
+# 저장 메서드가 경로를 키워드로 받을 때의 이름 (`df.to_csv(path_or_buf=p)`).
+PATH_KEYWORDS = frozenset({"path", "path_or_buf", "fname", "filename", "file", "excel_writer", "filepath"})
 
 
 class _Scanner:
@@ -234,6 +249,11 @@ class _Scanner:
             return True
         return False
 
+    def _write_target(self, node: Optional[ast.AST]) -> None:
+        """쓰기 대상. 글자가 아니면 "대상을 모르는 쓰기" 하나로 남깁니다 (삭제와 같은 규칙)."""
+        if not self._path_arg(node, "writes"):
+            self._add("writes", "")
+
     # -------------------------------------------------- 가져오기
 
     def _module(self, name: str) -> None:
@@ -261,9 +281,19 @@ class _Scanner:
         if name in PROCESS_CALLS or name.startswith(PROCESS_CALL_PREFIXES):
             self._flag(f"`{name}` 로 프로세스를 실행함")
 
-        if name in {"open", "io.open", "codecs.open"}:
+        if name in OPEN_CALLS:
             mode = _open_mode(node)
-            self._path_arg(first, "writes" if any(c in mode for c in "wax+") else "reads")
+            # 모드가 변수면 무엇을 할지 모릅니다. 쓰기일 수 있는 열기는 쓰기로 봅니다.
+            if mode is None or _writes(mode):
+                self._write_target(first)
+            else:
+                self._path_arg(first, "reads")
+        elif tail == "open" and receiver is not None:
+            mode = _open_mode(node, position=0)
+            if mode is not None and _MODE_RE.match(mode) and _writes(mode):
+                self._write_target(receiver)
+            elif mode is not None and _MODE_RE.match(mode):
+                self._path_arg(receiver, "reads")
         elif name in DELETE_CALLS:
             if not self._path_arg(first, "deletes"):
                 self._add("deletes", "")
@@ -271,17 +301,24 @@ class _Scanner:
             if not self._path_arg(receiver, "deletes"):
                 self._add("deletes", "")
         elif name in MOVE_CALLS:
-            self._path_arg(first, "writes")
-            self._path_arg(second, "writes")
+            self._write_target(first)
+            self._write_target(second)
         elif name in COPY_CALLS:
             self._path_arg(first, "reads")
-            self._path_arg(second, "writes")
+            self._write_target(second)
         elif tail in RECEIVER_WRITE_METHODS and receiver is not None:
-            self._path_arg(receiver, "writes")
+            # `os.mkdir(경로)` 처럼 받는 쪽이 모듈이면 경로는 첫 인자입니다.
+            module_call = isinstance(receiver, ast.Name) and receiver.id in ("os", "pathlib")
+            self._write_target(first if module_call else receiver)
         elif tail in RECEIVER_READ_METHODS and receiver is not None:
             self._path_arg(receiver, "reads")
         elif tail in ARG_WRITE_METHODS:
-            self._path_arg(first, "writes")
+            # 경로 없이 부르면 파일이 아니라 값을 돌려줍니다 (`df.to_csv()` 는 글자를 돌려줌).
+            target = first if first is not None else next(
+                (kw.value for kw in node.keywords if kw.arg in PATH_KEYWORDS), None,
+            )
+            if target is not None:
+                self._write_target(target)
         elif tail in ARG_READ_METHODS:
             self._path_arg(first, "reads")
 
