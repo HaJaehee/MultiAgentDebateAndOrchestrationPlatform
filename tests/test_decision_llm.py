@@ -301,25 +301,30 @@ async def test_decision_failure_names_the_system1_model_and_endpoint(clean_decis
     assert "HTTP 422" in raised.value.reason
 
 
+@pytest.mark.parametrize(
+    ("conflicts", "settles", "opened", "calls"),
+    [
+        ((0.2, 0.8), 0.1, True, 2),     # 두 번째 쟁점이 충돌 → 그 쟁점을 짚어 당사자를 묻고 엶
+        ((0.3, 0.4), 0.1, False, 1),    # 충돌로 보이는 쟁점이 없음 → 한 번만 묻고 열지 않음
+        ((0.2, 0.8), 0.7, False, 2),    # 본 토론에서 풀릴 쟁점 → 열지 않음
+    ],
+)
 @pytest.mark.asyncio
-async def test_sub_debate_issue_choice_carries_issue_text_and_maps_back(clean_decision_env):
+async def test_sub_debate_asks_each_issue_then_names_the_chosen_one(clean_decision_env, conflicts, settles, opened, calls):
     seen: List[Dict[str, Any]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content.decode("utf-8"))
         seen.append(body)
-        return httpx.Response(
-            200,
-            json={
-                "model": "jev-1.13.0",
-                "answers": {
-                    "open": {"type": "noul", "noul": 0.9},
-                    "issue_idx": {"type": "choice", "choice": "1", "probabilities": {"0": 0.2, "1": 0.8}},
-                    "cand_architect": {"type": "noul", "noul": 0.9},
-                    "cand_critic": {"type": "noul", "noul": 0.7},
-                },
-            },
-        )
+        if "conflict_0" in body["questions"]:
+            answers = {f"conflict_{i}": {"type": "noul", "noul": p} for i, p in enumerate(conflicts)}
+        else:
+            answers = {
+                "settles": {"type": "noul", "noul": settles},
+                "party_architect": {"type": "noul", "noul": 0.9},
+                "party_critic": {"type": "noul", "noul": 0.7},
+            }
+        return httpx.Response(200, json={"model": "jev-1.13.0", "answers": answers})
 
     jev = DecisionLLMConfig(enabled=True, backend="jev", api_key="jev-key")
     orchestrator = Agent.from_config(
@@ -337,12 +342,22 @@ async def test_sub_debate_issue_choice_carries_issue_text_and_maps_back(clean_de
         [architect, critic],
     )
 
-    criteria = seen[0]["questions"]["issue_idx"]["criteria"]
-    assert criteria == {"0": "[I-1] 캐시 무효화 시점", "1": "[I-2] 인증 토큰 보관 위치"}, "번호마다 쟁점 본문이 붙어야 합니다"
-    assert picked is not None
-    pair, issue_text, _reason, issue_no = picked
+    assert len(seen) == calls
+    first = seen[0]["questions"]
+    assert set(first) == {"conflict_0", "conflict_1"}
+    assert "[I-1] '캐시 무효화 시점'" in first["conflict_0"]["instructions"], "질문마다 쟁점을 짚어야 합니다"
+    assert "[I-2] '인증 토큰 보관 위치'" in first["conflict_1"]["instructions"]
+    if calls == 2:
+        second = seen[1]["questions"]
+        assert set(second) == {"settles", "party_architect", "party_critic"}
+        assert all("[I-2] '인증 토큰 보관 위치'" in q["instructions"] for q in second.values()), "고른 쟁점을 짚어 물어야 합니다"
+    if not opened:
+        assert picked is None
+        return
+    pair, issue_text, reason, issue_no = picked
     assert [a.key for a in pair] == ["architect", "critic"]
     assert (issue_text, issue_no) == ("인증 토큰 보관 위치", 2)
+    assert "의견 충돌 p=0.80" in reason and "본 토론에서 풀림 p=0.10" in reason
 
 
 @pytest.mark.asyncio
@@ -574,16 +589,18 @@ async def test_orchestrator_system1_controls_speaker_selection_sub_debate_and_gr
         qs = body["questions"]
         if "gate" in qs:
             return httpx.Response(200, json={"model": "jev-ctrl", "answers": {"gate": {"noul": 0.91}}})
-        if "open" in qs:
+        if "conflict_0" in qs:
+            return httpx.Response(200, json={"model": "jev-ctrl", "answers": {"conflict_0": {"noul": 0.85}}})
+        if "settles" in qs:
             return httpx.Response(
                 200,
                 json={
                     "model": "jev-ctrl",
                     "answers": {
-                        "open": {"noul": 0.85},
-                        "cand_architect": {"noul": 0.92},
-                        "cand_coder": {"noul": 0.20},
-                        "cand_critic": {"noul": 0.88},
+                        "settles": {"noul": 0.10},
+                        "party_architect": {"noul": 0.92},
+                        "party_coder": {"noul": 0.20},
+                        "party_critic": {"noul": 0.88},
                     },
                 },
             )

@@ -44,8 +44,24 @@ _ISSUE_TAG = re.compile(r"^\[I-(\d{1,5})\]\s*")
 
 # 단일 패스 입력 텍스트 상한 (과도한 프롬프트로 인한 결정 모델 컨텍스트 초과 방지)
 MAX_DECISION_STATE_CHARS = 32_000
-# choice 선택지 하나에 붙이는 설명의 길이 상한. 쟁점 본문 전체는 state 에 이미 들어 있습니다.
-MAX_CHOICE_NOTE_CHARS = 300
+# 서브 토론 판정이 한 번에 묻는 쟁점 수의 상한과, 질문에서 쟁점을 짚을 때 옮기는 본문 길이. 본문 전체는 state 에 있습니다.
+MAX_SUB_DEBATE_ISSUES = 16
+ISSUE_HEAD_CHARS = 120
+
+
+def _issue_head(issue: str) -> str:
+    """질문에서 쟁점 하나를 짚는 말: `쟁점 [I-3] '본문 앞부분'`. 번호가 없으면 본문만 씁니다."""
+    text = issue.strip()
+    tag = _ISSUE_TAG.match(text)
+    body = text[tag.end():].strip() if tag else text
+    clipped = body if len(body) <= ISSUE_HEAD_CHARS else body[:ISSUE_HEAD_CHARS]
+    return f"쟁점 [I-{tag.group(1)}] '{clipped}'" if tag else f"쟁점 '{clipped}'"
+
+
+def _noul(resp: "DecisionResponse", qid: str) -> float:
+    """noul 답의 확률. 답이 없으면 0 (열지 않는 쪽)."""
+    ans = resp.answers.get(qid)
+    return ans.noul if (ans is not None and ans.noul is not None) else 0.0
 
 
 class DecisionHTTPStatusError(RuntimeError):
@@ -516,7 +532,16 @@ class DecisionCaller:
         issues: Sequence[str],
         candidates: Sequence[Agent],
     ) -> Optional[Tuple[List[Agent], str, str, Optional[int]]]:
-        """라운드 경계에서 서브 토론 개시 여부, 핵심 쟁점, 당사자 2인을 단일 패스로 결정합니다.
+        """라운드 경계에서 서브 토론을 열지, 어느 쟁점을 누구 둘이 다룰지 두 단계로 정합니다.
+
+        1단계는 쟁점마다 "두 전문가가 서로 다른 안을 고수하는가" 를 묻습니다. 기준을 넘는 쟁점이 없으면 열지 않습니다
+        (호출 1번으로 끝). 2단계는 가장 높은 쟁점 하나를 짚어 "본 토론의 다음 차례에서 풀리겠는가" 와, 후보마다 "이 쟁점에서
+        맞선 안을 낸 당사자인가" 를 묻습니다. 풀리겠다는 확률이 기준을 넘으면 열지 않고, 아니면 당사자 확률이 높은 두 사람을 고릅니다.
+        기준은 다른 판정과 같은 `decision_llm.threshold` 입니다.
+
+        예전에는 한 패스에서 "충돌에서 비롯되어 지금 열어야 하는가" 라는 복합 질문 하나와, 어느 쟁점인지 말하지 않은 당사자
+        질문을 했습니다. 기록된 경계 8곳을 Jev 에 다시 물으니 복합 질문은 상태와 무관하게 0.24~0.37 이라 한 번도 열리지 않았고,
+        쟁점별 질문은 같은 상태 안에서도 0.10~0.86 으로 갈렸습니다 (ADR-034, 2026-11-11).
 
         반환값은 (선정된 두 전문가, 쟁점 본문, 선정 사유, 쟁점 번호) 튜플입니다. 장부의 미해결 쟁점은 `[I-3] 내용` 형태이므로(ADR-051),
         선정된 항목에서 식별 태그를 분리하여 번호와 순수 본문 텍스트를 각각 반환합니다.
@@ -524,56 +549,59 @@ class DecisionCaller:
         if len(candidates) < 2 or not issues:
             return None
         cfg = orchestrator.decision_llm
-        questions: Dict[str, DecisionQuestion] = {
-            "open": DecisionQuestion(
+        # 장부 뒤쪽이 최근 쟁점입니다. 한 번에 묻는 질문 수를 묶어 두려고 넘치면 최근 것만 묻습니다.
+        asked = list(issues)[-MAX_SUB_DEBATE_ISSUES:]
+        conflicts = {
+            f"conflict_{i}": DecisionQuestion(
                 type="noul",
                 instructions=(
-                    "결정 장부의 미해결 쟁점이 두 전문가의 의견 충돌에서 비롯되어, "
-                    "본 토론과 분리된 집중 서브 토론을 지금 바로 열어야 합니까?"
+                    f"{_issue_head(issue)} 에서 두 전문가가 서로 다른 안을 내놓고 각자 자기 안을 고수하고 있습니까? "
+                    "방향은 합의하고 조건·세부만 남았거나, 한 사람만 안을 냈거나, 유저·외부 팀의 확인을 기다리는 쟁점이면 "
+                    "아니오입니다."
                 ),
-            ),
+            )
+            for i, issue in enumerate(asked)
         }
-        issue_labels = [str(i) for i in range(len(issues))]
-        if len(issues) > 1:
-            questions["issue_idx"] = DecisionQuestion(
-                type="choice",
-                instructions="가장 시급히 두 전문가가 맞대어 해결해야 할 미해결 쟁점 번호를 고르세요.",
-                criteria=tuple(issue_labels),
-                # 번호만 보내면 모델이 번호와 쟁점을 짝지을 수 없으므로 쟁점 본문을 설명으로 붙입니다.
-                choice_notes=tuple(issue.strip()[:MAX_CHOICE_NOTE_CHARS] for issue in issues),
-            )
-        for cand in candidates:
-            questions[f"cand_{cand.key}"] = DecisionQuestion(
-                type="noul",
-                instructions=f"이 미해결 쟁점을 직접 조율할 당사자로 '{cand.name}' ({cand.role}) 전문가가 적합합니까?",
-            )
-
-        resp = await self.evaluate(cfg, state_text, questions, agent=orchestrator)
-        open_ans = resp.answers.get("open")
-        open_prob = open_ans.noul if (open_ans is not None and open_ans.noul is not None) else 0.0
-        if open_prob < cfg.threshold:
+        first = await self.evaluate(cfg, state_text, conflicts, agent=orchestrator)
+        scored_issues = [(_noul(first, f"conflict_{i}"), -i) for i in range(len(asked))]
+        conflict_prob, neg_idx = max(scored_issues)
+        chosen_issue = asked[-neg_idx]
+        if conflict_prob < cfg.threshold:
+            logger.info(f"No sub-debate: the highest issue conflict p={conflict_prob:.2f} is below {cfg.threshold:.2f}")
             return None
 
-        chosen_issue = issues[0]
-        if len(issues) > 1:
-            idx_ans = resp.answers.get("issue_idx")
-            if idx_ans and idx_ans.choice in issue_labels:
-                chosen_issue = issues[int(idx_ans.choice)]
+        head = _issue_head(chosen_issue)
+        follow_up: Dict[str, DecisionQuestion] = {
+            "settles": DecisionQuestion(
+                type="noul",
+                instructions=f"{head} 은 별도 서브 토론 없이 본 토론의 다음 차례 발언에서 풀릴 것 같습니까?",
+            ),
+        }
+        for cand in candidates:
+            follow_up[f"party_{cand.key}"] = DecisionQuestion(
+                type="noul",
+                instructions=f"{head} 에서 서로 맞선 안 가운데 하나를 '{cand.name}' ({cand.role}) 전문가가 냈거나 지지하고 있습니까?",
+            )
+        second = await self.evaluate(cfg, state_text, follow_up, agent=orchestrator)
+        settles_prob = _noul(second, "settles")
+        if settles_prob >= cfg.threshold:
+            logger.info(f"No sub-debate: the main debate is likely to settle the issue (p={settles_prob:.2f})")
+            return None
 
-        scored_cands: List[Tuple[float, int, Agent]] = []
-        for idx, cand in enumerate(candidates):
-            c_ans = resp.answers.get(f"cand_{cand.key}")
-            c_prob = c_ans.noul if (c_ans is not None and c_ans.noul is not None) else 0.0
-            scored_cands.append((c_prob, idx, cand))
-        scored_cands.sort(key=lambda item: (-item[0], item[1]))
-        pair = [scored_cands[0][2], scored_cands[1][2]]
-        reason = (
-            f"System 1({cfg.backend.upper()}/{resp.model}) 서브 토론 개시 판정 p={open_prob:.2f} · "
-            f"당사자 적합도 {pair[0].name}({scored_cands[0][0]:.2f}), {pair[1].name}({scored_cands[1][0]:.2f})"
+        scored_cands = sorted(
+            ((_noul(second, f"party_{cand.key}"), idx, cand) for idx, cand in enumerate(candidates)),
+            key=lambda item: (-item[0], item[1]),
         )
+        pair = [scored_cands[0][2], scored_cands[1][2]]
         tag = _ISSUE_TAG.match(chosen_issue.strip())
         issue_no = int(tag.group(1)) if tag else None
         issue_text = chosen_issue.strip()[tag.end():].strip() if tag else chosen_issue.strip()
+        label = f"I-{issue_no} " if issue_no else ""
+        reason = (
+            f"System 1({cfg.backend.upper()}/{second.model}) 서브 토론 판정: 쟁점 {label}의견 충돌 p={conflict_prob:.2f} · "
+            f"본 토론에서 풀림 p={settles_prob:.2f} (기준 {cfg.threshold:.2f}) · "
+            f"당사자 {pair[0].name}({scored_cands[0][0]:.2f}), {pair[1].name}({scored_cands[1][0]:.2f})"
+        )
         return pair, issue_text, reason, issue_no
 
     # ------------------------------------------------------------ 전문가 System 1 발언 평가
