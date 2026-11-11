@@ -1,6 +1,7 @@
 """실제 LLM 시험의 pytest 설정.
 
-이 폴더의 시험은 **실제 LLM(DeepSeek, Jev)을 호출해 돈과 시간이 듭니다.** 그래서 켜야만 돕니다.
+이 폴더의 시험은 **실제 LLM(대상 conf 의 모델 — 개발 PC 에서는 DeepSeek 와 Jev)을 호출해 돈과 시간이 듭니다.**
+그래서 켜야만 돕니다.
 
     set MADO_REAL_LLM=1
     dist\\MultiAgentDebateOrchestration_bundle\\python_runtime\\python.exe -m pytest real_llm_tests -x -q
@@ -27,6 +28,9 @@ _HARNESS = None
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "adr(number): 이 시험이 확인하는 ADR 번호")
+    config.addinivalue_line(
+        "markers", "acceptance: 새 모델을 들였을 때 먼저 돌리는 최소 묶음 (`-m acceptance`, 연결·적합성·토론 한 턴·도구)",
+    )
 
 
 @pytest.fixture(scope="session")
@@ -42,7 +46,9 @@ def mado():
     print(f"\n[real-llm] 대상(환경): {harness.target}\n[real-llm] 코드: {harness.code}"
           f"{'' if identity.get('code_is_target_code') else ' (대상의 app/ 과 다름)'}\n"
           f"[real-llm] 실행 폴더: {harness.run_dir}\n"
-          f"[real-llm] 모델: {identity.get('model')} · 미러 일치: {identity.get('mirror_matches_code')}")
+          f"[real-llm] 모델: {identity.get('model')} · 미러 일치: {identity.get('mirror_matches_code')}"
+          + (f"\n[real-llm] 예제 설정에서 채운 에이전트: {', '.join(identity['supplemented_agents'])}"
+             if identity.get("supplemented_agents") else ""))
     yield harness
     harness.shutdown()
     print(f"\n[real-llm] 보고서: {harness.run_dir / 'report.json'}")

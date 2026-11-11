@@ -17,6 +17,7 @@ MCP 서버 설치본까지 들고 있어 수백 MB 입니다. 그 런타임은 �
         ├── trial_templates/          체험 서버의 공식 템플릿 (trial.templates_dir)
         ├── skills/                   기본 스킬 디렉터리 (skills.dir)
         ├── wheels/                   --with-wheels 로 지정했을 때만 (아래 참고)
+        ├── real_llm_tests/           --with-acceptance 로 지정했을 때만 (아래 참고)
         ├── docs/
         │   ├── user_manual/          사용 설명서 마크다운 원본
         │   ├── examples/plugins/     복사하여 활용 가능한 전략·호스트 도구 플러그인 예제
@@ -35,6 +36,7 @@ MCP 서버 설치본까지 들고 있어 수백 MB 입니다. 그 런타임은 �
 사용법:
     python package_source.py [--out-dir dist] [--max-file-mb 2] [--allow-secrets]
                              [--skip-manual-html] [--with-wheels PKG [PKG ...]]
+                             [--with-acceptance]
 
 포함 목록은 **허용 목록(allow-list)** 입니다. 제외 목록으로 짜면 새 디렉터리가
 생겼을 때 조용히 딸려 들어갑니다. 여기서는 새 디렉터리가 생기면 그냥 빠지고,
@@ -56,6 +58,20 @@ MCP 서버 설치본까지 들고 있어 수백 MB 입니다. 그 런타임은 �
 대상 장비에서:
 
     python_runtime\\python.exe -m pip install --no-index --find-links wheels mcp-server-fetch
+
+## 새 모델을 받아 볼 때 (`--with-acceptance`)
+
+`real_llm_tests/` 는 실제 모델을 불러 MADO 가 그 모델로 도는지 보는 시험입니다. 테스트는 원래 담지 않지만,
+폐쇄망에서는 모델이 그곳에만 있으므로 이 시험만은 그곳에서 돌려야 합니다. 이 옵션을 주면 그 폴더를 함께 담습니다.
+
+    python package_source.py --with-acceptance
+
+대상 장비에서 (설치본 폴더에서, 그 설치본의 conf.json 과 .env 로 돕니다):
+
+    set MADO_REAL_LLM=1
+    python_runtime\\python.exe -m pytest real_llm_tests -m acceptance -q -p no:cacheprovider
+
+기본으로 넣지 않는 까닭: 돌리면 모델을 수백 번 부르고, 갱신 때마다 필요한 것이 아닙니다.
 """
 
 from __future__ import annotations
@@ -105,6 +121,9 @@ PACKAGE_NAME = "MultiAgentDebateOrchestration_source"
 # wiki/ 는 영문 기술 위키입니다. 설명서와 같은 이유로 — 폐쇄망에서는 저장소를 열 수 없으므로 — 설계 배경과
 # 세부 사양을 소스와 함께 들고 갑니다. 마크다운 그대로 담습니다 (렌더러는 사용 설명서용입니다).
 SOURCE_DIRS = ["app", "mcp_servers", "docs", "trial_templates", "skills", "wiki"]
+
+# `--with-acceptance` 를 줬을 때만 담는 폴더 (실제 모델을 부르는 수용 시험). 기본 목록에는 넣지 않습니다.
+ACCEPTANCE_DIR = "real_llm_tests"
 
 # (원본 경로, 패키지 안에서의 경로). 대부분 루트 파일이지만, 설치본의 같은
 # 자리에 바로 놓여야 하는 파일은 하위 경로로 넣습니다.
@@ -212,6 +231,12 @@ def collect_dir(src: Path, rel_root: str) -> list[tuple[Path, str]]:
             continue
         collected.append((path, f"{rel_root}/{path.relative_to(src).as_posix()}"))
     return collected
+
+
+def collect_acceptance() -> list[tuple[Path, str]]:
+    """수용 시험 폴더에서 담을 파일. 폴더가 없으면 빈 목록입니다."""
+    src = ROOT_DIR / ACCEPTANCE_DIR
+    return collect_dir(src, ACCEPTANCE_DIR) if src.is_dir() else []
 
 
 def render_manual_html(build_dir: Path) -> list[tuple[Path, str]]:
@@ -365,6 +390,9 @@ def main() -> None:
     parser.add_argument("--with-wheels", nargs="+", metavar="PKG", default=[],
                         help="이번 갱신이 새로 요구하는 pip 패키지를 wheel 로 함께 담습니다 "
                              "(예: --with-wheels mcp-server-fetch). 인터넷 필요")
+    parser.add_argument("--with-acceptance", action="store_true",
+                        help="실제 모델로 돌리는 수용 시험(real_llm_tests/)을 함께 담습니다 "
+                             "(폐쇄망에서 새 모델을 받아 볼 때)")
     args = parser.parse_args()
 
     dist_dir = (ROOT_DIR / args.out_dir).resolve() if not Path(args.out_dir).is_absolute() \
@@ -382,6 +410,13 @@ def main() -> None:
         found = collect_dir(src, name)
         items.extend(found)
         log(f"  {name}/  {len(found)}개")
+
+    if args.with_acceptance:
+        found = collect_acceptance()
+        if not found:
+            sys.exit(f"--with-acceptance 를 줬지만 {ACCEPTANCE_DIR}/ 이 없습니다.")
+        items.extend(found)
+        log(f"  {ACCEPTANCE_DIR}/  {len(found)}개 (--with-acceptance)")
 
     single_files = 0
     for src_name, dest_name in PACKAGE_FILES:

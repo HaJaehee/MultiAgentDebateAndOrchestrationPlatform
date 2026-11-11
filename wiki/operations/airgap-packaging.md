@@ -185,6 +185,25 @@ module that imports nothing but `vue`, which NiceGUI already puts in the page's 
 editor loads with no network access. The folder is deliberately **not** named `vendor`: that name is
 in `FORBIDDEN_NAMES` to keep runtimes out, and the files would have been dropped.
 
+### Carrying the acceptance tests (`--with-acceptance`)
+
+Tests are not in the package, with one exception that has to run on the far side: the model exists only there.
+`python package_source.py --with-acceptance` adds `real_llm_tests/`, which calls the real models of the
+installation it is unpacked into. On the target, from the installation folder:
+
+```bat
+python_runtime\python.exe -m app.modelcheck
+set MADO_REAL_LLM=1
+python_runtime\python.exe -m pytest real_llm_tests -m acceptance -q -p no:cacheprovider
+```
+
+The first line is the eight-request conformance check ([LLM Integration §8](../agents/llm-integration.md#8-checking-a-model-before-it-joins-a-debate-adr-054));
+the marked set (`test_00`, `test_05`, `test_10`, `test_40`) then runs one real debate turn and the tool scenarios.
+The harness mirrors the code into a run folder and leaves the installation's `conf.json`, database and workspace
+alone; with no target named it uses the installation the folder sits in. The files pass the same size and
+credential checks as the rest of the package and are listed in `MANIFEST.txt`. They are left out by default
+because a run makes hundreds of model calls and an update rarely needs one. See `real_llm_tests/README.md`.
+
 ### Three things the script refuses to do
 
 1. **Overwrite the target's `conf.json`.** The local file is not shipped at all. The

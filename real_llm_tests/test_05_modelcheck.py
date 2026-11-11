@@ -9,7 +9,7 @@
 
 import pytest
 
-pytestmark = pytest.mark.adr(54)
+pytestmark = [pytest.mark.adr(54), pytest.mark.acceptance]
 
 SYSTEM2_KEYS = ["answer", "reasoning", "stream", "length", "roles", "tools", "tool_result", "catalog", "image", "window"]
 

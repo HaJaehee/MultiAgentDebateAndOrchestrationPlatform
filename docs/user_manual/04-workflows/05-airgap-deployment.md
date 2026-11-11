@@ -132,7 +132,7 @@ mcp 2.x 를 끌어옵니다. mcp 2.x 는 `mcp.server.fastmcp` 를 제거했으�
 
 ```bash
 python package_source.py [--out-dir dist] [--max-file-mb 2] [--allow-secrets]
-                         [--skip-manual-html]
+                         [--skip-manual-html] [--with-acceptance]
 ```
 
 ```text
@@ -216,6 +216,41 @@ GitHub(`ghp_`), Slack(`xox*-`), 개인 키 헤더.
 ```powershell
 Get-Content MANIFEST.txt | Where-Object { $_ -notmatch '^#' } | ForEach-Object { ... }
 ```
+
+---
+
+## 새 모델을 반입했을 때 — 점검과 수용 시험
+
+폐쇄망의 모델은 그곳에만 있으므로, 그 모델로 MADO 가 도는지는 그곳에서 확인해야 합니다. 가벼운 것부터 두 단계입니다.
+
+**1단계: 적합성 점검 (1분, 요청 8건).** 설치본에 이미 들어 있습니다.
+
+```bat
+python_runtime\python.exe -m app.modelcheck
+```
+
+도구 호출이 `tool_calls` 로 오는지, 추론이 본문과 갈라져 오는지, 잘린 답을 알려 주는지, 서버의 컨텍스트 창이 설정보다
+작은지를 검사 한 줄씩으로 보여 주고 고칠 설정을 알려 줍니다. 화면에서는 `모델 연결 상태` 창의 `적합성 점검` 버튼입니다.
+자세한 내용은 [LLM 연동 — 모델 적합성 점검](../03-core/03-llm-integration.md#모델-적합성-점검-adr-054).
+
+**2단계: 수용 시험 (약 20분, 실제 토론 한 턴 포함).** 시험 폴더는 기본 소스 패키지에 없고, 이름을 적어야 실립니다.
+
+```bat
+rem 개발 PC
+python package_source.py --with-acceptance
+
+rem 폐쇄망 — 패키지를 설치본 위에 풀고, 설치본 폴더에서
+set MADO_REAL_LLM=1
+python_runtime\python.exe -m pytest real_llm_tests -m acceptance -q -p no:cacheprovider
+```
+
+설치본의 `conf.json` 과 `.env` 가 가리키는 모델을 그대로 부르며, 설치본의 설정·DB·작업 공간은 건드리지 않고 임시
+폴더(`%TEMP%\mado-real-llm\<시각>`)에서 돕니다. 끝나면 그 폴더의 `report.json` 에 확인 하나하나의 통과 여부(`checks`)와
+모델이 실제로 한 행동(`notes`)이 남습니다. 모델의 선택에 달린 일은 실패가 아니라 `notes` 로 남으므로, 새 모델의 성향은
+`notes` 를 읽어 파악합니다. 기록 폴더에는 모델이 쓴 글이 들어 있으니 반출할 때는 `report.json` 만 가져가거나 내용을
+확인하십시오. 자세한 사용법은 패키지의 `real_llm_tests/README.md` 에 있습니다.
+
+기본 패키지에 넣지 않는 까닭은 한 번 돌리면 모델을 수백 번 부르고, 코드만 고친 갱신에는 필요 없기 때문입니다.
 
 ---
 

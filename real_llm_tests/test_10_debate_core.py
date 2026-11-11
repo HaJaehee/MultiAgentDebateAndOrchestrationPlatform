@@ -24,6 +24,8 @@ PROMPT = (
 
 SPEECH_KINDS = ("plan", "speech", "synthesis", "merge", "subdebate_speech", "subdebate_conclusion")
 
+pytestmark = pytest.mark.acceptance
+
 
 @pytest.fixture(scope="module")
 def debate(mado):
@@ -114,11 +116,19 @@ def test_adr043_round_boundaries_are_snapshotted(mado, debate):
 
 @pytest.mark.adr(45)
 def test_adr045_non_claude_requests_are_untouched_and_prefix_is_stable(mado, debate):
+    from app.agents.llm_prompt_cache import cache_mark
+    from app.agents.pool import get_agent_pool
+
     outcome = debate["outcome"]
     marked = [r.index for r in outcome.requests if "cache_control" in json.dumps([r.messages, r.tools])]
-    mado.check("ADR-045", "DeepSeek 요청에는 cache_control 마커가 없음", not marked, marked)
     blocks = [r.index for r in outcome.requests if any(isinstance(m.get("content"), list) for m in r.messages)]
-    mado.check("ADR-045", "DeepSeek 요청의 메시지는 블록이 아니라 글 그대로", not blocks, blocks)
+    claude = [key for key in AGENTS if cache_mark(get_agent_pool().get(key)) is not None]
+    if claude:
+        # Claude 연결에서는 마커가 붙는 것이 정상입니다 (그 확인은 `tests/test_prompt_cache.py` 의 몫입니다).
+        mado.note("ADR-045", f"Claude 연결({claude})이라 마커가 붙습니다 — 마커 붙은 요청 {len(marked)}건")
+    else:
+        mado.check("ADR-045", f"{mado.s2} 요청에는 cache_control 마커가 없음", not marked, marked)
+        mado.check("ADR-045", f"{mado.s2} 요청의 메시지는 블록이 아니라 글 그대로", not blocks, blocks)
 
     for agent in ("architect", "critic"):
         own = [r for r in outcome.requests_by(agent) if "[결정 장부 갱신]" not in r.last_user()]
@@ -136,7 +146,7 @@ def test_adr045_non_claude_requests_are_untouched_and_prefix_is_stable(mado, deb
         cached = [r.usage.get("prompt_tokens_details", {}).get("cached_tokens") or 0 for r in firsts[:2]]
         prompts = [r.usage.get("prompt_tokens") or 0 for r in firsts[:2]]
         mado.note("ADR-045", f"{agent}: 공통 앞부분 {shared}자 (1R 요청 {len(one)}자, 2R 요청 {len(two)}자) · "
-                             f"DeepSeek 가 보고한 캐시 적중 1R {cached[0]}/{prompts[0]} · 2R {cached[1]}/{prompts[1]} 토큰")
+                             f"{mado.s2} 가 보고한 캐시 적중 1R {cached[0]}/{prompts[0]} · 2R {cached[1]}/{prompts[1]} 토큰")
     turn_usage = debate["turns"][-1].usage or {}
     mado.check("ADR-045", "사용량 기록에 cache_write_tokens 칸이 있음", "cache_write_tokens" in turn_usage, turn_usage)
     mado.settle()
@@ -164,10 +174,10 @@ def test_adr048_usage_report_adds_up_to_what_the_provider_reported(mado, debate)
                   if isinstance(d.response, dict))
     mado.check("ADR-048", "턴 기록의 입력 토큰 = 제공자가 요청마다 보고한 값의 합",
                recorded.prompt_tokens == provider_prompt + jev_in,
-               f"턴 {recorded.prompt_tokens} · DeepSeek {provider_prompt} + Jev {jev_in}")
+               f"턴 {recorded.prompt_tokens} · {mado.s2} {provider_prompt} + 결정 LLM {jev_in}")
     mado.check("ADR-048", "턴 기록의 출력 토큰 = 제공자가 요청마다 보고한 값의 합",
                recorded.completion_tokens == provider_completion + jev_out,
-               f"턴 {recorded.completion_tokens} · DeepSeek {provider_completion} + Jev {jev_out}")
+               f"턴 {recorded.completion_tokens} · {mado.s2} {provider_completion} + 결정 LLM {jev_out}")
     mado.check("ADR-048", "턴 기록의 호출 수 = 실제 보낸 요청 수",
                recorded.calls == len(outcome.requests) + len(outcome.decisions),
                f"턴 {recorded.calls} · 요청 {len(outcome.requests)} + Jev {len(outcome.decisions)}")

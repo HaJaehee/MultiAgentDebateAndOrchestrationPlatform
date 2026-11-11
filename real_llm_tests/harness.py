@@ -176,7 +176,15 @@ class Harness:
         self._failed_before = 0
         # 도구 실행 앞뒤에서 "서버가 죽었다" 를 흉내 내는 훅 (`crash_turn`). 한 번 걸리면 스스로 풀립니다.
         self.inherits_system1 = False
+        # 대상 conf 에 없어 `conf.example.json` 에서 채워 넣은 표준 에이전트 키 (`_write_conf`).
+        self.supplemented_agents: List[str] = []
         self.fault: Optional[Callable[[str, Any, str, Dict[str, Any]], bool]] = None
+
+    @property
+    def s2(self) -> str:
+        """생성형(System 2) 모델의 이름. 확인·관찰 문구에 씁니다 — 어느 모델로 돌린 기록인지 보고서만 보고 알 수 있게."""
+        model = str(self.code_identity.get("model") or "")
+        return model.split("/", 1)[-1] or "System 2 모델"
 
     # ------------------------------------------------------------------ 세우기
 
@@ -247,6 +255,10 @@ class Harness:
         """대상의 conf.json 을 바탕으로 시험용 사본을 만듭니다. 코드가 아니라 설정만 다릅니다."""
         raw = json.loads((self.target / "conf.json").read_text(encoding="utf-8-sig"))
         raw.setdefault("app", {})["db_url"] = f"sqlite+aiosqlite:///{self.db_path.as_posix()}"
+        # 같은 연결의 다른 모델로 돌려 볼 때 (폐쇄망에서 모델 여럿을 차례로 받아 볼 때). 연결 정보는 대상의 것 그대로입니다.
+        model_override = os.environ.get("MADO_REAL_LLM_MODEL", "").strip()
+        if model_override:
+            raw.setdefault("llm", {})["model"] = model_override
         servers = raw.setdefault("mcp_servers", {})
         # 실제 웹 검색은 시험을 비결정적으로 만들고 밖으로 나갑니다. 끕니다.
         if "web_search" in servers:
@@ -260,6 +272,7 @@ class Harness:
         security["allow"] = list(security.get("allow") or []) + ["mcp(webdocs/fetch_page)"]
         security["untrusted_sources"] = list(security.get("untrusted_sources") or []) + ["mcp(webdocs/read_doc)"]
         agents = raw.setdefault("agents", {})
+        self._supplement_standard_agents(agents)
         agents["rt_reader"] = {
             "name": "Log Reader", "role": "Reads files and reports facts",
             "temperature": 0.0, "max_tokens": 1500, "max_context_window": 24000,
@@ -285,12 +298,39 @@ class Harness:
             "system_prompt": "용어는 도구로 확인하고 답합니다.",
         }
         # 대상 conf 의 전역 `llm.decision_llm.enabled` 가 켜져 있으면, 따로 끄지 않은 에이전트는 전부 System 1(Jev)
-        # 판정 에이전트가 됩니다 (도구도 DeepSeek 도 쓰지 않습니다). 시험용 전문가는 System 2 로 고정합니다.
+        # 판정 에이전트가 됩니다 (도구도 생성형 모델도 쓰지 않습니다). 시험용 전문가는 System 2 로 고정합니다.
         for key, agent in agents.items():
             if key.startswith("rt_"):
                 agent["decision_llm"] = {"enabled": False}
         self.inherits_system1 = bool(((raw.get("llm") or {}).get("decision_llm") or {}).get("enabled"))
         self.conf_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def _supplement_standard_agents(self, agents: Dict[str, Any]) -> None:
+        """시나리오가 이름으로 부르는 표준 에이전트(architect·coder·critic)가 대상 conf 에 없으면 예제 설정에서 채웁니다.
+
+        번들은 `conf.example.json` 으로 conf 를 만들기 때문에 보통은 다 있습니다. 운영 conf 에서 지웠거나 이름을
+        바꾼 경우에만 채우고, 있는 것은 건드리지 않습니다 (꺼 둔 것은 이 사본에서만 켭니다). 연결은 전역 `llm` 을
+        물려받게 개별 모델·주소·키는 비웁니다 — 시험하려는 것은 대상의 모델입니다.
+        """
+        example_path = self.code / "conf.example.json"
+        if not example_path.is_file():
+            return
+        example = json.loads(example_path.read_text(encoding="utf-8-sig")).get("agents") or {}
+        for key in ("architect", "coder", "critic"):
+            current = agents.get(key)
+            if isinstance(current, dict):
+                if current.get("enabled") is False:
+                    current["enabled"] = True
+                    self.supplemented_agents.append(f"{key}(켬)")
+                continue
+            template = example.get(key)
+            if not isinstance(template, dict):
+                continue
+            agents[key] = {
+                name: value for name, value in template.items()
+                if name not in ("model", "api_key", "api_base", "api_version", "provider") and not name.startswith("//")
+            }
+            self.supplemented_agents.append(key)
 
     async def _start(self) -> None:
         from functools import partial
@@ -318,7 +358,8 @@ class Harness:
         get_runtime_pool().idle_hook = partial(maintain_workspace, get_session_factory())
         self.engine = get_orchestrator_engine()
         self._install_recorders()
-        self.code_identity["model"] = os.environ.get("LLM_MODEL", "")
+        self.code_identity["model"] = cfg.llm.model or os.environ.get("LLM_MODEL", "")
+        self.code_identity["supplemented_agents"] = list(self.supplemented_agents)
         self.code_identity["decision_backend"] = cfg.llm.decision_llm.backend
         self.code_identity["python"] = sys.version.split()[0]
         from importlib.metadata import version
@@ -693,7 +734,8 @@ class Harness:
         이런 실패는 앱이 "연결 끊김" 발언으로 정직하게 기록하고 턴을 끝까지 돌리므로(ADR-007), 시험은 겉으로 멀쩡히
         끝납니다. 그 결과로 통과·실패를 판정하면 틀립니다. 그래서 `settle()` 이 먼저 이것을 봅니다.
         """
-        marks = ("Insufficient Balance", "insufficient_balance", "AuthenticationError", "invalid api key")
+        marks = ("Insufficient Balance", "insufficient_balance", "AuthenticationError", "invalid api key",
+                 "Incorrect API key")
         for request in self.requests:
             if request.error and any(mark.lower() in request.error.lower() for mark in marks):
                 return f"요청 {request.index} ({request.agent}): {request.error[:200]}"
@@ -930,7 +972,17 @@ def default_run_dir() -> Path:
 
 
 def default_target() -> Path:
-    return Path(os.environ.get("MADO_REAL_LLM_TARGET") or DEFAULT_TARGET).resolve()
+    """환경을 빌릴 MADO 폴더. 정하지 않으면 개발 저장소의 번들, 그것이 없으면 이 폴더가 놓인 설치본 자신입니다.
+
+    뒤의 경우가 폐쇄망입니다: 소스 패키지(`package_source.py --with-acceptance`)로 설치본에 `real_llm_tests/` 를
+    함께 풀었을 때, 그 설치본의 conf·.env·런타임으로 돕니다.
+    """
+    chosen = os.environ.get("MADO_REAL_LLM_TARGET")
+    if chosen:
+        return Path(chosen).resolve()
+    if DEFAULT_TARGET.is_dir():
+        return DEFAULT_TARGET.resolve()
+    return REPO.resolve()
 
 
 def default_code(target: Path) -> Path:
