@@ -73,6 +73,25 @@ def test_the_last_band_tells_the_agent_to_stop_calling_tools():
     assert "도구를 더 부르지 말고" in notice
 
 
+def test_the_notice_counts_what_compaction_would_free():
+    """남은 여유만 알리면 모델이 일찍 멈춥니다 (실제 DeepSeek 시험, 2026-11-11). 줄일 수 있는 지난 읽기 몫을 함께 알립니다."""
+    asked = []
+
+    def spare() -> int:
+        asked.append(1)
+        return 9_000
+
+    assert context_pressure_notice(used=10_000, budget=100_000, announced=set(), reclaimable=spare) is None
+    assert asked == [], "띠를 넘지 않으면 세지 않습니다 (세는 동안 이벤트 루프가 멈춥니다)"
+    notice = context_pressure_notice(used=72_000, budget=100_000, announced=set(), reclaimable=spare)
+    assert "남은 여유 약 28,000 토큰, 지난 파일 읽기를 줄이면 약 37,000 토큰" in notice
+    assert "다시 읽으면 원문" in notice and "일찍 멈추지 말고" in notice
+    small = context_pressure_notice(used=72_000, budget=100_000, announced=set(), reclaimable=lambda: 300)
+    assert "줄이면" not in small, "몇백 토큰은 알리지 않습니다"
+    last = context_pressure_notice(used=96_000, budget=100_000, announced=set(), reclaimable=spare)
+    assert "여유가 거의 없습니다" in last and "꼭 필요한 호출이 아니면" in last
+
+
 def test_a_zero_budget_never_divides_by_zero():
     """`max_context_window` 가 `max_tokens` 보다 작게 설정될 수 있습니다."""
     assert context_pressure_notice(used=10, budget=0, announced=set()) is None

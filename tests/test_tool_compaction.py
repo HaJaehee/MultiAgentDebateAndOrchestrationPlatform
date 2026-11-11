@@ -147,11 +147,27 @@ def test_the_stub_says_what_was_read_and_how_to_get_it_back():
     assert READ in stub and "app/x.py" in stub
     assert f"{len(lines):,}줄" in stub and f"{len(BIG):,}자" in stub
     assert "다시 읽으세요" in stub and "지어내지" in stub
+    # 도구가 잘라서 준 것으로 읽히면 모델이 다시 읽지 않습니다 (실제 DeepSeek 시험, 2026-11-11).
+    assert "도구는 원문 전체를 돌려줬고" in stub and "앱이 나중에" in stub
+    # 그때 적어 둔 값을 믿으라고 하지 않으면 다 읽은 모델이 제 기록을 철회하고 같은 파일을 되풀이해 읽습니다.
+    assert "그때 본문에 적어 둔 값은 실제로 본 것" in stub
     assert lines[0] in stub and lines[EXCERPT_HEAD_LINES - 1] in stub
     assert lines[EXCERPT_HEAD_LINES] not in stub
     assert lines[-1] in stub and lines[-EXCERPT_TAIL_LINES] in stub
     assert lines[-EXCERPT_TAIL_LINES - 1] not in stub
     assert len(stub) < 1500
+
+
+def test_reclaimable_tokens_count_what_overflow_compaction_would_free(_settings):
+    """사용률 고지가 알리는 몫: 넘치면 가장 최근 판만 남기고 줄인 크기와의 차이입니다."""
+    model = "openai/gpt-4o"
+    messages = _reads(3)
+    used = estimate_tokens(model, messages)
+    shrunk, _ = compact_stale_tool_outputs(messages, stale_rounds=1, min_chars=_settings.min_chars)
+    assert tool_compaction.reclaimable_tokens(model, messages, used) == used - estimate_tokens(model, shrunk) > 0
+    assert tool_compaction.reclaimable_tokens(model, _reads(1), used) == 0, "가장 최근 판은 줄이지 않습니다"
+    _settings.enabled = False
+    assert tool_compaction.reclaimable_tokens(model, messages, used) == 0
 
 
 def test_a_file_with_no_line_breaks_stays_small():

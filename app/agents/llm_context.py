@@ -6,7 +6,7 @@ import json
 import logging
 import math
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import litellm
 
@@ -241,6 +241,9 @@ CONTEXT_OFFLOAD_BAND = 0.85
 # 상향의 하드 상한. 지금 나와 있는 가장 큰 모델을 넉넉히 덮습니다.
 CONTEXT_WINDOW_CEILING = 2_000_000
 
+# 압축으로 되찾을 몫이 이만큼은 돼야 고지에 적습니다. 몇백 토큰을 알리면 모델이 그것을 믿고 더 읽다 넘칩니다.
+CONTEXT_RECLAIM_NOTE_MIN_TOKENS = 1_000
+
 def context_headroom(agent: Agent) -> Optional[int]:
     """모델의 **실제** 입력 한도까지 남은 여유. 한도를 모르면 None.
 
@@ -285,6 +288,7 @@ def context_pressure_notice(
     announced: set,
     memory_tool: Optional[str] = None,
     tool_calls_left: Optional[int] = None,
+    reclaimable: Optional[Callable[[], int]] = None,
 ) -> Optional[str]:
     """컨텍스트 사용률 고지. 새로 넘은 띠가 없으면 None.
 
@@ -294,6 +298,11 @@ def context_pressure_notice(
     `memory_tool` 이 있으면 85% 띠에서 "잘리기 전에 그래프로 옮겨 두라"를 덧붙입니다.
     메모리에 쓴다고 컨텍스트가 그 자리에서 줄지는 않습니다 — 대화 메시지는 그대로
     남습니다. 줄어드는 것은 **잘려도 잃지 않게 되는 것**이고, 문구도 그렇게 씁니다.
+
+    `reclaimable` 은 자리가 모자랄 때 압축(ADR-040)으로 되찾을 토큰을 셉니다. 고지할 띠를 넘었을 때만 부릅니다 (세는 동안
+    이벤트 루프가 멈춥니다). 되찾을 몫이 있으면 그것을 남은 여유와 함께 알립니다. 남은 여유만 알렸더니 실제 DeepSeek 시험에서
+    모델이 "남은 7,440 토큰으로는 파일 4개를 못 읽는다" 며 일찍 멈췄습니다. 오래된 읽기는 자리가 모자라면 줄어든다는 것을
+    고지가 말하지 않았기 때문입니다 (2026-11-11).
     """
     if budget <= 0:
         return None
@@ -305,18 +314,38 @@ def context_pressure_notice(
     band = max(crossed)
     announced.update(crossed)
     remaining = max(0, budget - used)
+    spare = 0
+    if reclaimable is not None:
+        try:
+            spare = max(0, int(reclaimable()))
+        except Exception:  # noqa: BLE001 - 되찾을 몫을 못 세도 고지는 갑니다
+            spare = 0
+    compactable = spare >= CONTEXT_RECLAIM_NOTE_MIN_TOKENS
     head = (
         f"[컨텍스트] 이번 발언의 맥락이 한도의 **{int(ratio * 100)}%** 를 쓰고 있습니다 "
-        f"(남은 여유 약 {remaining:,} 토큰)."
+        + (
+            f"(남은 여유 약 {remaining:,} 토큰, 지난 파일 읽기를 줄이면 약 {remaining + spare:,} 토큰). "
+            f"자리가 모자라면 앱이 지난 파일 읽기 결과를 앞뒤 일부만 남기고 줄입니다 — 같은 도구로 다시 읽으면 원문을 다시 "
+            f"받습니다. 그러니 남은 여유만 보고 일찍 멈추지 말고, 읽은 파일에서 필요한 값은 다음 도구를 부를 때 본문에 한 줄로 "
+            f"적어 두세요."
+            if compactable else
+            f"(남은 여유 약 {remaining:,} 토큰)."
+        )
     )
 
     if band >= 0.95:
+        if compactable:
+            return (
+                f"{head} **여유가 거의 없습니다.** 꼭 필요한 호출이 아니면 도구를 더 부르지 말고 지금 결론을 쓰세요."
+            )
         return (
             f"{head} **여유가 거의 없습니다.** 도구를 더 부르지 말고 지금 결론을 쓰세요. "
             f"길게 쓰면 그만큼 앞선 기록이 잘려 나갑니다."
         )
     if band >= 0.85:
         tail = (
+            "곧 지난 파일 읽기부터 줄이고, 그래도 모자라면 앞선 발언과 도구 관측을 오래된 것부터 생략합니다. 결론을 준비하세요."
+            if compactable else
             "곧 앞선 발언과 도구 관측이 오래된 것부터 생략됩니다. 결론을 준비하세요."
         )
         if memory_tool and (tool_calls_left is None or tool_calls_left > TOOL_BUDGET_FINAL_COUNTDOWN):

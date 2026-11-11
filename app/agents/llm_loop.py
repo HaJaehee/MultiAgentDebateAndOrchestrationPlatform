@@ -51,7 +51,7 @@ from app.agents.media import (
     replace_attachments,
     store_tool_media,
 )
-from app.agents.tool_compaction import compact_loop_messages
+from app.agents.tool_compaction import compact_loop_messages, reclaimable_tokens
 from app.agents.tool_loading import (
     CALLED_BEFORE_LOADING_NOTE,
     ToolShelf,
@@ -526,12 +526,15 @@ class ToolLoopMixin:
         if notice:
             self._append_budget_notice(loop.messages, notice)
 
+        used = estimate_tokens(agent.model, loop.messages)
         pressure = context_pressure_notice(
-            used=estimate_tokens(agent.model, loop.messages),
+            used=used,
             budget=context_budget(agent, loop.window, loop.tools),
             announced=loop.announced_bands,
             memory_tool=loop.memory_write,
             tool_calls_left=loop.limit - loop.used,
+            # 자리가 모자라면 지난 파일 읽기를 줄입니다 (ADR-040). 고지가 그 몫을 함께 알려야 모델이 일찍 멈추지 않습니다.
+            reclaimable=lambda: reclaimable_tokens(agent.model, loop.messages, used),
         )
         if pressure:
             self._append_budget_notice(loop.messages, pressure)

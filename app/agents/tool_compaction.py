@@ -51,10 +51,16 @@ def compacted_output(name: str, arguments: str, output: str) -> str:
     lines = output.splitlines()
     head = lines[:EXCERPT_HEAD_LINES]
     tail = lines[max(EXCERPT_HEAD_LINES, len(lines) - EXCERPT_TAIL_LINES):]
+    # 도구가 잘라서 돌려준 것이 아니라 앱이 나중에 줄였다는 것을 밝힙니다. 그렇게 적지 않았더니 실제 DeepSeek 시험에서 모델이
+    # "read_text_file 이 앞 12줄·끝 3줄만 돌려준다" 고 결론 내리고 다시 읽어도 같을 것이라며 다시 읽지 않았습니다. 또 그때 본문에
+    # 적어 둔 값을 믿어도 된다고 적지 않았더니, 다 읽고 값을 적은 모델이 스텁에 그 줄이 안 보인다며 "관측이 아니라 오기" 로
+    # 철회하고 같은 파일을 18번 다시 읽다 컨텍스트가 넘쳤습니다 (2026-11-11).
     parts = [
         f"{COMPACTED_OUTPUT_HEAD} 앞서 `{name}` 로 읽은 결과입니다 (인자: {arguments or '없음'}, 전체 "
-        f"{len(lines):,}줄 {len(output):,}자). 컨텍스트를 아끼려고 앞뒤 일부만 남겼습니다. 생략된 내용을 지어내지 마세요. "
-        f"내용이 더 필요하거나 이 파일을 고치려면 같은 도구로 다시 읽으세요. 필요한 범위만 읽을 수 있으면 그렇게 하세요.",
+        f"{len(lines):,}줄 {len(output):,}자). 도구는 원문 전체를 돌려줬고 당신은 그때 전체를 봤습니다. 컨텍스트를 아끼려고 "
+        f"앱이 나중에 앞뒤 일부만 남기고 줄였습니다. 그때 본문에 적어 둔 값은 실제로 본 것이니 그대로 쓰고, 확인하려고 다시 "
+        f"읽지 마세요. 적어 두지 않은 내용이 필요하거나 이 파일을 고치려면 같은 도구로 다시 읽으세요 — 원문 전체를 다시 "
+        f"받습니다. 생략된 내용을 지어내지 마세요. 필요한 범위만 읽을 수 있으면 그렇게 하세요.",
         f"--- 앞 {len(head)}줄",
         *(_clip(line, EXCERPT_LINE_CHARS) for line in head),
     ]
@@ -100,6 +106,21 @@ def compact_stale_tool_outputs(
                     continue
         out.append(msg)
     return (out, compacted) if compacted else (messages, 0)
+
+
+def reclaimable_tokens(model: str, messages: List[Dict[str, Any]], used: int) -> int:
+    """자리가 모자랄 때 압축으로 되찾을 토큰. 압축이 꺼졌거나 줄일 것이 없으면 0.
+
+    예산을 넘기면 `compact_loop_messages` 가 가장 최근 판만 남기고 줄이므로, 같은 방식으로 줄인 뒤의 크기와 비교합니다.
+    컨텍스트 사용률 고지가 띠를 넘을 때만 부릅니다 (`context_pressure_notice`).
+    """
+    settings = get_config().tool_output_compaction
+    if not settings.enabled:
+        return 0
+    shrunk, count = compact_stale_tool_outputs(messages, stale_rounds=1, min_chars=settings.min_chars)
+    if not count:
+        return 0
+    return max(0, used - estimate_tokens(model, shrunk))
 
 
 def compact_loop_messages(
