@@ -105,6 +105,7 @@ LLM 요청은 가로채 **기록만 하고 그대로 보냅니다** (`litellm.ac
 | `test_40_tool_context.py` | ADR-039 · 040 | 도구 스키마 지연 로딩, 지난 파일 읽기 압축, 압축 몫을 알리는 사용률 고지 |
 | `test_41_outside_content.py` | ADR-047 · 035 | 지시 주입 문서와 오염 승격, 첨부 · 도구가 준 그림 |
 | `test_42_plugins.py` | ADR-042 | 예제 전략 · 호스트 도구 플러그인 |
+| `test_45_bench.py` | ADR-055 | Bench 의 결정적 검사(모델이 만든 스크립트를 실제로 실행)와 판정 모델의 채점, 같은 실행끼리의 비교 |
 | `test_50_resume.py` | ADR-046 (+048) | 끊긴 쓰기의 디스크 확인, 커널 셀 다시 실행 |
 | `test_60_diagnostician.py` | ADR-049 | 실행 기반 진단, 시도 · 검증 이력, 정체 관찰자 |
 | `test_70_workflow_builder.py` | ADR-050 (+053) | 대화로 그래프 + 새 에이전트 설계 → 저장 → 그 그래프로 실제 턴, 계획 발언은 읽기만 |

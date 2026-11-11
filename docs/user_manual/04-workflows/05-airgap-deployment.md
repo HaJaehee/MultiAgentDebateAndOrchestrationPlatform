@@ -252,6 +252,20 @@ python_runtime\python.exe -m pytest real_llm_tests -m acceptance -q -p no:cachep
 
 기본 패키지에 넣지 않는 까닭은 한 번 돌리면 모델을 수백 번 부르고, 코드만 고친 갱신에는 필요 없기 때문입니다.
 
+**3단계: 모델·전략 조합 비교 (Bench).** 모델이 여럿이면 어느 모델을 어느 역할에 둘지를 일을 시켜 보고 고릅니다.
+시나리오 파일에 요청 하나와 변형들을 적고, `matrix` 로 에이전트별 모델 목록을 주면 조합마다 한 턴씩 돕니다.
+
+```bat
+python_runtime\python.exe -m app.bench run bench\small-impl.json
+python_runtime\python.exe -m app.bench diff data\bench\<이전>\result.json data\bench\<이후>\result.json
+```
+
+보고서(`data/bench/<실행 id>/report.md`)에는 토큰·시간과 함께 **검사**(만든 스크립트가 실제로 도는가 같은 결정적 확인)와
+**채점**(conf 의 에이전트 하나가 판정자로 매긴 0~1 점수)이 변형마다 남습니다. 채점은 모델의 의견이므로 같은 판정자가
+매긴 변형끼리의 차이로 읽고, 판정자는 `max_tokens` 가 넉넉한 에이전트로 고릅니다. `diff` 는 모델이나 프롬프트를 바꾼
+뒤에 끝나지 못한 변형·줄어든 검사·내려간 채점을 짚고, 있으면 끝남 값 1 을 돌려줍니다. Bench 는 그 설치본의 DB 에
+`[bench]` 로 시작하는 대화를 남기므로 화면에서 열어 읽을 수 있습니다.
+
 ---
 
 ## 설정 하나로 두 환경

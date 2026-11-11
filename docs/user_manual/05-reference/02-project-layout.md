@@ -76,7 +76,7 @@ app/
 ├── code_diff.py                     234   코드 Diff 연산 엔진 (git diff 파싱, 인라인 단어 강조)
 ├── code_versions.py                  96   세션 발언 기반 코드 버전 추출 및 비교 추천 엔진
 ├── session_fork.py                  291   대화 세션 분기(Fork), 비교 데이터 구성 및 결론 평가
-├── bench.py                         339   전략 벤치마크 하네스 python -m app.bench
+├── bench.py                         811   전략 벤치마크 하네스 python -m app.bench — 검사·채점·모델 행렬·실행 비교 (ADR-055)
 ├── modelcheck.py                     75   모델 적합성 점검 명령줄 python -m app.modelcheck (ADR-054)
 ├── graph_store.py                   105   그래프 토론의 그래프 파일 data/graphs/
 │

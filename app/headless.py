@@ -26,6 +26,7 @@ from app.config import DEFAULT_SUB_DEBATE_ROUNDS, MAX_SUB_DEBATE_ROUNDS, ORCHEST
 from app.database.models import ArtifactModel, MessageModel, SessionModel, TurnModel
 from app.database.session import get_session_factory
 from app.events import EventType
+from app.graph_store import load_graph
 from app.orchestration import turns
 from app.orchestration.runner import get_debate_runner
 from app.orchestration.session_title import API_SESSION_TITLE
@@ -76,15 +77,27 @@ async def create_session(
     token_budget: int = 0,
     sub_debates: bool = False,
     sub_debate_rounds: int = DEFAULT_SUB_DEBATE_ROUNDS,
+    graph_id: str = "",
 ) -> Dict[str, Any]:
-    """새 대화 세션을 생성합니다. 사람이 그린 그래프가 필요한 그래프 토론은 전용 편집기를 통해 생성해야 하므로 지원되지 않습니다."""
+    """새 대화 세션을 생성합니다.
+
+    그래프 토론은 그래프를 여기서 만들지 않습니다. 편집기로 저장해 둔 그래프의 id 를 `graph_id` 로 골라야 하고,
+    주지 않으면 거절합니다 (REST·MCP 는 이 인자를 내보내지 않으므로 거기서는 예전처럼 거절됩니다). 적응형 그래프
+    토론은 `graph_id` 를 주면 그것을 바탕 그래프로 씁니다.
+    """
     # 신규 생성이므로 레거시 별칭(`LEGACY_STRATEGY_ALIASES`)은 허용하지 않으며 정확한 전략 식별자를 요구합니다.
     name = (strategy or "").strip()
     chosen = STRATEGY_MAP.get(name)
     if chosen is None:
         raise HeadlessError(400, f"지원되지 않는 토론 전략입니다: {strategy} (지원 전략: {', '.join(STRATEGY_MAP)})")
-    if chosen.uses_graph_file:
+    graph_id = (graph_id or "").strip()
+    if chosen.uses_graph_file and not graph_id:
         raise HeadlessError(400, "그래프 기반 토론은 웹 UI에서 그래프를 선택하여 생성해야 합니다.")
+    if graph_id:
+        try:
+            load_graph(graph_id)
+        except (OSError, ValueError) as exc:
+            raise HeadlessError(400, f"그래프를 읽지 못했습니다: {graph_id} ({exc})") from exc
     if not 1 <= int(max_rounds) <= MAX_ROUNDS_LIMIT:
         raise HeadlessError(400, f"max_rounds 값은 1~{MAX_ROUNDS_LIMIT} 사이여야 합니다.")
     if not 1 <= int(sub_debate_rounds) <= MAX_SUB_DEBATE_ROUNDS:
@@ -105,6 +118,7 @@ async def create_session(
             token_budget=max(0, int(token_budget or 0)),
             sub_debates=bool(sub_debates),
             sub_debate_rounds=int(sub_debate_rounds),
+            graph_id=graph_id,
         ))
         await db.commit()
     return {"session_id": sid, "strategy": name, "agents": keys,

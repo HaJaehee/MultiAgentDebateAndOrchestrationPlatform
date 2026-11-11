@@ -1,6 +1,6 @@
 # ADR-054. 새 모델은 토론에 넣기 전에 작은 요청 몇 건으로 점검하고, 결과는 설정을 바꾸지 않고 권고로만 낸다
 
-> [ADR 목록](README.md) · 이전: [ADR-053](ADR-053-plan-speech-reads-only.md)
+> [ADR 목록](README.md) · 이전: [ADR-053](ADR-053-plan-speech-reads-only.md) · 다음: [ADR-055](ADR-055-bench-checks-and-judged-rubric.md)
 
 ## 상태 (Status)
 
