@@ -806,6 +806,10 @@ EARLIER_RESULTS_SOURCE = "earlier-tool-results"
 TAINT_SOURCES_SHOWN = 5
 # 감사 로그의 `rule` 필드에 기록되는 오염 승격 식별자 (`tool_gate`에서 기록하고 `describe_verdict`에서 해석).
 TAINT_RULE = "taint"
+# 물어볼 유저가 없어 거부한 호출. 오염 승격 때문에 물어야 했던 호출이면 `unattended:taint` 로 남겨, 무인 턴에서도
+# "외부 내용을 읽은 발언이라 막혔다" 가 감사 기록에 드러나게 합니다 (ADR-047). 시간 초과도 같은 표식을 씁니다.
+UNATTENDED_RULE = "unattended"
+UNATTENDED_TAINT_RULE = f"{UNATTENDED_RULE}:{TAINT_RULE}"
 
 # 괄호 형태와 무관하게 태그 이름을 무력화합니다 — `＜/untrusted_content＞`나 `&lt;/untrusted_content&gt;`는 물론,
 # 공백·대소문자·제로폭(Zero-width) 문자로 분할된 변형도 모델에게는 닫는 태그로 인식될 수 있기 때문입니다.
@@ -984,8 +988,8 @@ def describe_verdict(security: Optional[Mapping[str, Any]]) -> str:
     elif decision == "deny":
         if origin == "mode":
             parts = ["모드 차단", f"{MODE_LABELS.get(body, body)} 모드"]
-        elif rule == "unattended":
-            parts = ["응답 없음", "물어볼 유저가 없었음"]
+        elif rule in (UNATTENDED_RULE, UNATTENDED_TAINT_RULE):
+            parts = ["응답 없음", "물어볼 유저가 없었음", _TAINT_GROUND if rule == UNATTENDED_TAINT_RULE else ""]
         elif rule == "gate-error":
             parts = ["판정 오류", "안전을 위해 실행하지 않음"]
         else:
@@ -1002,7 +1006,7 @@ def describe_verdict(security: Optional[Mapping[str, Any]]) -> str:
         else:
             parts = ["유저 거부", _registered(origin, body)]
     elif decision == "timeout":
-        parts = ["응답 없음", "정해진 시간 안에 답이 없었음"]
+        parts = ["응답 없음", "정해진 시간 안에 답이 없었음", _TAINT_GROUND if rule == TAINT_RULE else ""]
     else:
         parts = [decision, rule]
     parts.append(_APPROVER_LABELS.get(approver, ""))

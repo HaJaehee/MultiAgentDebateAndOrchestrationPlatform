@@ -37,6 +37,7 @@ from app.mcp.policy import (
     OUTSIDE,
     TAINT_RULE,
     TAINT_SOURCES_SHOWN,
+    UNATTENDED_TAINT_RULE,
     UNTRUSTED_MEDIA_NOTE,
     UNTRUSTED_NOTE,
     UNTRUSTED_TAG,
@@ -427,7 +428,8 @@ async def test_a_refused_card_tells_the_model_and_records_why(tmp_path, security
 async def test_a_speech_with_nobody_to_ask_is_refused(tmp_path, security):
     gate = ToolGate(session_id="s", control=None)
     result = await gate.check(_agent(), *CODE, _runtime(tmp_path), tainted_by=("kb/search",))
-    assert not result.allowed and result.audit["rule"] == "unattended"
+    assert not result.allowed and result.audit["rule"] == UNATTENDED_TAINT_RULE
+    assert describe_verdict(result.audit) == "응답 없음 · 물어볼 유저가 없었음 · 외부 내용을 읽은 발언"
     assert "외부 내용" in result.output
 
 
@@ -485,7 +487,7 @@ async def test_a_second_network_call_asks_even_under_an_allow_rule(monkeypatch, 
     _install(monkeypatch, [("", [FETCH_CALL]), ("", [FETCH_CALL]), ("끝", [])])
     _content, logs = await _speak(_runtime(tmp_path), ToolGate(session_id="s", control=None))
     assert logs[0]["status"] == "success"
-    assert logs[1]["status"] == "denied" and logs[1]["security"]["rule"] == "unattended"
+    assert logs[1]["status"] == "denied" and logs[1]["security"]["rule"] == UNATTENDED_TAINT_RULE
 
 
 @pytest.mark.asyncio
@@ -598,7 +600,7 @@ async def test_the_mark_survives_a_cut_and_a_lost_message(monkeypatch, tmp_path,
     runtime = _runtime(tmp_path)
     _content, logs = await _speak(runtime, ToolGate(session_id="s", control=None), resume_state=state)
     assert logs[-1]["tool_name"] == CODE[0] and logs[-1]["status"] == "denied"
-    assert logs[-1]["security"]["rule"] == "unattended" and CODE[0] not in runtime.ran
+    assert logs[-1]["security"]["rule"] == UNATTENDED_TAINT_RULE and CODE[0] not in runtime.ran
 
 
 def test_the_snapshot_round_trips_the_mark():

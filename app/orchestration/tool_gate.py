@@ -42,6 +42,8 @@ from app.mcp.policy import (
     MODE_LABELS,
     RISK_LABELS,
     TAINT_RULE,
+    UNATTENDED_RULE,
+    UNATTENDED_TAINT_RULE,
     CallProfile,
     Policy,
     Verdict,
@@ -312,7 +314,7 @@ class ToolGate:
                 refusal_text(tool_name, "확인이 필요한 호출인데 물어볼 유저가 없어 실행하지 않았습니다.\n"
                                         + verdict.explain()),
                 "denied",
-                _audit("deny", verdict.risk, "unattended"),
+                _audit("deny", verdict.risk, UNATTENDED_TAINT_RULE if verdict.source == "taint" else UNATTENDED_RULE),
             )
 
         return await self._ask(agent, tool_name, arguments, profile, policy, verdict, signature)
@@ -454,7 +456,7 @@ class ToolGate:
                 f"실행하지 않았습니다.\n{verdict.explain()}"
             )
             text = refusal_text(tool_name, reason)
-            audit = _audit("timeout", verdict.risk)
+            audit = _audit("timeout", verdict.risk, marker)
         else:
             reason = "유저가 이 호출을 거부했습니다."
             if decision in ("deny_session", "deny_always") and scope:
