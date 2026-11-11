@@ -225,7 +225,8 @@ def test_the_benchmark_accepts_it_because_it_needs_no_graph_file(tmp_path):
     variant = load_scenario(path).variants[0]
     assert variant.sub_debates is True and variant.sub_debate_rounds == 3
     path.write_text(json.dumps({"prompt": "p", "variants": [{"label": "a", "strategy": "graph_debate"}]}), encoding="utf-8")
-    with pytest.raises(ValueError, match="지원되지 않는 전략"):
+    # 그래프 토론은 저장해 둔 그래프의 id 를 적어야 돕니다 (ADR-055). 적응형은 그래프 없이도 됩니다.
+    with pytest.raises(ValueError, match="graph 에 그래프 id 를 적어야"):
         load_scenario(path)
 
 
