@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
-from app.agents import write_probe
+from app.agents import llm_usage, write_probe
 from app.agents.base import Agent
 from app.agents.connection import REJECTED, classify
 from app.agents.consultation import current_consultation_scope
@@ -51,7 +51,7 @@ from app.agents.media import (
     replace_attachments,
     store_tool_media,
 )
-from app.agents.tool_compaction import compact_loop_messages, reclaimable_tokens
+from app.agents.tool_compaction import compact_loop_messages, reclaimable_tokens, reread_of_compacted
 from app.agents.tool_loading import (
     CALLED_BEFORE_LOADING_NOTE,
     ToolShelf,
@@ -235,6 +235,7 @@ class ToolLoop:
         """모델의 `tools__load_tools` 호출을 처리하여 요청된 도구 스키마들을 로드합니다."""
         output, status, loaded = load_tools_answer(self.shelf, arguments)
         self._refresh_shelf(loaded)
+        llm_usage.note_tool_context(load_calls=1, loads=len(loaded))
         return output, status
 
     def note_direct_call(self, fn_name: str, output: str, status: str) -> str:
@@ -243,6 +244,7 @@ class ToolLoop:
             return output
         loaded = self.shelf.load([fn_name])
         self._refresh_shelf(loaded)
+        llm_usage.note_tool_context(loads=len(loaded))
         if loaded and status == "error":
             return f"{output}\n\n{CALLED_BEFORE_LOADING_NOTE}"
         return output
@@ -501,6 +503,7 @@ class ToolLoopMixin:
             loop.agent.model, loop.messages, context_budget(loop.agent, loop.window, loop.tools),
         )
         if compacted:
+            llm_usage.note_tool_context(compacted=compacted)
             logger.info(
                 f"{loop.agent.name} compacted {compacted} stale file read(s): "
                 f"context now ≈{estimate_tokens(loop.agent.model, loop.messages):,} tok"
@@ -727,6 +730,9 @@ class ToolLoopMixin:
                 output, status = gate.output, gate.status or "denied"
             else:
                 await self._note_write_start(loop, fn_name, fn_args, call_id)
+                if reread_of_compacted(loop.messages, fn_name, fn_args):
+                    # 줄여 둔 읽기를 모델이 다시 불렀습니다. 막지 않고 셉니다 — 압축이 치르는 값입니다 (ADR-040).
+                    llm_usage.note_tool_context(rereads=1)
                 outside = self._outside_source(fn_name, fn_args, loop.mcp)
                 output, status = await self._execute_tool_safely(
                     agent, fn_name, fn_args, loop.session_id, loop.mcp, tools=loop.tools, loop=loop,

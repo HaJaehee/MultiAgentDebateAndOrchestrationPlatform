@@ -539,3 +539,51 @@ def test_the_screen_label_names_the_tools():
     from app.agents.catalog import tool_label
 
     assert tool_label(LOAD_TOOLS_TOOL, {"names": ["git__git_log"]}) == "도구 꺼내 오기: git__git_log"
+
+
+# ------------------------------------------------------------------ 불러오기를 셉니다 (ADR-039 의 실측)
+
+
+@pytest.mark.asyncio
+async def test_the_speech_counts_load_calls_and_loaded_schemas(monkeypatch):
+    """불러오기 한 번은 판 하나입니다. 실제 모델이 얼마나 자주 그러는지 보려면 세어야 합니다."""
+    from app.agents.llm_usage import measuring
+
+    _install(monkeypatch, [
+        ("", [(LOAD_TOOLS_TOOL, {"names": ["git__git_log", "git__git_show"]})]),
+        ("", [("git__git_log", {"path": "."})]),
+        ("", [("git__git_branch", {"path": "."})]),          # 목록에 있던 도구를 곧바로 부름
+        ("", [(LOAD_TOOLS_TOOL, {"names": ["no_such_tool"]})]),  # 없는 이름: 호출은 세고, 불러온 것은 없음
+        ("끝", []),
+    ])
+    with measuring() as usage:
+        await _speak(_MCP())
+    assert usage.tool_load_calls == 2
+    assert usage.tool_loads == 3, "load_tools 로 2개 + 곧바로 불러 정의가 실린 1개"
+
+
+@pytest.mark.asyncio
+async def test_tools_that_were_already_sent_are_not_counted_as_loads(monkeypatch):
+    from app.agents.llm_usage import measuring
+
+    _install(monkeypatch, [("", [("filesystem__read_text_file", {"path": "a.py"})]), ("끝", [])])
+    with measuring() as usage:
+        await _speak(_MCP())
+    assert usage.tool_load_calls == 0 and usage.tool_loads == 0
+    assert "tool_loads" not in usage.as_meta()
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_speech_does_not_count_its_restored_tools_again(monkeypatch):
+    """끊긴 발언을 이어 갈 때 되살리는 도구는 새로 불러온 것이 아닙니다."""
+    from app.agents.llm_usage import measuring
+
+    saved: List[Dict[str, Any]] = []
+    _install(monkeypatch, [("", [(LOAD_TOOLS_TOOL, {"names": ["git__git_log"]})]), ("끝", [])])
+    await _speak(_MCP(), checkpoint=lambda state: saved.append(state))
+    assert saved and saved[-1]["loaded_tools"] == ["git__git_log"]
+
+    _install(monkeypatch, [("이어서 끝", [])])
+    with measuring() as usage:
+        await _speak(_MCP(), resume_state=saved[-1])
+    assert usage.tool_loads == 0 and usage.tool_load_calls == 0

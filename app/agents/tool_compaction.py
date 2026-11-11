@@ -108,6 +108,39 @@ def compact_stale_tool_outputs(
     return (out, compacted) if compacted else (messages, 0)
 
 
+def _same_arguments(call: Dict[str, Any], arguments: Any) -> bool:
+    raw = (call.get("function") or {}).get("arguments")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return False
+    return raw == arguments
+
+
+def reread_of_compacted(messages: List[Dict[str, Any]], name: str, arguments: Any) -> bool:
+    """이 호출이 **앞서 스텁으로 줄인 읽기와 같은 도구·같은 인자**인지 (압축 뒤 다시 읽기).
+
+    압축이 얼마나 자주 되읽기를 부르는지 세는 데 씁니다 (`llm_usage.note_tool_context`). 메시지만 보고 판단하므로
+    끊긴 발언을 이어 가도 같습니다.
+    """
+    if name.split("__", 1)[-1] not in REREADABLE_TOOLS:
+        return False
+    calls: Dict[Any, Dict[str, Any]] = {}
+    for msg in messages:
+        if _opens_round(msg):
+            calls.update({call.get("id"): call for call in msg["tool_calls"]})
+        elif (
+            msg.get("role") == "tool"
+            and msg.get("name") == name
+            and isinstance(msg.get("content"), str)
+            and msg["content"].startswith(COMPACTED_OUTPUT_HEAD)
+            and _same_arguments(calls.get(msg.get("tool_call_id")) or {}, arguments)
+        ):
+            return True
+    return False
+
+
 def reclaimable_tokens(model: str, messages: List[Dict[str, Any]], used: int) -> int:
     """자리가 모자랄 때 압축으로 되찾을 토큰. 압축이 꺼졌거나 줄일 것이 없으면 0.
 

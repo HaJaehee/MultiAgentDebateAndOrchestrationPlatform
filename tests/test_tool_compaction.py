@@ -12,6 +12,7 @@ from app.agents import tool_compaction
 from app.agents.base import Agent
 from app.agents.llm import LLMCaller
 from app.agents.llm_context import context_budget, estimate_tokens
+from app.agents.llm_usage import measuring
 from app.agents.tool_compaction import (
     COMPACTED_OUTPUT_HEAD,
     EXCERPT_HEAD_LINES,
@@ -20,6 +21,7 @@ from app.agents.tool_compaction import (
     compact_loop_messages,
     compact_stale_tool_outputs,
     compacted_output,
+    reread_of_compacted,
 )
 from app.config import RootConfig, ToolOutputCompactionConfig
 
@@ -420,3 +422,68 @@ async def test_a_resumed_speech_keeps_the_stubs_and_does_not_redo_them(monkeypat
     resumed = [m["content"] for m in sent[0] if str(m.get("content")).startswith(COMPACTED_OUTPUT_HEAD)]
     assert all(stub in resumed for stub in stubs)
     assert all(content.count(COMPACTED_OUTPUT_HEAD) == 1 for content in resumed)
+
+
+# =============================================================== 압축 뒤 다시 읽기를 셉니다
+
+
+def test_a_reread_is_the_same_tool_and_arguments_as_a_read_that_was_compacted():
+    messages, count = compact_stale_tool_outputs(_reads(6), stale_rounds=3, min_chars=8_000)
+    assert count == 3 and _compacted_ids(messages) == ["c0", "c1", "c2"]
+    assert reread_of_compacted(messages, READ, {"path": "f0.py"}) is True
+    assert reread_of_compacted(messages, READ, {"path": "f5.py"}) is False, "아직 원문이 실려 있는 읽기"
+    assert reread_of_compacted(messages, READ, {"path": "f0.py", "head": 10}) is False, "인자가 다르면 다른 읽기"
+    assert reread_of_compacted(messages, "filesystem__read_file", {"path": "f0.py"}) is False, "다른 도구"
+    assert reread_of_compacted(messages, "sandbox__execute_python_code", {"code": "1"}) is False
+    assert reread_of_compacted(_reads(6), READ, {"path": "f0.py"}) is False, "줄인 적이 없으면 다시 읽기가 아닙니다"
+
+
+def _install_paths(monkeypatch, paths: Sequence[str]) -> List[List[Dict[str, Any]]]:
+    """`paths` 를 한 판에 하나씩 읽고 답하는 가짜 엔드포인트."""
+    sent: List[List[Dict[str, Any]]] = []
+    current: Dict[str, Optional[Tuple[str, Dict[str, Any]]]] = {"call": None}
+
+    async def fake_acompletion(**kwargs):
+        sent.append([dict(m) for m in kwargs["messages"]])
+        turn = len(sent)
+        current["call"] = (READ, {"path": paths[turn - 1]}) if turn <= len(paths) else None
+
+        async def stream():
+            yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=""))])
+
+        return stream()
+
+    def fake_builder(chunks, messages=None):
+        call = current["call"]
+        tool_calls = [SimpleNamespace(
+            id=f"call_{len(sent)}", function=SimpleNamespace(name=call[0], arguments=json.dumps(call[1])),
+        )] if call else None
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=_Message(content="" if call else "끝", tool_calls=tool_calls), finish_reason="stop",
+        )])
+
+    monkeypatch.setattr(llm_module.litellm, "acompletion", fake_acompletion)
+    monkeypatch.setattr(llm_module.litellm, "stream_chunk_builder", fake_builder)
+    return sent
+
+
+@pytest.mark.asyncio
+async def test_the_speech_counts_what_was_compacted_and_what_was_read_again(monkeypatch, _settings):
+    """ADR-040 이 '재지 못했다' 고 적어 둔 값입니다: 줄인 뒤에 모델이 같은 파일을 몇 번 다시 읽는가."""
+    paths = [f"f{i}.py" for i in range(1, 9)] + ["f1.py", "f2.py", "f9.py"]
+    _install_paths(monkeypatch, paths)
+    with measuring() as usage:
+        _content, logs = await _speak(_agent(30_000))
+    assert len(logs) == len(paths)
+    assert usage.compacted_reads >= 6, "작은 창에서 큰 파일 여덟 개를 읽으면 오래된 것부터 줄어듭니다"
+    assert usage.rereads_after_compaction == 2, "f1 · f2 는 줄인 뒤의 다시 읽기, f9 는 처음 읽는 파일"
+    assert usage.as_meta()["rereads_after_compaction"] == 2
+
+
+@pytest.mark.asyncio
+async def test_with_room_left_nothing_is_counted(monkeypatch, _settings):
+    _install_paths(monkeypatch, ["f1.py", "f1.py"])
+    with measuring() as usage:
+        await _speak(_agent(400_000))
+    assert usage.compacted_reads == 0 and usage.rereads_after_compaction == 0
+    assert "compacted_reads" not in usage.as_meta()

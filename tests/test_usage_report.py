@@ -18,7 +18,8 @@ from nicegui import ui
 from sqlalchemy import select
 
 from app.agents.llm_usage import Usage
-from app.database.models import SessionModel, TurnModel
+from app.agents.tool_loading import LOAD_TOOLS_TOOL
+from app.database.models import SessionModel, ToolCallRecordModel, TurnModel
 from app.database.session import get_session_factory, init_db
 from app.events import EventType
 from app.orchestration.engine import OrchestratorEngine
@@ -29,7 +30,17 @@ from app.orchestration.turns import (
     KIND_SUBDEBATE_SPEECH,
     KIND_SYNTHESIS,
 )
-from app.orchestration.usage_report import OTHER_LABEL, bottleneck_lines, build_report, load_usage_report, token_parts
+from app.orchestration.usage_report import (
+    CORE_CANDIDATE_MIN_SESSIONS,
+    OTHER_LABEL,
+    bottleneck_lines,
+    build_report,
+    core_candidate_line,
+    core_tool_candidates,
+    load_usage_report,
+    loaded_tool_sessions,
+    token_parts,
+)
 from app.ui.components.chat_feed.cards import CardTimeline
 from app.ui.components.sidebar import SessionSidebar
 from app.ui.components.usage_chart import UsageDialog, UsagePanel, summary_text
@@ -470,3 +481,87 @@ async def test_a_new_message_and_a_revised_speech_refresh_open_views():
     with patch("app.ui.expert.events.ui.notify"):
         await view._on_speech_revised({"type": EventType.SPEECH_REVISED, "agent_name": "Coder", "ok": True})
     page.refresh_usage_views.assert_awaited_once()
+
+
+# ------------------------------------------------------------------ 도구 컨텍스트 (ADR-039 · ADR-040 의 실측)
+
+
+def test_tool_context_counts_ride_along_with_the_tokens():
+    """불러오기·다시 읽기 횟수는 사용량 기록에 함께 실려, 행과 합계에 토큰처럼 더해집니다."""
+    report = build_report(
+        [_turn(usage=_usage(300, 30, calls=3, tool_load_calls=1, tool_loads=2, compacted_reads=4, rereads_after_compaction=1))],
+        [
+            _msg("coder", usage=_usage(tool_load_calls=1, tool_loads=2)),
+            _msg("critic", usage=_usage(compacted_reads=4, rereads_after_compaction=1)),
+        ],
+    )
+    by_key = {row.key: row.usage for row in report.by_agent}
+    assert by_key["coder"].tool_loads == 2 and by_key["critic"].rereads_after_compaction == 1
+    assert (report.total.tool_load_calls, report.total.tool_loads) == (1, 2)
+    assert (report.total.compacted_reads, report.total.rereads_after_compaction) == (4, 1)
+
+
+async def _load_call(db, session_id: str, names: Any, status: str = "success") -> None:
+    db.add(ToolCallRecordModel(
+        session_id=session_id, agent_key="coder", tool_name=LOAD_TOOLS_TOOL, arguments={"names": names}, status=status,
+    ))
+
+
+@pytest.mark.asyncio
+async def test_tools_loaded_in_several_conversations_become_core_tool_candidates():
+    await init_db("sqlite+aiosqlite:///:memory:")
+    sids = [str(uuid.uuid4()) for _ in range(CORE_CANDIDATE_MIN_SESSIONS + 1)]
+    async with get_session_factory()() as db:
+        for sid in sids:
+            db.add(SessionModel(id=sid, title="t", strategy="sequential_debate", max_rounds=1, active_agents=["orchestrator"]))
+        await db.flush()
+        for sid in sids:                                   # 네 대화 모두에서
+            await _load_call(db, sid, ["git__git_log"])
+        for sid in sids[:CORE_CANDIDATE_MIN_SESSIONS]:      # 세 대화에서, 이름 꼬리로
+            await _load_call(db, sid, ["git_show"])
+        await _load_call(db, sids[0], ["git__git_log"])    # 같은 대화에서 또 불러도 대화 수는 그대로
+        await _load_call(db, sids[0], "git__git_blame")    # 한 대화뿐
+        for sid in sids:                                   # 실패한 호출은 세지 않습니다
+            await _load_call(db, sid, ["no_such_tool"], status="error")
+        for sid in sids:
+            await _load_call(db, sid, ["read_text_file"])
+        await db.commit()
+
+        counts = await loaded_tool_sessions(db)
+        assert counts["git_log"] == 4 and counts["git_show"] == 3 and counts["git_blame"] == 1
+        assert "no_such_tool" not in counts
+        assert (await loaded_tool_sessions(db, sids[0]))["git_blame"] == 1
+
+        candidates = await core_tool_candidates(db, core_tools=["read_text_file"])
+    assert candidates == [("git_log", 4), ("git_show", 3)], "이미 core_tools 에 있는 것과 한두 대화뿐인 것은 뺍니다"
+    line = core_candidate_line(candidates)
+    assert "git_log(대화 4개)" in line and "tool_loading.core_tools" in line
+    assert core_candidate_line([]) == ""
+
+
+@pytest.mark.asyncio
+async def test_the_dialog_shows_the_tool_context_line_only_when_there_is_one(ui_page):
+    sid = await _real_turn()
+    factory = get_session_factory()
+    with ui_page:
+        dialog = UsageDialog(factory)
+        dialog.build()
+        await dialog.open(sid)
+    assert not any("도구 불러오기" in text for text in _texts(dialog.body)), "일어난 것이 없으면 줄도 없습니다"
+
+    async with factory() as db:
+        turn = (await db.execute(select(TurnModel).where(TurnModel.session_id == sid))).scalar_one()
+        turn.usage = {**turn.usage, "tool_load_calls": 2, "tool_loads": 3, "rereads_after_compaction": 1}
+        others = [str(uuid.uuid4()) for _ in range(CORE_CANDIDATE_MIN_SESSIONS)]
+        for other in others:
+            db.add(SessionModel(id=other, title="t", strategy="sequential_debate", max_rounds=1, active_agents=["orchestrator"]))
+        await db.flush()
+        for other in others:
+            await _load_call(db, other, ["git__git_log"])
+        await db.commit()
+    with ui_page:
+        await dialog.refresh()
+    texts = _texts(dialog.body)
+    assert "도구 불러오기 2회(정의 3개) · 압축 뒤 다시 읽기 1회" in texts
+    # 같은 메모리 DB 를 앞선 시험과 함께 쓰므로 대화 수는 정확히 세지 않고, 후보로 뜨는지만 봅니다.
+    assert any(text.startswith("자주 불러오는 도구: ") and "git_log(대화 " in text for text in texts)

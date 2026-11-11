@@ -75,6 +75,8 @@ async def test_a_dry_run_writes_results_and_a_report(tmp_path, monkeypatch):
     assert first["ended_early"] == {"reason": "converged", "round": 2} and first["rounds"] == 2
     assert first["open_issues"] == 0 and first["tool_problems"] == 0 and first["failed_agents"] == []
     assert first["usage"]["calls"] > 0, "드라이런도 진짜 호출 경로를 지나 호출 수와 시간을 셉니다"
+    report_text = (run_dir / "report.md").read_text(encoding="utf-8")
+    assert "| 도구 컨텍스트 |" in report_text.splitlines()[5], "도구 불러오기·압축 뒤 다시 읽기 열이 있습니다"
     assert second["agents"] == ["orchestrator", "architect", "critic"]
     for v in payload["variants"]:
         workspace = run_dir / "workspaces" / bench._slug(v["label"])

@@ -17,12 +17,15 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from nicegui import ui
 
-from app.agents.llm_usage import Usage, format_tokens
+from app.agents.llm_usage import Usage, format_tokens, tool_context_line
+from app.config import get_config
 from app.orchestration.turns import usage_by_session
 from app.orchestration.usage_report import (
     UsageReport,
     UsageRow,
     bottleneck_lines,
+    core_candidate_line,
+    core_tool_candidates,
     load_usage_report,
     token_parts,
 )
@@ -37,6 +40,10 @@ ELAPSED_COLOR = "#94a3b8"
 
 OTHER_TIP = "의사결정 장부 기록·중간 요약·라우팅처럼 발언에 속하지 않는 호출과, 중단되어 기록되지 못한 발언의 호출입니다."
 REST_TIP = "도구 실행, 동시 실행 순번 대기, 사용자 승인 대기처럼 모델 응답 대기를 제외한 나머지 소요 시간입니다."
+TOOL_CONTEXT_TIP = (
+    "도구 정의를 필요할 때 불러오고(지연 로딩) 지난 파일 읽기를 줄이는(압축) 장치가 이 범위에서 한 일입니다. "
+    "불러오기는 판을 하나 더 쓰고, 압축 뒤 다시 읽기는 아낀 토큰의 일부를 되돌려 씁니다."
+)
 
 
 @dataclass(frozen=True)
@@ -258,6 +265,9 @@ class UsageDialog:
             if self.turn_id and self.turn_id not in options:
                 self.turn_id = None
                 report = await load_usage_report(db, self.session_id)
+            loading = get_config().tool_loading
+            # 지연 로딩을 꺼 두었으면 불러올 일이 없으니 후보도 찾지 않습니다.
+            candidates = await core_tool_candidates(db, loading.core_tools) if loading.enabled else []
         if self.body is None or self.body.is_deleted:
             return
         self.scope_select.set_options(options, value=self.turn_id or "")
@@ -266,10 +276,11 @@ class UsageDialog:
             if report.empty:
                 _empty_note()
             else:
-                self._render(report)
+                self._render(report, candidates)
 
-    def _render(self, report: UsageReport) -> None:
+    def _render(self, report: UsageReport, candidates: Sequence[Tuple[str, int]] = ()) -> None:
         self._totals(report)
+        self._tool_context(report, candidates)
         for title, rows, plots in (
             ("에이전트별", report.by_agent, _agent_plots(report.by_agent, _LARGE)),
             (report.step_word, report.by_step, _step_plots(report.by_step, _LARGE)),
@@ -308,6 +319,19 @@ class UsageDialog:
                 with ui.column().classes("gap-0"):
                     ui.label(name).classes("text-[11px] text-slate-400")
                     ui.label(value).classes("text-lg font-semibold text-slate-100")
+
+
+    @staticmethod
+    def _tool_context(report: UsageReport, candidates: Sequence[Tuple[str, int]]) -> None:
+        """도구 불러오기·읽기 압축이 이 범위에서 한 일과, 여러 대화에서 되풀이해 불러온 도구."""
+        lines = [line for line in (tool_context_line(report.total), core_candidate_line(candidates)) if line]
+        if not lines:
+            return
+        with ui.row().classes("w-full items-start no-wrap gap-1 text-xs").mark("usage-tool-context"):
+            ui.icon("build", size="14px").classes("text-slate-400 flex-shrink-0 mt-px").tooltip(TOOL_CONTEXT_TIP)
+            with ui.column().classes("gap-0 min-w-0"):
+                for line in lines:
+                    ui.label(line).classes("text-slate-300 break-words")
 
 
 _TABLE_COLUMNS = (

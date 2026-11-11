@@ -763,9 +763,12 @@ notices read the same with the split list. `tests/test_tool_loading.py` compares
 goes through `plan_shelf()` too, so the synthesis budget counts what the speech sends.
 
 **What it costs.** The first use of a listed tool takes one more round, and that round invalidates the provider's
-prefix cache once because `tools` changes. How often agents load in real debates has not been measured yet: if
-tool cards keep showing `tools__load_tools` for the same tool, add it to `core_tools`. A model that ignores
-the catalog can answer without tools it would otherwise have used; turn off `tool_loading.enabled` for those. Tests:
+prefix cache once because `tools` changes. How often that happens is now counted: every speech and turn records
+`tool_load_calls` (calls of `tools__load_tools`) and `tool_loads` (definitions loaded, including a listed tool called
+directly) next to its tokens ([§6](#6-usage-metering-v15)). One real run (2026-11-11, `deepseek-v4-flash`, an agent holding filesystem, sandbox and git, two turns): one `tools__load_tools` call loaded two definitions in 19 LLM calls, and the second turn loaded nothing again. One run is not a trend, and models differ. A tool that several conversations keep loading
+is listed in the usage dialog as a candidate for `core_tools`. A model that ignores the catalog can answer without
+tools it would otherwise have used; the [conformance check](#8-checking-a-model-before-it-joins-a-debate-adr-054)
+shows that before a debate, and `tool_loading.enabled: false` is the setting for such a model. Tests:
 `tests/test_tool_loading.py`.
 
 ### 5.5. Compacting stale file reads (ADR-040)
@@ -811,10 +814,13 @@ scripted LLM and the `openai/gpt-4o` tokenizer:
 The 128k run changed its prefix on 3 of 11 requests. The 32k total falls less because the run without compaction was
 already dropping blocks.
 
-**What it costs.** A model that needs a compacted file again spends a round on it, counted against the tool limit, and
-how often real models do this has not been measured; the call order above is scripted. If tool cards show the same file
-read repeatedly, raise `stale_rounds` or `min_usage`. Each compaction breaks the prefix cache once from that message on,
-and over budget that can be every round. Tests: `tests/test_tool_compaction.py`.
+**What it costs.** A model that needs a compacted file again spends a round on it, counted against the tool limit.
+The call order in the table above is scripted, so how often real models read again is counted at run time instead:
+`compacted_reads` (results turned into stubs) and `rereads_after_compaction` (a read with the same tool and arguments
+as one already stubbed, `reread_of_compacted()`) are recorded with the speech's and the turn's usage
+([§6](#6-usage-metering-v15)). One real run (2026-11-11, `deepseek-v4-flash`, a 24,000-token window, eight files of about 11,600 characters read in order): nine results were compacted and three reads repeated a compacted one, out of 11 reads. The window was small on purpose and one run is not a trend. If the second number is a large share of the first, raise `stale_rounds` or
+`min_usage`. Each compaction breaks the prefix cache once from that message on, and over budget that can be every
+round. Tests: `tests/test_tool_compaction.py`.
 
 ---
 
@@ -849,6 +855,15 @@ the [bench](../operations/bench.md)) can be measured.
   LiteLLM's `stream_chunk_builder` counts with a tokenizer, which can differ slightly from the server.
 * **Turn token budget.** `sessions.token_budget` ends the debate at a round boundary once the turn total
   reaches it ([Conversation Memory §2.6](../orchestration/context-memory.md)).
+* **What the context savers cost.** The same meters count four events, through `note_tool_context()`:
+  `tool_load_calls`, `tool_loads` ([§5.4](#54-sending-only-the-tool-definitions-that-get-used-adr-039)),
+  `compacted_reads` and `rereads_after_compaction` ([§5.5](#55-compacting-stale-file-reads-adr-040)). They nest like
+  tokens (a speech's counts are in its turn's), and a record carries a field only when the event happened, so
+  records of speeches without them look as before and old records read as zero. A resumed speech does not count the
+  tools it restores. They appear as one line in the usage dialog (`도구 불러오기 2회(정의 3개) · 읽기 압축 4건 · 압축 뒤
+  다시 읽기 1회`) and as the `도구 컨텍스트` column of the bench report. `core_tool_candidates()` reads
+  `tool_calls` for tools that three or more conversations loaded and that are not in `core_tools` yet; the dialog
+  names them. It is a suggestion; nothing changes the setting.
 
 Tests: `tests/test_llm_usage.py`, `tests/test_usage_report.py`.
 

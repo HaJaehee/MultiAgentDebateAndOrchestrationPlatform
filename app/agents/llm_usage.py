@@ -13,6 +13,10 @@
 활성 측정기 스택은 `contextvars`로 격리 관리되므로 도구 루프 등에 불필요한 인자 전달을 방지하며,
 병렬 발언 태스크는 생성 시 상위 턴 측정기를 상속받고 발언 측정기는 각 태스크 내부에서 독립 격리됩니다.
 
+같은 측정기에 **컨텍스트를 아끼는 장치가 치른 값**도 셉니다 (`note_tool_context`): 도구 스키마 지연 로딩(ADR-039)이
+도구를 불러온 횟수와, 지난 파일 읽기 압축(ADR-040) 뒤에 모델이 같은 파일을 다시 읽은 횟수입니다. 두 장치는 토큰을
+아끼는 대신 판을 하나씩 더 쓰게 할 수 있는데, 실제 모델이 얼마나 자주 그러는지는 돌려 봐야 압니다.
+
 토큰 집계는 각 LLM 프로바이더의 응답 메타데이터를 기반으로 합니다.
 스트리밍 응답에서 프로바이더가 실시간 토큰을 제공하지 않는 경우 LiteLLM의 추정 토크나이저 카운트가 적용될 수 있습니다.
 `_complete_unthrottled`를 재정의한 모의 호출기(테스트 대역, MADOWarGame)는 토큰 정보가 없을 경우 호출 횟수와 응답 시간만 계측합니다.
@@ -26,9 +30,12 @@ from typing import Any, Dict, Iterator, Mapping, Optional, Tuple
 
 from pydantic import BaseModel
 
+# 도구 컨텍스트 계수. 일어나지 않았으면 기록에 싣지 않습니다 (`as_meta`).
+TOOL_CONTEXT_FIELDS = ("tool_load_calls", "tool_loads", "compacted_reads", "rereads_after_compaction")
+
 _FIELDS = (
     "prompt_tokens", "completion_tokens", "cached_tokens", "cache_write_tokens", "reasoning_tokens", "calls",
-    "llm_seconds",
+    "llm_seconds", *TOOL_CONTEXT_FIELDS,
 )
 
 
@@ -45,6 +52,14 @@ class Usage(BaseModel):
     reasoning_tokens: int = 0
     calls: int = 0
     llm_seconds: float = 0.0
+    # `tools__load_tools` 를 부른 횟수. 한 번마다 대화를 다시 싣는 판이 하나 더 듭니다 (ADR-039).
+    tool_load_calls: int = 0
+    # 불러온 도구 정의 수 (목록의 도구를 곧바로 불러 정의가 실린 것 포함). 불러올 때마다 요청 앞부분의 캐시가 한 번 깨집니다.
+    tool_loads: int = 0
+    # 스텁으로 줄인 지난 파일 읽기 결과 수 (ADR-040).
+    compacted_reads: int = 0
+    # 줄인 뒤에 같은 도구·같은 인자로 다시 읽은 횟수. 압축이 아낀 토큰의 일부를 되돌려 쓰는 호출입니다.
+    rereads_after_compaction: int = 0
 
     @property
     def total_tokens(self) -> int:
@@ -65,6 +80,9 @@ class Usage(BaseModel):
     def as_meta(self) -> Dict[str, Any]:
         data = self.model_dump()
         data["llm_seconds"] = round(self.llm_seconds, 2)
+        for name in TOOL_CONTEXT_FIELDS:
+            if not data[name]:
+                del data[name]
         return data
 
     @classmethod
@@ -148,6 +166,32 @@ def note_call(seconds: float) -> None:
     for meter in _METERS.get():
         meter.calls += 1
         meter.llm_seconds += max(0.0, seconds)
+
+
+def note_tool_context(
+    *, load_calls: int = 0, loads: int = 0, compacted: int = 0, rereads: int = 0,
+) -> None:
+    """도구 불러오기·파일 읽기 압축에서 일어난 일을 활성 측정 컨텍스트에 누적합니다."""
+    if not (load_calls or loads or compacted or rereads):
+        return
+    for meter in _METERS.get():
+        meter.tool_load_calls += max(0, load_calls)
+        meter.tool_loads += max(0, loads)
+        meter.compacted_reads += max(0, compacted)
+        meter.rereads_after_compaction += max(0, rereads)
+
+
+def tool_context_line(usage: Any) -> str:
+    """`도구 불러오기 2회(정의 3개) · 읽기 압축 4건 · 압축 뒤 다시 읽기 1회`. 일어난 것이 없으면 빈 문자열."""
+    value = usage if isinstance(usage, Usage) else Usage.of(usage)
+    parts = []
+    if value.tool_load_calls or value.tool_loads:
+        parts.append(f"도구 불러오기 {value.tool_load_calls}회(정의 {value.tool_loads}개)")
+    if value.compacted_reads:
+        parts.append(f"읽기 압축 {value.compacted_reads}건")
+    if value.rereads_after_compaction:
+        parts.append(f"압축 뒤 다시 읽기 {value.rereads_after_compaction}회")
+    return " · ".join(parts)
 
 
 def format_tokens(count: int) -> str:

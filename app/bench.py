@@ -13,7 +13,7 @@
 * 변형마다 격리된 작업 공간 디렉터리를 생성합니다 (`seed` 디렉터리 지정 시 복제본 사용). 변형 간 파일 간섭이 배제됩니다.
 * 비대면(unattended) 모드로 실행되므로 계획 승인 및 도구 확인 절차를 자동으로 통과합니다 (`app/headless.py`).
 * 측정 지표: 실행 상태, 진행 라운드, 조기 종료 여부, 토큰 소모량, LLM 응답 시간, 소요 시간, 미해결 쟁점 수,
-  도구 오류/차단 횟수, 무응답 에이전트, 변경 파일 수, 정량 평가.
+  도구 오류/차단 횟수, 도구 컨텍스트(불러오기·읽기 압축·압축 뒤 다시 읽기), 무응답 에이전트, 변경 파일 수, 정량 평가.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import func, select
 
 from app.agents.llm import LLMCaller
-from app.agents.llm_usage import Usage, format_tokens
+from app.agents.llm_usage import Usage, format_tokens, tool_context_line
 from app.agents.personas import freeze_personas
 from app.agents.pool import get_agent_pool
 from app.config import DEFAULT_CONFIG_PATH, DEFAULT_SUB_DEBATE_ROUNDS, PROJECT_ROOT, get_config
@@ -269,8 +269,8 @@ async def write_report(result_path: str | Path) -> Path:
         f"- 실행: `{payload['run_id']}` ({payload['created_at']}){' · 드라이런 (LLM 없음)' if payload.get('dry_run') else ''}",
         f"- 요청: {payload['prompt']}",
         "",
-        "| 변형 | 전략 | 상태 | 라운드 | 조기 종료 | 입력 토큰 | 출력 토큰 | LLM 시간 | 소요 시간 | 미해결 쟁점 | 도구 실패·차단 | 무응답 에이전트 | 변경 파일 | 평가 |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| 변형 | 전략 | 상태 | 라운드 | 조기 종료 | 입력 토큰 | 출력 토큰 | LLM 시간 | 소요 시간 | 미해결 쟁점 | 도구 실패·차단 | 도구 컨텍스트 | 무응답 에이전트 | 변경 파일 | 평가 |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for v in variants:
         usage = Usage.of(v.get("usage"))
@@ -285,7 +285,7 @@ async def write_report(result_path: str | Path) -> Path:
             format_tokens(usage.prompt_tokens) if usage.prompt_tokens else "",
             format_tokens(usage.completion_tokens) if usage.completion_tokens else "",
             f"{usage.llm_seconds:.1f}초" if usage.llm_seconds else "",
-            f"{v['seconds']}초", v.get("open_issues"), v.get("tool_problems"),
+            f"{v['seconds']}초", v.get("open_issues"), v.get("tool_problems"), tool_context_line(usage),
             ", ".join(v.get("failed_agents") or []), v.get("files_changed"), score,
         )) + " |")
     first = variants[0]["session_id"] if variants else ""

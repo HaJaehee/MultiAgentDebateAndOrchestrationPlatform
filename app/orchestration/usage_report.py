@@ -12,6 +12,9 @@
 * **중단 후 재개된 발언** — 중단되었던 발언은 중단 전의 시작 시각을 그대로 유지합니다. 이를 그대로 소요 시간 계산에 사용하면
   서버가 꺼져 있던 유휴 시간까지 병목 시간으로 잘못 표시되므로, 실제 재개된 시각(`llm_meta.resumed_at`)부터 측정합니다.
   토큰 역시 재개 이후의 호출분만 반영되므로 시간과 토큰의 집계 범위가 일치합니다.
+* **도구 컨텍스트** — 도구 스키마 지연 로딩(ADR-039)이 도구를 불러온 횟수와, 파일 읽기 압축(ADR-040) 뒤에 같은 파일을
+  다시 읽은 횟수가 같은 사용량 기록에 실려 옵니다 (`llm_usage.note_tool_context`). 두 장치가 아낀 토큰의 반대편 값입니다.
+  여러 대화에서 되풀이해 불러온 도구는 `tool_loading.core_tools` 후보로 따로 뽑습니다 (`core_tool_candidates`).
 """
 
 from __future__ import annotations
@@ -23,7 +26,8 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optio
 from sqlalchemy import select
 
 from app.agents.llm_usage import Usage, format_tokens
-from app.database.models import MessageModel, TurnModel
+from app.agents.tool_loading import LOAD_TOOLS_TOOL
+from app.database.models import MessageModel, ToolCallRecordModel, TurnModel
 from app.orchestration.turns import (
     KIND_PLAN,
     KIND_SUBDEBATE_CONCLUSION,
@@ -35,6 +39,13 @@ from app.timestamps import _as_datetime, format_duration, to_local
 
 OTHER_LABEL = "보조 호출"
 OTHER_KEY = "__other__"
+
+# 이만큼의 대화에서 되풀이해 불러온 도구부터 `core_tools` 후보로 봅니다. 한 대화 안에서는 한 번 불러오면 남으므로
+# (`remember_loaded`), 되풀이는 대화 수로 셉니다.
+CORE_CANDIDATE_MIN_SESSIONS = 3
+CORE_CANDIDATE_LIMIT = 5
+# 후보를 뽑을 때 훑는 최근 불러오기 호출 수.
+CORE_CANDIDATE_SCAN = 2000
 
 _Span = Tuple[datetime, datetime]
 # 라운드 표 표시 순서: 계획 → 라운드(서브 토론은 해당 라운드 바로 뒤) → 결론 합성.
@@ -277,3 +288,56 @@ def bottleneck_lines(rows: Sequence[UsageRow]) -> List[str]:
     if largest:
         lines.append(f"토큰 최다: {largest[0].label} {format_tokens(largest[0].usage.total_tokens)} ({largest[1]:.0%})")
     return lines
+
+
+def _loaded_names(arguments: Any) -> List[str]:
+    """`tools__load_tools` 호출 인자에서 도구 이름의 꼬리(`git_log`)를 뽑습니다."""
+    names = arguments.get("names") if isinstance(arguments, Mapping) else None
+    if isinstance(names, str):
+        names = [names]
+    if not isinstance(names, (list, tuple)):
+        return []
+    return [str(name).strip().split("__", 1)[-1] for name in names if str(name).strip()]
+
+
+async def loaded_tool_sessions(db: Any, session_id: Optional[str] = None) -> Dict[str, int]:
+    """도구 이름 → 그 도구를 `tools__load_tools` 로 불러온 **대화 수**. `session_id` 를 주면 그 대화만 봅니다."""
+    query = (
+        select(ToolCallRecordModel.session_id, ToolCallRecordModel.arguments)
+        .where(ToolCallRecordModel.tool_name == LOAD_TOOLS_TOOL, ToolCallRecordModel.status == "success")
+        .order_by(ToolCallRecordModel.created_at.desc())
+        .limit(CORE_CANDIDATE_SCAN)
+    )
+    if session_id:
+        query = query.where(ToolCallRecordModel.session_id == session_id)
+    seen: Dict[str, set] = {}
+    for sid, arguments in (await db.execute(query)).all():
+        for name in _loaded_names(arguments):
+            seen.setdefault(name, set()).add(sid)
+    return {name: len(sessions) for name, sessions in seen.items()}
+
+
+async def core_tool_candidates(db: Any, core_tools: Sequence[str] = ()) -> List[Tuple[str, int]]:
+    """여러 대화에서 되풀이해 불러온 도구 — `tool_loading.core_tools` 에 더하면 불러오는 판이 줄어드는 후보입니다.
+
+    `(도구 이름 꼬리, 대화 수)` 를 대화 수가 많은 순으로 돌려줍니다. 이미 `core_tools` 에 있는 것은 뺍니다.
+    제안일 뿐이고 설정은 바꾸지 않습니다.
+    """
+    already = {str(item).strip().split("__", 1)[-1] for item in core_tools}
+    counts = await loaded_tool_sessions(db)
+    picked = [
+        (name, sessions) for name, sessions in counts.items()
+        if sessions >= CORE_CANDIDATE_MIN_SESSIONS and name not in already
+    ]
+    picked.sort(key=lambda item: (-item[1], item[0]))
+    return picked[:CORE_CANDIDATE_LIMIT]
+
+
+def core_candidate_line(candidates: Sequence[Tuple[str, int]]) -> str:
+    """`자주 불러오는 도구: git_log(대화 4개) · …`. 후보가 없으면 빈 문자열."""
+    if not candidates:
+        return ""
+    listed = " · ".join(f"{name}(대화 {sessions}개)" for name, sessions in candidates)
+    return (
+        f"자주 불러오는 도구: {listed} — `tool_loading.core_tools` 에 더하면 처음부터 실려 불러오는 판이 줄어듭니다."
+    )

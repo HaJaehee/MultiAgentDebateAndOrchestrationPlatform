@@ -47,7 +47,8 @@ examples ship in `bench/`.
 
 `result.json` and `report.md` per run. Columns: status, rounds used / allowed, early end, input and
 output tokens, LLM time, wall time, open issues in the final ledger, failed or blocked tool calls,
-agents that never answered, files changed, and the person's rating. The report links each variant to the
+tool context (`도구 컨텍스트`: tool definitions loaded on demand, file reads compacted, and reads repeated after
+compaction — [LLM Integration §6](../agents/llm-integration.md#6-usage-metering-v15)), agents that never answered, files changed, and the person's rating. The report links each variant to the
 first one on the compare page (`/compare?a=…&b=…`); ratings given there (`TurnModel.rating`) appear
 after `report` is run again.
 
