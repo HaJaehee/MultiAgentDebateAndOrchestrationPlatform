@@ -23,12 +23,18 @@ from app.orchestration import plan_gate, turns
 from app.orchestration.control import TurnControl, asks_human
 from app.orchestration.phases.base import PhaseExecutor
 from app.orchestration.state import DebateMessage, DebateState
+from app.orchestration.tool_gate import reads_only_speech
 
 if TYPE_CHECKING:
     from app.orchestration.turn_setup import TurnSetup
 
 logger = logging.getLogger(__name__)
 
+# 계획 발언의 도구는 읽기 전용입니다 (ADR-053). 모델이 쓰기 도구가 안 보이는 까닭을 "그런 도구가 없다" 로 읽지 않게 알립니다.
+PLAN_READ_ONLY_NOTE = (
+    "이 계획 발언에서는 읽기 도구만 쓸 수 있습니다. 파일 쓰기·코드 실행·네트워크는 이 발언에서 빠져 있을 뿐 전문가는 쓸 수 "
+    "있으니, 그 일은 분담에 적으세요. 읽기도 계획에 필요한 만큼만 하고 조사 자체는 전문가에게 맡기세요."
+)
 
 
 class PlanningPhaseExecutor(PhaseExecutor):
@@ -64,7 +70,8 @@ class PlanningPhaseExecutor(PhaseExecutor):
         assign_rule = (
             "위 전문가 각각에게, 목록의 이름 그대로 불러 이번 턴에 맡을 일과 산출물을 "
             "한두 문장으로 지시하세요. 도구가 필요한 일(파일 쓰기 등)은 그 도구를 가진 "
-            "전문가에게 맡기고, 목록에 없는 역할에는 일을 주지 마세요."
+            "전문가에게 맡기고, 목록에 없는 역할에는 일을 주지 마세요. "
+            f"{PLAN_READ_ONLY_NOTE}"
             if specialists else ""
         )
 
@@ -124,18 +131,20 @@ class PlanningPhaseExecutor(PhaseExecutor):
 
         plan_message: Optional[DebateMessage] = None
         if setup.graph_spec is None or setup.graph_spec.start.plan:
-            plan_message = await self.speech.speak(
-                db=db,
-                state=state,
-                agent=orchestrator_agent,
-                prompt_messages=orch_plan_prompt,
-                custom_instructions=setup.custom_instructions,
-                round_number=0,
-                msg_type="orchestrator",
-                on_event=on_event,
-                control=control,
-                kind=turns.KIND_PLAN,
-            )
+            # 계획 발언은 읽기만 합니다 (ADR-053). 쓰기·실행·네트워크는 분담을 받은 전문가가 합니다.
+            with reads_only_speech():
+                plan_message = await self.speech.speak(
+                    db=db,
+                    state=state,
+                    agent=orchestrator_agent,
+                    prompt_messages=orch_plan_prompt,
+                    custom_instructions=setup.custom_instructions,
+                    round_number=0,
+                    msg_type="orchestrator",
+                    on_event=on_event,
+                    control=control,
+                    kind=turns.KIND_PLAN,
+                )
         if plan_message is not None and plan_message.msg_type != "error":
             state.plan_index = len(state.messages) - 1
         return plan_message

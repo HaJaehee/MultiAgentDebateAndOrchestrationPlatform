@@ -810,6 +810,9 @@ TAINT_RULE = "taint"
 # "외부 내용을 읽은 발언이라 막혔다" 가 감사 기록에 드러나게 합니다 (ADR-047). 시간 초과도 같은 표식을 씁니다.
 UNATTENDED_RULE = "unattended"
 UNATTENDED_TAINT_RULE = f"{UNATTENDED_RULE}:{TAINT_RULE}"
+# 오케스트레이터의 계획 발언은 읽기만 합니다 (ADR-053). 그 발언에서 모드로 판정한 호출은 이 표식을 남겨,
+# 대화 모드가 읽기 전용이 아닌데 왜 막혔는지가 감사 기록에 드러나게 합니다.
+PLAN_READ_ONLY_RULE = "plan:read_only"
 
 # 괄호 형태와 무관하게 태그 이름을 무력화합니다 — `＜/untrusted_content＞`나 `&lt;/untrusted_content&gt;`는 물론,
 # 공백·대소문자·제로폭(Zero-width) 문자로 분할된 변형도 모델에게는 닫는 태그로 인식될 수 있기 때문입니다.
@@ -925,13 +928,14 @@ def tool_always_denied(meta: ToolMeta, policy: Policy) -> Optional[str]:
 #   mode:<모드>        모드 기본값으로 판정
 #   session:<규칙…>    이 대화의 허용·거부 규칙 (카드에서 등록했거나, 등록된 것에 걸렸거나)
 #   always:<규칙…>     카드에서 conf.json 에 등록
-#   once · repeat · unattended · gate-error · taint   표식
+#   once · repeat · unattended · gate-error · taint · plan:read_only   표식
 #   그 밖              conf.json 의 규칙 원문 (고정 보호면 그 종류)
 
 OUTCOME_LABELS = {"success": "성공", "error": "실패", "blocked": "차단"}
 _BLOCKING_DECISIONS = frozenset({"deny", "hard", "rejected", "timeout"})
 _APPROVER_LABELS = {"local": "서버 PC", "remote": "원격"}
 _TAINT_GROUND = "외부 내용을 읽은 발언"
+_PLAN_GROUND = "계획 발언은 읽기 전용"
 
 
 def tool_outcome(status: str, security: Optional[Mapping[str, Any]] = None) -> str:
@@ -977,7 +981,9 @@ def describe_verdict(security: Optional[Mapping[str, Any]]) -> str:
     origin, body = _split_rule(rule)
 
     if decision == "allow":
-        if origin == "mode":
+        if rule == PLAN_READ_ONLY_RULE:
+            parts = ["자동 허용", _PLAN_GROUND]
+        elif origin == "mode":
             parts = ["자동 허용", f"{MODE_LABELS.get(body, body)} 모드"]
         elif origin == "session":
             parts = ["자동 허용", f"이 대화 규칙 {body}"]
@@ -986,7 +992,9 @@ def describe_verdict(security: Optional[Mapping[str, Any]]) -> str:
     elif decision == "approved":
         parts = ["유저 승인", _TAINT_GROUND if rule == TAINT_RULE else _registered(origin, body)]
     elif decision == "deny":
-        if origin == "mode":
+        if rule == PLAN_READ_ONLY_RULE:
+            parts = ["모드 차단", _PLAN_GROUND]
+        elif origin == "mode":
             parts = ["모드 차단", f"{MODE_LABELS.get(body, body)} 모드"]
         elif rule in (UNATTENDED_RULE, UNATTENDED_TAINT_RULE):
             parts = ["응답 없음", "물어볼 유저가 없었음", _TAINT_GROUND if rule == UNATTENDED_TAINT_RULE else ""]

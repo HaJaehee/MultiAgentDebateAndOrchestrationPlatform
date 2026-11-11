@@ -307,6 +307,26 @@ def test_filter_tools_drops_tools_that_can_never_run(tmp_path, security):
     assert [t["function"]["name"] for t in kept] == ["filesystem__read_file"]
 
 
+@pytest.mark.asyncio
+async def test_a_plan_speech_reads_only_even_with_write_grants(tmp_path, security):
+    """계획 발언(ADR-053)은 대화 모드·쓰기 허용과 무관하게 읽기만 하고, 끝나면 원래대로 돌아갑니다."""
+    security(allow=["write(**)"])
+    gate = ToolGate(session_id="s", mode="auto", grants=["write(**)", "read(/elsewhere/**)"], control=None)
+    mcp = _manager(tmp_path)
+    tools = [{"type": "function", "function": {"name": n}} for n in
+             ("filesystem__read_text_file", "filesystem__write_file", "sandbox__execute_python_code", "fetch__fetch")]
+    with gate_module.reads_only_speech():
+        kept = gate.filter_tools("orchestrator", tools, mcp)
+        read = await gate.check(_agent("orchestrator"), "filesystem__read_text_file", {"path": "a.md"}, mcp)
+        write = await gate.check(_agent("orchestrator"), "filesystem__write_file", {"path": "a.md"}, mcp)
+    assert [t["function"]["name"] for t in kept] == ["filesystem__read_text_file"]
+    assert read.allowed and read.audit["rule"] == "plan:read_only"
+    assert not write.allowed and write.audit == {"decision": "deny", "risk": "write", "rule": "plan:read_only", "approver": ""}
+    assert "전문가에게 맡기세요" in write.output
+    after = await gate.check(_agent("orchestrator"), "filesystem__write_file", {"path": "a.md"}, mcp)
+    assert after.allowed, "계획 발언이 끝나면 대화 모드로 돌아가야 합니다"
+
+
 def test_read_only_mode_takes_the_edit_rule_away_with_the_tool(tmp_path, security):
     """목록에서 빠진 도구를 지침이 부르라고 하면 안 됩니다 (프롬프트는 거른 목록으로 만듭니다)."""
     gate = ToolGate(session_id="s", mode="read_only")

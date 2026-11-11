@@ -1,6 +1,6 @@
 # ADR-052. 전문가 피드의 라운드 묶음 접기/펼치기 및 `[S14]`·`[I-3]` 인용 링크 체계 도입
 
-> [ADR 목록](README.md) · 이전: [ADR-051](ADR-051-fixed-issue-ids-and-ledger-revisions.md)
+> [ADR 목록](README.md) · 이전: [ADR-051](ADR-051-fixed-issue-ids-and-ledger-revisions.md) · 다음: [ADR-053](ADR-053-plan-speech-reads-only.md)
 
 ## 상태 (Status)
 

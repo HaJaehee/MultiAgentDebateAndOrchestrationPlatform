@@ -445,6 +445,7 @@ def test_a_tool_wide_denial_removes_the_tool_from_the_list():
      "유저 승인 · conf.json 규칙으로 등록 net(pypi.org) · 서버 PC"),
     ("denied", {"decision": "deny", "rule": "read(**/.env)"}, "blocked", "규칙 차단 · read(**/.env)"),
     ("denied", {"decision": "deny", "rule": "mode:read_only"}, "blocked", "모드 차단 · 읽기 전용 모드"),
+    ("denied", {"decision": "deny", "rule": "plan:read_only"}, "blocked", "모드 차단 · 계획 발언은 읽기 전용"),
     ("error", {"decision": "hard", "rule": "문서 형식"}, "blocked", "고정 보호 · 문서 형식"),
     ("denied", {"decision": "rejected", "rule": "session:write(a.md)", "approver": "remote"}, "blocked",
      "유저 거부 · 이 대화 규칙으로 등록 write(a.md) · 원격"),

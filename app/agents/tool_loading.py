@@ -39,6 +39,13 @@ SEQUENTIAL_THINKING_TOOL = "sequentialthinking"
 # 불러온 도구를 기억해 두는 (대화, 에이전트) 수의 상한. 넘으면 오래된 것부터 잊습니다.
 MAX_REMEMBERED = 1024
 
+# 불러오기 목록에 없는 이름을 받았을 때 붙입니다. 다른 전문가의 도구나 이 발언에서 뺀 도구(계획 발언의 쓰기 도구,
+# ADR-053)를 부르다 이 답을 받은 오케스트레이터가 "그 도구는 없다" 를 계획의 전제로 적은 일이 있었습니다 (2026-11-11 실제 DeepSeek 시험).
+UNKNOWN_TOOL_NOTE = (
+    "이 발언에서 당신이 부를 수 있는 도구가 아닐 뿐입니다. 다른 전문가의 도구이거나 이 단계에서 뺀 도구일 수 있으니 "
+    "그런 도구가 없다고 판단하지 말고, 필요하면 그 도구를 가진 전문가에게 맡기세요."
+)
+
 # 목록의 도구를 불러오지 않고 곧바로 불렀다가 실패했을 때 결과 뒤에 붙입니다.
 CALLED_BEFORE_LOADING_NOTE = (
     "[도구 불러오기] 이 도구의 정의를 보지 않고 호출했습니다. 이제 정의를 불러왔으니 인자를 확인하고 다시 호출하세요."
@@ -293,5 +300,5 @@ def load_tools_answer(shelf: Optional[ToolShelf], arguments: Any) -> Tuple[str, 
     if unknown:
         remaining = list(shelf.waiting)
         listed = f"불러올 수 있는 도구: {', '.join(remaining)}" if remaining else "불러올 도구가 남아 있지 않습니다."
-        parts.append(f"찾지 못한 이름: {', '.join(unknown)}. {listed}")
+        parts.append(f"찾지 못한 이름: {', '.join(unknown)}. {UNKNOWN_TOOL_NOTE} {listed}")
     return " ".join(parts), ("success" if loaded or already else "error"), loaded

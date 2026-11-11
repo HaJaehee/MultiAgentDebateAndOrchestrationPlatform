@@ -24,10 +24,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence
+from typing import Any, Awaitable, Callable, Dict, Iterator, List, Optional, Sequence
 
 from app.agents.host_tools import host_tool_meta
 from app.config import (
@@ -40,6 +42,7 @@ from app.mcp.policy import (
     ALLOW,
     DENY,
     MODE_LABELS,
+    PLAN_READ_ONLY_RULE,
     RISK_LABELS,
     TAINT_RULE,
     UNATTENDED_RULE,
@@ -124,6 +127,31 @@ def _preview(arguments: Any) -> str:
     return text
 
 
+# 계획 발언이 도는 동안 켜 둡니다 (ADR-053). 이 발언의 판정은 모드를 `read_only` 로 조이고, 읽기 허용 규칙만 씁니다.
+# 게이트 인스턴스는 턴 전체가 함께 쓰므로 발언 단위의 상태는 컨텍스트 변수에 둡니다 (태스크마다 따로 갑니다).
+_reads_only_speech: contextvars.ContextVar[bool] = contextvars.ContextVar("mado_reads_only_speech", default=False)
+
+_PLAN_READ_ONLY_NEXT_ACTION = (
+    "계획 발언에서는 작업 공간 안을 읽기만 합니다. 같은 호출을 다시 하지 말고, 쓰기·실행·네트워크·작업 공간 밖이 필요한 "
+    "일은 분담에 적어 그 도구를 가진 전문가에게 맡기세요."
+)
+
+
+@contextmanager
+def reads_only_speech() -> Iterator[None]:
+    """이 안에서 도는 발언의 도구 판정을 읽기 전용으로 묶습니다.
+
+    오케스트레이터의 계획 발언이 씁니다. 쓰기·실행·네트워크는 분담을 받은 전문가의 일입니다. 실제 DeepSeek 시험에서
+    filesystem 을 가진 오케스트레이터가 계획 단계에서 파일을 직접 고쳤습니다 (2026-11-11). conf 의 허용 규칙과 "이 대화에서
+    허용" 도 읽기 규칙(`read(…)`)만 살립니다 — 남기면 `write(**)` 같은 허용이 계획 발언의 쓰기를 통과시킵니다.
+    """
+    token = _reads_only_speech.set(True)
+    try:
+        yield
+    finally:
+        _reads_only_speech.reset(token)
+
+
 # 사용자가 거부한 도구 호출에 부여되는 후속 지침. 사용자 결정이므로 모델이 우회로를 시도하지 않도록 제한합니다.
 _DENIED_BY_USER_NEXT_ACTION = (
     "유저의 결정을 따르세요. 같은 호출을 다시 하지 말고, 같은 결과를 내는 다른 도구로 "
@@ -190,19 +218,29 @@ class ToolGate:
             logger.warning(f"Could not save tool rules for {self.session_id}: {exc}")
 
     def policy_for(self, agent_key: str) -> Policy:
-        """이 발언자에게 걸리는 규칙. 매번 지금의 conf.json 으로 만듭니다."""
+        """이 발언자에게 걸리는 규칙. 매번 지금의 conf.json 으로 만듭니다.
+
+        계획 발언(`reads_only_speech`) 안이면 모드를 `read_only` 로 조이고 허용은 읽기 규칙만 남깁니다.
+        """
         security = get_config().tool_security
         extra = security.agents.get(agent_key)
+        reads_only = _reads_only_speech.get()
         mode = stricter_mode(
             self._session_mode or security.mode,
             extra.mode if extra is not None else None,
+            "read_only" if reads_only else None,
         )
+        allow = parse_rules(security.allow)
+        grants = _safe_rules(self._grants)
+        if reads_only:
+            allow = [rule for rule in allow if rule.kind == "read"]
+            grants = [rule for rule in grants if rule.kind == "read"]
         return Policy(
             mode=mode,
             deny=parse_rules(list(security.deny) + (list(extra.deny) if extra else [])),
             ask=parse_rules(list(security.ask) + (list(extra.ask) if extra else [])),
-            allow=parse_rules(security.allow),
-            grants=_safe_rules(self._grants),
+            allow=allow,
+            grants=grants,
             denials=_safe_rules(self._denials),
         )
 
@@ -274,6 +312,8 @@ class ToolGate:
         profile.tainted_by = tuple(tainted_by)
         policy = self.policy_for(agent.key)
         verdict = evaluate(profile, policy)
+        # 계획 발언에서 모드로 판정한 호출 (ADR-053). 대화 모드는 그대로인데 읽기 전용으로 판정된 까닭을 남깁니다.
+        plan_mode = _reads_only_speech.get() and verdict.source == "mode"
 
         if verdict.effect == ALLOW:
             # 감사 기록의 `rule` 칸 모양은 `policy.describe_verdict` 에 적혀 있습니다.
@@ -281,9 +321,17 @@ class ToolGate:
                 rule = f"session:{verdict.rule}"
             elif verdict.source == "rule":
                 rule = verdict.rule
+            elif plan_mode:
+                rule = PLAN_READ_ONLY_RULE
             else:
                 rule = f"mode:{policy.mode}"
             return GateResult(True, audit=_audit("allow", verdict.risk, rule))
+
+        if verdict.effect == DENY and plan_mode:
+            return GateResult(
+                False, refusal_text(tool_name, verdict.explain(), _PLAN_READ_ONLY_NEXT_ACTION), "denied",
+                _audit("deny", verdict.risk, PLAN_READ_ONLY_RULE),
+            )
 
         if verdict.effect == DENY:
             if verdict.source == "denial":
