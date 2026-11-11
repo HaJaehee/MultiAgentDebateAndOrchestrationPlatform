@@ -676,3 +676,107 @@ async def test_the_owner_row_shows_the_check_button_and_the_results(server, gate
         if listener.type == "click":
             listener.handler(None)
     assert pressed == [profile.target_id]
+
+
+# ---------------------------------------------------------------- 8. 권고를 conf.json 에 적기 (ADR-056)
+
+
+def _conf_file(tmp_path, server, agents, tool_loading=None):
+    path = tmp_path / "conf.json"
+    data = {
+        "// llm": "전역 연결",
+        "llm": {"model": "openai/small-window", "api_base": server, "api_key": "${TEST_LLM_KEY:-sk-from-env}"},
+        "agents": agents,
+    }
+    if tool_loading is not None:
+        data["tool_loading"] = tool_loading
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def _reload(path) -> RootConfig:
+    from app.config import get_config
+
+    return get_config(reload=True, config_path=str(path))
+
+
+def test_applying_a_window_suggestion_lowers_only_the_agents_that_are_over(server, tmp_path, restore_config):
+    path = _conf_file(tmp_path, server, {
+        "orchestrator": {"name": "Orchestrator", "role": "M", "max_context_window": 32000},
+        "coder": {"name": "Coder", "role": "C"},
+        "other": {"name": "Other", "role": "x", "model": "openai/elsewhere", "max_context_window": 200000},
+    })
+    config = _reload(path)
+    target = ms.collect_targets(config)[0]
+    changed = mc.apply_suggestion(target.id, mc.SET_MAX_CONTEXT_WINDOW, 32768, config, config_path=path)
+    assert changed == ["Coder: max_context_window 128,000 → 32,768"]
+
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert raw["agents"]["coder"]["max_context_window"] == 32768
+    assert raw["agents"]["orchestrator"]["max_context_window"] == 32000, "이미 그 아래인 것은 건드리지 않습니다"
+    assert raw["agents"]["other"]["max_context_window"] == 200000, "다른 연결의 에이전트는 건드리지 않습니다"
+    assert raw["llm"]["api_key"] == "${TEST_LLM_KEY:-sk-from-env}" and raw["// llm"] == "전역 연결", "참조와 주석은 그대로"
+    assert _reload(path).agents["coder"].max_context_window == 32768
+    assert mc.apply_suggestion(target.id, mc.SET_MAX_CONTEXT_WINDOW, 32768, _reload(path), config_path=path) == []
+
+
+def test_applying_the_other_suggestions(server, tmp_path, restore_config):
+    path = _conf_file(tmp_path, server, {
+        "orchestrator": {"name": "Orchestrator", "role": "M", "max_tokens": 16000},
+        "coder": {"name": "Coder", "role": "C", "max_tokens": 2000, "allowed_modalities": ["image", "document"]},
+    })
+    config = _reload(path)
+    target = ms.collect_targets(config)[0]
+
+    assert mc.apply_suggestion(target.id, mc.SET_MAX_TOKENS, 8192, config, config_path=path) == [
+        "Coder: max_tokens 2,000 → 8,192",
+    ], "이미 넉넉한 에이전트는 낮추지 않습니다"
+    config = _reload(path)
+    target = ms.collect_targets(config)[0]
+    assert mc.apply_suggestion(target.id, mc.SET_DROP_IMAGE, False, config, config_path=path) == ["Coder: 모달에서 이미지를 뺌"]
+    config = _reload(path)
+    assert config.agents["coder"].allowed_modalities == ["document"] and config.agents["coder"].max_tokens == 8192
+
+    assert config.tool_loading.enabled is True
+    assert mc.apply_suggestion("any", mc.SET_TOOL_LOADING, False, config, config_path=path) == [
+        "tool_loading.enabled → false (전역: 모든 에이전트)",
+    ]
+    assert _reload(path).tool_loading.enabled is False
+    assert mc.apply_suggestion("any", mc.SET_TOOL_LOADING, False, _reload(path), config_path=path) == []
+
+
+def test_applying_refuses_what_it_does_not_know(server, tmp_path, restore_config):
+    path = _conf_file(tmp_path, server, {"orchestrator": {"name": "Orchestrator", "role": "M"}})
+    config = _reload(path)
+    with pytest.raises(ValueError, match="적용할 수 없는 설정"):
+        mc.apply_suggestion("x", "api_key", "sk-evil", config, config_path=path)
+    with pytest.raises(ValueError, match="그 연결을 찾지 못했습니다"):
+        mc.apply_suggestion("no-such-connection", mc.SET_MAX_TOKENS, 8192, config, config_path=path)
+    assert "sk-evil" not in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_the_apply_button_is_only_on_suggestions_that_name_a_setting_and_only_when_allowed(server, gate, ui_page):
+    from nicegui import ui
+
+    from app.ui.components import model_status as component
+
+    catalog = (await run(server, "no-catalog")).to_dict(detail=True)     # 설정 이름이 붙은 권고
+    leaky = (await run(server, "leaky")).to_dict(detail=True)            # 서버 쪽에서 고칠 것 (글만)
+    pressed = []
+    with ui_page:
+        with ui.column() as allowed:
+            component._check_results(catalog, lambda target_id, suggestion: pressed.append((target_id, suggestion)))  # noqa: SLF001
+        with ui.column() as server_side:
+            component._check_results(leaky, lambda target_id, suggestion: pressed.append((target_id, suggestion)))  # noqa: SLF001
+        with ui.column() as remote:
+            component._check_results(catalog)  # noqa: SLF001
+
+    def buttons(element):
+        return [child for child in element.descendants() if getattr(child, "text", None) == component.APPLY_LABEL]
+
+    assert len(buttons(allowed)) == 1 and buttons(server_side) == [] and buttons(remote) == []
+    for listener in buttons(allowed)[0]._event_listeners.values():  # noqa: SLF001
+        if listener.type == "click":
+            listener.handler(None)
+    assert pressed == [(catalog["target_id"], {"text": pressed[0][1]["text"], "setting": mc.SET_TOOL_LOADING, "value": False})]

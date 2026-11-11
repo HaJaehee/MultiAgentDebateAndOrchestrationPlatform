@@ -35,7 +35,8 @@ The configuration file is loaded, validated, and normalized by [app/config/](fil
 | `app` | Application network and storage settings |
 | `llm` | Global LLM settings inherited by all agents |
 | `llm.sequential_thinking` | Global default for step-by-step reasoning |
-| `llm.fallback` | `{enabled: false, retry_after: 60}` — answer for an agent whose own connection fails (ADR-030). Not inherited by agents |
+| `llm.fallback` | `{enabled: false, retry_after: 60, order: []}` — answer for an agent whose own connection fails (ADR-030). `order` lists the connections to try, agent keys or `"llm"`; empty means the global one only (ADR-056). Not inherited by agents |
+| `llm.max_concurrency` / `agents.<key>.max_concurrency` | Concurrent requests allowed on one connection (same model, address and key); `0` = unlimited. `app.llm_concurrency` stays the server-wide limit (ADR-056) |
 | `mcp_servers.<name>` | External/local MCP server processes (stdio) |
 | `agents.<key>` | Specialist agent definitions (override `llm`) |
 | `agents.<key>.sequential_thinking` | Optional per-agent reasoning overrides |

@@ -361,6 +361,7 @@ INHERITABLE_LLM_FIELDS = (
     "extra_body",
     "max_tool_iterations",
     "max_continuations",
+    "max_concurrency",
 )
 
 # Aliases that refer to the same underlying field; setting any one blocks inheritance of the group.
@@ -559,6 +560,13 @@ class LLMFallbackConfig(BaseModel):
         default=60.0, ge=0,
         description="Seconds a failed connection is skipped before it is tried again (0 = try it every time)",
     )
+    # 물러설 연결의 순서 (ADR-056). 에이전트 키를 적으면 그 에이전트의 연결(모델·주소·키)이고, "llm" 은 전역 기본
+    # 연결입니다. 비워 두면 전역 기본 연결 하나뿐입니다 (ADR-030 의 동작). 모델이 여럿인 폐쇄망에서 "코더의 모델이
+    # 안 되면 비평가의 모델로, 그것도 안 되면 전역으로" 를 적는 자리입니다. 목록에 없는 연결로는 물러서지 않습니다.
+    order: List[str] = Field(
+        default_factory=list,
+        description="Connections to fall back to, in order: agent keys (that agent's connection) or 'llm' (the global one)",
+    )
 
 class LLMConfig(BaseModel):
     """Global LLM defaults (the "llm" object). Every agent inherits these unless it overrides them."""
@@ -594,6 +602,9 @@ class LLMConfig(BaseModel):
     extra_body: Optional[Dict[str, Any]] = Field(default=None, description="Extra JSON body fields")
     max_tool_iterations: Optional[int] = Field(default=None, ge=1, le=TOOL_ITERATION_CEILING)
     max_continuations: Optional[int] = Field(default=None, ge=0, le=CONTINUATION_CEILING)
+    max_concurrency: Optional[int] = Field(
+        default=None, ge=0, description="Max concurrent requests on one connection (0 = unlimited)",
+    )
     sequential_thinking: SequentialThinkingConfig = Field(default_factory=SequentialThinkingConfig)
     decision_llm: DecisionLLMConfig = Field(default_factory=DecisionLLMConfig)
     # 에이전트가 물려받는 값이 아닙니다 (`INHERITABLE_LLM_FIELDS` 에 없습니다). 전역 연결 그 자체에 딸린 설정입니다.
@@ -711,6 +722,13 @@ class AgentConfig(BaseModel):
     )
     sequential_thinking: SequentialThinkingConfig = Field(default_factory=SequentialThinkingConfig)
     decision_llm: DecisionLLMConfig = Field(default_factory=DecisionLLMConfig)
+    # 이 에이전트가 쓰는 **연결 하나**에 동시에 보내는 요청의 상한 (ADR-056). 0 이면 제한하지 않습니다.
+    #
+    # `app.llm_concurrency` 는 서버 전체를 한 줄로 묶습니다. 모델마다 서버가 다른 배치에서는 그 값 하나로 맞출 수
+    # 없습니다 — GPU 한 장에 뜬 모델은 한 번에 하나만 받아야 하고, 옆의 큰 서버는 넷을 받습니다. 같은 연결(모델·
+    # 주소·키가 같은 것)을 쓰는 요청끼리 줄을 서고, 요청마다 자기 에이전트의 값으로 자리가 있는지 봅니다.
+    # 전역 `llm.max_concurrency` 를 적으면 따로 적지 않은 에이전트가 물려받습니다.
+    max_concurrency: int = Field(default=0, ge=0, description="Max concurrent requests on this agent's connection (0 = unlimited)")
     # `llm.fallback` 이 켜져 있어도 이 에이전트만은 전역 기본 모델로 물러서지 않게 합니다. 이 에이전트의
     # 프롬프트는 정해 둔 모델로만 보내야 할 때 씁니다 (사내 모델 전용 자료, 미세조정 모델의 역할 등).
     allow_fallback: bool = Field(

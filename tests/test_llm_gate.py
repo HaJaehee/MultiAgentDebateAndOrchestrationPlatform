@@ -4,6 +4,7 @@
 2. 누가 기다리는지(대화 id)와 앞에 몇 건이 있는지 보인다.
 3. 기다리다 취소된 요청도, 자리를 받은 순간 취소된 요청도 자리를 새게 하지 않는다.
 4. LLM 호출 한 판(`_complete_once`)이 실제로 이 관문을 지난다.
+5. 연결별 줄 (ADR-056): 같은 연결끼리만 줄을 서고, 상한은 요청이 들고 온 값(그 에이전트의 `max_concurrency`)이다.
 """
 
 import asyncio
@@ -11,7 +12,9 @@ import asyncio
 import pytest
 
 from app.agents import llm as llm_module
-from app.agents.llm_gate import LLM_HOLDER, LLMGate
+from app.agents.base import Agent
+from app.agents.connection import connection_id
+from app.agents.llm_gate import LLM_HOLDER, ConnectionGates, LLMGate
 
 
 @pytest.mark.asyncio
@@ -146,3 +149,147 @@ def test_the_engine_names_the_conversation_for_the_queue():
 
     source = (Path(__file__).resolve().parents[1] / "app" / "orchestration" / "engine.py").read_text(encoding="utf-8")
     assert "LLM_HOLDER.set(session_id)" in source
+
+
+# ---------------------------------------------------------------- 5. 연결별 줄 (ADR-056)
+
+
+@pytest.mark.asyncio
+async def test_a_request_can_bring_its_own_limit():
+    """관문의 상한이 없어도, 요청이 들고 온 상한으로 자리가 있는지 봅니다."""
+    gate = LLMGate(0)
+    order = []
+    release = asyncio.Event()
+
+    async def call(name: str, limit):
+        async with gate.slot(name, limit=limit):
+            order.append(name)
+            await release.wait()
+
+    first = asyncio.create_task(call("one-at-a-time", 1))
+    await asyncio.sleep(0)
+    second = asyncio.create_task(call("also-one", 1))
+    await asyncio.sleep(0)
+    assert order == ["one-at-a-time"] and gate.position("also-one") == 0
+    release.set()
+    await asyncio.gather(first, second)
+    assert order == ["one-at-a-time", "also-one"] and gate.snapshot()["active"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_generous_request_does_not_jump_ahead_of_a_strict_one():
+    """맨 앞 요청이 못 들어가면 상한이 더 넉넉한 뒤 요청도 기다립니다."""
+    gate = LLMGate(0)
+    order = []
+    release = asyncio.Event()
+
+    async def call(name: str, limit):
+        async with gate.slot(name, limit=limit):
+            order.append(name)
+            await release.wait()
+
+    tasks = [asyncio.create_task(call("running", 0))]
+    await asyncio.sleep(0)
+    tasks.append(asyncio.create_task(call("strict", 1)))      # 도는 것이 하나 있어 기다립니다
+    await asyncio.sleep(0)
+    tasks.append(asyncio.create_task(call("generous", 5)))    # 자리는 있지만 줄을 섭니다
+    await asyncio.sleep(0)
+    assert order == ["running"] and gate.position("strict") == 0 and gate.position("generous") == 1
+    release.set()
+    await asyncio.gather(*tasks)
+    assert order == ["running", "strict", "generous"]
+
+
+@pytest.mark.asyncio
+async def test_each_connection_has_its_own_line():
+    gates = ConnectionGates()
+    order = []
+    release = asyncio.Event()
+
+    async def call(connection: str, name: str):
+        async with gates.slot(connection, 1, name):
+            order.append(name)
+            await release.wait()
+
+    tasks = [asyncio.create_task(call("gpu-a", "a1"))]
+    await asyncio.sleep(0)
+    tasks.append(asyncio.create_task(call("gpu-a", "a2")))    # 같은 연결: 기다립니다
+    tasks.append(asyncio.create_task(call("gpu-b", "b1")))    # 다른 연결: 바로 들어갑니다
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert order == ["a1", "b1"]
+    assert gates.position("a2") == 0 and gates.position("b1") is None and gates.position("nobody") is None
+    assert gates.snapshot() == {"gpu-a": (1, 1), "gpu-b": (1, 0)}
+    release.set()
+    await asyncio.gather(*tasks)
+    assert order == ["a1", "b1", "a2"] and gates.snapshot() == {}, "한가한 연결은 보이지 않습니다"
+
+
+@pytest.mark.asyncio
+async def test_zero_means_the_connection_is_counted_but_never_waits():
+    gates = ConnectionGates()
+    async with gates.slot("c", 0, "x"), gates.slot("c", 0, "y"), gates.slot("c", 0, "z"):
+        assert gates.snapshot() == {"c": (3, 0)}
+
+
+def _agent(key: str, model: str, limit: int) -> Agent:
+    return Agent(key=key, name=key, role="r", model=model, api_key="k", api_base="http://llm.local/v1",
+                 max_concurrency=limit)
+
+
+@pytest.mark.asyncio
+async def test_calls_on_one_connection_obey_the_agents_max_concurrency(monkeypatch):
+    """GPU 한 장에 뜬 모델은 한 번에 하나, 옆의 연결은 그와 상관없이 함께 돕니다."""
+    monkeypatch.setattr(llm_module, "get_llm_gate", lambda: LLMGate(0))
+    gates = ConnectionGates()
+    monkeypatch.setattr(llm_module, "get_connection_gates", lambda: gates)
+    running = {}
+    peak = {}
+
+    async def fake_unthrottled(self, agent, *args, **kwargs):
+        running[agent.model] = running.get(agent.model, 0) + 1
+        peak[agent.model] = max(peak.get(agent.model, 0), running[agent.model])
+        await asyncio.sleep(0.02)
+        running[agent.model] -= 1
+        return object(), "stop"
+
+    monkeypatch.setattr(llm_module.LLMCaller, "_complete_unthrottled", fake_unthrottled)
+    monkeypatch.setattr(llm_module, "note_sent", lambda agent, messages: None)
+    caller = llm_module.LLMCaller.__new__(llm_module.LLMCaller)
+    single = [_agent("coder", "openai/single-gpu", 1), _agent("critic", "openai/single-gpu", 1)]
+    wide = _agent("architect", "openai/big-server", 0)
+    assert connection_id(single[0]) == connection_id(single[1]) != connection_id(wide)
+    await asyncio.gather(
+        *(caller._complete_once(single[i % 2], [], None) for i in range(4)),
+        *(caller._complete_once(wide, [], None) for _ in range(3)),
+    )
+    assert peak == {"openai/single-gpu": 1, "openai/big-server": 3}
+    assert gates.snapshot() == {}
+
+
+@pytest.mark.asyncio
+async def test_a_connection_slot_is_held_before_the_server_wide_one(monkeypatch):
+    """연결을 기다리는 동안 서버 전체의 자리를 쥐고 있으면 그 자리가 놉니다."""
+    shared = LLMGate(2)
+    monkeypatch.setattr(llm_module, "get_llm_gate", lambda: shared)
+    gates = ConnectionGates()
+    monkeypatch.setattr(llm_module, "get_connection_gates", lambda: gates)
+    monkeypatch.setattr(llm_module, "note_sent", lambda agent, messages: None)
+    seen = []
+    release = asyncio.Event()
+
+    async def fake_unthrottled(self, agent, *args, **kwargs):
+        seen.append(shared.snapshot()["active"])
+        await release.wait()
+        return object(), "stop"
+
+    monkeypatch.setattr(llm_module.LLMCaller, "_complete_unthrottled", fake_unthrottled)
+    caller = llm_module.LLMCaller.__new__(llm_module.LLMCaller)
+    agent = _agent("coder", "openai/single-gpu", 1)
+    tasks = [asyncio.create_task(caller._complete_once(agent, [], None)) for _ in range(2)]
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert seen == [1], "하나만 돌고 있습니다"
+    assert shared.snapshot() == {**shared.snapshot(), "active": 1, "waiting": 0}, "기다리는 쪽은 전체의 자리를 쥐지 않았습니다"
+    release.set()
+    await asyncio.gather(*tasks)

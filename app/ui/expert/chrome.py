@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Callable, Optional
+
 from nicegui import ui
 
 from app.about import (
@@ -93,8 +95,14 @@ def build_about_dialog() -> ui.dialog:
     return about_dialog
 
 
-def build_header(drawer: ui.left_drawer, about_dialog: ui.dialog) -> None:
-    """맨 위 줄: 사이드바 토글, 이름·버전, 쉬운 화면·모델 연결 상태·정보·접속 버튼."""
+def build_header(
+    drawer: ui.left_drawer, about_dialog: ui.dialog, viewer_is_local: Optional[Callable[[], bool]] = None,
+) -> None:
+    """맨 위 줄: 사이드바 토글, 이름·버전, 쉬운 화면·모델 연결 상태·정보·접속 버튼.
+
+    `viewer_is_local` 은 이 화면을 서버 PC 에서 열었는지입니다. 모델 적합성 점검의 권고를 conf.json 에 적는
+    `적용` 단추가 그때만 놓입니다.
+    """
     with ui.header().classes("bg-slate-900 border-b border-slate-800 px-4 py-2 items-center justify-between"):
         with ui.row().classes("items-center gap-2.5"):
             ui.button(icon="menu", on_click=drawer.toggle).props("flat dense round color=grey-4").tooltip("사이드바 열기/닫기")
@@ -113,7 +121,8 @@ def build_header(drawer: ui.left_drawer, about_dialog: ui.dialog) -> None:
             ).tooltip("비엔지니어를 위한 화면 — AI 에이전트 알아보기, 대화로 에이전트 만들기")
             # 설정에 있는 모델이 지금 응답하는지 (app/agents/model_status.py). 이 화면은 주인만
             # 열므로 주소와 오류 원문까지 보여 줍니다.
-            build_model_status_button(detail=True)
+            # 권고를 conf.json 에 적는 단추는 서버 PC 에서 연 화면에만 둡니다.
+            build_model_status_button(detail=True, can_apply=viewer_is_local)
             DesktopAlertButton()
             info_btn = ui.button(icon="info", on_click=about_dialog.open)
             info_btn.props("flat dense round color=grey-4")

@@ -590,6 +590,20 @@ recorded per message, not in the snapshot.
 dialog) for `retry_after` seconds, then lets one call try it again. Without it every speech would pay
 `timeout × (num_retries + 1)` first. A successful probe in the status dialog closes it immediately.
 
+**More than one place to fall back to (ADR-056).** `llm.fallback.order` lists connections in the order to try:
+an agent key means that agent's connection, `"llm"` the global one. Empty is the same as `["llm"]`, which is
+everything above. Each candidate is the failing agent with another connection and that connection's capacity.
+The chain moves to the next candidate under the same two conditions as the first switch — a connection-class
+failure, and nothing produced yet — so a candidate that streamed text or called a tool and then died ends the
+chain, and so does a 400. Every switch is announced, so the speech records the model that finally answered. A
+failed candidate is skipped for `retry_after` like any failed connection, except the **last** one, which is
+neither tripped nor skipped: with nowhere left to go it is tried every time (and a deployment without `order`
+behaves exactly as before). A connection not in the list is never used; the list is the whole answer to "where
+can this conversation be sent". Left out of the candidates: the agent's own connection, one already listed,
+one without connection details, a disabled agent, and a specialist on a decision LLM. A name that is not in the
+configuration is skipped with one warning instead of failing the load, so deleting an agent on screen cannot
+stop the app from starting. Tests: `tests/test_llm_fallback.py`.
+
 **Telling.** The switch is announced through `llm_fallback.listening(...)` (a context variable, like
 `LLM_HOLDER`, so `call_agent`'s signature — and every caller shaped like it — stays as is). `SpeechRunner.speak()` listens
 and (1) emits `llm_fallback` so the streaming card shows the badge before the substitute starts, (2) writes
@@ -965,6 +979,15 @@ tokenizer count into the last chunk whether or not the server sent one.
 (vLLM's `--tool-call-parser`, `--reasoning-parser`). Nothing at run time reads a profile, so the same `conf.json`
 behaves the same whether or not the check was run.
 
+**Applying a suggestion (ADR-056).** A suggestion that names a setting has an `적용` button, on a page opened on
+the server PC only (the same rule as editing global tool rules). `apply_suggestion()` lowers `max_context_window`
+for the agents on that connection that are above the value, raises `max_tokens` for those below it, removes the
+image modality from those that have it, or sets the global `tool_loading.enabled`. Agent values are written on
+that agent even when it inherited them, so agents on other connections keep theirs; `${VAR}` references and `//`
+comments are untouched. The toast lists what changed, or says nothing needed changing. The profile is left as it
+is: press `다시 점검` to confirm. The check still applies nothing by itself, and still nothing at run time reads a
+profile. Agent values take effect in new conversations.
+
 **What it cannot tell.** One request per check: a model that leaks one call in ten can pass. The window is what the
 server says; a gateway that hides `/models` leaves it unknown. LiteLLM splits a paired `<think>…</think>` itself
 (1.98), so reasoning mixed into the text shows only when the opening tag is missing.
@@ -972,3 +995,28 @@ server says; a gateway that hides `/models` leaves it unknown. LiteLLM splits a 
 Measured 2026-11-11: `deepseek/deepseek-v4-flash` passed all ten checks in 8 requests, `jev/jev-1.13.0` all four in one.
 Tests: `tests/test_model_check.py` (real LiteLLM against a local fake server, one misbehaviour per model name),
 `real_llm_tests/test_05_modelcheck.py`.
+
+## 9. One Line per Connection (`max_concurrency`, ADR-056)
+
+`app.llm_concurrency` is one line for the whole server. With several models on servers of different sizes no
+single number fits: a model on one GPU should take one request at a time, and setting the global limit to 1 makes
+requests for the large server next to it wait in the same line.
+
+`agents.<key>.max_concurrency` (default 0, unlimited; inherited from `llm.max_concurrency`) limits concurrent
+requests on **that agent's connection**. `ConnectionGates` in
+[app/agents/llm_gate.py](file:///d:/MultiAgentDebateOrchestration/app/agents/llm_gate.py) keeps one FIFO line per
+`connection_id`, so two agents on the same model share a line and an agent on another model does not.
+
+* **The request brings the limit.** Nothing is configured per connection. Each request asks whether fewer requests
+  than its own agent's limit are running on the connection, and waits in arrival order otherwise. Agents on one
+  connection with different values therefore never flip a shared limit back and forth.
+* **No overtaking.** While the request at the head of a line cannot enter, a later one with a more generous limit
+  waits too.
+* **Connection first, server second.** `_complete_once` takes the connection slot and then the server-wide one.
+  The other order would hold a server-wide slot idle while waiting for the connection.
+* **Never in the way.** A call whose connection cannot be read (test doubles, an external driver's agent object)
+  passes without a limit.
+* The trial page's queue position looks in the connection lines when the conversation is not in the server-wide
+  one. Waiting for a slot is not LLM time ([§6](#6-usage-metering-v15)); it shows as `도구·대기`.
+
+Decision-LLM calls and conformance-check requests use the server-wide line only. Tests: `tests/test_llm_gate.py`.

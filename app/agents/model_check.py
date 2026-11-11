@@ -12,7 +12,8 @@
 - **MADO 가 실제로 보내는 모양으로.** 마무리 호출의 `tool_choice="none"`, 지연 로딩 목록(`catalog_tool`) 같은
   요청은 실제 코드가 만드는 것을 그대로 씁니다. 검사가 통과하면 토론에서도 통과해야 뜻이 있습니다.
 - **제안만 합니다.** 결과에 따라 런타임이 달라지지 않습니다. 권장 설정은 글과 `Suggestion` 으로 내놓고,
-  conf 를 고치는 것은 사람이 합니다.
+  conf 를 고치는 것은 사람이 합니다. 설정 이름이 붙은 권고는 화면의 `적용` 단추로 한 번에 적을 수 있지만
+  (`apply_suggestion`, ADR-056), 그것도 사람이 눌러야 하고 서버 PC 에서만 됩니다.
 - **부하.** 생성형 연결 하나에 요청 8건(짧은 답)과 `/models` 조회 1건, 결정 LLM 은 1건입니다. 서버 전체의
   동시 요청 상한(`app.llm_concurrency`)을 지키며 차례로 보냅니다. 재시도는 없습니다.
 - **기록에는 크기와 상태만.** 오류 원문은 키를 가린 한두 줄(`safe_detail`)만 남기고, 모델이 쓴 글은 저장하지 않습니다.
@@ -43,7 +44,16 @@ from app.agents.llm_recovery import find_leaked_tool_call
 from app.agents.llm_tool_calls import ToolCallMixin
 from app.agents.model_status import ModelTarget, collect_targets, probe_kwargs, safe_detail
 from app.agents.tool_loading import catalog_tool, is_load_tool, tool_loading_guidance
-from app.config import ORCHESTRATOR_KEY, RootConfig, get_config
+from app.config import (
+    DEFAULT_CONFIG_PATH,
+    ORCHESTRATOR_KEY,
+    RootConfig,
+    active_config_path,
+    get_config,
+    set_agent_allowed_modalities_in_conf_file,
+    set_agent_limits_in_conf_file,
+    set_tool_loading_enabled_in_conf_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -807,6 +817,59 @@ def targets_for_agents(keys: Sequence[str], config: Optional[RootConfig] = None)
             if any(use.key == key for use in uses_of(target, config)) and target not in picked:
                 picked.append(target)
     return picked
+
+
+# ---------------------------------------------------------------- 권고 적용
+
+APPLICABLE_SETTINGS = (SET_MAX_CONTEXT_WINDOW, SET_MAX_TOKENS, SET_TOOL_LOADING, SET_DROP_IMAGE)
+
+
+def apply_suggestion(
+    target_id: str,
+    setting: str,
+    value: Any,
+    config: Optional[RootConfig] = None,
+    *,
+    config_path: Optional[str | Path] = None,
+) -> List[str]:
+    """권고 하나를 conf.json 에 적습니다. 바꾼 것을 한 줄씩 돌려주고, 바꿀 것이 없으면 빈 목록입니다.
+
+    점검이 자동으로 부르지 않습니다. 사람이 `적용` 을 눌렀을 때만 불립니다 (ADR-056).
+
+    - `max_context_window`: 그 연결을 쓰는 에이전트 가운데 값이 더 큰 것만 `value` 로 낮춥니다.
+    - `max_tokens`: 그 연결을 쓰는 에이전트 가운데 값이 더 작은 것만 `value` 로 올립니다.
+    - `allowed_modalities.image`: 그 연결을 쓰는 에이전트의 모달에서 이미지를 뺍니다.
+    - `tool_loading.enabled`: 전역 설정입니다. 다른 모델을 쓰는 에이전트에도 적용됩니다.
+
+    에이전트의 값은 새 대화부터 적용됩니다 (잠긴 대화는 시작할 때의 설정으로 계속 돕니다).
+    """
+    if setting not in APPLICABLE_SETTINGS:
+        raise ValueError(f"적용할 수 없는 설정입니다: {setting}")
+    config = config or get_config()
+    path = Path(config_path) if config_path is not None else (active_config_path() or Path(DEFAULT_CONFIG_PATH))
+    if setting == SET_TOOL_LOADING:
+        wanted = bool(value)
+        if config.tool_loading.enabled == wanted:
+            return []
+        set_tool_loading_enabled_in_conf_file(wanted, path)
+        return [f"tool_loading.enabled → {'true' if wanted else 'false'} (전역: 모든 에이전트)"]
+
+    target = next((t for t in collect_targets(config) if t.id == target_id), None)
+    if target is None:
+        raise ValueError("설정에서 그 연결을 찾지 못했습니다. 설정이 바뀌었으면 다시 점검해 주세요.")
+    changed: List[str] = []
+    for use in uses_of(target, config):
+        if setting == SET_MAX_CONTEXT_WINDOW and use.max_context_window > int(value):
+            set_agent_limits_in_conf_file(use.key, max_context_window=int(value), config_path=path)
+            changed.append(f"{use.name}: max_context_window {use.max_context_window:,} → {int(value):,}")
+        elif setting == SET_MAX_TOKENS and use.max_tokens < int(value):
+            set_agent_limits_in_conf_file(use.key, max_tokens=int(value), config_path=path)
+            changed.append(f"{use.name}: max_tokens {use.max_tokens:,} → {int(value):,}")
+        elif setting == SET_DROP_IMAGE and use.takes_images:
+            kept = [m for m in config.agents[use.key].allowed_modalities if m != "image"]
+            set_agent_allowed_modalities_in_conf_file(use.key, kept, path)
+            changed.append(f"{use.name}: 모달에서 이미지를 뺌")
+    return changed
 
 
 # ---------------------------------------------------------------- 저장

@@ -21,12 +21,12 @@ import litellm
 
 from app.agents import llm_fallback, llm_usage
 from app.agents.base import Agent
-from app.agents.connection import SERVER_ERROR, classify
+from app.agents.connection import SERVER_ERROR, classify, connection_id
 from app.agents.decision import DecisionCaller
 from app.agents.host_tools import host_tools_for
 from app.agents.llm_context import context_budget, fit_context_window, merge_consecutive_roles, place_ledger_last
 from app.agents.llm_fingerprint import request_fingerprint
-from app.agents.llm_gate import get_llm_gate
+from app.agents.llm_gate import get_connection_gates, get_llm_gate
 from app.agents.llm_loop import ToolLoopMixin
 from app.agents.llm_prompt_cache import mark_goal
 from app.agents.llm_recovery import AnswerRecoveryMixin
@@ -230,24 +230,16 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         primary_error: Optional[LLMUnavailableError] = None,
         already_announced: int = 0,
     ) -> Tuple[str, List[Dict[str, Any]]]:
-        """전역 기본 모델로 같은 발언을 처음부터 받습니다. 그것도 실패하면 두 이유를 함께 올립니다."""
-        agent, substitute = route.primary, route.substitute
-        notice = route.notice(state, skipped=skipped)
-        logger.warning(
-            f"Falling back for {agent.name}: {agent.model} is unavailable ({state}"
-            f"{', skipped without calling' if skipped else ''}); answering with the global model {substitute.model}"
-        )
-        on_fallback = llm_fallback.current_listener()
-        if on_fallback is not None:
-            try:
-                outcome = on_fallback(notice)
-                if asyncio.iscoroutine(outcome):
-                    await outcome
-            except asyncio.CancelledError:
-                raise
-            except BaseException as exc:  # noqa: BLE001 - 알리다 실패해도 발언은 받습니다
-                logger.warning(f"Fallback notification failed for {agent.name}: {type(exc).__name__}: {exc}")
+        """물러설 연결로 같은 발언을 처음부터 받습니다. 모두 실패하면 이유를 함께 올립니다.
 
+        후보가 여럿이면(`llm.fallback.order`, ADR-056) 순서대로 불러 봅니다. 다음 후보로 넘어가는 조건은 처음
+        물러설 때와 같습니다: 연결의 문제이고, 그 후보가 아무것도 내놓기 전일 때. 글이 흘렀거나 도구를 부른 뒤의
+        실패는 넘기지 않습니다 (같은 답이 두 번 붙고, 한 모델의 도구 호출 기록을 다른 모델이 받게 됩니다).
+        """
+        agent = route.primary
+        reasons = [primary_error.reason if primary_error is not None else (
+            f"{route.notice(state, skipped=skipped).label} (조금 전에 실패한 연결이라 다시 부르지 않았습니다)"
+        )]
         remaining = already_announced
 
         async def tool_call_once(call_log: Dict[str, Any]) -> None:
@@ -258,16 +250,50 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
                 return
             await self._notify_tool_call(agent, on_tool_call, call_log)
 
-        try:
-            return await run(substitute, tool_call_once, on_context_trim)
-        except LLMUnavailableError as exc:
-            first = primary_error.reason if primary_error is not None else (
-                f"{notice.label} (조금 전에 실패한 연결이라 다시 부르지 않았습니다)"
+        last_error: Optional[LLMUnavailableError] = None
+        for candidate in route.candidates:
+            substitute = candidate.agent
+            if route.skipping(candidate):
+                reasons.append(f"{candidate.title} `{substitute.model}` 은 조금 전에 실패해 건너뛰었습니다")
+                continue
+            notice = route.notice(state, skipped=skipped, candidate=candidate)
+            logger.warning(
+                f"Falling back for {agent.name}: {agent.model} is unavailable ({state}"
+                f"{', skipped without calling' if skipped else ''}); answering with "
+                f"{'the global model' if candidate.is_global else 'the connection of ' + candidate.name} {substitute.model}"
             )
-            raise LLMUnavailableError(
-                agent,
-                f"{first} — 기본 모델 `{substitute.model}` 로도 응답을 받지 못했습니다: {exc.reason}",
-            ) from exc
+            on_fallback = llm_fallback.current_listener()
+            if on_fallback is not None:
+                try:
+                    outcome = on_fallback(notice)
+                    if asyncio.iscoroutine(outcome):
+                        await outcome
+                except asyncio.CancelledError:
+                    raise
+                except BaseException as exc:  # noqa: BLE001 - 알리다 실패해도 발언은 받습니다
+                    logger.warning(f"Fallback notification failed for {agent.name}: {type(exc).__name__}: {exc}")
+
+            # 이 후보가 무엇을 내놓았는지 따로 봅니다. 다음 후보가 있을 때만 "곧 물러설 것" 으로 칩니다.
+            progress = _SpeechProgress(can_switch=not route.is_last(candidate))
+            token = _SPEECH_PROGRESS.set(progress)
+            try:
+                return await run(substitute, tool_call_once, on_context_trim)
+            except LLMUnavailableError as exc:
+                last_error = exc
+                reasons.append(f"{candidate.title} `{substitute.model}` 로도 응답을 받지 못했습니다: {exc.reason}")
+                cause = exc.__cause__ if progress.llm_failed else None
+                failed = classify(cause) if cause is not None else None
+                movable = (
+                    not route.is_last(candidate) and failed in llm_fallback.FALLBACK_STATES
+                    and not progress.rounds and not progress.streamed
+                )
+                if not movable:
+                    break
+                route.trip_candidate(candidate, failed)
+            finally:
+                _SPEECH_PROGRESS.reset(token)
+
+        raise LLMUnavailableError(agent, " — ".join(reasons)) from last_error
 
     async def _call_agent_once(
         self,
@@ -448,6 +474,19 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         else:
             on_chunk(text)
 
+    @staticmethod
+    def _connection_slot(agent: Any) -> Any:
+        """이 에이전트의 연결 줄에서 자리 하나 (`max_concurrency`, ADR-056).
+
+        연결을 읽을 수 없는 것(시험 대역, 바깥 구동기가 넘긴 모양이 다른 에이전트)은 상한 없이 한 줄에 셉니다.
+        줄을 서는 일이 호출을 막아서는 안 됩니다.
+        """
+        try:
+            connection, limit = connection_id(agent), int(getattr(agent, "max_concurrency", 0) or 0)
+        except Exception:  # noqa: BLE001
+            connection, limit = "", 0
+        return get_connection_gates().slot(connection, limit)
+
     async def _complete_once(
         self,
         agent: Agent,
@@ -465,15 +504,17 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
 
         스트리밍이 안 되는 엔드포인트면 한 번만 비스트리밍으로 되묻습니다.
 
-        서버 전체의 동시 요청 상한(`app.llm_concurrency`)이 있으면 자리가 날 때까지
-        여기서 기다립니다. 스트리밍이 끝날 때까지 자리를 쥡니다 (`app/agents/llm_gate.py`).
+        서버 전체의 동시 요청 상한(`app.llm_concurrency`)이나 이 에이전트의 연결 상한(`max_concurrency`)이
+        있으면 자리가 날 때까지 여기서 기다립니다. 스트리밍이 끝날 때까지 자리를 쥡니다 (`app/agents/llm_gate.py`).
         """
         progress = _SPEECH_PROGRESS.get()
         if progress is not None:
             # 직전 라운드의 호출 오류(첨부 모달리티 거절 등)를 도구 루프 내에서 자체 수습한 경우 오류 플래그를 초기화합니다.
             progress.llm_failed = False
         try:
-            async with get_llm_gate().slot():
+            # 연결의 줄을 먼저 서고(그 에이전트의 `max_concurrency`), 자리를 받은 뒤 서버 전체의 줄을 섭니다.
+            # 반대로 하면 연결을 기다리는 동안 전체의 자리 하나를 쥐고 놀립니다 (ADR-056).
+            async with self._connection_slot(agent), get_llm_gate().slot():
                 # 게이트 대기 시간은 제외하고, 모델 응답 소요 시간만 측정합니다 (`llm_usage`).
                 began = time.monotonic()
                 try:

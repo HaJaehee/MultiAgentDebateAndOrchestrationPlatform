@@ -1,6 +1,6 @@
 # ADR-055. Bench 는 결정적 검사와 판정 모델의 채점으로 품질을 숫자로 남기고, 두 실행을 견줘 나빠진 것을 짚는다
 
-> [ADR 목록](README.md) · 이전: [ADR-054](ADR-054-model-conformance-check.md)
+> [ADR 목록](README.md) · 이전: [ADR-054](ADR-054-model-conformance-check.md) · 다음: [ADR-056](ADR-056-per-connection-limits-fallback-chain-and-applying-advice.md)
 
 ## 상태 (Status)
 

@@ -38,11 +38,20 @@
 전역은 **지금의** 설정(`get_config().llm`)입니다. 잠긴 대화의 스냅샷에는 전역 값이 따로 없고, 키를 바꾼
 뒤에도 동작해야 하기 때문입니다. 그래서 어떤 모델이 실제로 답했는지는 스냅샷이 아니라 발언마다 적습니다.
 
+## 물러설 연결이 여럿일 때 (ADR-056)
+
+`llm.fallback.order` 에 연결을 순서대로 적으면 그 순서로 물러섭니다. 에이전트 키는 그 에이전트의 연결이고 `"llm"` 은
+전역 기본 연결입니다. 비워 두면 전역 하나뿐입니다. 한 후보가 **아무것도 내놓기 전에** 연결 문제로 실패하면 다음
+후보로 넘어가고, 글이 흘렀거나 도구를 부른 뒤의 실패는 넘기지 않습니다 (위 2번과 같은 이유). 후보마다 전환을 알리므로
+발언에는 마지막으로 답한 모델이 남습니다. 목록에 적지 않은 연결로는 물러서지 않습니다 — 어느 내용이 어느 서버로
+갈 수 있는지는 사람이 적은 목록이 전부입니다. 결정 LLM 을 쓰는 전문가와 꺼 둔 에이전트는 후보가 되지 않습니다.
+
 ## 차단기
 
 죽은 연결을 발언마다 다시 기다리면 그때마다 타임아웃과 재시도를 통째로 치릅니다. 한 번 실패한 연결은
 `retry_after` 초 동안 곧바로 기본 모델로 보내고, 지나면 한 번 다시 불러 봅니다. `모델 연결 상태` 창에서
-그 연결이 응답하는 것을 확인하면 곧바로 닫습니다.
+그 연결이 응답하는 것을 확인하면 곧바로 닫습니다. 사슬의 후보도 실패하면 같은 차단기에 걸려 그동안 건너뜁니다.
+다만 **마지막 후보**는 걸지도 건너뛰지도 않습니다 — 더 물러설 곳이 없으니 매번 불러 봅니다.
 """
 
 from __future__ import annotations
@@ -51,8 +60,8 @@ import contextvars
 import logging
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterator, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 from app.agents.base import Agent
 from app.agents.connection import (
@@ -68,14 +77,18 @@ from app.agents.connection import (
     connection_signature,
     global_entry,
 )
-from app.config import LLMConfig, RootConfig, get_config
+from app.config import ORCHESTRATOR_KEY, LLMConfig, RootConfig, get_config
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "FALLBACK_STATES", "FallbackBreaker", "FallbackNotice", "FallbackRoute", "classify",
-    "current_listener", "get_fallback_breaker", "listening", "route_for", "skip_remaining", "substitute_for",
+    "FALLBACK_STATES", "GLOBAL_CONNECTION", "FallbackBreaker", "FallbackCandidate", "FallbackNotice", "FallbackRoute",
+    "classify", "current_listener", "get_fallback_breaker", "listening", "route_for", "skip_remaining",
+    "substitute_for", "substitutes_for",
 ]
+
+# `llm.fallback.order` 에서 전역 기본 연결을 가리키는 이름.
+GLOBAL_CONNECTION = "llm"
 
 # 물러서는 실패. 연결 자체가 안 되는 것만 고릅니다.
 FALLBACK_STATES = frozenset({AUTH, MODEL, UNREACHABLE, TIMEOUT, SERVER_ERROR})
@@ -177,15 +190,41 @@ def get_fallback_breaker() -> FallbackBreaker:
     return _breaker
 
 
+@dataclass(frozen=True)
+class FallbackCandidate:
+    """물러설 연결 하나. `name` 은 `llm.fallback.order` 에 적힌 이름이고 `agent` 는 그 연결로 바꾼 같은 에이전트입니다."""
+
+    name: str
+    agent: Agent
+
+    @property
+    def connection(self) -> str:
+        return connection_id(self.agent)
+
+    @property
+    def is_global(self) -> bool:
+        return self.name == GLOBAL_CONNECTION
+
+    @property
+    def title(self) -> str:
+        """오류 문구에 쓰는 이름: 전역 연결은 '기본 모델', 다른 에이전트의 연결은 '대체 모델'."""
+        return "기본 모델" if self.is_global else "대체 모델"
+
+
 @dataclass
 class FallbackRoute:
-    """이 에이전트가 물러설 길. `substitute` 는 전역 연결을 쓰는 같은 에이전트입니다."""
+    """이 에이전트가 물러설 길. `candidates` 는 물러설 순서대로입니다 (적어도 하나)."""
 
     primary: Agent
-    substitute: Agent
     connection: str
     retry_after: float
     breaker: FallbackBreaker
+    candidates: List[FallbackCandidate] = field(default_factory=list)
+
+    @property
+    def substitute(self) -> Agent:
+        """가장 먼저 물러설 연결을 쓰는 같은 에이전트."""
+        return self.candidates[0].agent
 
     def known_failure(self) -> Optional[str]:
         """조금 전에 실패해 건너뛰는 중이면 그 실패 갈래."""
@@ -194,17 +233,34 @@ class FallbackRoute:
     def trip(self, state: str) -> None:
         self.breaker.trip(self.connection, state)
 
-    def notice(self, state: str, *, skipped: bool) -> FallbackNotice:
+    def is_last(self, candidate: FallbackCandidate) -> bool:
+        return candidate is self.candidates[-1]
+
+    def skipping(self, candidate: FallbackCandidate) -> bool:
+        """이 후보를 조금 전의 실패 때문에 건너뛸 것인지. 마지막 후보는 건너뛰지 않습니다."""
+        if self.is_last(candidate):
+            return False
+        return self.breaker.state(candidate.connection, self.retry_after) is not None
+
+    def trip_candidate(self, candidate: FallbackCandidate, state: str) -> None:
+        """후보가 실패했습니다. 다음 발언이 그 타임아웃을 다시 치르지 않게 잠깐 건너뜁니다 (마지막 후보는 걸지 않습니다)."""
+        if not self.is_last(candidate):
+            self.breaker.trip(candidate.connection, state)
+
+    def notice(self, state: str, *, skipped: bool, candidate: Optional[FallbackCandidate] = None) -> FallbackNotice:
+        answering = candidate.agent if candidate is not None else self.substitute
         return FallbackNotice(
             agent_key=self.primary.key, agent_name=self.primary.name,
-            intended_model=self.primary.display_model, model=self.substitute.display_model,
+            intended_model=self.primary.display_model, model=answering.display_model,
             state=state, skipped=skipped,
         )
 
 
-def substitute_for(agent: Agent, llm: LLMConfig) -> Optional[Agent]:
-    """전역 연결로 바꾼 사본. 이미 전역 연결을 쓰거나 전역에 연결 정보가 없으면 None."""
-    target = global_entry(llm, _CAPACITY_FIELDS)
+def _substitute_from(agent: Agent, target: Any, *, llm: Optional[LLMConfig]) -> Optional[Agent]:
+    """`target` 의 연결과 용량으로 바꾼 사본. 연결 정보가 없거나 이미 같은 연결이면 None.
+
+    `llm` 은 전역 연결로 물러설 때만 줍니다. 그때는 결정 LLM 과 Provider 고유 사고 옵션도 전역의 것을 따릅니다.
+    """
     if not target.is_live:
         return None
     if connection_signature(target) == connection_signature(agent):
@@ -212,12 +268,62 @@ def substitute_for(agent: Agent, llm: LLMConfig) -> Optional[Agent]:
     update: Dict[str, Any] = {
         name: getattr(target, name) for name in (*CONNECTION_FIELDS, *_CAPACITY_FIELDS)
     }
-    if agent.decision_llm.enabled != llm.decision_llm.enabled or llm.decision_llm.enabled:
+    if llm is not None and (agent.decision_llm.enabled != llm.decision_llm.enabled or llm.decision_llm.enabled):
         update["decision_llm"] = llm.decision_llm.model_copy(deep=True)
     if agent.sequential_thinking.enabled and agent.sequential_thinking.mode == "native":
-        # Provider 고유의 사고 옵션은 그 모델에 묶인 값입니다. 전역 모델에는 전역의 설정을 씁니다.
-        update["sequential_thinking"] = llm.sequential_thinking.model_copy(deep=True)
+        # Provider 고유의 사고 옵션은 그 모델에 묶인 값입니다. 물러선 모델에는 그 연결 쪽의 설정을 씁니다.
+        source = llm.sequential_thinking if llm is not None else target.sequential_thinking
+        update["sequential_thinking"] = source.model_copy(deep=True)
     return agent.model_copy(update=update)
+
+
+def substitute_for(agent: Agent, llm: LLMConfig) -> Optional[Agent]:
+    """전역 연결로 바꾼 사본. 이미 전역 연결을 쓰거나 전역에 연결 정보가 없으면 None."""
+    return _substitute_from(agent, global_entry(llm, _CAPACITY_FIELDS), llm=llm)
+
+
+_warned_unknown: set = set()
+
+
+def _warn_unknown(name: str) -> None:
+    """목록에 설정에 없는 이름이 있으면 한 번만 알립니다. 설정을 읽을 때 막지는 않습니다 — 화면에서 에이전트를 지운
+    것만으로 앱이 뜨지 않게 되어서는 안 됩니다. 그 이름은 건너뜁니다."""
+    if name not in _warned_unknown:
+        _warned_unknown.add(name)
+        logger.warning(
+            f"llm.fallback.order names '{name}', which is neither '{GLOBAL_CONNECTION}' nor an agent key; it is skipped"
+        )
+
+
+def substitutes_for(agent: Agent, config: RootConfig) -> List[FallbackCandidate]:
+    """`llm.fallback.order` 의 순서대로 물러설 후보. 순서를 적지 않았으면 전역 연결 하나입니다.
+
+    자기 자신의 연결, 앞에서 이미 나온 연결, 연결 정보가 없는 것은 뺍니다. 꺼 둔 에이전트와 결정 LLM 을 쓰는 전문가도
+    뺍니다 — 앞의 것은 쓰지 않기로 한 연결이고, 뒤의 것은 생성형 발언을 대신할 연결이 아닙니다.
+    """
+    seen = {connection_signature(agent)}
+    candidates: List[FallbackCandidate] = []
+    for name in config.llm.fallback.order or [GLOBAL_CONNECTION]:
+        if name == GLOBAL_CONNECTION:
+            substitute = substitute_for(agent, config.llm)
+        else:
+            entry = config.agents.get(name)
+            if entry is None:
+                _warn_unknown(name)
+                continue
+            if not entry.enabled:
+                continue
+            if entry.decision_llm.enabled and name != ORCHESTRATOR_KEY:
+                continue
+            substitute = _substitute_from(agent, entry, llm=None)
+        if substitute is None:
+            continue
+        signature = connection_signature(substitute)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        candidates.append(FallbackCandidate(name=name, agent=substitute))
+    return candidates
 
 
 def route_for(agent: Agent, config: Optional[RootConfig] = None) -> Optional[FallbackRoute]:
@@ -226,12 +332,12 @@ def route_for(agent: Agent, config: Optional[RootConfig] = None) -> Optional[Fal
     settings = config.llm.fallback
     if not settings.enabled or not agent.allow_fallback:
         return None
-    substitute = substitute_for(agent, config.llm)
-    if substitute is None:
+    candidates = substitutes_for(agent, config)
+    if not candidates:
         return None
     return FallbackRoute(
-        primary=agent, substitute=substitute, connection=connection_id(agent),
-        retry_after=settings.retry_after, breaker=get_fallback_breaker(),
+        primary=agent, connection=connection_id(agent), retry_after=settings.retry_after,
+        breaker=get_fallback_breaker(), candidates=candidates,
     )
 
 

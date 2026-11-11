@@ -173,7 +173,7 @@ class ExpertPage:
             on_open=self.open_waiting_session,
         )
 
-        build_header(drawer, build_about_dialog())
+        build_header(drawer, build_about_dialog(), self.viewer_is_local)
 
         # Main Splitter Workspace (58% Debate Feed / 42% Artifact Viewer)
         # 드래그하는 동안 서버가 값을 되돌려 보내지 않는 스플리터 (`QuietSplitter`).

@@ -813,3 +813,165 @@ def test_with_fallback_off_the_dialog_shows_nothing_about_it(setup):
     setup["config"] = make_config(enabled=False)
     setup["breaker"].trip(conn.connection_id(setup["config"].agents["critic"]), conn.AUTH)
     assert all(row.skip_seconds is None for row in ms.ModelStatusBoard().rows(setup["config"]))
+
+
+# ================================================================ 물러설 연결이 여럿일 때 (ADR-056)
+
+
+def chain_config(order, **extra_agents) -> RootConfig:
+    return RootConfig.model_validate({
+        "llm": {**GLOBAL, "fallback": {"enabled": True, "retry_after": 60, "order": order}},
+        "agents": {
+            "orchestrator": {"name": "Orchestrator", "role": "Moderator"},
+            "critic": {"name": "Critic", "role": "Review", "model": "openai/critic-only", "api_key": "sk-critic-secret-0002"},
+            "coder": {"name": "Coder", "role": "Code", "model": "openai/coder-only", "api_key": "sk-coder-secret-0003",
+                      "max_context_window": 64000, "max_tokens": 3000},
+            **extra_agents,
+        },
+    })
+
+
+def names_of(config: RootConfig, key: str = "critic"):
+    return [(c.name, c.agent.model) for c in fb.substitutes_for(agent_of(config, key), config)]
+
+
+def test_without_an_order_the_only_candidate_is_the_global_connection():
+    config = make_config()
+    assert names_of(config) == [("llm", "openai/shared")]
+    assert fb.route_for(agent_of(config, "critic"), config).substitute.model == "openai/shared"
+
+
+def test_the_order_names_agent_connections_and_the_global_one():
+    config = chain_config(["coder", "llm"])
+    assert names_of(config) == [("coder", "openai/coder-only"), ("llm", "openai/shared")]
+    first = fb.substitutes_for(agent_of(config, "critic"), config)[0].agent
+    assert (first.key, first.name, first.api_key) == ("critic", "Critic", "sk-coder-secret-0003"), "페르소나는 그대로, 연결만"
+    assert (first.max_context_window, first.max_tokens) == (64000, 3000), "그 연결의 용량도 함께 옵니다"
+    assert names_of(chain_config(["llm", "coder"])) == [("llm", "openai/shared"), ("coder", "openai/coder-only")]
+    assert names_of(chain_config(["coder"])) == [("coder", "openai/coder-only")], "적지 않은 전역으로는 물러서지 않습니다"
+
+
+def test_candidates_that_cannot_stand_in_are_left_out():
+    config = chain_config(
+        ["critic", "coder", "twin", "off", "judge", "ghost", "orchestrator", "llm"],
+        twin={"name": "Twin", "role": "x", "model": "openai/coder-only", "api_key": "sk-coder-secret-0003"},
+        off={"name": "Off", "role": "x", "model": "openai/off-only", "api_key": "k", "enabled": False},
+        judge={"name": "Judge", "role": "x", "decision_llm": {"enabled": True, "backend": "jev", "api_key": "j",
+                                                              "api_base": "https://s1.local"}},
+    )
+    # 자기 자신, 앞에서 나온 연결(twin), 꺼 둔 것, 결정 LLM 전문가, 없는 이름은 빠집니다. 오케스트레이터는 전역 연결과 같아
+    # 한 번만 나옵니다.
+    assert names_of(config) == [("coder", "openai/coder-only"), ("orchestrator", "openai/shared")]
+    assert names_of(config, "coder") == [("critic", "openai/critic-only"), ("orchestrator", "openai/shared")]
+
+
+def test_an_unknown_name_in_the_order_does_not_stop_the_config_from_loading():
+    """화면에서 에이전트를 지운 것만으로 앱이 뜨지 않게 되어서는 안 됩니다. 그 이름은 건너뜁니다."""
+    config = chain_config(["deleted-agent", "llm"])
+    assert names_of(config) == [("llm", "openai/shared")]
+    assert names_of(chain_config(["deleted-agent"])) == []
+    assert fb.route_for(agent_of(chain_config(["deleted-agent"]), "critic"), chain_config(["deleted-agent"])) is None
+
+
+@pytest.mark.asyncio
+async def test_the_chain_moves_on_until_a_connection_answers_and_tells_each_time(setup):
+    setup["config"] = chain_config(["coder", "llm"])
+    critic = agent_of(setup["config"], "critic")
+    caller = Scripted({
+        "openai/critic-only": connection_error(), "openai/coder-only": coded_error(503, "overloaded"),
+        "openai/shared": "전역 모델의 답",
+    })
+    (content, _logs), notices = await call(caller, critic)
+    assert content == "전역 모델의 답"
+    assert caller.calls == ["openai/critic-only", "openai/coder-only", "openai/shared"]
+    assert [n.model for n in notices] == ["openai/coder-only", "openai/shared"], "후보마다 알리고, 마지막이 답한 모델입니다"
+    assert {n.intended_model for n in notices} == {"openai/critic-only"}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_candidate_is_skipped_next_time_but_the_last_one_never_is(setup):
+    setup["config"] = chain_config(["coder", "llm"])
+    critic = agent_of(setup["config"], "critic")
+    caller = Scripted({
+        "openai/critic-only": connection_error(), "openai/coder-only": connection_error(), "openai/shared": "답",
+    })
+    await call(caller, critic)
+    caller.calls.clear()
+    (content, _logs), notices = await call(caller, critic)
+    assert content == "답" and caller.calls == ["openai/shared"], "조금 전에 실패한 둘은 타임아웃을 다시 치르지 않습니다"
+    assert [n.model for n in notices] == ["openai/shared"] and notices[0].skipped
+
+    # 마지막 후보는 실패해도 차단기에 걸지 않고, 다음 발언에서 다시 불러 봅니다.
+    caller.script["openai/shared"] = connection_error("shared is down")
+    caller.calls.clear()
+    error, _ = await call(caller, critic)
+    assert isinstance(error, LLMUnavailableError) and caller.calls == ["openai/shared"]
+    caller.calls.clear()
+    await call(caller, critic)
+    assert caller.calls == ["openai/shared"], "더 물러설 곳이 없으니 매번 불러 봅니다"
+
+    setup["clock"].now += 61
+    caller.script.update({"openai/critic-only": "원래 모델의 답"})
+    caller.calls.clear()
+    (content, _logs), notices = await call(caller, critic)
+    assert content == "원래 모델의 답" and caller.calls == ["openai/critic-only"] and notices == []
+
+
+@pytest.mark.asyncio
+async def test_when_every_connection_fails_the_error_names_them_all(setup):
+    setup["config"] = chain_config(["coder", "llm"])
+    critic = agent_of(setup["config"], "critic")
+    caller = Scripted({
+        "openai/critic-only": connection_error("first down"), "openai/coder-only": connection_error("second down"),
+        "openai/shared": connection_error("third down"),
+    })
+    error, _ = await call(caller, critic)
+    assert isinstance(error, LLMUnavailableError) and error.model == "openai/critic-only", "원래 에이전트의 실패로 올립니다"
+    for part in ("first down", "대체 모델 `openai/coder-only` 로도", "second down", "기본 모델 `openai/shared` 로도", "third down"):
+        assert part in error.reason, part
+
+
+@pytest.mark.asyncio
+async def test_the_chain_stops_at_a_candidate_that_already_produced_something(setup):
+    """글이 흘렀거나 도구를 부른 뒤의 실패는 다음 후보로 넘기지 않습니다 (같은 답이 두 번 붙습니다)."""
+    setup["config"] = chain_config(["coder", "llm"])
+    critic = agent_of(setup["config"], "critic")
+
+    def streamed_then_died(kwargs):
+        llm_module._SPEECH_PROGRESS.get().streamed = True  # noqa: SLF001
+        return connection_error("dropped mid-answer")
+
+    caller = Scripted({
+        "openai/critic-only": connection_error(), "openai/coder-only": streamed_then_died, "openai/shared": "부르면 안 됨",
+    })
+    error, _ = await call(caller, critic)
+    assert isinstance(error, LLMUnavailableError)
+    assert caller.calls == ["openai/critic-only", "openai/coder-only"]
+
+
+@pytest.mark.asyncio
+async def test_the_chain_stops_at_a_failure_that_is_not_about_the_connection(setup):
+    setup["config"] = chain_config(["coder", "llm"])
+    critic = agent_of(setup["config"], "critic")
+    caller = Scripted({
+        "openai/critic-only": connection_error(), "openai/coder-only": coded_error(400, "bad request"),
+        "openai/shared": "부르면 안 됨",
+    })
+    error, _ = await call(caller, critic)
+    assert isinstance(error, LLMUnavailableError) and caller.calls == ["openai/critic-only", "openai/coder-only"]
+    assert setup["breaker"].state(fb.substitutes_for(critic, setup["config"])[0].connection, 60) is None, (
+        "요청의 문제로 실패한 연결은 건너뛰지 않습니다"
+    )
+
+
+def test_max_concurrency_is_inherited_from_the_global_llm_and_can_be_set_per_agent():
+    config = RootConfig.model_validate({
+        "llm": {**GLOBAL, "max_concurrency": 2},
+        "agents": {
+            "orchestrator": {"name": "O", "role": "M"},
+            "coder": {"name": "C", "role": "R", "model": "openai/single-gpu", "api_key": "k", "max_concurrency": 1},
+        },
+    })
+    assert agent_of(config, "orchestrator").max_concurrency == 2 and agent_of(config, "coder").max_concurrency == 1
+    plain = make_config()
+    assert agent_of(plain, "critic").max_concurrency == 0 and plain.llm.fallback.order == []

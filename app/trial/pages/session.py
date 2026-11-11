@@ -18,7 +18,7 @@ from fastapi import Request
 from fastapi.responses import RedirectResponse
 from nicegui import ui
 
-from app.agents.llm_gate import get_llm_gate
+from app.agents.llm_gate import get_connection_gates, get_llm_gate
 from app.agents.personas import session_roster_agents
 from app.agents.pool import get_agent_pool
 from app.config import get_config
@@ -203,7 +203,12 @@ class TrialSessionScreen:
     def tick_queue(self) -> None:
         if self.queue_label is None or self.queue_label.is_deleted:
             return
-        position = get_llm_gate().position(self.session_id) if self.runner.is_running(self.session_id) else None
+        position = None
+        if self.runner.is_running(self.session_id):
+            # 서버 전체의 줄에 없으면 연결별 줄(`max_concurrency`)에서 기다리는지 봅니다.
+            position = get_llm_gate().position(self.session_id)
+            if position is None:
+                position = get_connection_gates().position(self.session_id)
         if position is None:
             self.queue_label.set_text("")
         elif position == 0:

@@ -167,6 +167,8 @@ class Agent(BaseModel):
     extra_body: Dict[str, Any] = Field(default_factory=dict)
     max_tool_iterations: int = 30
     max_continuations: int = 2
+    # 이 에이전트의 연결 하나에 동시에 보내는 요청의 상한. 0 이면 제한하지 않습니다 (`app/agents/llm_gate.py`).
+    max_concurrency: int = 0
     allowed_mcp_servers: List[str] = Field(default_factory=list)
     allowed_skills: List[str] = Field(default_factory=list)
     # 파일 내용을 직접 수신할 입력 모달리티 목록 (`app/agents/media.py`). 비어 있으면 텍스트와 파일 경로만 수신합니다.
