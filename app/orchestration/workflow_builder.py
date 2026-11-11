@@ -611,7 +611,12 @@ def save_workflow(
 
 
 def _conf_entry(key: str, agent: AgentDraft) -> Dict[str, Any]:
-    """`add_agents_to_conf_file`에 전달할 개별 항목을 구성합니다. 모델 및 API 키는 지정하지 않아 llm 기본 설정을 상속합니다."""
+    """`add_agents_to_conf_file`에 전달할 개별 항목을 구성합니다. 모델 및 API 키는 지정하지 않아 llm 기본 설정을 상속합니다.
+
+    System 1 결정 LLM 은 **끕니다**. 빌더가 설계하는 에이전트는 글을 쓰고 도구를 쓰는 전문가인데, 전역
+    `llm.decision_llm.enabled` 가 켜진 conf 에서 이 값을 비워 두면 상속으로 판정 전용 에이전트가 되어 발언마다 점수표만
+    냅니다. 판정 에이전트가 필요하면 설정 화면에서 따로 켭니다.
+    """
     return {
         "agent_key": key,
         "name": agent.name,
@@ -621,4 +626,5 @@ def _conf_entry(key: str, agent: AgentDraft) -> Dict[str, Any]:
         "allowed_skills": list(agent.allowed_skills),
         "card_color": agent.card_color or None,
         "icon": agent.icon or None,
+        "decision_llm": {"enabled": False},
     }
