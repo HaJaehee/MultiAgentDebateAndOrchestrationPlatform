@@ -167,7 +167,7 @@ class Agent(BaseModel):
     extra_body: Dict[str, Any] = Field(default_factory=dict)
     max_tool_iterations: int = 30
     max_continuations: int = 2
-    # 이 에이전트의 연결 하나에 동시에 보내는 요청의 상한. 0 이면 제한하지 않습니다 (`app/agents/llm_gate.py`).
+    # 이 에이전트가 사용하는 단일 연결에 동시에 보낼 수 있는 요청 수 상한입니다. 0이면 제한하지 않습니다 (`app/agents/llm_gate.py`).
     max_concurrency: int = 0
     allowed_mcp_servers: List[str] = Field(default_factory=list)
     allowed_skills: List[str] = Field(default_factory=list)

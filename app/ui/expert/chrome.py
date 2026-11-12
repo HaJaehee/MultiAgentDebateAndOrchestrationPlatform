@@ -98,10 +98,10 @@ def build_about_dialog() -> ui.dialog:
 def build_header(
     drawer: ui.left_drawer, about_dialog: ui.dialog, viewer_is_local: Optional[Callable[[], bool]] = None,
 ) -> None:
-    """맨 위 줄: 사이드바 토글, 이름·버전, 쉬운 화면·모델 연결 상태·정보·접속 버튼.
+    """상단 헤더 영역: 사이드바 토글, 이름·버전, 쉬운 화면·모델 연결 상태·정보·접속 버튼.
 
-    `viewer_is_local` 은 이 화면을 서버 PC 에서 열었는지입니다. 모델 적합성 점검의 권고를 conf.json 에 적는
-    `적용` 단추가 그때만 놓입니다.
+    `viewer_is_local`은 이 화면을 서버 PC에서 열었는지 여부를 반환합니다. 모델 적합성 점검의 권고를 conf.json에
+    반영하는 `적용` 버튼은 로컬 접속일 때만 표시됩니다.
     """
     with ui.header().classes("bg-slate-900 border-b border-slate-800 px-4 py-2 items-center justify-between"):
         with ui.row().classes("items-center gap-2.5"):
@@ -119,9 +119,9 @@ def build_header(
             ui.button("쉬운 화면", icon="eco", on_click=lambda: ui.navigate.to(EASY_HOME)).props(
                 "flat dense no-caps color=teal-3"
             ).tooltip("비엔지니어를 위한 화면 — AI 에이전트 알아보기, 대화로 에이전트 만들기")
-            # 설정에 있는 모델이 지금 응답하는지 (app/agents/model_status.py). 이 화면은 주인만
-            # 열므로 주소와 오류 원문까지 보여 줍니다.
-            # 권고를 conf.json 에 적는 단추는 서버 PC 에서 연 화면에만 둡니다.
+            # 설정에 등록된 모델의 현재 응답 여부를 확인합니다(app/agents/model_status.py). 이 화면은 관리자 전용이므로
+            # 엔드포인트 주소와 오류 원문까지 표시합니다.
+            # 권고를 conf.json에 반영하는 버튼은 서버 PC에서 연 화면에만 표시합니다.
             build_model_status_button(detail=True, can_apply=viewer_is_local)
             DesktopAlertButton()
             info_btn = ui.button(icon="info", on_click=about_dialog.open)

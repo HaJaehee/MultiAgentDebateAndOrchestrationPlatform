@@ -218,11 +218,11 @@ def test_cards_and_exports_show_the_same_usage_wording():
     assert "토큰" not in card_time_text(plain)[0]
 
 
-# ------------------------------------------------------------------ 도구 컨텍스트 계수 (ADR-039 · ADR-040 의 실측)
+# ------------------------------------------------------------------ 도구 컨텍스트 집계 (ADR-039 · ADR-040 실측)
 
 
 def test_tool_context_counts_nest_like_tokens():
-    """불러오기·압축·다시 읽기도 토큰과 같은 측정기에 쌓입니다. 발언의 것은 턴에도 들어갑니다."""
+    """불러오기·압축·다시 읽기도 토큰과 같은 측정기에 쌓입니다. 발언의 수치는 턴에도 합산됩니다."""
     with measuring() as turn:
         with measuring() as speech:
             note_tool_context(load_calls=1, loads=2, compacted=3, rereads=1)
@@ -230,18 +230,18 @@ def test_tool_context_counts_nest_like_tokens():
     note_tool_context(loads=9)  # 측정기 밖에서는 아무 데도 쌓이지 않습니다
     assert (speech.tool_load_calls, speech.tool_loads, speech.compacted_reads, speech.rereads_after_compaction) == (1, 2, 3, 1)
     assert (turn.tool_load_calls, turn.tool_loads, turn.compacted_reads, turn.rereads_after_compaction) == (1, 3, 3, 1)
-    assert turn.minus(speech).tool_loads == 1, "턴 합계에서 발언을 빼면 발언 밖에서 일어난 것이 남습니다"
+    assert turn.minus(speech).tool_loads == 1, "턴 합계에서 발언을 빼면 발언 밖에서 일어난 수치가 남습니다"
 
 
 def test_tool_context_counts_are_recorded_only_when_something_happened():
-    """아무 일도 없던 발언의 기록은 예전과 같은 모양입니다. 일어난 것만 칸이 생깁니다."""
+    """아무 일도 없던 발언의 기록은 예전과 같은 형태입니다. 일어난 항목만 필드가 생깁니다."""
     quiet = Usage(prompt_tokens=5, calls=1).as_meta()
     assert not set(llm_usage.TOOL_CONTEXT_FIELDS) & set(quiet)
     busy = Usage(prompt_tokens=5, calls=1, tool_loads=2, rereads_after_compaction=1)
     meta = busy.as_meta()
     assert meta["tool_loads"] == 2 and meta["rereads_after_compaction"] == 1 and "compacted_reads" not in meta
     assert Usage.of(meta) == busy, "기록을 다시 읽으면 같은 값입니다"
-    assert Usage.of(quiet).tool_loads == 0, "칸이 없는 옛 기록은 0 으로 읽힙니다"
+    assert Usage.of(quiet).tool_loads == 0, "필드가 없는 옛 기록은 0으로 읽힙니다"
 
 
 def test_the_tool_context_line_names_only_what_happened():

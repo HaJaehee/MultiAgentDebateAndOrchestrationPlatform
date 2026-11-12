@@ -541,25 +541,25 @@ def test_the_screen_label_names_the_tools():
     assert tool_label(LOAD_TOOLS_TOOL, {"names": ["git__git_log"]}) == "도구 꺼내 오기: git__git_log"
 
 
-# ------------------------------------------------------------------ 불러오기를 셉니다 (ADR-039 의 실측)
+# ------------------------------------------------------------------ 불러오기 집계 (ADR-039 실측)
 
 
 @pytest.mark.asyncio
 async def test_the_speech_counts_load_calls_and_loaded_schemas(monkeypatch):
-    """불러오기 한 번은 판 하나입니다. 실제 모델이 얼마나 자주 그러는지 보려면 세어야 합니다."""
+    """불러오기 1회당 LLM 호출 한 차례를 더 소모합니다. 실제 모델이 얼마나 자주 호출하는지 보려면 횟수를 세어야 합니다."""
     from app.agents.llm_usage import measuring
 
     _install(monkeypatch, [
         ("", [(LOAD_TOOLS_TOOL, {"names": ["git__git_log", "git__git_show"]})]),
         ("", [("git__git_log", {"path": "."})]),
-        ("", [("git__git_branch", {"path": "."})]),          # 목록에 있던 도구를 곧바로 부름
-        ("", [(LOAD_TOOLS_TOOL, {"names": ["no_such_tool"]})]),  # 없는 이름: 호출은 세고, 불러온 것은 없음
+        ("", [("git__git_branch", {"path": "."})]),          # 목록에 있던 도구를 바로 호출
+        ("", [(LOAD_TOOLS_TOOL, {"names": ["no_such_tool"]})]),  # 없는 이름: 호출 횟수는 세고, 불러온 정의는 없음
         ("끝", []),
     ])
     with measuring() as usage:
         await _speak(_MCP())
     assert usage.tool_load_calls == 2
-    assert usage.tool_loads == 3, "load_tools 로 2개 + 곧바로 불러 정의가 실린 1개"
+    assert usage.tool_loads == 3, "load_tools로 2개 + 바로 호출해 정의가 실린 1개"
 
 
 @pytest.mark.asyncio
@@ -575,7 +575,7 @@ async def test_tools_that_were_already_sent_are_not_counted_as_loads(monkeypatch
 
 @pytest.mark.asyncio
 async def test_a_resumed_speech_does_not_count_its_restored_tools_again(monkeypatch):
-    """끊긴 발언을 이어 갈 때 되살리는 도구는 새로 불러온 것이 아닙니다."""
+    """중단된 발언을 이어 갈 때 복원하는 도구는 새로 불러온 것으로 치지 않습니다."""
     from app.agents.llm_usage import measuring
 
     saved: List[Dict[str, Any]] = []

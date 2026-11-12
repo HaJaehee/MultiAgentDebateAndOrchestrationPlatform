@@ -13,9 +13,9 @@
 활성 측정기 스택은 `contextvars`로 격리 관리되므로 도구 루프 등에 불필요한 인자 전달을 방지하며,
 병렬 발언 태스크는 생성 시 상위 턴 측정기를 상속받고 발언 측정기는 각 태스크 내부에서 독립 격리됩니다.
 
-같은 측정기에 **컨텍스트를 아끼는 장치가 치른 값**도 셉니다 (`note_tool_context`): 도구 스키마 지연 로딩(ADR-039)이
-도구를 불러온 횟수와, 지난 파일 읽기 압축(ADR-040) 뒤에 모델이 같은 파일을 다시 읽은 횟수입니다. 두 장치는 토큰을
-아끼는 대신 판을 하나씩 더 쓰게 할 수 있는데, 실제 모델이 얼마나 자주 그러는지는 돌려 봐야 압니다.
+같은 측정기에 **컨텍스트 절약 기법이 수반하는 추가 비용**도 함께 기록합니다(`note_tool_context`): 도구 스키마 지연 로딩(ADR-039)이
+도구를 불러온 횟수와, 이전 파일 읽기 압축(ADR-040) 이후 모델이 같은 파일을 다시 읽은 횟수입니다. 두 기법은 토큰을
+절약하는 대신 추가 호출을 유발할 수 있는데, 실제 모델에서 얼마나 자주 발생하는지는 실측해 보아야 알 수 있습니다.
 
 토큰 집계는 각 LLM 프로바이더의 응답 메타데이터를 기반으로 합니다.
 스트리밍 응답에서 프로바이더가 실시간 토큰을 제공하지 않는 경우 LiteLLM의 추정 토크나이저 카운트가 적용될 수 있습니다.
@@ -30,7 +30,7 @@ from typing import Any, Dict, Iterator, Mapping, Optional, Tuple
 
 from pydantic import BaseModel
 
-# 도구 컨텍스트 계수. 일어나지 않았으면 기록에 싣지 않습니다 (`as_meta`).
+# 도구 컨텍스트 지표입니다. 발생하지 않은 항목은 직렬화 시 제외합니다(`as_meta`).
 TOOL_CONTEXT_FIELDS = ("tool_load_calls", "tool_loads", "compacted_reads", "rereads_after_compaction")
 
 _FIELDS = (
@@ -40,7 +40,7 @@ _FIELDS = (
 
 
 class Usage(BaseModel):
-    """토큰과 호출 시간의 합. 발언 기록(`llm_meta.usage`)과 턴 기록(`turns.usage`)에 이 모양으로 남습니다."""
+    """토큰 사용량과 호출 시간의 합계입니다. 발언 기록(`llm_meta.usage`)과 턴 기록(`turns.usage`)에 이 형식으로 저장됩니다."""
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -52,13 +52,13 @@ class Usage(BaseModel):
     reasoning_tokens: int = 0
     calls: int = 0
     llm_seconds: float = 0.0
-    # `tools__load_tools` 를 부른 횟수. 한 번마다 대화를 다시 싣는 판이 하나 더 듭니다 (ADR-039).
+    # `tools__load_tools`를 호출한 횟수입니다. 한 번 호출할 때마다 대화 맥락을 다시 전송하는 추가 라운드가 발생합니다(ADR-039).
     tool_load_calls: int = 0
-    # 불러온 도구 정의 수 (목록의 도구를 곧바로 불러 정의가 실린 것 포함). 불러올 때마다 요청 앞부분의 캐시가 한 번 깨집니다.
+    # 불러온 도구 정의 수입니다(목록의 도구를 바로 호출해 정의가 로드된 경우 포함). 새로 불러올 때마다 요청 앞부분의 프롬프트 캐시가 무효화됩니다.
     tool_loads: int = 0
-    # 스텁으로 줄인 지난 파일 읽기 결과 수 (ADR-040).
+    # 스텁으로 압축한 이전 파일 읽기 결과 수입니다(ADR-040).
     compacted_reads: int = 0
-    # 줄인 뒤에 같은 도구·같은 인자로 다시 읽은 횟수. 압축이 아낀 토큰의 일부를 되돌려 쓰는 호출입니다.
+    # 압축 이후 동일한 도구·인자로 다시 읽은 횟수입니다. 압축으로 절감한 토큰 일부를 다시 소모한 재읽기 호출입니다.
     rereads_after_compaction: int = 0
 
     @property
@@ -74,7 +74,7 @@ class Usage(BaseModel):
             setattr(self, name, getattr(self, name) + getattr(other, name))
 
     def minus(self, other: "Usage") -> "Usage":
-        """뺀 값. 음수는 0 으로 (반올림 차이로 시간이 조금 넘칠 수 있습니다)."""
+        """두 Usage의 차이를 반환합니다. 반올림 차이 등으로 음수가 되면 0으로 보정합니다."""
         return Usage(**{name: max(0, getattr(self, name) - getattr(other, name)) for name in _FIELDS})
 
     def as_meta(self) -> Dict[str, Any]:
@@ -87,7 +87,7 @@ class Usage(BaseModel):
 
     @classmethod
     def of(cls, data: Any) -> "Usage":
-        """기록에서 읽은 값. 모양이 어긋나면 빈 값입니다."""
+        """저장된 기록에서 Usage 객체를 복원합니다. 형식이 맞지 않으면 빈 Usage를 반환합니다."""
         if not isinstance(data, Mapping):
             return cls()
         values: Dict[str, Any] = {}
@@ -171,7 +171,7 @@ def note_call(seconds: float) -> None:
 def note_tool_context(
     *, load_calls: int = 0, loads: int = 0, compacted: int = 0, rereads: int = 0,
 ) -> None:
-    """도구 불러오기·파일 읽기 압축에서 일어난 일을 활성 측정 컨텍스트에 누적합니다."""
+    """도구 로딩 및 파일 읽기 압축 관련 지표를 활성 측정 컨텍스트에 누적합니다."""
     if not (load_calls or loads or compacted or rereads):
         return
     for meter in _METERS.get():

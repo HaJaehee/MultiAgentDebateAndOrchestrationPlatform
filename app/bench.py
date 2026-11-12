@@ -7,34 +7,33 @@
     python -m app.bench run bench/design-review.json            # conf.json 설정 모델로 실행
     python -m app.bench run bench/design-review.json --dry-run  # LLM 호출 없이 파이프라인 흐름만 검증
     python -m app.bench report data/bench/<실행 id>/result.json  # 비교 화면의 정량 평가를 반영해 보고서 재작성
-    python -m app.bench diff <이전 result.json> <새 result.json>   # 두 실행을 변형별로 견주고 나빠진 것을 짚음
+    python -m app.bench diff <이전 result.json> <새 result.json>   # 두 실행 결과를 변형별로 비교하고 성능 저하를 검출
 
 * 실행된 세션은 데이터베이스에 `[bench]` 접두사가 붙은 제목으로 저장됩니다. 웹 브라우저에서 직접 검토하거나 보고서의 비교 링크(`/compare`)를
   통해 좌우로 나란히 비교하며 평가(👍/👎)를 기록할 수 있으며, `report` 명령으로 평가 결과를 보고서에 재반영할 수 있습니다.
-* 변형마다 격리된 작업 공간 디렉터리를 생성합니다 (`seed` 디렉터리 지정 시 복제본 사용). 변형 간 파일 간섭이 배제됩니다.
-* 비대면(unattended) 모드로 실행되므로 계획 승인 및 도구 확인 절차를 자동으로 통과합니다 (`app/headless.py`).
+* 변형마다 격리된 작업 공간 디렉터리를 생성합니다(`seed` 디렉터리 지정 시 복제본 사용). 변형 간 파일 간섭이 배제됩니다.
+* 비대면(unattended) 모드로 실행되므로 계획 승인 및 도구 확인 절차를 자동으로 통과합니다(`app/headless.py`).
 * 측정 지표: 실행 상태, 진행 라운드, 조기 종료 여부, 토큰 소모량, LLM 응답 시간, 소요 시간, 미해결 쟁점 수,
   도구 오류/차단 횟수, 도구 컨텍스트(불러오기·읽기 압축·압축 뒤 다시 읽기), 무응답 에이전트, 변경 파일 수, 정량 평가.
 
 ## 품질을 숫자로 (ADR-055)
 
-토큰과 시간만으로는 "어느 조합이 일을 잘했는가" 를 고를 수 없습니다. 사람이 👍/👎 를 매기는 길은 그대로 두고,
-사람 없이도 남는 두 가지를 더합니다.
+토큰과 시간만으로는 "어느 조합이 더 나은 결과를 냈는가"를 고를 수 없습니다. 사용자가 👍/👎로 평가하는 방식은 그대로 유지하고,
+자동 평가용 두 가지 수단을 추가했습니다.
 
-* **`checks` — 결정적 검사.** 변형이 끝난 뒤 그 변형의 작업 공간과 결론을 봅니다: 파일이 있는가(`file_exists`), 파일에
-  그 글이 있는가(`file_contains`), 결론에 그 글이 있는가(`conclusion_contains`), 명령이 0 으로 끝나는가(`command` —
-  만든 스크립트를 돌리거나 pytest 를 돌립니다), 미해결 쟁점이 그 수 이하인가(`max_open_issues`). 같은 결과물에는 늘 같은
-  답이 나옵니다.
-* **`rubric` — 판정 모델의 채점.** conf 의 에이전트 하나를 판정자로 지정해, 기준마다 척도 한 단계를 고르게 합니다.
-  판정자가 결정 LLM(System 1)을 쓰는 에이전트면 `score` 질문으로, 아니면 생성형 모델에게 JSON 한 줄을 받습니다.
-  판정자는 변형의 이름·전략·모델을 보지 못하고 요청과 결론만 봅니다. 답을 읽지 못하면 점수를 지어내지 않고 "판정 실패"
-  로 남깁니다. 모델이 매긴 점수이므로 절대값이 아니라 **같은 판정자가 매긴 변형끼리의 차이**로 읽습니다.
+* **`checks` — 결정적 검사.** 변형이 끝난 뒤 해당 변형의 작업 공간과 결론을 검사합니다: 파일 존재 여부(`file_exists`),
+  파일 내 문자열 포함(`file_contains`), 결론 내 문자열 포함(`conclusion_contains`), 명령의 종료 코드 0 여부(`command` —
+  생성한 스크립트나 pytest 실행), 미해결 쟁점 수 상한 이하 여부(`max_open_issues`). 동일한 결과물에 대해서는 항상 같은 판정이 나옵니다.
+* **`rubric` — 판정 모델 채점.** conf.json의 에이전트 하나를 판정자로 지정해, 기준마다 척도의 한 단계를 선택하게 합니다.
+  판정자가 결정 LLM(System 1)을 사용하는 에이전트이면 `score` 질문으로, 그렇지 않으면 생성형 모델에게 JSON 한 줄 응답을 받습니다.
+  판정자에게는 변형의 이름·전략·모델을 노출하지 않고 요청과 결론만 전달합니다. 응답을 파싱하지 못하면 점수를 임의로 채우지 않고
+  "판정 실패"로 기록합니다. 모델이 매긴 점수이므로 절대값보다는 **동일 판정자가 평가한 변형 간의 상대 차이**로 해석합니다.
 
-`matrix` 는 한 변형을 에이전트별 모델 목록의 곱으로 펼칩니다 (폐쇄망의 모델 여럿을 역할마다 바꿔 끼워 보기).
-`graph` 는 편집기로 저장해 둔 그래프의 id 로, 그래프 토론 변형을 돌립니다.
+`matrix`는 단일 변형을 에이전트별 모델 목록의 데카르트 곱으로 확장합니다(폐쇄망에서 여러 모델을 역할별로 조합해 테스트).
+`graph`는 편집기로 저장해 둔 그래프 ID를 지정해 그래프 토론 변형을 실행합니다.
 
-`diff` 는 두 실행을 변형 이름으로 맞춰 상태·검사·채점·토큰·시간을 견줍니다. 끝난 변형이 실패로 바뀌었거나, 통과한
-검사가 줄었거나, 채점이 눈에 띄게 내려갔으면 **나빠짐** 으로 짚고 끝남 값 1 을 돌려줍니다 (모델이나 프롬프트를 바꾼 뒤의 회귀 확인).
+`diff`는 두 실행 결과를 변형 이름으로 매칭해 상태·검사·채점·토큰·소요 시간을 비교합니다. 완료되었던 변형이 실패로 바뀌었거나,
+통과한 검사 수가 줄었거나, 채점 점수가 눈에 띄게 하락했으면 **성능 저하**로 판정하고 종료 코드 1을 반환합니다(모델이나 프롬프트 변경 후 회귀 검증).
 """
 
 from __future__ import annotations
@@ -80,14 +79,14 @@ TITLE_PREFIX = "[bench]"
 
 CHECK_KINDS = ("file_exists", "file_contains", "conclusion_contains", "command", "max_open_issues")
 COMMAND_TIMEOUT_SECONDS = 120.0
-# 검사 결과에 남기는 명령 출력의 상한.
+# 검사 결과에 남길 명령 출력의 최대 길이(문자 수)입니다.
 COMMAND_OUTPUT_CHARS = 400
 DEFAULT_SCALE = ("미흡", "보통", "충실")
-# 판정자에게 주는 결론의 상한 (글자). 넘으면 앞부분과 끝부분을 남깁니다.
+# 판정자에게 전달하는 결론의 최대 길이(문자 수)입니다. 초과 시 앞부분과 끝부분만 남깁니다.
 JUDGE_CONCLUSION_CHARS = 24_000
-# `diff` 가 채점이 내려갔다고 보는 폭 (0~1 척도).
+# `diff`가 채점 하락(회귀)으로 판정하는 점수 차이(0~1 척도)입니다.
 SCORE_DROP = 0.15
-# `diff` 가 토큰이 늘었다고 알리는 비율. 나빠짐으로 치지는 않습니다.
+# `diff`가 토큰 증가 경고로 표시하는 비율입니다. 성능 저하(회귀)로는 판정하지 않습니다.
 TOKEN_RISE = 0.25
 GRAPH_BASE_STRATEGY = "adaptive_graph"
 
@@ -101,22 +100,22 @@ class Variant:
     strategy: str = "sequential_debate"
     max_rounds: int = 3
     agents: Optional[List[str]] = None
-    # 에이전트 키 → 해당 변형에서 사용할 모델 (conf.json 의 연결 정보는 유지하고 모델명만 재정의)
+    # 에이전트 키 → 해당 변형에서 사용할 모델 (conf.json의 연결 정보는 유지하고 모델명만 재정의)
     models: Dict[str, str] = field(default_factory=dict)
     converge_early: bool = True
     token_budget: int = 0
     sub_debates: bool = False
     sub_debate_rounds: int = DEFAULT_SUB_DEBATE_ROUNDS
     custom_instructions: str = ""
-    # 그래프 토론이 쓸 그래프의 id (`data/graphs/<id>.json`). 적응형 그래프 토론에서는 바탕 그래프입니다.
+    # 그래프 토론에 사용할 그래프 ID(`data/graphs/<id>.json`)입니다. 적응형 그래프 토론에서는 기본 골격 그래프로 사용됩니다.
     graph: str = ""
-    # 에이전트 키 → 모델 목록. 목록들의 곱만큼 변형으로 펼쳐집니다 (`_expand`). 펼친 뒤에는 비어 있습니다.
+    # 에이전트 키 → 모델 목록입니다. 목록들의 데카르트 곱만큼 변형으로 확장됩니다(`_expand`). 확장 후에는 비워 둡니다.
     matrix: Dict[str, List[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class Check:
-    """결정적 검사 하나. `kind` 는 `CHECK_KINDS` 가운데 하나이고 `spec` 은 그 종류의 값입니다."""
+    """결정적 검사 항목입니다. `kind`는 `CHECK_KINDS` 중 하나이고 `spec`은 해당 종류의 설정값입니다."""
 
     name: str
     kind: str
@@ -125,7 +124,7 @@ class Check:
 
 @dataclass(frozen=True)
 class Rubric:
-    """판정 모델의 채점표. `criteria` 는 `(이름, 물음)` 이고 `scale` 은 낮은 단계부터입니다."""
+    """판정 모델의 채점 기준표입니다. `criteria`는 `(이름, 질문)` 목록이고 `scale`은 낮은 단계부터 정렬한 척도입니다."""
 
     judge: str
     criteria: Tuple[Tuple[str, str], ...]
@@ -147,7 +146,7 @@ def _model_tail(model: str) -> str:
 
 
 def _expand(variant: Variant) -> List[Variant]:
-    """`matrix` 를 곱으로 펼칩니다. 없으면 그 변형 하나입니다."""
+    """`matrix`를 데카르트 곱으로 확장합니다. 비어 있으면 해당 변형만 반환합니다."""
     if not variant.matrix:
         return [variant]
     keys = list(variant.matrix)
@@ -169,36 +168,36 @@ def _parse_checks(raw: Any, problems: List[str]) -> List[Check]:
             continue
         kinds = [kind for kind in CHECK_KINDS if kind in item]
         if len(kinds) != 1:
-            problems.append(f"checks[{index}]: 검사 종류는 {', '.join(CHECK_KINDS)} 가운데 하나만 적습니다")
+            problems.append(f"checks[{index}]: 검사 종류는 {', '.join(CHECK_KINDS)} 중 하나만 지정해야 합니다")
             continue
         kind, spec = kinds[0], item[kinds[0]]
         name = str(item.get("name") or f"{kind} {index + 1}")
         if kind in ("file_exists",) and not (isinstance(spec, str) and spec.strip()):
-            problems.append(f"checks[{index}] '{name}': 경로를 적습니다")
+            problems.append(f"checks[{index}] '{name}': 경로를 지정해야 합니다")
         elif kind == "file_contains" and not (
             isinstance(spec, Mapping) and spec.get("path") and (spec.get("text") or spec.get("regex"))
         ):
-            problems.append(f"checks[{index}] '{name}': path 와 text(또는 regex)를 적습니다")
+            problems.append(f"checks[{index}] '{name}': path와 text(또는 regex)를 지정해야 합니다")
         elif kind == "conclusion_contains" and not (
             (isinstance(spec, str) and spec) or (isinstance(spec, Mapping) and (spec.get("text") or spec.get("regex")))
         ):
-            problems.append(f"checks[{index}] '{name}': 찾을 글이나 regex 를 적습니다")
+            problems.append(f"checks[{index}] '{name}': 찾을 문자열이나 regex를 지정해야 합니다")
         elif kind == "command" and not (
             isinstance(spec, Mapping) and isinstance(spec.get("argv"), list) and spec["argv"]
             and all(isinstance(part, str) for part in spec["argv"])
         ):
-            problems.append(f"checks[{index}] '{name}': argv 를 문자열 목록으로 적습니다 (셸 한 줄은 받지 않습니다)")
+            problems.append(f"checks[{index}] '{name}': argv를 문자열 목록으로 지정해야 합니다(단일 셸 명령 문자열은 지원하지 않습니다)")
         elif kind == "max_open_issues" and not (isinstance(spec, int) and not isinstance(spec, bool) and spec >= 0):
-            problems.append(f"checks[{index}] '{name}': 0 이상의 정수를 적습니다")
+            problems.append(f"checks[{index}] '{name}': 0 이상의 정수를 지정해야 합니다")
         else:
             for pattern in _regexes(spec):
                 try:
                     re.compile(pattern)
                 except re.error as exc:
-                    problems.append(f"checks[{index}] '{name}': regex 가 틀렸습니다 ({exc})")
+                    problems.append(f"checks[{index}] '{name}': regex가 올바르지 않습니다 ({exc})")
             checks.append(Check(name=name, kind=kind, spec=spec))
     if len({check.name for check in checks}) != len(checks):
-        problems.append("checks 의 name 이 겹칩니다")
+        problems.append("checks의 name이 중복됩니다")
     return checks
 
 
@@ -216,22 +215,22 @@ def _parse_rubric(raw: Any, problems: List[str]) -> Optional[Rubric]:
     if not judge:
         problems.append("rubric: 판정자 에이전트 키(judge)가 없습니다")
     elif get_agent_pool().get(judge) is None:
-        problems.append(f"rubric: 판정자 '{judge}' 는 설정에 없는 에이전트입니다")
+        problems.append(f"rubric: 판정자 '{judge}'는 설정에 없는 에이전트입니다")
     criteria: List[Tuple[str, str]] = []
     for index, item in enumerate(raw.get("criteria") or []):
         name = str((item or {}).get("name") or "").strip() if isinstance(item, Mapping) else ""
         question = str((item or {}).get("question") or "").strip() if isinstance(item, Mapping) else ""
         if not name or not question:
-            problems.append(f"rubric.criteria[{index}]: name 과 question 을 적습니다")
+            problems.append(f"rubric.criteria[{index}]: name과 question을 지정해야 합니다")
             continue
         criteria.append((name, question))
     if not criteria:
-        problems.append("rubric: criteria 가 비어 있습니다")
+        problems.append("rubric: criteria가 비어 있습니다")
     if len({name for name, _ in criteria}) != len(criteria):
-        problems.append("rubric.criteria 의 name 이 겹칩니다")
+        problems.append("rubric.criteria의 name이 중복됩니다")
     scale = raw.get("scale") or list(DEFAULT_SCALE)
     if not (isinstance(scale, list) and len(scale) >= 2 and all(isinstance(step, str) and step for step in scale)):
-        problems.append("rubric.scale: 낮은 단계부터 두 단계 이상을 문자열로 적습니다")
+        problems.append("rubric.scale: 낮은 단계부터 두 단계 이상을 문자열로 지정해야 합니다")
         scale = list(DEFAULT_SCALE)
     return Rubric(judge=judge, criteria=tuple(criteria), scale=tuple(scale))
 
@@ -243,7 +242,7 @@ def load_scenario(path: str | Path) -> Scenario:
     problems: List[str] = []
     prompt = str(data.get("prompt") or "").strip()
     if not prompt:
-        problems.append("prompt 가 비어 있습니다")
+        problems.append("prompt가 비어 있습니다")
     variants: List[Variant] = []
     for index, raw in enumerate(data.get("variants") or []):
         try:
@@ -256,35 +255,35 @@ def load_scenario(path: str | Path) -> Scenario:
         if strategy is None:
             problems.append(f"{where}: 지원되지 않는 전략 {variant.strategy}")
         elif strategy.uses_graph_file and not variant.graph:
-            problems.append(f"{where}: {variant.strategy} 는 graph 에 그래프 id 를 적어야 합니다")
+            problems.append(f"{where}: {variant.strategy}는 graph에 그래프 ID를 지정해야 합니다")
         elif variant.graph and not (strategy.uses_graph_file or variant.strategy == GRAPH_BASE_STRATEGY):
-            problems.append(f"{where}: graph 는 그래프 토론과 적응형 그래프 토론에서만 씁니다")
+            problems.append(f"{where}: graph는 그래프 토론과 적응형 그래프 토론에서만 사용할 수 있습니다")
         elif variant.graph:
             try:
                 load_graph(variant.graph)
             except (OSError, ValueError) as exc:
-                problems.append(f"{where}: 그래프 '{variant.graph}' 를 읽지 못했습니다 ({exc})")
+                problems.append(f"{where}: 그래프 '{variant.graph}'를 읽지 못했습니다 ({exc})")
         if not isinstance(variant.matrix, dict) or not all(
             isinstance(models, list) and models and all(isinstance(m, str) and m for m in models)
             for models in variant.matrix.values()
         ):
-            problems.append(f"{where}: matrix 는 에이전트 키마다 모델 이름 목록을 적습니다")
+            problems.append(f"{where}: matrix는 에이전트 키별로 모델 이름 목록을 지정해야 합니다")
             variant.matrix = {}
         unknown = [key for key in (*variant.models, *variant.matrix) if get_agent_pool().get(key) is None]
         if unknown:
-            problems.append(f"{where}: 설정에 없는 에이전트의 모델을 바꾸려 합니다 ({', '.join(unknown)})")
+            problems.append(f"{where}: 설정에 없는 에이전트의 모델을 지정했습니다 ({', '.join(unknown)})")
         variants.extend(_expand(variant))
     if not variants:
-        problems.append("variants 가 비어 있습니다")
+        problems.append("variants가 비어 있습니다")
     if len({v.label for v in variants}) != len(variants):
-        problems.append("variants 의 label 이 겹칩니다")
+        problems.append("variants의 label이 중복됩니다")
     checks = _parse_checks(data.get("checks"), problems)
     rubric = _parse_rubric(data.get("rubric"), problems)
     seed = None
     if data.get("seed"):
         seed = (source.parent / str(data["seed"])).resolve()
         if not seed.is_dir():
-            problems.append(f"seed 폴더가 존재하지 않습니다: {seed}")
+            problems.append(f"seed 디렉터리가 존재하지 않습니다: {seed}")
     if problems:
         raise ValueError(f"{source}: " + "; ".join(problems))
     return Scenario(
@@ -357,7 +356,7 @@ async def _tool_problems(turn_id: Optional[str]) -> int:
 
 
 def _inside(workspace: Path, relative: str) -> Optional[Path]:
-    """작업 공간 안의 경로. 밖을 가리키면 None (검사는 그 변형의 작업 공간만 봅니다)."""
+    """작업 공간 내부 경로를 반환합니다. 작업 공간 밖을 가리키면 None을 반환합니다(검사는 해당 변형의 작업 공간만 대상으로 합니다)."""
     root = workspace.resolve()
     target = (root / relative).resolve()
     return target if target == root or root in target.parents else None
@@ -381,17 +380,17 @@ def _run_command(spec: Mapping[str, Any], workspace: Path) -> Tuple[bool, str]:
             timeout=timeout, env=env, shell=False,
         )
     except subprocess.TimeoutExpired:
-        return False, f"{timeout:.0f}초 안에 끝나지 않았습니다"
+        return False, f"{timeout:.0f}초 내에 종료되지 않았습니다"
     except OSError as exc:
-        return False, f"실행하지 못했습니다 ({type(exc).__name__}: {exc})"
+        return False, f"실행에 실패했습니다 ({type(exc).__name__}: {exc})"
     expected = int(spec.get("expect_exit", 0))
     tail = (done.stdout or done.stderr or "").strip()[-COMMAND_OUTPUT_CHARS:]
     if done.returncode != expected:
-        return False, f"끝남 값 {done.returncode} (기대 {expected}) · {tail}"
+        return False, f"종료 코드 {done.returncode} (기대값 {expected}) · {tail}"
     wanted = spec.get("stdout_contains")
     if wanted and str(wanted) not in (done.stdout or ""):
-        return False, f"출력에 '{wanted}' 가 없습니다 · {tail}"
-    return True, f"끝남 값 {done.returncode}"
+        return False, f"출력에 '{wanted}'가 없습니다 · {tail}"
+    return True, f"종료 코드 {done.returncode}"
 
 
 def _check_one(check: Check, workspace: Path, conclusion: str, open_issues: int) -> Tuple[bool, str]:
@@ -400,24 +399,24 @@ def _check_one(check: Check, workspace: Path, conclusion: str, open_issues: int)
         path = _inside(workspace, spec)
         if path is None:
             return False, "작업 공간 밖의 경로입니다"
-        return (True, "있음") if path.is_file() else (False, f"{spec} 이 없습니다")
+        return (True, "있음") if path.is_file() else (False, f"{spec} 파일이 없습니다")
     if check.kind == "file_contains":
         path = _inside(workspace, str(spec["path"]))
         if path is None:
             return False, "작업 공간 밖의 경로입니다"
         if not path.is_file():
-            return False, f"{spec['path']} 이 없습니다"
+            return False, f"{spec['path']} 파일이 없습니다"
         found = _found(path.read_text(encoding="utf-8", errors="replace"), spec)
-        return (True, "있음") if found else (False, f"{spec['path']} 에 찾는 글이 없습니다")
+        return (True, "있음") if found else (False, f"{spec['path']}에 찾는 문자열이 없습니다")
     if check.kind == "conclusion_contains":
-        return (True, "있음") if _found(conclusion, spec) else (False, "결론에 찾는 글이 없습니다")
+        return (True, "있음") if _found(conclusion, spec) else (False, "결론에 찾는 문자열이 없습니다")
     if check.kind == "command":
         return _run_command(spec, workspace)
     return (True, f"미해결 {open_issues}건") if open_issues <= spec else (False, f"미해결 {open_issues}건 (상한 {spec})")
 
 
 async def run_checks(checks: Sequence[Check], workspace: Path, conclusion: str, open_issues: int) -> List[Dict[str, Any]]:
-    """변형 하나의 결과물에 검사를 돌립니다. 검사 하나가 터져도 나머지는 계속합니다."""
+    """단일 변형의 결과물에 대해 결정적 검사를 실행합니다. 개별 검사에서 오류가 발생해도 나머지 검사는 계속 실행합니다."""
     results: List[Dict[str, Any]] = []
     for check in checks:
         try:
@@ -431,9 +430,9 @@ async def run_checks(checks: Sequence[Check], workspace: Path, conclusion: str, 
 # ---------------------------------------------------------------- 판정 모델의 채점
 
 JUDGE_INSTRUCTION = (
-    "당신은 결과물을 채점하는 판정자입니다. 아래 [요청] 에 대한 [결론] 을 기준마다 평가하세요.\n"
-    "척도는 낮은 단계부터 {scale} 이고, 단계 번호는 0 부터 {top} 까지입니다.\n"
-    "설명 없이 JSON 한 줄만 답하세요: {{\"scores\": {{\"<기준 이름>\": <단계 번호>, ...}}}}\n\n"
+    "당신은 결과물을 채점하는 판정자입니다. 아래 [요청]에 대한 [결론]을 기준별로 평가하세요.\n"
+    "척도는 낮은 단계부터 {scale}이며, 단계 번호는 0부터 {top}까지입니다.\n"
+    "부가 설명 없이 JSON 한 줄만 출력하세요: {{\"scores\": {{\"<기준 이름>\": <단계 번호>, ...}}}}\n\n"
     "[기준]\n{criteria}\n\n[요청]\n{prompt}\n\n[결론]\n{conclusion}"
 )
 
@@ -446,7 +445,7 @@ def _clip_conclusion(text: str) -> str:
 
 
 def _parse_scores(content: str, rubric: Rubric) -> Dict[str, int]:
-    """판정자의 답에서 기준별 단계 번호를 읽습니다. 못 읽은 기준은 빠집니다 (지어내지 않습니다)."""
+    """판정자의 응답에서 기준별 단계 번호를 추출합니다. 파싱하지 못한 기준은 생략합니다(임의로 채우지 않습니다)."""
     for match in re.finditer(r"\{.*\}", content or "", re.DOTALL):
         try:
             data = json.loads(match.group(0))
@@ -467,12 +466,12 @@ def _parse_scores(content: str, rubric: Rubric) -> Dict[str, int]:
 
 
 async def judge(scenario: Scenario, conclusion: str, engine: Any) -> Dict[str, Any]:
-    """판정자에게 결론을 채점시킵니다. `{"judge", "scores", "score", "error"}` — 못 읽으면 `score` 는 None 입니다."""
+    """판정자에게 결론 채점을 요청합니다. `{"judge", "scores", "score", "error"}`를 반환하며, 파싱 실패 시 `score`는 None입니다."""
     rubric = scenario.rubric
     result: Dict[str, Any] = {"judge": rubric.judge, "scores": {}, "score": None, "error": ""}
     agent = get_agent_pool().get(rubric.judge)
     if agent is None:
-        result["error"] = f"판정자 '{rubric.judge}' 가 설정에 없습니다"
+        result["error"] = f"판정자 '{rubric.judge}'가 설정에 없습니다"
         return result
     if not (conclusion or "").strip():
         result["error"] = "결론이 없어 채점하지 않았습니다"
@@ -481,7 +480,7 @@ async def judge(scenario: Scenario, conclusion: str, engine: Any) -> Dict[str, A
     scores: Dict[str, int] = {}
     try:
         if agent.decision_llm.enabled:
-            # 결정 LLM: 기준마다 `score` 질문 하나. 한 번의 요청으로 모두 판정합니다.
+            # 결정 LLM: 기준마다 `score` 질문을 생성해 단일 요청으로 일괄 판정합니다.
             questions = {
                 f"c{index}": DecisionQuestion(type="score", instructions=question, criteria=rubric.scale)
                 for index, (_name, question) in enumerate(rubric.criteria)
@@ -538,7 +537,7 @@ async def run_variant(
     try:
         state = await engine.run_turn(session_id=sid, user_prompt=scenario.prompt)
         rounds = state.current_round
-    except Exception as exc:  # noqa: BLE001 - 한 변형의 실패로 나머지를 멈추지 않습니다
+    except Exception as exc:  # noqa: BLE001 - 한 변형의 실패가 전체 실행을 중단하지 않도록 합니다
         error, rounds = f"{type(exc).__name__}: {exc}", 0
     seconds = round(time.monotonic() - began, 1)
     result = await turn_result(sid)
@@ -548,7 +547,7 @@ async def run_variant(
     if scenario.rubric is None:
         rubric = None
     elif dry_run:
-        # 드라이런의 결론은 대본이라 채점할 것이 없습니다.
+        # 드라이런 결론은 시뮬레이션 응답이므로 채점하지 않습니다.
         rubric = {"judge": scenario.rubric.judge, "scores": {}, "score": None, "error": "드라이런 — 채점하지 않았습니다"}
     else:
         rubric = await judge(scenario, conclusion, engine)
@@ -578,7 +577,7 @@ async def run_variant(
 
 
 async def run(scenario_path: str | Path, *, dry_run: bool = False, out_dir: Path = BENCH_DIR) -> Path:
-    """시나리오를 돌리고 `result.json`·`report.md` 를 쓴 폴더를 돌려줍니다."""
+    """시나리오를 실행하고 `result.json`·`report.md`가 생성된 디렉터리를 반환합니다."""
     scenario = load_scenario(scenario_path)
     run_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4]
     run_dir = Path(out_dir) / run_id
@@ -690,7 +689,7 @@ async def write_report(result_path: str | Path) -> Path:
     return report
 
 
-# ---------------------------------------------------------------- 두 실행 견주기
+# ---------------------------------------------------------------- 두 실행 비교
 
 
 def _passed(variant: Mapping[str, Any]) -> Optional[int]:
@@ -708,10 +707,10 @@ def _arrow(before: Any, after: Any) -> str:
 
 
 def diff_runs(before_path: str | Path, after_path: str | Path) -> Tuple[str, List[str]]:
-    """두 `result.json` 을 변형 이름으로 맞춰 견줍니다. `(글, 나빠진 것들)` 을 돌려줍니다.
+    """두 `result.json`을 변형 이름으로 매칭해 비교합니다. `(비교표 문자열, 성능 저하 목록)`을 반환합니다.
 
-    나빠짐으로 치는 것: 끝났던 변형이 끝나지 못함, 통과한 검사 수가 줄어듦, 채점이 `SCORE_DROP` 이상 내려감.
-    토큰이 `TOKEN_RISE` 넘게 늘면 표에 알리기만 합니다 — 품질이 오른 값일 수 있습니다.
+    성능 저하 판정 기준: 완료되었던 변형의 실행 미완료, 통과 검사 수 감소, 채점 점수의 `SCORE_DROP` 이상 하락.
+    토큰이 `TOKEN_RISE`를 초과해 증가한 경우 표에 표시만 합니다 — 품질 향상에 따른 비용일 수 있습니다.
     """
     before = json.loads(Path(before_path).read_text(encoding="utf-8"))
     after = json.loads(Path(after_path).read_text(encoding="utf-8"))
@@ -728,7 +727,7 @@ def diff_runs(before_path: str | Path, after_path: str | Path) -> Tuple[str, Lis
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     if before.get("prompt") != after.get("prompt"):
-        lines.insert(4, "- ⚠️ 두 실행의 요청(prompt)이 다릅니다. 같은 일을 시킨 비교가 아닙니다.")
+        lines.insert(4, "- ⚠️ 두 실행의 요청(prompt)이 다릅니다. 동일한 프롬프트 기준 비교가 아닙니다.")
     for label in [*new, *(name for name in old if name not in new)]:
         a, b = old.get(label), new.get(label)
         if a is None or b is None:
@@ -736,16 +735,16 @@ def diff_runs(before_path: str | Path, after_path: str | Path) -> Tuple[str, Lis
             continue
         notes: List[str] = []
         if a.get("status") == "completed" and b.get("status") != "completed":
-            notes.append("끝나지 못함")
+            notes.append("실행 미완료")
         passed_a, passed_b = _passed(a), _passed(b)
         if passed_a is not None and passed_b is not None and passed_b < passed_a:
-            notes.append("통과한 검사가 줄어듦")
+            notes.append("통과 검사 수 감소")
         score_a, score_b = _score(a), _score(b)
         if score_a is not None and score_b is not None and score_a - score_b >= SCORE_DROP:
-            notes.append(f"채점 {score_a - score_b:.2f} 내려감")
+            notes.append(f"점수 {score_a - score_b:.2f} 하락")
         tokens_a = Usage.of(a.get("usage")).total_tokens
         tokens_b = Usage.of(b.get("usage")).total_tokens
-        verdict = "나빠짐: " + ", ".join(notes) if notes else "같거나 나아짐"
+        verdict = "성능 저하: " + ", ".join(notes) if notes else "유지 또는 개선"
         if tokens_a and tokens_b > tokens_a * (1 + TOKEN_RISE):
             verdict += f" · 토큰 {tokens_b / tokens_a - 1:+.0%}"
         if notes:
@@ -756,7 +755,7 @@ def diff_runs(before_path: str | Path, after_path: str | Path) -> Tuple[str, Lis
             _arrow(format_tokens(tokens_a) if tokens_a else "", format_tokens(tokens_b) if tokens_b else ""),
             _arrow(f"{a.get('seconds')}초", f"{b.get('seconds')}초"), verdict,
         )) + " |")
-    lines += ["", f"나빠진 변형 {len(regressions)}개." if regressions else "나빠진 변형이 없습니다.", ""]
+    lines += ["", f"저하된 변형 {len(regressions)}개." if regressions else "저하된 변형이 없습니다.", ""]
     return "\n".join(lines), regressions
 
 
@@ -767,19 +766,19 @@ async def _main(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.bench", description="MADO 전략 비교 하네스")
     parser.add_argument("--config", default=DEFAULT_CONFIG_PATH, help="conf.json 경로")
     sub = parser.add_subparsers(dest="command", required=True)
-    run_cmd = sub.add_parser("run", help="시나리오를 돌립니다")
+    run_cmd = sub.add_parser("run", help="시나리오를 실행합니다")
     run_cmd.add_argument("scenario")
-    run_cmd.add_argument("--dry-run", action="store_true", help="LLM 없이 흐름만 확인합니다")
+    run_cmd.add_argument("--dry-run", action="store_true", help="LLM 호출 없이 흐름만 검증합니다")
     run_cmd.add_argument("--out", default=str(BENCH_DIR))
-    report_cmd = sub.add_parser("report", help="평가를 반영해 보고서를 다시 씁니다")
+    report_cmd = sub.add_parser("report", help="평가를 반영해 보고서를 다시 작성합니다")
     report_cmd.add_argument("result")
-    diff_cmd = sub.add_parser("diff", help="두 실행을 견주고 나빠진 변형이 있으면 끝남 값 1 을 돌려줍니다")
+    diff_cmd = sub.add_parser("diff", help="두 실행 결과를 비교해 저하된 변형이 있으면 종료 코드 1을 반환합니다")
     diff_cmd.add_argument("before", help="이전 실행의 result.json")
     diff_cmd.add_argument("after", help="새 실행의 result.json")
     args = parser.parse_args(argv)
 
     if args.command == "diff":
-        # 파일 둘만 읽습니다. 설정도 DB 도 필요 없습니다.
+        # 두 결과 파일만 읽습니다. 설정과 DB는 필요하지 않습니다.
         try:
             text, regressions = diff_runs(args.before, args.after)
         except (OSError, ValueError, KeyError) as exc:
@@ -788,7 +787,7 @@ async def _main(argv: List[str]) -> int:
         print(text)
         return 1 if regressions else 0
 
-    # DB 엔진은 처음 부른 쪽의 주소로 고정됩니다. 설정의 주소로 먼저 묶습니다.
+    # DB 엔진은 첫 초기화 시점의 주소로 고정됩니다. 설정의 DB 주소로 먼저 바인딩합니다.
     cfg = get_config(reload=True, config_path=args.config)
     get_engine(cfg.app.db_url)
     await init_db(cfg.app.db_url)

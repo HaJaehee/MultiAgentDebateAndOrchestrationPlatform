@@ -12,9 +12,9 @@
 * **중단 후 재개된 발언** — 중단되었던 발언은 중단 전의 시작 시각을 그대로 유지합니다. 이를 그대로 소요 시간 계산에 사용하면
   서버가 꺼져 있던 유휴 시간까지 병목 시간으로 잘못 표시되므로, 실제 재개된 시각(`llm_meta.resumed_at`)부터 측정합니다.
   토큰 역시 재개 이후의 호출분만 반영되므로 시간과 토큰의 집계 범위가 일치합니다.
-* **도구 컨텍스트** — 도구 스키마 지연 로딩(ADR-039)이 도구를 불러온 횟수와, 파일 읽기 압축(ADR-040) 뒤에 같은 파일을
-  다시 읽은 횟수가 같은 사용량 기록에 실려 옵니다 (`llm_usage.note_tool_context`). 두 장치가 아낀 토큰의 반대편 값입니다.
-  여러 대화에서 되풀이해 불러온 도구는 `tool_loading.core_tools` 후보로 따로 뽑습니다 (`core_tool_candidates`).
+* **도구 컨텍스트** — 도구 스키마 지연 로딩(ADR-039)이 도구를 불러온 횟수와, 파일 읽기 압축(ADR-040) 이후 같은 파일을
+  다시 읽은 횟수가 동일한 사용량 기록에 포함됩니다(`llm_usage.note_tool_context`). 두 기법이 절감한 토큰 이면의 추가 비용에 해당합니다.
+  여러 대화에서 반복적으로 불러온 도구는 `tool_loading.core_tools` 후보로 별도 추출합니다(`core_tool_candidates`).
 """
 
 from __future__ import annotations
@@ -40,11 +40,11 @@ from app.timestamps import _as_datetime, format_duration, to_local
 OTHER_LABEL = "보조 호출"
 OTHER_KEY = "__other__"
 
-# 이만큼의 대화에서 되풀이해 불러온 도구부터 `core_tools` 후보로 봅니다. 한 대화 안에서는 한 번 불러오면 남으므로
-# (`remember_loaded`), 되풀이는 대화 수로 셉니다.
+# 이 횟수 이상의 대화에서 반복적으로 불러온 도구부터 `core_tools` 후보로 선정합니다. 한 대화 안에서는 한 번 불러오면 유지되므로
+# (`remember_loaded`), 반복 여부는 대화 수 기준으로 집계합니다.
 CORE_CANDIDATE_MIN_SESSIONS = 3
 CORE_CANDIDATE_LIMIT = 5
-# 후보를 뽑을 때 훑는 최근 불러오기 호출 수.
+# 후보 추출 시 스캔할 최근 도구 로딩 호출 수입니다.
 CORE_CANDIDATE_SCAN = 2000
 
 _Span = Tuple[datetime, datetime]
@@ -291,7 +291,7 @@ def bottleneck_lines(rows: Sequence[UsageRow]) -> List[str]:
 
 
 def _loaded_names(arguments: Any) -> List[str]:
-    """`tools__load_tools` 호출 인자에서 도구 이름의 꼬리(`git_log`)를 뽑습니다."""
+    """`tools__load_tools` 호출 인자에서 도구 이름의 끝부분(`git_log`)을 추출합니다."""
     names = arguments.get("names") if isinstance(arguments, Mapping) else None
     if isinstance(names, str):
         names = [names]
@@ -301,7 +301,7 @@ def _loaded_names(arguments: Any) -> List[str]:
 
 
 async def loaded_tool_sessions(db: Any, session_id: Optional[str] = None) -> Dict[str, int]:
-    """도구 이름 → 그 도구를 `tools__load_tools` 로 불러온 **대화 수**. `session_id` 를 주면 그 대화만 봅니다."""
+    """도구 이름 → 해당 도구를 `tools__load_tools`로 불러온 **대화 수** 매핑을 반환합니다. `session_id`를 지정하면 해당 대화만 집계합니다."""
     query = (
         select(ToolCallRecordModel.session_id, ToolCallRecordModel.arguments)
         .where(ToolCallRecordModel.tool_name == LOAD_TOOLS_TOOL, ToolCallRecordModel.status == "success")
@@ -318,10 +318,10 @@ async def loaded_tool_sessions(db: Any, session_id: Optional[str] = None) -> Dic
 
 
 async def core_tool_candidates(db: Any, core_tools: Sequence[str] = ()) -> List[Tuple[str, int]]:
-    """여러 대화에서 되풀이해 불러온 도구 — `tool_loading.core_tools` 에 더하면 불러오는 판이 줄어드는 후보입니다.
+    """여러 대화에서 반복적으로 불러온 도구 목록을 반환합니다 — `tool_loading.core_tools`에 추가하면 로딩 호출을 줄일 수 있는 후보입니다.
 
-    `(도구 이름 꼬리, 대화 수)` 를 대화 수가 많은 순으로 돌려줍니다. 이미 `core_tools` 에 있는 것은 뺍니다.
-    제안일 뿐이고 설정은 바꾸지 않습니다.
+    `(도구 이름 끝부분, 대화 수)` 튜플을 대화 수가 많은 순으로 반환합니다. 이미 `core_tools`에 포함된 도구는 제외합니다.
+    권고 목록일 뿐이며 설정 파일을 자동으로 변경하지 않습니다.
     """
     already = {str(item).strip().split("__", 1)[-1] for item in core_tools}
     counts = await loaded_tool_sessions(db)
@@ -334,10 +334,10 @@ async def core_tool_candidates(db: Any, core_tools: Sequence[str] = ()) -> List[
 
 
 def core_candidate_line(candidates: Sequence[Tuple[str, int]]) -> str:
-    """`자주 불러오는 도구: git_log(대화 4개) · …`. 후보가 없으면 빈 문자열."""
+    """`자주 불러오는 도구: git_log(대화 4개) · …`. 후보가 없으면 빈 문자열을 반환합니다."""
     if not candidates:
         return ""
     listed = " · ".join(f"{name}(대화 {sessions}개)" for name, sessions in candidates)
     return (
-        f"자주 불러오는 도구: {listed} — `tool_loading.core_tools` 에 더하면 처음부터 실려 불러오는 판이 줄어듭니다."
+        f"자주 불러오는 도구: {listed} — `tool_loading.core_tools`에 추가하면 처음부터 로드되어 추가 로딩 호출이 줄어듭니다."
     )

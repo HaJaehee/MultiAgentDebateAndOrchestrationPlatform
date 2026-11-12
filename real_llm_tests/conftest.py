@@ -1,12 +1,12 @@
 """실제 LLM 시험의 pytest 설정.
 
-이 폴더의 시험은 **실제 LLM(대상 conf 의 모델 — 개발 PC 에서는 DeepSeek 와 Jev)을 호출해 돈과 시간이 듭니다.**
+이 폴더의 시험은 **실제 LLM(대상 `conf.json`의 모델 — 개발 PC에서는 DeepSeek와 Jev)을 호출해 비용과 시간이 듭니다.**
 그래서 켜야만 돕니다.
 
     set MADO_REAL_LLM=1
     dist\\MultiAgentDebateOrchestration_bundle\\python_runtime\\python.exe -m pytest real_llm_tests -x -q
 
-`MADO_REAL_LLM` 이 없으면 아무 것도 수집하지 않습니다 (저장소 루트에서 `pytest -q` 를 돌려도 단위 테스트만 돕니다).
+`MADO_REAL_LLM`이 없으면 아무것도 수집하지 않습니다 (저장소 루트에서 `pytest -q`를 돌려도 단위 테스트만 돕니다).
 자세한 내용은 `README.md`.
 """
 
@@ -29,7 +29,7 @@ _HARNESS = None
 def pytest_configure(config):
     config.addinivalue_line("markers", "adr(number): 이 시험이 확인하는 ADR 번호")
     config.addinivalue_line(
-        "markers", "acceptance: 새 모델을 들였을 때 먼저 돌리는 최소 묶음 (`-m acceptance`, 연결·적합성·토론 한 턴·도구)",
+        "markers", "acceptance: 새 모델을 도입했을 때 먼저 실행하는 최소 묶음 (`-m acceptance`, 연결·적합성·토론 한 턴·도구)",
     )
 
 

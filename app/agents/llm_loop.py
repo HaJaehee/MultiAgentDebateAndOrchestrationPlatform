@@ -731,7 +731,7 @@ class ToolLoopMixin:
             else:
                 await self._note_write_start(loop, fn_name, fn_args, call_id)
                 if reread_of_compacted(loop.messages, fn_name, fn_args):
-                    # 줄여 둔 읽기를 모델이 다시 불렀습니다. 막지 않고 셉니다 — 압축이 치르는 값입니다 (ADR-040).
+                    # 압축으로 줄여 둔 읽기를 모델이 다시 호출했습니다. 차단하지 않고 횟수만 집계합니다 — 압축이 수반하는 재읽기 비용입니다(ADR-040).
                     llm_usage.note_tool_context(rereads=1)
                 outside = self._outside_source(fn_name, fn_args, loop.mcp)
                 output, status = await self._execute_tool_safely(

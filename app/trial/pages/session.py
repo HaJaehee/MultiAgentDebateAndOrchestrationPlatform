@@ -205,7 +205,7 @@ class TrialSessionScreen:
             return
         position = None
         if self.runner.is_running(self.session_id):
-            # 서버 전체의 줄에 없으면 연결별 줄(`max_concurrency`)에서 기다리는지 봅니다.
+            # 서버 전체 대기열에 없으면 연결별 대기열(`max_concurrency`)에서 대기 중인지 확인합니다.
             position = get_llm_gate().position(self.session_id)
             if position is None:
                 position = get_connection_gates().position(self.session_id)

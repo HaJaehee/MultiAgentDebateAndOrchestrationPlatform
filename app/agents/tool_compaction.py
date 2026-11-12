@@ -119,10 +119,10 @@ def _same_arguments(call: Dict[str, Any], arguments: Any) -> bool:
 
 
 def reread_of_compacted(messages: List[Dict[str, Any]], name: str, arguments: Any) -> bool:
-    """이 호출이 **앞서 스텁으로 줄인 읽기와 같은 도구·같은 인자**인지 (압축 뒤 다시 읽기).
+    """이 호출이 **이전에 스텁으로 압축한 읽기와 동일한 도구·동일한 인자**인지 판별합니다(압축 뒤 다시 읽기).
 
-    압축이 얼마나 자주 되읽기를 부르는지 세는 데 씁니다 (`llm_usage.note_tool_context`). 메시지만 보고 판단하므로
-    끊긴 발언을 이어 가도 같습니다.
+    압축으로 인해 재읽기가 얼마나 자주 발생하는지 집계할 때 사용합니다(`llm_usage.note_tool_context`).
+    메시지 이력만을 기준으로 판별하므로 중단된 발언을 이어서 재개해도 동일하게 동작합니다.
     """
     if name.split("__", 1)[-1] not in REREADABLE_TOOLS:
         return False
@@ -142,10 +142,10 @@ def reread_of_compacted(messages: List[Dict[str, Any]], name: str, arguments: An
 
 
 def reclaimable_tokens(model: str, messages: List[Dict[str, Any]], used: int) -> int:
-    """자리가 모자랄 때 압축으로 되찾을 토큰. 압축이 꺼졌거나 줄일 것이 없으면 0.
+    """컨텍스트 여유가 부족할 때 압축으로 회수할 수 있는 예상 토큰 수입니다. 압축이 비활성화되었거나 줄일 대상이 없으면 0을 반환합니다.
 
-    예산을 넘기면 `compact_loop_messages` 가 가장 최근 판만 남기고 줄이므로, 같은 방식으로 줄인 뒤의 크기와 비교합니다.
-    컨텍스트 사용률 고지가 띠를 넘을 때만 부릅니다 (`context_pressure_notice`).
+    예산을 초과하면 `compact_loop_messages`가 가장 최근 라운드만 남기고 압축하므로, 동일한 방식으로 줄인 뒤의 크기와 비교합니다.
+    컨텍스트 사용률 안내가 임계 구간을 넘었을 때만 호출합니다(`context_pressure_notice`).
     """
     settings = get_config().tool_output_compaction
     if not settings.enabled:

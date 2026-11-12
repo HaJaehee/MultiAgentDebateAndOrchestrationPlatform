@@ -1,11 +1,11 @@
 """모델 적합성 점검 (app/agents/model_check.py, app/modelcheck.py, ADR-054).
 
-진짜 LiteLLM 이 로컬 가짜 서버를 부르게 해서 봅니다. 가짜 서버는 모델 이름으로 "어떤 서버인지" 를 정합니다.
+실제 LiteLLM이 로컬 모의 서버를 호출하도록 해 검증합니다. 모의 서버는 모델 이름으로 "어떤 서버인지"를 결정합니다.
 
 1. 잘 맞는 서버는 전부 통과하고, 요청은 정해진 수만 나가며 재시도하지 않는다.
 2. 서버마다 다른 어긋남(도구 호출 누출, 추론에 갇힌 답, 잘림을 알리지 않음 …)이 그 검사 하나에만 드러난다.
-3. 컨텍스트 창은 서버가 말한 값과 에이전트 설정을 견준다.
-4. 결정 LLM 은 한 번의 요청으로 세 가지 답의 모양을 본다.
+3. 컨텍스트 창은 서버가 보고한 값과 에이전트 설정을 비교한다.
+4. 결정 LLM은 한 번의 요청으로 세 가지 응답 형태를 확인한다.
 5. 결과는 파일로 남고 다시 읽히며, 방문자용 자료에는 주소와 오류 원문이 없다.
 6. 결과판은 한 번에 한 연결만 점검한다.
 7. 명령줄과 화면.
@@ -30,7 +30,7 @@ SHARED_KEY = "sk-shared-secret-0001"
 BIG_WINDOW = 131072
 
 
-# ---------------------------------------------------------------- 가짜 서버
+# ---------------------------------------------------------------- 모의 서버
 
 
 def _reply(content="", *, finish="stop", tool_calls=None, reasoning=None):
@@ -49,14 +49,14 @@ def _call(name, arguments):
 
 
 class _FakeServer(BaseHTTPRequestHandler):
-    """모델 이름으로 성격을 정하는 OpenAI 호환 서버."""
+    """모델 이름으로 동작 특성을 정하는 OpenAI 호환 서버."""
 
     seen: list = []
 
     def log_message(self, *args):
         pass
 
-    # --- 요청의 종류
+    # --- 요청 유형
     @staticmethod
     def _kind(body) -> str:
         messages = body.get("messages") or []
@@ -89,13 +89,13 @@ class _FakeServer(BaseHTTPRequestHandler):
 
         if kind == "answer":
             if model == "thinker":
-                return 200, _reply("", finish="length", reasoning="17 더하기 25 를 따져 보면 " * 20)
+                return 200, _reply("", finish="length", reasoning="17 더하기 25를 따져 보면 " * 20)
             if model == "trapped":
                 return 200, _reply("", reasoning="생각 끝에 답은 42 입니다.")
             if model == "inline-think":
-                # 여는 표식이 챗 템플릿에 미리 들어가 닫는 표식만 오는 모양. 짝이 맞는 <think>…</think> 는
-                # LiteLLM 이 스스로 reasoning_content 로 갈라 주기도 합니다 (1.98 에서 확인).
-                return 200, _reply("17 과 25 를 더하면</think>42")
+                # 여는 표식이 챗 템플릿에 미리 들어가 닫는 표식만 오는 형태입니다. 짝이 맞는 <think>…</think>는
+                # LiteLLM이 스스로 reasoning_content로 분리해 주기도 합니다 (1.98에서 확인).
+                return 200, _reply("17과 25를 더하면</think>42")
             if model == "splitter":
                 return 200, _reply("42", reasoning="17 + 25 = 42")
             return 200, _reply("42")
@@ -107,7 +107,7 @@ class _FakeServer(BaseHTTPRequestHandler):
             if model == "leaky":
                 return 200, _reply('<tool_call>{"name": "probe__lookup_code", "arguments": {"code": "A7"}}</tool_call>')
             if model == "talker":
-                return 200, _reply("A7 은 아마 좌표일 것입니다.")
+                return 200, _reply("A7은 아마 좌표일 것입니다.")
             if model == "thinks-then-calls":
                 return 200, _reply(tool_calls=_call(mc.PROBE_TOOL_NAME, json.dumps({"code": mc.PROBE_CODE})),
                                    reasoning="코드를 찾아야 한다")
@@ -198,7 +198,7 @@ def gate(monkeypatch) -> LLMGate:
 
 @pytest.fixture(autouse=True)
 def _scratch_records(tmp_path, monkeypatch):
-    """점검 기록이 실제 `data/modelcheck` 에 쌓이지 않게 합니다."""
+    """점검 기록이 실제 `data/modelcheck`에 쌓이지 않게 합니다."""
     monkeypatch.setattr(mc, "modelcheck_dir", lambda: tmp_path / "modelcheck")
     _FakeServer.seen.clear()
 
@@ -235,9 +235,9 @@ async def test_a_well_behaved_server_passes_everything(server, gate):
     ]
     assert {key: r.outcome for key, r in results.items() if r.outcome != mc.OK} == {}
     assert profile.worst == mc.OK and not profile.suggestions()
-    assert "사용량 보고됨" in results["answer"].summary and "3조각" in results["stream"].summary
+    assert "사용량 보고됨" in results["answer"].summary and "본문 3개" in results["stream"].summary
     assert profile.kind == mc.SYSTEM2 and profile.users == ("전역 기본값", "Orchestrator", "Coder")
-    assert gate.snapshot()["active"] == 0, "쥔 자리는 모두 돌려줍니다"
+    assert gate.snapshot()["active"] == 0, "점유한 슬롯은 모두 반환합니다"
 
 
 @pytest.mark.asyncio
@@ -248,7 +248,7 @@ async def test_requests_are_few_small_and_never_retried(server, gate):
         "answer", "stream", "length", "roles", "tools", "tool_result", "catalog", "image",
     ]
     assert all(entry["body"]["max_tokens"] <= mc.ANSWER_TOKENS for entry in posts)
-    assert not any("temperature" in entry["body"] for entry in posts), "모델마다 받는 값이 다른 것은 보내지 않습니다"
+    assert not any("temperature" in entry["body"] for entry in posts), "모델마다 지원 여부가 다른 파라미터는 보내지 않습니다"
     assert [entry["path"] for entry in _FakeServer.seen if "path" in entry] == ["/v1/models"]
 
 
@@ -256,18 +256,18 @@ async def test_requests_are_few_small_and_never_retried(server, gate):
 async def test_the_wrap_up_request_has_the_shape_the_real_loop_sends(server, gate):
     await run(server)
     body = next(entry["body"] for entry in _FakeServer.seen if entry.get("kind") == "tool_result")
-    assert body["tool_choice"] == "none" and body["tools"], "도구는 싣되 부르지 못하게 — `_wrap_up_without_tools` 와 같습니다"
+    assert body["tool_choice"] == "none" and body["tools"], "도구 정의는 포함하되 호출은 금지 — `_wrap_up_without_tools`와 같습니다"
     assert [m["role"] for m in body["messages"]] == ["user", "assistant", "tool"]
     assert body["messages"][1]["tool_calls"][0]["id"] == body["messages"][2]["tool_call_id"] == "call_1", (
-        "지어낸 턴이 아니라 방금 모델이 낸 호출을 되돌려 넣습니다"
+        "임의로 만든 턴이 아니라 직전에 모델이 보낸 호출을 그대로 되돌려 넣습니다"
     )
 
 
 @pytest.mark.asyncio
 async def test_the_assistant_turn_carries_back_what_the_model_sent_with_its_call(server, gate):
-    """도구를 부른 발언의 `reasoning_content` 를 돌려받아야 하는 모델이 있습니다 (DeepSeek thinking mode).
+    """도구를 호출한 발언의 `reasoning_content`를 돌려받아야 하는 모델이 있습니다 (DeepSeek thinking mode).
 
-    손으로 만든 assistant 턴은 그런 모델에서 400 으로 거절되어, 멀쩡한 모델이 '실패' 로 나왔습니다 (2026-11-11 실제 시험).
+    임의로 만든 assistant 턴은 해당 모델에서 400으로 거절되어, 정상 모델이 '실패'로 판정되었습니다 (2026-11-11 실제 테스트).
     """
     await run(server, "thinks-then-calls")
     body = next(entry["body"] for entry in _FakeServer.seen if entry.get("kind") == "tool_result")
@@ -290,25 +290,25 @@ async def test_the_catalog_request_uses_the_real_catalog_tool_and_guidance(serve
     assert body["messages"][0]["role"] == "system" and LOAD_TOOLS_TOOL in body["messages"][0]["content"]
 
 
-# ---------------------------------------------------------------- 2. 어긋나는 서버
+# ---------------------------------------------------------------- 2. 비호환 동작 서버
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("model, key, outcome, word", [
-    ("leaky", "tools", mc.FAIL, "본문 글자로"),
-    ("talker", "tools", mc.WARN, "부르지 않고"),
-    ("broken-args", "tools", mc.WARN, "JSON 이 아닙니다"),
+    ("leaky", "tools", mc.FAIL, "본문 텍스트로"),
+    ("talker", "tools", mc.WARN, "호출하지 않고"),
+    ("broken-args", "tools", mc.WARN, "JSON 형식이 아닙니다"),
     ("thinker", "reasoning", mc.WARN, "한도"),
-    ("trapped", "reasoning", mc.WARN, "추론(reasoning_content"),
+    ("trapped", "reasoning", mc.WARN, "추론 필드(reasoning_content"),
     ("inline-think", "reasoning", mc.WARN, "<think>"),
     ("quiet-cut", "length", mc.WARN, "finish_reason='stop'"),
-    ("strict-roles", "roles", mc.INFO, "합쳐서 보내므로"),
-    ("no-none", "tool_result", mc.WARN, "tool_choice='none' 을 받지 않습니다"),
-    ("no-history", "tool_result", mc.FAIL, "도구 결과가 담긴 대화를 받지 않습니다"),
-    ("ignores-none", "tool_result", mc.WARN, "다시 불렀습니다"),
+    ("strict-roles", "roles", mc.INFO, "병합해 전송하므로"),
+    ("no-none", "tool_result", mc.WARN, "tool_choice='none'을 지원하지 않습니다"),
+    ("no-history", "tool_result", mc.FAIL, "도구 결과가 포함된 대화를 처리하지 못합니다"),
+    ("ignores-none", "tool_result", mc.WARN, "다시 호출했습니다"),
     ("no-catalog", "catalog", mc.WARN, "불러오지 않았습니다"),
-    ("blind", "image", mc.INFO, "받지 않습니다"),
-    ("blind-quiet", "image", mc.INFO, "읽지 못했습니다"),
+    ("blind", "image", mc.INFO, "처리하지 못합니다"),
+    ("blind-quiet", "image", mc.INFO, "인식하지 못했습니다"),
     ("no-stream", "stream", mc.WARN, "스트리밍 요청이 실패"),
 ])
 async def test_each_quirk_shows_up_in_its_own_check(server, gate, model, key, outcome, word):
@@ -316,9 +316,9 @@ async def test_each_quirk_shows_up_in_its_own_check(server, gate, model, key, ou
     results = by_key(profile)
     assert results[key].outcome == outcome, results[key].summary
     assert word in results[key].summary
-    # 그 검사 말고는 잘 맞는 서버와 같습니다 (창 크기는 /models 에 없는 모델이라 건너뜁니다).
+    # 해당 검사 외에는 정상 동작하는 서버와 같습니다 (컨텍스트 창 크기는 /models에 없는 모델이라 건너뜁니다).
     others = {k: r.outcome for k, r in results.items() if k not in (key, "window", "stream", "answer")}
-    # 모델이 낸 도구 호출이 없으면 그 뒤의 도구 검사는 묻지 않고 건너뜁니다.
+    # 모델이 도구 호출을 생성하지 않으면 후속 도구 검사는 수행하지 않고 건너뜁니다.
     allowed = {mc.OK, mc.SKIP} if key == "tools" else {mc.OK}
     assert set(others.values()) <= allowed, others
 
@@ -326,7 +326,7 @@ async def test_each_quirk_shows_up_in_its_own_check(server, gate, model, key, ou
 @pytest.mark.asyncio
 async def test_reasoning_that_arrives_apart_from_the_answer_is_fine(server, gate):
     result = by_key(await run(server, "splitter"))["reasoning"]
-    assert result.outcome == mc.OK and "갈라져" in result.summary
+    assert result.outcome == mc.OK and "분리되어" in result.summary
 
 
 @pytest.mark.asyncio
@@ -342,7 +342,7 @@ async def test_suggestions_name_the_setting_to_change(server, gate):
     catalog = by_key(await run(server, "no-catalog"))["catalog"].suggestions[0]
     assert (catalog.setting, catalog.value) == (mc.SET_TOOL_LOADING, False)
     leaky = by_key(await run(server, "leaky"))["tools"].suggestions[0]
-    assert leaky.setting == "" and "tool-call-parser" in leaky.text, "서버 쪽 설정은 conf 로 고칠 수 없습니다"
+    assert leaky.setting == "" and "tool-call-parser" in leaky.text, "서버 측 설정은 conf.json으로 수정할 수 없습니다"
 
 
 @pytest.mark.asyncio
@@ -370,7 +370,7 @@ async def test_a_server_that_does_not_answer_stops_after_one_request(server, gat
     profile = await run(server, "down")
     (result,) = profile.results
     assert result.key == "answer" and result.outcome == mc.FAIL and "서버 오류" in result.summary
-    assert SHARED_KEY not in result.detail, "Provider 가 되돌려 보낸 키도 가립니다"
+    assert SHARED_KEY not in result.detail, "Provider가 되돌려 보낸 키도 마스킹합니다"
     assert len([entry for entry in _FakeServer.seen if "kind" in entry]) == 1
 
 
@@ -474,7 +474,7 @@ async def test_a_decision_model_is_checked_with_one_request(gate):
     profile = await mc.check_target(_s1_target(), http_transport=_s1_transport(GOOD_S1, seen=seen))
     assert profile.kind == mc.SYSTEM1 and [r.outcome for r in profile.results] == [mc.OK] * 4
     assert len(seen) == 1 and set(seen[0]["questions"]) == {"noul", "choice", "score"}
-    assert isinstance(seen[0]["questions"]["choice"]["criteria"], dict), "Jev 는 choice 의 criteria 를 사전으로만 받습니다"
+    assert isinstance(seen[0]["questions"]["choice"]["criteria"], dict), "Jev는 choice의 criteria를 사전으로만 받습니다"
 
 
 @pytest.mark.asyncio
@@ -483,7 +483,7 @@ async def test_missing_or_odd_decision_answers_fail_on_their_own_line(gate):
     results = by_key(await mc.check_target(_s1_target(), http_transport=_s1_transport(answers)))
     assert results["systemone"].outcome == mc.OK
     assert results["s1_choice"].outcome == results["s1_score"].outcome == mc.FAIL
-    # 답에 확률이 없으면 0 으로 읽히므로 형식은 통과합니다 — 값이 없다는 것은 'noul' 이 아예 빠졌을 때 드러납니다.
+    # 응답에 확률이 없으면 0으로 읽히므로 형식은 통과합니다 — 값이 없다는 것은 'noul'이 아예 빠졌을 때 드러납니다.
     partial = by_key(await mc.check_target(_s1_target(), http_transport=_s1_transport({"score": {"score": 1}})))
     assert partial["s1_noul"].outcome == mc.FAIL and partial["s1_score"].outcome == mc.OK
 
@@ -601,7 +601,7 @@ def _write_conf(tmp_path, server, model, agents=None):
 
 @pytest.fixture
 def restore_config():
-    """명령줄은 전역 설정을 다시 읽습니다. 시험이 끝나면 원래 설정으로 되돌립니다."""
+    """명령줄은 전역 설정을 다시 읽습니다. 테스트가 끝나면 원래 설정으로 되돌립니다."""
     from app.config import get_config
 
     yield
@@ -617,7 +617,7 @@ async def test_the_command_line_prints_a_report_and_exits_by_the_worst_result(
     assert await modelcheck._main(["--config", _write_conf(tmp_path, server, "good")]) == 0  # noqa: SLF001
     out = capsys.readouterr().out
     assert "openai/good" in out and "[통과] 도구 호출" in out and SHARED_KEY not in out
-    assert list((tmp_path / "modelcheck").glob("*.json")), "화면이 읽는 자리에 기록을 남깁니다"
+    assert list((tmp_path / "modelcheck").glob("*.json")), "화면이 읽는 위치에 기록을 남깁니다"
 
     assert await modelcheck._main(["--config", _write_conf(tmp_path, server, "leaky"), "--json"]) == 1  # noqa: SLF001
     (profile,) = json.loads(capsys.readouterr().out)
@@ -668,7 +668,7 @@ async def test_the_owner_row_shows_the_check_button_and_the_results(server, gate
     owner_text = "\n".join(_texts(owner))
     assert "다시 점검" in owner_text and "적합성 점검: " in owner_text
     assert "도구 목록에서 불러오기" in owner_text and "tool_loading.enabled" in owner_text
-    assert "점검" not in "\n".join(_texts(visitor)), "방문자의 줄에는 단추도 결과도 없습니다"
+    assert "점검" not in "\n".join(_texts(visitor)), "방문자 행에는 버튼도 결과도 없습니다"
     assert "적합성 점검 중" in "\n".join(_texts(busy)) and "다시 점검" not in "\n".join(_texts(busy))
 
     button = next(child for child in owner.descendants() if getattr(child, "text", None) == "다시 점검")
@@ -678,7 +678,7 @@ async def test_the_owner_row_shows_the_check_button_and_the_results(server, gate
     assert pressed == [profile.target_id]
 
 
-# ---------------------------------------------------------------- 8. 권고를 conf.json 에 적기 (ADR-056)
+# ---------------------------------------------------------------- 8. 권고 설정을 conf.json에 적용 (ADR-056)
 
 
 def _conf_file(tmp_path, server, agents, tool_loading=None):
@@ -733,7 +733,9 @@ def test_applying_the_other_suggestions(server, tmp_path, restore_config):
     ], "이미 넉넉한 에이전트는 낮추지 않습니다"
     config = _reload(path)
     target = ms.collect_targets(config)[0]
-    assert mc.apply_suggestion(target.id, mc.SET_DROP_IMAGE, False, config, config_path=path) == ["Coder: 모달에서 이미지를 뺌"]
+    assert mc.apply_suggestion(target.id, mc.SET_DROP_IMAGE, False, config, config_path=path) == [
+        "Coder: 입력 모달리티에서 image 제외",
+    ]
     config = _reload(path)
     assert config.agents["coder"].allowed_modalities == ["document"] and config.agents["coder"].max_tokens == 8192
 
@@ -750,7 +752,7 @@ def test_applying_refuses_what_it_does_not_know(server, tmp_path, restore_config
     config = _reload(path)
     with pytest.raises(ValueError, match="적용할 수 없는 설정"):
         mc.apply_suggestion("x", "api_key", "sk-evil", config, config_path=path)
-    with pytest.raises(ValueError, match="그 연결을 찾지 못했습니다"):
+    with pytest.raises(ValueError, match="해당 연결을 찾을 수 없습니다"):
         mc.apply_suggestion("no-such-connection", mc.SET_MAX_TOKENS, 8192, config, config_path=path)
     assert "sk-evil" not in path.read_text(encoding="utf-8")
 

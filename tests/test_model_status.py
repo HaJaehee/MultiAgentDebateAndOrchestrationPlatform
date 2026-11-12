@@ -506,7 +506,7 @@ def test_the_button_is_in_all_three_headers_with_the_right_level_of_detail():
     assert component.BUTTON_LABEL == "모델 연결 상태"
     # 전문가 화면은 주인만 엽니다. 체험·쉬운 화면은 방문자도 여므로 주인일 때만 자세히 보여 줍니다.
     expert = (ROOT / "app" / "ui" / "expert" / "chrome.py").read_text(encoding="utf-8")
-    # 권고를 conf.json 에 적는 단추는 서버 PC 에서 연 화면에만 놓입니다 (ADR-056). 체험·쉬운 화면에는 넘기지 않습니다.
+    # 권고 설정을 conf.json에 적용하는 버튼은 서버 PC에서 연 화면에만 표시됩니다 (ADR-056). 체험·쉬운 화면에는 전달하지 않습니다.
     assert "build_model_status_button(detail=True, can_apply=viewer_is_local)" in expert
     assert "can_apply" not in inspect.getsource(trial_common.header)
     assert "can_apply" not in inspect.getsource(easy_common.easy_header)

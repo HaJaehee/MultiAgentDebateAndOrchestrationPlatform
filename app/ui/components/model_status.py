@@ -1,23 +1,25 @@
-"""`모델 연결 상태` 단추와 그 창 — 전문가·체험·쉬운 화면의 머리에 함께 놓입니다.
+"""`모델 연결 상태` 버튼과 상태 다이얼로그 — 전문가·체험·쉬운 화면 헤더에 공통으로 배치됩니다.
 
-누르면 창을 열고, 설정에 있는 모델마다 아주 짧은 요청을 보내 지금 응답하는지 보여 줍니다
-(`app/agents/model_status.py`). 확인은 서버 전체에서 한 판만 돌고 결과는 잠깐 다시 쓰이므로,
-여러 사람이 동시에 열어도 요청이 사람 수만큼 나가지 않습니다.
+누르면 다이얼로그를 열고, 설정에 등록된 모델마다 짧은 확인 요청을 보내 현재 응답 여부를 표시합니다
+(`app/agents/model_status.py`). 확인 작업은 서버 전체에서 한 번만 실행되고 결과는 잠시 캐시되므로,
+여러 사용자가 동시에 창을 열어도 요청이 사용자 수만큼 중복 전송되지 않습니다.
 
-창은 페이지를 만들 때 **한 번만** 짓고 단추는 열기만 합니다 (정보 창과 같은 이유입니다 — 누를 때마다
-지으면 눌린 횟수만큼 DOM 에 쌓입니다). 확인이 도는 동안에만 타이머가 줄을 다시 그리고, 창을 닫거나
-확인이 끝나면 타이머를 끕니다.
+다이얼로그는 페이지를 생성할 때 **한 번만** 만들고 버튼은 열기 동작만 수행합니다(정보 창과 동일한 이유입니다 —
+누를 때마다 새로 생성하면 클릭 횟수만큼 DOM 요소가 누적됩니다). 확인이 진행 중일 때만 타이머가 목록을
+다시 그리며, 창을 닫거나 확인이 끝나면 타이머를 중지합니다.
 
-`detail` 은 주소와 오류 원문을 보여 줄지입니다. 주인의 화면에서만 켭니다. 꺼져 있으면 그 값들은
-화면으로 가는 자료에 아예 담기지 않습니다 (`describe_row`).
+`detail`은 엔드포인트 주소와 오류 원문을 표시할지 여부를 결정합니다. 관리자 화면에서만 활성화하며,
+비활성화 시 해당 값들은 화면으로 전달되는 데이터에 아예 포함되지 않습니다(`describe_row`).
 
-주인의 화면에서는 줄마다 `적합성 점검` 단추가 함께 놓입니다 (ADR-054, `app/agents/model_check.py`). 그 연결에
-짧은 요청 몇 건을 보내 도구 호출·추론 분리·잘림 알림·컨텍스트 창 따위를 확인하고, 결과와 권장 설정을 줄 아래에
-펼칩니다. 요청이 여러 건 나가므로 방문자의 화면에는 단추를 두지 않고, 한 번에 한 연결만 점검합니다.
+관리자 화면에서는 각 연결 행마다 `적합성 점검` 버튼이 함께 표시됩니다(ADR-054, `app/agents/model_check.py`).
+해당 연결로 짧은 요청 몇 건을 보내 도구 호출·추론 분리·잘림 알림·컨텍스트 창 크기 등을 확인하고,
+점검 결과와 권장 설정을 행 아래에 펼칩니다. 요청이 여러 건 발생하므로 방문자 화면에는 표시하지 않으며,
+한 번에 하나의 연결만 점검합니다.
 
-설정 이름이 붙은 권고 옆에는 `적용` 단추가 놓입니다 (ADR-056, `model_check.apply_suggestion`). conf.json 을 고치는
-일이라 **서버 PC 에서 연 화면에만** 있습니다 (`can_apply`, 전역 도구 규칙 편집과 같은 기준). 누르면 무엇을 바꿨는지
-알리고, 바꿀 것이 없으면 그렇게 말합니다. 점검 결과 자체는 그대로 두므로 `다시 점검` 으로 확인합니다.
+설정 키가 연결된 권고 옆에는 `적용` 버튼이 표시됩니다(ADR-056, `model_check.apply_suggestion`). conf.json을
+수정하는 작업이므로 **서버 PC에서 연 화면에만** 활성화됩니다(`can_apply`, 전역 도구 규칙 편집과 동일한 기준).
+누르면 변경된 내역을 알리고, 바꿀 항목이 없으면 그 사실을 안내합니다. 점검 결과 자체는 유지되므로
+`다시 점검`으로 반영 여부를 다시 확인할 수 있습니다.
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ from app.agents.connection import CHECKING, OK
 BUTTON_LABEL = "모델 연결 상태"
 BUTTON_ICON = "network_check"
 
-# 색조별 (글자색, 바탕, 테두리, 아이콘). 체험 화면은 오래된 브라우저에서도 열리므로 rgba 만 씁니다.
+# 톤별 색상(글자색, 배경, 테두리, 아이콘)입니다. 체험 화면은 구형 브라우저에서도 열리므로 rgba만 사용합니다.
 _TONES: Dict[str, tuple] = {
     "good": ("#6ee7b7", "rgba(16, 185, 129, .14)", "rgba(16, 185, 129, .45)", "check_circle"),
     "warn": ("#fcd34d", "rgba(245, 158, 11, .14)", "rgba(245, 158, 11, .45)", "error_outline"),
@@ -63,7 +65,7 @@ APPLY_LABEL = "적용"
 def _check_results(
     profile: Dict[str, Any], on_apply: Optional[Callable[[str, Dict[str, Any]], None]] = None,
 ) -> None:
-    """점검 결과 — 검사마다 한 줄, 권장 설정은 그 아래에. `on_apply` 가 있으면 설정 이름이 붙은 권고에 적용 단추."""
+    """점검 결과 — 항목별 한 줄 요약과 권장 설정을 표시합니다. `on_apply`가 있으면 설정 키가 연결된 권고에 적용 버튼을 둡니다."""
     with ui.column().classes("w-full gap-1 mt-1 pt-2 border-t border-slate-800").mark(
         f"model-check-{profile['target_id']}"
     ):
@@ -86,7 +88,7 @@ def _check_results(
                                     APPLY_LABEL,
                                     on_click=lambda _e, tid=profile["target_id"], s=suggestion: on_apply(tid, s),
                                 ).props("flat dense no-caps size=sm color=amber-4").classes("shrink-0").tooltip(
-                                    "이 권고를 conf.json 에 적습니다. 에이전트의 값은 새 대화부터 적용됩니다"
+                                    "이 권고를 conf.json에 기록합니다. 에이전트 설정은 새 대화부터 적용됩니다."
                                 )
                     if result.get("detail"):
                         ui.label(result["detail"]).classes(
@@ -130,7 +132,7 @@ def _row(
             with ui.row().classes("w-full items-center gap-2 flex-nowrap"):
                 if checking:
                     ui.spinner(size="14px", color="grey-4")
-                    ui.label("적합성 점검 중 — 짧은 요청 몇 건을 차례로 보내고 있습니다.").classes("text-xs text-slate-400")
+                    ui.label("적합성 점검 중 — 짧은 요청 몇 건을 순차적으로 보내고 있습니다.").classes("text-xs text-slate-400")
                 else:
                     button = ui.button(
                         CHECK_LABEL if profile is None else "다시 점검", icon="fact_check",
@@ -138,42 +140,42 @@ def _row(
                     ).props("flat dense no-caps size=sm color=light-blue-4").mark(f"model-check-button-{view['id']}")
                     button.set_enabled(can_check)
                     button.tooltip(
-                        "이 모델로 도구 호출·추론 분리·잘림 알림·컨텍스트 창이 동작하는지 짧은 요청으로 확인합니다"
+                        "이 모델에서 도구 호출·추론 분리·잘림 알림·컨텍스트 창이 정상 동작하는지 짧은 요청으로 확인합니다."
                     )
         if profile is not None:
             _check_results(profile, on_apply)
 
 
 def build_model_status_button(*, detail: bool, can_apply: Optional[Callable[[], bool]] = None) -> ui.button:
-    """머리에 단추를 놓고, 그 단추가 여는 창을 함께 짓습니다. `detail` 은 주인의 화면에서만 켭니다.
+    """헤더에 버튼을 배치하고 해당 버튼으로 여는 다이얼로그를 생성합니다. `detail`은 관리자 화면에서만 활성화합니다.
 
-    `can_apply` 는 이 화면이 conf.json 을 고쳐도 되는지입니다 (서버 PC 에서 연 화면). 주지 않으면 적용 단추가 없습니다.
+    `can_apply`는 이 화면에서 conf.json을 수정할 수 있는지 여부를 반환합니다(서버 PC에서 연 화면). 지정하지 않으면 적용 버튼을 표시하지 않습니다.
     """
     board = get_model_status_board()
     checks = get_model_check_board()
 
     def apply(target_id: str, suggestion: Dict[str, Any]) -> None:
-        # 누르는 순간에 다시 봅니다. 창을 연 뒤에 사정이 바뀌었을 수 있습니다.
+        # 누르는 시점에 권한을 다시 확인합니다. 창을 연 뒤 접속 환경이 바뀌었을 수 있습니다.
         if can_apply is None or not can_apply():
-            ui.notify("설정은 서버 PC 에서 연 화면에서만 바꿀 수 있습니다.", type="warning", position="bottom-right")
+            ui.notify("설정은 서버 PC에서 연 화면에서만 변경할 수 있습니다.", type="warning", position="bottom-right")
             return
         try:
             changed = apply_suggestion(target_id, suggestion["setting"], suggestion.get("value"))
-        except Exception as exc:  # noqa: BLE001 - 무엇이 안 됐는지 그대로 알립니다
+        except Exception as exc:  # noqa: BLE001 - 실패 원인을 그대로 안내합니다
             ui.notify(f"적용하지 못했습니다: {exc}", type="negative", position="bottom-right")
             return
         if changed:
             ui.notify(
-                "conf.json 에 적었습니다 — " + " · ".join(changed) + ". `다시 점검` 으로 확인해 주세요.",
+                "conf.json에 반영했습니다 — " + " · ".join(changed) + ". '다시 점검'으로 확인해 주세요.",
                 type="positive", position="bottom-right", multi_line=True,
             )
         else:
-            ui.notify("이미 그렇게 되어 있어 바꾼 것이 없습니다.", type="info", position="bottom-right")
+            ui.notify("이미 해당 값으로 설정되어 있어 변경한 항목이 없습니다.", type="info", position="bottom-right")
         render()
 
     def start_check(target_id: str) -> None:
         if not checks.start(target_id):
-            ui.notify("다른 연결을 점검하고 있습니다. 끝난 뒤에 다시 눌러 주세요.", type="info", position="bottom-right")
+            ui.notify("다른 연결을 점검하고 있습니다. 완료된 뒤 다시 눌러 주세요.", type="info", position="bottom-right")
         render()
         timer.activate()
 
@@ -191,7 +193,7 @@ def build_model_status_button(*, detail: bool, can_apply: Optional[Callable[[], 
                 view,
                 profile=found.to_dict(detail=True) if found is not None else None,
                 checking=checks.running_id == row.target.id,
-                # 연결이 안 되는 줄에 여러 건을 보내 봐야 같은 실패만 돌아옵니다.
+                # 연결 자체가 안 되는 대상에는 여러 요청을 보내도 같은 오류만 반복됩니다.
                 can_check=row.state == OK and not checks.running,
                 on_check=start_check,
                 on_apply=apply if can_apply is not None and can_apply() else None,
@@ -206,7 +208,7 @@ def build_model_status_button(*, detail: bool, can_apply: Optional[Callable[[], 
                 with ui.column().classes("gap-0 flex-grow"):
                     ui.label(BUTTON_LABEL).classes("text-lg font-bold text-white")
                     ui.label(
-                        ".env 와 conf.json 에 있는 모델의 연결을 확인합니다."
+                        ".env와 conf.json에 설정된 모델의 연결 상태를 확인합니다."
                     ).classes("text-[11px] text-slate-400")
             with ui.column().classes("w-full gap-2 px-5 py-4 max-h-[60vh] overflow-y-auto flex-nowrap"):
                 rows_view(board.rows())

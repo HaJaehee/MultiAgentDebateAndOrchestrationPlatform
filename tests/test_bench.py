@@ -4,7 +4,7 @@
 2. 드라이런 검증 — LLM 호출 없이 도구 루프, 이벤트 기록, 계측 로직을 거쳐 결과 JSON 및 보고서를 작성한다.
 3. 변형별 모델 스냅샷 고정 및 seed 디렉터리 격리 복제를 검증한다.
 4. 비교 화면(/compare)에서 기록된 정량 평가가 보고서 재작성 시 올바르게 반영되는지 검증한다.
-5. 품질을 숫자로 (ADR-055) — 결정적 검사, 판정 모델의 채점, 모델 행렬, 그래프 변형, 두 실행 견주기.
+5. 품질을 수치로 검증 (ADR-055) — 결정적 검사, 판정 모델의 채점, 모델 행렬, 그래프 변형, 두 실행 비교.
 """
 
 import json
@@ -53,7 +53,7 @@ def test_scenario_problems_are_collected(tmp_path):
     with pytest.raises(ValueError) as exc:
         bench.load_scenario(path)
     message = str(exc.value)
-    for expected in ("prompt 가 비어", "graph_debate", "nope", "colour", "label 이 겹칩니다", "seed 폴더"):
+    for expected in ("prompt가 비어", "graph_debate", "nope", "colour", "label이 중복됩니다", "seed 디렉터리"):
         assert expected in message, expected
 
 
@@ -109,17 +109,17 @@ async def test_a_dry_run_writes_results_and_a_report(tmp_path, monkeypatch):
     assert "👍 더 간결" in (run_dir / "report.md").read_text(encoding="utf-8")
 
 
-# ================================================================ 5. 품질을 숫자로 (ADR-055)
+# ================================================================ 5. 품질을 수치로 검증 (ADR-055)
 
 CHECKED = {
-    "name": "채점 시험", "prompt": "요약 스크립트를 만들어 줘",
+    "name": "채점 테스트", "prompt": "요약 스크립트를 만들어 줘",
     "variants": [{"label": "순차", "strategy": "sequential_debate", "max_rounds": 1}],
     "checks": [
         {"name": "스크립트가 있음", "file_exists": "summarize.py"},
-        {"name": "README 에 합계", "file_contains": {"path": "README.md", "text": "합계"}},
+        {"name": "README에 합계", "file_contains": {"path": "README.md", "text": "합계"}},
         {"name": "결론에 드라이런", "conclusion_contains": {"regex": "드라이런\\s*결론"}},
-        {"name": "스크립트가 돈다", "command": {"argv": ["{python}", "-c", "print('ok 42')"], "stdout_contains": "42"}},
-        {"name": "쟁점이 남지 않음", "max_open_issues": 0},
+        {"name": "스크립트가 정상 실행됨", "command": {"argv": ["{python}", "-c", "print('ok 42')"], "stdout_contains": "42"}},
+        {"name": "미해결 쟁점이 남지 않음", "max_open_issues": 0},
     ],
     "rubric": {
         "judge": "critic", "scale": ["미흡", "보통", "충실"],
@@ -134,8 +134,8 @@ CHECKED = {
 def test_checks_and_a_rubric_are_read_from_the_scenario(tmp_path):
     scenario = bench.load_scenario(_write(tmp_path, CHECKED))
     assert [(c.name, c.kind) for c in scenario.checks] == [
-        ("스크립트가 있음", "file_exists"), ("README 에 합계", "file_contains"), ("결론에 드라이런", "conclusion_contains"),
-        ("스크립트가 돈다", "command"), ("쟁점이 남지 않음", "max_open_issues"),
+        ("스크립트가 있음", "file_exists"), ("README에 합계", "file_contains"), ("결론에 드라이런", "conclusion_contains"),
+        ("스크립트가 정상 실행됨", "command"), ("미해결 쟁점이 남지 않음", "max_open_issues"),
     ]
     assert scenario.rubric.judge == "critic" and scenario.rubric.scale == ("미흡", "보통", "충실")
     assert scenario.rubric.criteria[0] == ("정확성", "요청한 것을 빠짐없이 했는가?")
@@ -143,7 +143,7 @@ def test_checks_and_a_rubric_are_read_from_the_scenario(tmp_path):
         "prompt": "p", "variants": [{"label": "a", "strategy": "sequential_debate"}],
     }, "plain.json"))
     assert plain.checks == [] and plain.rubric is None, "적지 않은 시나리오는 예전 그대로입니다"
-    # 함께 싣는 예제는 하나씩 보여 줍니다: 설계 검토는 채점표, 소규모 구현은 실행 검사.
+    # 함께 배포하는 예제는 하나씩 보여 줍니다: 설계 검토는 채점표, 소규모 구현은 실행 검사.
     assert bench.load_scenario(ROOT / "bench" / "design-review.json").rubric.judge == "critic"
     assert "command" in [c.kind for c in bench.load_scenario(ROOT / "bench" / "small-impl.json").checks]
 
@@ -169,9 +169,9 @@ def test_check_and_rubric_problems_are_collected_with_the_rest(tmp_path):
         bench.load_scenario(path)
     message = str(exc.value)
     for expected in (
-        "graph 는 그래프 토론과 적응형 그래프 토론에서만", "matrix 는 에이전트 키마다", "설정에 없는 에이전트의 모델을 바꾸려 합니다 (nobody)",
-        "가운데 하나만 적습니다", "셸 한 줄은 받지 않습니다", "regex 가 틀렸습니다", "0 이상의 정수", "객체가 아닙니다",
-        "판정자 'nobody'", "name 과 question", "criteria 가 비어", "두 단계 이상",
+        "graph는 그래프 토론과 적응형 그래프 토론에서만", "matrix는 에이전트 키별로", "설정에 없는 에이전트의 모델을 지정했습니다 (nobody)",
+        "중 하나만 지정해야 합니다", "단일 셸 명령 문자열은 지원하지 않습니다", "regex가 올바르지 않습니다", "0 이상의 정수", "객체가 아닙니다",
+        "판정자 'nobody'", "name과 question", "criteria가 비어", "두 단계 이상",
     ):
         assert expected in message, expected
 
@@ -227,12 +227,12 @@ async def test_checks_look_only_at_that_variants_workspace_and_conclusion(tmp_pa
         "실행": True, "실패": False, "시간 초과": False, "없는 프로그램": False, "쟁점": False,
     }
     detail = {r["name"]: r["detail"] for r in results}
-    assert "작업 공간 밖" in detail["밖"] and "끝남 값 3" in detail["실패"] and "끝나지 않았습니다" in detail["시간 초과"]
+    assert "작업 공간 밖" in detail["밖"] and "종료 코드 3" in detail["실패"] and "종료되지 않았습니다" in detail["시간 초과"]
     assert "미해결 2건 (상한 1)" in detail["쟁점"]
 
 
 class _JudgeCaller:
-    """판정자 호출을 흉내 냅니다. 보낸 글을 모아 두고 정해 둔 답을 돌려줍니다."""
+    """판정자 호출을 모방합니다. 전달된 메시지를 모아 두고 정해 둔 응답을 반환합니다."""
 
     def __init__(self, reply="", decision=None, error=None):
         self.reply, self.error, self.sent = reply, error, []
@@ -321,13 +321,13 @@ async def test_a_dry_run_runs_the_checks_but_does_not_judge(tmp_path, monkeypatc
 
     (variant,) = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))["variants"]
     assert {c["name"]: c["ok"] for c in variant["checks"]} == {
-        "스크립트가 있음": True, "README 에 합계": False, "결론에 드라이런": True, "스크립트가 돈다": True, "쟁점이 남지 않음": True,
+        "스크립트가 있음": True, "README에 합계": False, "결론에 드라이런": True, "스크립트가 정상 실행됨": True, "미해결 쟁점이 남지 않음": True,
     }
     assert variant["rubric"]["score"] is None and "드라이런" in variant["rubric"]["error"]
     report = (run_dir / "report.md").read_text(encoding="utf-8")
     header, row = report.splitlines()[5], report.splitlines()[7]
     assert "| 검사 | 채점 |" in header and "| 4/5 | 채점 안 함 |" in row
-    assert "- ❌ README 에 합계 — README.md 이 없습니다" in report and "- ✅ 스크립트가 있음 — 있음" in report
+    assert "- ❌ README에 합계 — README.md 파일이 없습니다" in report and "- ✅ 스크립트가 있음 — 있음" in report
 
 
 def _one_step_graph() -> dict:
@@ -358,8 +358,8 @@ def test_a_graph_variant_names_a_saved_graph(tmp_path, graphs):
     }))
     assert [v.graph for v in scenario.variants] == ["one-step", "one-step"]
     for bad, word in (
-        ({"label": "a", "strategy": "graph_debate"}, "graph 에 그래프 id 를 적어야"),
-        ({"label": "a", "strategy": "graph_debate", "graph": "no-such-graph"}, "'no-such-graph' 를 읽지 못했습니다"),
+        ({"label": "a", "strategy": "graph_debate"}, "graph에 그래프 ID를 지정해야"),
+        ({"label": "a", "strategy": "graph_debate", "graph": "no-such-graph"}, "'no-such-graph'를 읽지 못했습니다"),
     ):
         with pytest.raises(ValueError) as exc:
             bench.load_scenario(_write(tmp_path, {"prompt": "p", "variants": [bad]}))
@@ -420,35 +420,35 @@ def test_a_diff_names_what_got_worse_and_only_that(tmp_path):
     ]), "b.json")
     text, regressions = bench.diff_runs(before, after)
     assert regressions == [
-        "끝나지 못함: 끝나지 못함", "검사 줄어듦: 통과한 검사가 줄어듦", "채점 내려감: 채점 0.20 내려감",
+        "끝나지 못함: 실행 미완료", "검사 줄어듦: 통과 검사 수 감소", "채점 내려감: 점수 0.20 하락",
     ]
     rows = {line.split("|")[1].strip(): line for line in text.splitlines() if line.startswith("| ")}
-    assert "같거나 나아짐" in rows["그대로"], "0.1 내려간 것은 판정자의 흔들림 범위로 봅니다"
-    assert "같거나 나아짐 · 토큰 +40%" in rows["토큰만 늚"], "토큰이 는 것은 알리기만 합니다"
+    assert "유지 또는 개선" in rows["그대로"], "0.1 하락은 판정자의 오차 범위로 간주합니다"
+    assert "유지 또는 개선 · 토큰 +40%" in rows["토큰만 늚"], "토큰 증가는 참고 정보로만 알립니다"
     assert "1/2 → 2/2" in rows["나아짐"] and "0.50 → 0.90" in rows["나아짐"]
     assert "이후에만 있음" in rows["새로 생김"] and "이전에만 있음" in rows["사라짐"]
-    assert "나빠진 변형 3개." in text
+    assert "저하된 변형 3개." in text
 
 
 def test_a_diff_of_different_requests_says_so(tmp_path):
     before = _write(tmp_path, _result("r1", [_variant("a")], prompt="요청 하나"), "a.json")
     after = _write(tmp_path, _result("r2", [_variant("a")], prompt="요청 둘"), "b.json")
     text, regressions = bench.diff_runs(before, after)
-    assert regressions == [] and "요청(prompt)이 다릅니다" in text and "나빠진 변형이 없습니다." in text
+    assert regressions == [] and "요청(prompt)이 다릅니다" in text and "저하된 변형이 없습니다." in text
 
 
 @pytest.mark.asyncio
 async def test_the_diff_command_exits_by_what_it_found_and_needs_no_config(tmp_path, capsys, monkeypatch):
     def no_config(*args, **kwargs):
-        raise AssertionError("diff 는 설정을 읽지 않습니다")
+        raise AssertionError("diff는 설정을 읽지 않습니다")
 
     monkeypatch.setattr(bench, "get_config", no_config)
     good = _write(tmp_path, _result("r1", [_variant("a")]), "a.json")
     worse = _write(tmp_path, _result("r2", [_variant("a", status="failed")]), "b.json")
     assert await bench._main(["diff", str(good), str(good)]) == 0  # noqa: SLF001
-    assert "나빠진 변형이 없습니다." in capsys.readouterr().out
+    assert "저하된 변형이 없습니다." in capsys.readouterr().out
     assert await bench._main(["diff", str(good), str(worse)]) == 1  # noqa: SLF001
-    assert "나빠짐: 끝나지 못함" in capsys.readouterr().out
+    assert "성능 저하: 실행 미완료" in capsys.readouterr().out
     assert await bench._main(["diff", str(good), str(tmp_path / "없는-파일.json")]) == 2  # noqa: SLF001
     assert "읽지 못했습니다" in capsys.readouterr().err
 

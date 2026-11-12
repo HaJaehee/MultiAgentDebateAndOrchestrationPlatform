@@ -41,8 +41,8 @@ ELAPSED_COLOR = "#94a3b8"
 OTHER_TIP = "의사결정 장부 기록·중간 요약·라우팅처럼 발언에 속하지 않는 호출과, 중단되어 기록되지 못한 발언의 호출입니다."
 REST_TIP = "도구 실행, 동시 실행 순번 대기, 사용자 승인 대기처럼 모델 응답 대기를 제외한 나머지 소요 시간입니다."
 TOOL_CONTEXT_TIP = (
-    "도구 정의를 필요할 때 불러오고(지연 로딩) 지난 파일 읽기를 줄이는(압축) 장치가 이 범위에서 한 일입니다. "
-    "불러오기는 판을 하나 더 쓰고, 압축 뒤 다시 읽기는 아낀 토큰의 일부를 되돌려 씁니다."
+    "도구 정의를 필요할 때 불러오는 기능(지연 로딩)과 이전 파일 읽기를 축약하는 기능(압축)이 이 범위에서 동작한 내역입니다. "
+    "도구 불러오기는 추가 호출 라운드를 발생시키며, 압축 뒤 다시 읽기는 절감한 토큰 일부를 재소모한 횟수를 뜻합니다."
 )
 
 
@@ -266,7 +266,7 @@ class UsageDialog:
                 self.turn_id = None
                 report = await load_usage_report(db, self.session_id)
             loading = get_config().tool_loading
-            # 지연 로딩을 꺼 두었으면 불러올 일이 없으니 후보도 찾지 않습니다.
+            # 지연 로딩이 비활성화되어 있으면 추가 불러오기가 없으므로 후보도 조회하지 않습니다.
             candidates = await core_tool_candidates(db, loading.core_tools) if loading.enabled else []
         if self.body is None or self.body.is_deleted:
             return
@@ -323,7 +323,7 @@ class UsageDialog:
 
     @staticmethod
     def _tool_context(report: UsageReport, candidates: Sequence[Tuple[str, int]]) -> None:
-        """도구 불러오기·읽기 압축이 이 범위에서 한 일과, 여러 대화에서 되풀이해 불러온 도구."""
+        """도구 불러오기·읽기 압축이 이 범위에서 수행한 내역과, 여러 대화에서 반복적으로 불러온 도구 목록을 표시합니다."""
         lines = [line for line in (tool_context_line(report.total), core_candidate_line(candidates)) if line]
         if not lines:
             return

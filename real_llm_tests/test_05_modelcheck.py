@@ -1,10 +1,10 @@
-"""모델 적합성 점검 (ADR-054) — 대상 conf 의 연결마다 실제로 점검을 돌려, 검사가 끝까지 가고 결과가 남는지 봅니다.
+"""모델 적합성 점검 (ADR-054) — 대상 conf.json의 연결마다 실제로 점검을 실행해, 검사가 끝까지 진행되고 결과가 저장되는지 확인합니다.
 
-무엇이 통과하고 무엇이 주의인지는 **모델과 서버에 달린 것**이라 실패로 만들지 않고 관찰로 남깁니다. 여기서
-확인하는 것은 점검 자체의 규칙입니다: 연결이 되는 모델에서 첫 요청이 실패로 나오지 않고, 검사가 모두 한 줄씩
-결과를 내며, 기록이 실행 폴더에 남고, 요청 수가 정해진 범위 안인가.
+무엇이 통과하고 무엇이 주의인지는 **모델과 서버의 특성에 따라 달라지므로** 실패로 처리하지 않고 관찰 기록으로 남깁니다. 여기서
+확인하는 것은 점검 자체의 규칙입니다: 응답하는 모델에서 첫 검사가 실패로 나오지 않고, 검사가 모두 한 줄씩
+결과를 내며, 기록이 실행 폴더에 저장되고, 요청 수가 정해진 범위 안에 있는지 검증합니다.
 
-생성형 연결 하나에 요청 8~9건(짧은 답), 결정 LLM 은 1건입니다.
+생성형 연결 하나에 요청 8~9건(짧은 응답), 결정 LLM은 1건입니다.
 """
 
 import pytest
@@ -39,23 +39,23 @@ def test_every_live_connection_gets_a_full_profile(mado):
                                      f"{' → ' + ' / '.join(s.text for s in result.suggestions) if result.suggestions else ''}")
 
         if profile.kind == mc.SYSTEM2:
-            mado.check("ADR-054", f"{profile.model}: 검사 10개가 차례대로 한 줄씩 결과를 냄",
+            mado.check("ADR-054", f"{profile.model}: 검사 10개가 순서대로 한 줄씩 결과를 생성함",
                        [r.key for r in profile.results] == SYSTEM2_KEYS, [r.key for r in profile.results])
             mado.check("ADR-054", f"{profile.model}: 응답하는 연결의 첫 검사는 실패가 아님",
                        outcomes.get("answer") != mc.FAIL, profile.results[0].summary)
-            mado.check("ADR-054", f"{profile.model}: 요청은 8~9건 (재시도 없음)", 8 <= sent <= 9, sent)
+            mado.check("ADR-054", f"{profile.model}: 요청 수는 8~9건 (재시도 없음)", 8 <= sent <= 9, sent)
         else:
-            mado.check("ADR-054", f"{profile.model}: 결정 LLM 은 요청 한 번에 네 줄",
+            mado.check("ADR-054", f"{profile.model}: 결정 LLM은 요청 1건에 4개 항목 출력",
                        sent == 1 and len(profile.results) == 4, (sent, [r.key for r in profile.results]))
-            mado.check("ADR-054", f"{profile.model}: 결정 LLM 이 답함", outcomes.get("systemone") == mc.OK,
+            mado.check("ADR-054", f"{profile.model}: 결정 LLM이 응답함", outcomes.get("systemone") == mc.OK,
                        profile.results[0].summary)
 
         path = mc.save_profile(profile)
-        mado.check("ADR-054", f"{profile.model}: 기록이 실행 폴더의 data/modelcheck 에 남음",
+        mado.check("ADR-054", f"{profile.model}: 기록이 실행 폴더의 data/modelcheck에 저장됨",
                    path is not None and path.exists() and str(mado.run_dir) in str(path.resolve()), path)
         reread = mc.load_profile(profile.target_id)
-        mado.check("ADR-054", f"{profile.model}: 기록을 다시 읽으면 같은 결과", reread == profile, reread)
+        mado.check("ADR-054", f"{profile.model}: 기록을 다시 읽으면 동일한 결과 반환", reread == profile, reread)
         key = (target.api_key or "").strip()
         if key and path is not None:
-            mado.check("ADR-054", f"{profile.model}: 기록에 키가 없음", key not in path.read_text(encoding="utf-8"), path)
+            mado.check("ADR-054", f"{profile.model}: 기록에 API 키가 포함되지 않음", key not in path.read_text(encoding="utf-8"), path)
     mado.settle()

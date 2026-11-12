@@ -1,14 +1,14 @@
-"""모델 적합성 점검 명령줄 (ADR-054) — 새 모델을 들인 날, 서버를 띄우기 전에 콘솔에서 돌립니다.
+"""모델 적합성 점검 CLI (ADR-054) — 새 모델을 반입한 날 서버를 기동하기 전에 콘솔에서 실행합니다.
 
-    python -m app.modelcheck                    # conf.json 의 연결 전부
-    python -m app.modelcheck --agent coder      # 그 에이전트가 쓰는 연결만 (여러 번 줄 수 있습니다)
-    python -m app.modelcheck --json             # 기계가 읽을 JSON
+    python -m app.modelcheck                    # conf.json의 모든 연결 점검
+    python -m app.modelcheck --agent coder      # 지정한 에이전트가 사용하는 연결만 점검(복수 지정 가능)
+    python -m app.modelcheck --json             # 기계 판독용 JSON 출력
     python -m app.modelcheck --config other.json
 
-연결 하나에 짧은 요청 8건쯤을 차례로 보냅니다. 결과는 화면의 모델 연결 상태 창과 같은 자리
-(`data/modelcheck/<연결 id>.json`)에 남습니다. 검사와 판정은 `app/agents/model_check.py` 에 있습니다.
+단일 연결당 짧은 요청 약 8건을 순차적으로 전송합니다. 결과는 화면의 모델 연결 상태 창과 동일한 경로
+(`data/modelcheck/<연결 id>.json`)에 저장됩니다. 실제 검사 및 판정 로직은 `app/agents/model_check.py`에 있습니다.
 
-끝남 값: 실패한 검사가 하나도 없으면 0, 있으면 1, 인자나 설정이 틀렸으면 2.
+종료 코드: 실패한 항목이 없으면 0, 실패가 있으면 1, 인자나 설정이 잘못되었으면 2.
 """
 
 from __future__ import annotations
@@ -28,16 +28,16 @@ async def _main(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.modelcheck", description="MADO 모델 적합성 점검")
     parser.add_argument("--config", default=DEFAULT_CONFIG_PATH, help="conf.json 경로")
     parser.add_argument("--agent", action="append", default=[], metavar="KEY",
-                        help="이 에이전트가 쓰는 연결만 점검합니다 (여러 번 줄 수 있습니다)")
+                        help="지정한 에이전트가 사용하는 연결만 점검합니다 (복수 지정 가능)")
     parser.add_argument("--all", action="store_true", help="모든 연결을 점검합니다 (기본값)")
-    parser.add_argument("--json", action="store_true", help="결과를 JSON 으로 찍습니다")
+    parser.add_argument("--json", action="store_true", help="결과를 JSON 형식으로 출력합니다")
     parser.add_argument("--timeout", type=float, default=model_check.CHECK_TIMEOUT_SECONDS,
-                        help="요청 하나를 기다리는 시간(초)")
+                        help="요청당 대기 제한 시간(초)")
     args = parser.parse_args(argv)
 
     try:
         config = get_config(reload=True, config_path=args.config)
-    except Exception as exc:  # noqa: BLE001 - 설정을 못 읽은 까닭을 그대로 알립니다
+    except Exception as exc:  # noqa: BLE001 - 설정 로드 실패 원인을 그대로 출력합니다
         print(f"[modelcheck] 설정을 읽지 못했습니다: {exc}", file=sys.stderr)
         return 2
 

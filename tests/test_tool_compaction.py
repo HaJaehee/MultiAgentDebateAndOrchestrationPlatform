@@ -424,22 +424,22 @@ async def test_a_resumed_speech_keeps_the_stubs_and_does_not_redo_them(monkeypat
     assert all(content.count(COMPACTED_OUTPUT_HEAD) == 1 for content in resumed)
 
 
-# =============================================================== 압축 뒤 다시 읽기를 셉니다
+# =============================================================== 압축 뒤 다시 읽기 집계
 
 
 def test_a_reread_is_the_same_tool_and_arguments_as_a_read_that_was_compacted():
     messages, count = compact_stale_tool_outputs(_reads(6), stale_rounds=3, min_chars=8_000)
     assert count == 3 and _compacted_ids(messages) == ["c0", "c1", "c2"]
     assert reread_of_compacted(messages, READ, {"path": "f0.py"}) is True
-    assert reread_of_compacted(messages, READ, {"path": "f5.py"}) is False, "아직 원문이 실려 있는 읽기"
+    assert reread_of_compacted(messages, READ, {"path": "f5.py"}) is False, "아직 원문이 남아 있는 읽기"
     assert reread_of_compacted(messages, READ, {"path": "f0.py", "head": 10}) is False, "인자가 다르면 다른 읽기"
     assert reread_of_compacted(messages, "filesystem__read_file", {"path": "f0.py"}) is False, "다른 도구"
     assert reread_of_compacted(messages, "sandbox__execute_python_code", {"code": "1"}) is False
-    assert reread_of_compacted(_reads(6), READ, {"path": "f0.py"}) is False, "줄인 적이 없으면 다시 읽기가 아닙니다"
+    assert reread_of_compacted(_reads(6), READ, {"path": "f0.py"}) is False, "압축한 적이 없으면 다시 읽기가 아닙니다"
 
 
 def _install_paths(monkeypatch, paths: Sequence[str]) -> List[List[Dict[str, Any]]]:
-    """`paths` 를 한 판에 하나씩 읽고 답하는 가짜 엔드포인트."""
+    """`paths`를 라운드마다 하나씩 읽고 응답하는 모의 엔드포인트."""
     sent: List[List[Dict[str, Any]]] = []
     current: Dict[str, Optional[Tuple[str, Dict[str, Any]]]] = {"call": None}
 
@@ -469,14 +469,14 @@ def _install_paths(monkeypatch, paths: Sequence[str]) -> List[List[Dict[str, Any
 
 @pytest.mark.asyncio
 async def test_the_speech_counts_what_was_compacted_and_what_was_read_again(monkeypatch, _settings):
-    """ADR-040 이 '재지 못했다' 고 적어 둔 값입니다: 줄인 뒤에 모델이 같은 파일을 몇 번 다시 읽는가."""
+    """ADR-040에서 '재지 못했다'고 적어 둔 수치입니다: 압축한 뒤에 모델이 같은 파일을 몇 번 다시 읽는지 검증합니다."""
     paths = [f"f{i}.py" for i in range(1, 9)] + ["f1.py", "f2.py", "f9.py"]
     _install_paths(monkeypatch, paths)
     with measuring() as usage:
         _content, logs = await _speak(_agent(30_000))
     assert len(logs) == len(paths)
-    assert usage.compacted_reads >= 6, "작은 창에서 큰 파일 여덟 개를 읽으면 오래된 것부터 줄어듭니다"
-    assert usage.rereads_after_compaction == 2, "f1 · f2 는 줄인 뒤의 다시 읽기, f9 는 처음 읽는 파일"
+    assert usage.compacted_reads >= 6, "작은 컨텍스트 창에서 큰 파일 8개를 읽으면 오래된 것부터 압축됩니다"
+    assert usage.rereads_after_compaction == 2, "f1·f2는 압축 뒤 다시 읽기, f9는 처음 읽는 파일"
     assert usage.as_meta()["rereads_after_compaction"] == 2
 
 

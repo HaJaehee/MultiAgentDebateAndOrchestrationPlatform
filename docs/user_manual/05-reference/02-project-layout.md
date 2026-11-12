@@ -99,7 +99,7 @@ app/
 │   ├── draft.py                     306   에이전트 설계도 및 프롬프트 빌더, 관리자 설정 저장
 │   ├── catalog.py                   155   도구 및 스킬 카탈로그 메타데이터 및 선택 목록
 │   ├── media.py                     454   입력 모달리티 처리: LLM 요청 직전 멀티모달 파일 주입 및 도구 반환 미디어 처리 (ADR-035)
-│   ├── llm.py                       469   LLMCaller: 호출, 폴백 판단, 한 판 호출
+│   ├── llm.py                       469   LLMCaller: 호출, 폴백 판단, 단일 호출 실행
 │   ├── llm_loop.py                  630   도구 루프 (ToolLoop 상태 + 단계별 함수)
 │   ├── write_probe.py               159   중단된 파일 쓰기의 디스크 반영 여부 해시 검증 (ADR-046)
 │   ├── llm_request.py               170   시스템 프롬프트·LiteLLM 인자
@@ -116,10 +116,10 @@ app/
 │   ├── llm_types.py                  51   LLMUnavailableError, 콜백 형식
 │   ├── reasoning.py                  86   사고 과정 떼기·결론 찾기
 │   ├── llm_gate.py                  218   서버 전체·연결별 LLM 동시 요청 상한 (ADR-056)
-│   ├── llm_fallback.py              350   연결 실패 시 폴백 — 전역 모델, 순서로 적은 사슬 (ADR-030, ADR-056)
+│   ├── llm_fallback.py              350   연결 실패 시 폴백 — 전역 모델, 지정 순서 폴백 체인 (ADR-030, ADR-056)
 │   ├── connection.py                174   모델 연결 ID, 실패 분류
 │   ├── model_status.py              394   모델 연결 상태 확인
-│   └── model_check.py               990   모델 적합성 점검 — 도구 호출·추론 분리·잘림 알림·창 크기, 권고 적용 (ADR-054, ADR-056)
+│   └── model_check.py               990   모델 적합성 점검 — 도구 호출·추론 분리·잘림 감지·컨텍스트 창 크기, 권고 적용 (ADR-054, ADR-056)
 │
 ├── mcp/
 │   ├── client.py                    746   stdio·HTTP 세션 하나, 도구 검색·실행
@@ -200,7 +200,7 @@ app/
     ├── components/sidebar.py        850   세션 목록
     ├── components/artifact_viewer.py   405   산출물 탭, 복사·다운로드
     ├── components/agent_appearance.py   257   카드 색·아이콘 편집기
-    ├── components/model_status.py   258   모델 연결 상태 단추와 창, 줄마다 적합성 점검 단추·결과·권고 적용
+    ├── components/model_status.py   258   모델 연결 상태 버튼과 창, 항목별 적합성 점검 버튼·결과·권고 적용
     ├── components/access_token.py   352   원격 접속 토큰 버튼
     ├── components/workspace_download.py   224   작업 공간 파일 다운로드 창
     ├── components/turn_changes.py   221   턴 파일 변경 내역(Diff) 및 롤백 다이얼로그

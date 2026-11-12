@@ -382,9 +382,9 @@ async def test_when_the_global_model_fails_too_nothing_is_made_up(setup):
     assert "bad key" in error.reason and "openai/shared" in error.reason and "down" in error.reason
     assert len(notices) == 1, "기본 모델을 부르기 전에 알렸습니다 — 기록할지는 결과를 본 쪽이 정합니다"
 
-    # 건너뛰는 중에 기본 모델이 실패해도 마찬가지입니다.
+    # 건너뛰는 중에도 기본 모델이 실패하면 동일하게 예외를 발생시킵니다.
     error, _ = await call(caller, critic)
-    assert isinstance(error, LLMUnavailableError) and "다시 부르지 않았습니다" in error.reason
+    assert isinstance(error, LLMUnavailableError) and "다시 호출하지 않고 건너뛰었습니다" in error.reason
     assert caller.calls == ["openai/critic-only", "openai/shared", "openai/shared"]
 
 
@@ -815,7 +815,7 @@ def test_with_fallback_off_the_dialog_shows_nothing_about_it(setup):
     assert all(row.skip_seconds is None for row in ms.ModelStatusBoard().rows(setup["config"]))
 
 
-# ================================================================ 물러설 연결이 여럿일 때 (ADR-056)
+# ================================================================ 대체 연결이 여러 개일 때 (ADR-056)
 
 
 def chain_config(order, **extra_agents) -> RootConfig:
@@ -845,10 +845,10 @@ def test_the_order_names_agent_connections_and_the_global_one():
     config = chain_config(["coder", "llm"])
     assert names_of(config) == [("coder", "openai/coder-only"), ("llm", "openai/shared")]
     first = fb.substitutes_for(agent_of(config, "critic"), config)[0].agent
-    assert (first.key, first.name, first.api_key) == ("critic", "Critic", "sk-coder-secret-0003"), "페르소나는 그대로, 연결만"
-    assert (first.max_context_window, first.max_tokens) == (64000, 3000), "그 연결의 용량도 함께 옵니다"
+    assert (first.key, first.name, first.api_key) == ("critic", "Critic", "sk-coder-secret-0003"), "페르소나는 그대로 두고 연결만 바꿉니다"
+    assert (first.max_context_window, first.max_tokens) == (64000, 3000), "해당 연결의 용량 한도도 함께 따라옵니다"
     assert names_of(chain_config(["llm", "coder"])) == [("llm", "openai/shared"), ("coder", "openai/coder-only")]
-    assert names_of(chain_config(["coder"])) == [("coder", "openai/coder-only")], "적지 않은 전역으로는 물러서지 않습니다"
+    assert names_of(chain_config(["coder"])) == [("coder", "openai/coder-only")], "지정하지 않은 전역 연결로는 대체하지 않습니다"
 
 
 def test_candidates_that_cannot_stand_in_are_left_out():
@@ -859,14 +859,14 @@ def test_candidates_that_cannot_stand_in_are_left_out():
         judge={"name": "Judge", "role": "x", "decision_llm": {"enabled": True, "backend": "jev", "api_key": "j",
                                                               "api_base": "https://s1.local"}},
     )
-    # 자기 자신, 앞에서 나온 연결(twin), 꺼 둔 것, 결정 LLM 전문가, 없는 이름은 빠집니다. 오케스트레이터는 전역 연결과 같아
-    # 한 번만 나옵니다.
+    # 자기 자신, 앞서 나온 연결(twin), 비활성화한 에이전트, 결정 LLM 전문가, 존재하지 않는 이름은 제외됩니다.
+    # 오케스트레이터는 전역 연결과 같으므로 한 번만 포함됩니다.
     assert names_of(config) == [("coder", "openai/coder-only"), ("orchestrator", "openai/shared")]
     assert names_of(config, "coder") == [("critic", "openai/critic-only"), ("orchestrator", "openai/shared")]
 
 
 def test_an_unknown_name_in_the_order_does_not_stop_the_config_from_loading():
-    """화면에서 에이전트를 지운 것만으로 앱이 뜨지 않게 되어서는 안 됩니다. 그 이름은 건너뜁니다."""
+    """화면에서 에이전트를 삭제했다는 이유만으로 앱이 기동되지 않아서는 안 됩니다. 존재하지 않는 이름은 건너뜁니다."""
     config = chain_config(["deleted-agent", "llm"])
     assert names_of(config) == [("llm", "openai/shared")]
     assert names_of(chain_config(["deleted-agent"])) == []
@@ -884,7 +884,7 @@ async def test_the_chain_moves_on_until_a_connection_answers_and_tells_each_time
     (content, _logs), notices = await call(caller, critic)
     assert content == "전역 모델의 답"
     assert caller.calls == ["openai/critic-only", "openai/coder-only", "openai/shared"]
-    assert [n.model for n in notices] == ["openai/coder-only", "openai/shared"], "후보마다 알리고, 마지막이 답한 모델입니다"
+    assert [n.model for n in notices] == ["openai/coder-only", "openai/shared"], "후보마다 알리고, 마지막이 응답한 모델입니다"
     assert {n.intended_model for n in notices} == {"openai/critic-only"}
 
 
@@ -898,17 +898,17 @@ async def test_a_failed_candidate_is_skipped_next_time_but_the_last_one_never_is
     await call(caller, critic)
     caller.calls.clear()
     (content, _logs), notices = await call(caller, critic)
-    assert content == "답" and caller.calls == ["openai/shared"], "조금 전에 실패한 둘은 타임아웃을 다시 치르지 않습니다"
+    assert content == "답" and caller.calls == ["openai/shared"], "방금 실패한 두 연결은 타임아웃을 다시 겪지 않습니다"
     assert [n.model for n in notices] == ["openai/shared"] and notices[0].skipped
 
-    # 마지막 후보는 실패해도 차단기에 걸지 않고, 다음 발언에서 다시 불러 봅니다.
+    # 마지막 후보는 실패해도 차단기에 등록하지 않고, 다음 발언에서 다시 호출해 봅니다.
     caller.script["openai/shared"] = connection_error("shared is down")
     caller.calls.clear()
     error, _ = await call(caller, critic)
     assert isinstance(error, LLMUnavailableError) and caller.calls == ["openai/shared"]
     caller.calls.clear()
     await call(caller, critic)
-    assert caller.calls == ["openai/shared"], "더 물러설 곳이 없으니 매번 불러 봅니다"
+    assert caller.calls == ["openai/shared"], "더 이상 대체할 연결이 없으므로 매번 호출해 봅니다"
 
     setup["clock"].now += 61
     caller.script.update({"openai/critic-only": "원래 모델의 답"})
@@ -926,14 +926,14 @@ async def test_when_every_connection_fails_the_error_names_them_all(setup):
         "openai/shared": connection_error("third down"),
     })
     error, _ = await call(caller, critic)
-    assert isinstance(error, LLMUnavailableError) and error.model == "openai/critic-only", "원래 에이전트의 실패로 올립니다"
-    for part in ("first down", "대체 모델 `openai/coder-only` 로도", "second down", "기본 모델 `openai/shared` 로도", "third down"):
+    assert isinstance(error, LLMUnavailableError) and error.model == "openai/critic-only", "원래 에이전트의 실패로 보고합니다"
+    for part in ("first down", "대체 모델 `openai/coder-only`로도", "second down", "기본 모델 `openai/shared`로도", "third down"):
         assert part in error.reason, part
 
 
 @pytest.mark.asyncio
 async def test_the_chain_stops_at_a_candidate_that_already_produced_something(setup):
-    """글이 흘렀거나 도구를 부른 뒤의 실패는 다음 후보로 넘기지 않습니다 (같은 답이 두 번 붙습니다)."""
+    """텍스트가 스트리밍되었거나 도구를 호출한 뒤 발생한 실패는 다음 후보로 넘기지 않습니다 (중복 응답 방지)."""
     setup["config"] = chain_config(["coder", "llm"])
     critic = agent_of(setup["config"], "critic")
 
@@ -960,7 +960,7 @@ async def test_the_chain_stops_at_a_failure_that_is_not_about_the_connection(set
     error, _ = await call(caller, critic)
     assert isinstance(error, LLMUnavailableError) and caller.calls == ["openai/critic-only", "openai/coder-only"]
     assert setup["breaker"].state(fb.substitutes_for(critic, setup["config"])[0].connection, 60) is None, (
-        "요청의 문제로 실패한 연결은 건너뛰지 않습니다"
+        "요청 자체의 문제로 실패한 연결은 건너뛰지 않습니다"
     )
 
 

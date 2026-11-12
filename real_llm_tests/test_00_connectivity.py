@@ -1,7 +1,7 @@
-"""연결 확인: 대상 코드가 미러에서 그대로 떴는지, 생성형 모델(System 2)과 결정 LLM(System 1)이 답하는지.
+"""연결 확인: 대상 코드가 미러에서 그대로 실행되었는지, 생성형 모델(System 2)과 결정 LLM(System 1)이 응답하는지 확인합니다.
 
 다른 시험이 전부 이 연결에 기대므로 가장 먼저 돕니다. 여기서 실패하면 나머지를 돌릴 이유가 없습니다.
-개발 PC 에서는 DeepSeek 와 Jev 이고, 폐쇄망에서는 그 설치본의 conf 가 가리키는 모델입니다.
+개발 PC에서는 DeepSeek와 Jev이고, 폐쇄망에서는 해당 설치본의 `conf.json`이 가리키는 모델입니다.
 """
 
 import pytest
@@ -35,7 +35,7 @@ def test_plugins_loaded_from_plugin_folders(mado):
 
 
 def test_system2_answers(mado):
-    """System 2: 대상의 전역 연결로 한 번 묻고 답을 받습니다."""
+    """System 2: 대상의 전역 연결로 한 번 질의하고 응답을 받습니다."""
     from app.agents.pool import get_agent_pool
 
     critic = get_agent_pool().get("critic")
@@ -49,7 +49,7 @@ def test_system2_answers(mado):
     before = len(mado.requests)
     content, _logs = mado.run(ask(), timeout=180)
     request = mado.requests[before]
-    mado.check("env", f"{mado.s2} 가 답함", "42" in content, content[:200])
+    mado.check("env", f"{mado.s2}가 응답함", "42" in content, content[:200])
     mado.check("ADR-031", "스트림 조립이 이벤트 루프 밖 스레드에서 돎",
                mado.assemblies and not mado.assemblies[-1].on_main_thread,
                mado.assemblies[-1] if mado.assemblies else "조립 기록 없음")
@@ -58,7 +58,7 @@ def test_system2_answers(mado):
 
 
 def test_system1_answers_all_three_question_kinds(mado):
-    """System 1: 결정 LLM 의 `/v1/systemone` 이 noul·choice·score 를 한 번에 판정합니다. 연결 정보가 없으면 건너뜁니다."""
+    """System 1: 결정 LLM의 `/v1/systemone`이 noul·choice·score를 한 번에 판정합니다. 연결 정보가 없으면 건너뜁니다."""
     from app.agents.decision import DecisionQuestion
     from app.config import get_config
 
@@ -82,7 +82,7 @@ def test_system1_answers_all_three_question_kinds(mado):
     response = mado.run(caller.evaluate(cfg, state, questions), timeout=60)
     call = mado.decisions[before]
     answers = response.answers
-    mado.check("env", f"결정 LLM({cfg.backend}) 이 200 으로 답함", call.status == 200, f"{call.status} {call.error}")
+    mado.check("env", f"결정 LLM({cfg.backend})이 200으로 응답함", call.status == 200, f"{call.status} {call.error}")
     mado.check("env", "세 질문 모두 답이 돌아옴", set(answers) == set(questions), sorted(answers))
     mado.check("env", "noul 이 0~1 확률", answers.get("yes") is not None and 0.0 <= (answers["yes"].noul or -1) <= 1.0,
                answers.get("yes"))

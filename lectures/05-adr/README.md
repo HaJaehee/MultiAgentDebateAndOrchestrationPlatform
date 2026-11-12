@@ -88,9 +88,9 @@ ADR은 **기존 내용을 수정하지 않고 불변의 문서로 누적 보존�
 | [051](ADR-051-fixed-issue-ids-and-ledger-revisions.md) | 미해결 쟁점에 서버가 고정 번호를 붙이고, 장부가 바뀔 때마다 개정 이력을 바로 저장한다 | 11-06 | 채택됨 |
 | [052](ADR-052-round-groups-and-citation-labels.md) | 전문가 피드를 라운드 묶음으로 그룹화하고, 발언·쟁점을 `[S14]`·`[I-3]` 인용 링크로 연결한다 | 11-07 | 채택됨 |
 | [053](ADR-053-plan-speech-reads-only.md) | 오케스트레이터의 계획 발언은 읽기 도구만 쓰고, 쓰기·실행은 분담받은 전문가에게 둔다 | 11-11 | 채택됨 |
-| [054](ADR-054-model-conformance-check.md) | 새 모델은 토론에 넣기 전에 작은 요청 몇 건으로 점검하고, 결과는 설정을 바꾸지 않고 권고로만 낸다 | 11-11 | 채택됨 |
-| [055](ADR-055-bench-checks-and-judged-rubric.md) | Bench 는 결정적 검사와 판정 모델의 채점으로 품질을 숫자로 남기고, 두 실행을 견줘 나빠진 것을 짚는다 | 11-12 | 채택됨 |
-| [056](ADR-056-per-connection-limits-fallback-chain-and-applying-advice.md) | 모델이 여럿인 배치를 위해 연결마다 동시 요청을 묶고, 물러설 연결을 순서로 적고, 점검의 권고는 사람이 눌러 적용한다 | 11-12 | 채택됨 |
+| [054](ADR-054-model-conformance-check.md) | 새 모델은 토론에 투입하기 전에 간단한 요청 몇 건으로 적합성을 점검하고, 설정을 직접 바꾸지 않고 권고안만 제시한다 | 11-11 | 채택됨 |
+| [055](ADR-055-bench-checks-and-judged-rubric.md) | Bench는 결정적 검사와 판정 모델의 채점으로 품질을 수치화하고, 두 실행 결과를 비교해 성능 저하를 검출한다 | 11-12 | 채택됨 |
+| [056](ADR-056-per-connection-limits-fallback-chain-and-applying-advice.md) | 다중 모델 배치를 위해 연결별 동시 요청을 제한하고, 폴백 연결 순서를 지정하며, 점검 권고는 사용자가 직접 눌러 적용한다 | 11-12 | 채택됨 |
 
 날짜는 모두 2026년 기준입니다.
 

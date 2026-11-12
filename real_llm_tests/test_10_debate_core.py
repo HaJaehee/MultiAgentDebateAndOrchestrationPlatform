@@ -124,11 +124,11 @@ def test_adr045_non_claude_requests_are_untouched_and_prefix_is_stable(mado, deb
     blocks = [r.index for r in outcome.requests if any(isinstance(m.get("content"), list) for m in r.messages)]
     claude = [key for key in AGENTS if cache_mark(get_agent_pool().get(key)) is not None]
     if claude:
-        # Claude 연결에서는 마커가 붙는 것이 정상입니다 (그 확인은 `tests/test_prompt_cache.py` 의 몫입니다).
-        mado.note("ADR-045", f"Claude 연결({claude})이라 마커가 붙습니다 — 마커 붙은 요청 {len(marked)}건")
+        # Claude 연결에서는 마커가 붙는 것이 정상입니다 (해당 검증은 `tests/test_prompt_cache.py`에서 수행합니다).
+        mado.note("ADR-045", f"Claude 연결({claude})이므로 마커가 붙습니다 — 마커가 붙은 요청 {len(marked)}건")
     else:
         mado.check("ADR-045", f"{mado.s2} 요청에는 cache_control 마커가 없음", not marked, marked)
-        mado.check("ADR-045", f"{mado.s2} 요청의 메시지는 블록이 아니라 글 그대로", not blocks, blocks)
+        mado.check("ADR-045", f"{mado.s2} 요청의 메시지는 블록이 아니라 일반 텍스트임", not blocks, blocks)
 
     for agent in ("architect", "critic"):
         own = [r for r in outcome.requests_by(agent) if "[결정 장부 갱신]" not in r.last_user()]
@@ -146,7 +146,7 @@ def test_adr045_non_claude_requests_are_untouched_and_prefix_is_stable(mado, deb
         cached = [r.usage.get("prompt_tokens_details", {}).get("cached_tokens") or 0 for r in firsts[:2]]
         prompts = [r.usage.get("prompt_tokens") or 0 for r in firsts[:2]]
         mado.note("ADR-045", f"{agent}: 공통 앞부분 {shared}자 (1R 요청 {len(one)}자, 2R 요청 {len(two)}자) · "
-                             f"{mado.s2} 가 보고한 캐시 적중 1R {cached[0]}/{prompts[0]} · 2R {cached[1]}/{prompts[1]} 토큰")
+                             f"{mado.s2}가 보고한 캐시 적중 1R {cached[0]}/{prompts[0]} · 2R {cached[1]}/{prompts[1]} 토큰")
     turn_usage = debate["turns"][-1].usage or {}
     mado.check("ADR-045", "사용량 기록에 cache_write_tokens 칸이 있음", "cache_write_tokens" in turn_usage, turn_usage)
     mado.settle()

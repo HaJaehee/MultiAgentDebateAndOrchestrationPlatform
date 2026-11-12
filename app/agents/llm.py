@@ -57,10 +57,10 @@ class _SpeechProgress:
     방식). 병렬 발언은 태스크마다 컨텍스트가 따로라 서로 섞이지 않습니다.
     """
 
-    rounds: int = 0            # 끝까지 받은 LLM 판 수 — 0 이 아니면 모델이 만든 도구 호출이 기록에 있습니다
-    streamed: bool = False     # 화면으로 흘려보낸 글이 있는지
-    llm_failed: bool = False   # 실패가 LLM 호출에서 났는지 (도구 루프의 다른 곳에서 난 예외와 가릅니다)
-    can_switch: bool = True    # 실패하면 물러설 수 있는 발언인지 (끊긴 발언을 이어 가는 중이면 아닙니다)
+    rounds: int = 0            # 완료된 LLM 호출 라운드 수 — 0이 아니면 모델이 만든 도구 호출이 이력에 있습니다
+    streamed: bool = False     # 화면으로 스트리밍된 텍스트가 있는지
+    llm_failed: bool = False   # 실패 원인이 LLM 호출 자체인지(도구 루프의 다른 예외와 구분)
+    can_switch: bool = True    # 실패 시 다른 연결로 폴백할 수 있는 발언인지(중단된 발언 이어 쓰기 중이면 불가)
 
 
 _SPEECH_PROGRESS: "contextvars.ContextVar[Optional[_SpeechProgress]]" = contextvars.ContextVar(
@@ -71,15 +71,15 @@ _SPEECH_PROGRESS: "contextvars.ContextVar[Optional[_SpeechProgress]]" = contextv
 class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoopMixin):
     """Executes LLM completions with an MCP tool-calling loop.
 
-    호출이 실패하면 `LLMUnavailableError` 를 올립니다. 대체 응답을 만들어 내지 않습니다.
-    `llm.fallback` 을 켠 배치에서는 개별 모델의 연결 실패에 한해 전역 기본 모델이 대신 답하고,
-    그 사실을 걸어 둔 곳에 알립니다 (`app/agents/llm_fallback.py`).
+    호출에 실패하면 `LLMUnavailableError`를 발생시킵니다. 임의의 대체 응답을 만들어 내지 않습니다.
+    `llm.fallback`을 활성화한 환경에서는 개별 모델의 연결 실패에 한해 대체 모델이 대신 응답하고,
+    전환 사실을 등록된 리스너에 알립니다(`app/agents/llm_fallback.py`).
     """
 
     def __init__(self, mcp_manager: Optional[MCPManager] = None):
-        # 기본 런타임. 실제 토론은 발언마다 **그 대화의 작업 공간에 해당하는**
-        # 런타임을 `call_agent(mcp=...)` 로 받아 씁니다. 이 값은 그것이 주어지지
-        # 않았을 때의 폴백입니다.
+        # 기본 런타임입니다. 실제 토론은 발언마다 **해당 대화의 작업 공간에 속한**
+        # 런타임을 `call_agent(mcp=...)`로 받아 사용합니다. 이 값은 전달되지
+        # 않았을 때 사용하는 기본값입니다.
         self.mcp_manager = mcp_manager or get_runtime_pool().default_runtime()
         self.decision_caller = DecisionCaller()
 
@@ -111,45 +111,45 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         `attachments`는 현재 발언에 원문 내용을 직접 포함할 파일 목록입니다 (`media.attachments_for`). 비어 있으면 텍스트 요청만 전달됩니다.
         세션 재개 발언의 경우 이미 메시지에 포함되어 있습니다.
 
-        `preload_skills` 는 유저가 이 에이전트에게 지정한 스킬입니다 (입력창의 `@전문가 @스킬`).
-        첫 LLM 호출 전에 호스트가 `load_skill` 을 대신 불러 결과를 넣어 둡니다 (`_preload_skills`).
-        이어 가는 발언에서는 이미 메시지에 들어 있으므로 다시 부르지 않습니다.
+        `preload_skills`는 사용자가 이 에이전트에게 지정한 스킬입니다(입력창의 `@전문가 @스킬`).
+        첫 LLM 호출 전에 호스트가 `load_skill`을 대신 호출해 결과를 넣어 둡니다(`_preload_skills`).
+        이어 가는 발언에서는 이미 메시지에 포함되어 있으므로 다시 호출하지 않습니다.
 
-        `checkpoint` 는 도구 루프가 한 판을 마칠 때마다(도구를 부른 직후, 도구 결과를 받을 때마다)
-        이어 갈 수 있는 상태를 넘겨받는 콜백입니다 (ADR-025). `resume_state` 는 그렇게 남긴 상태로,
-        주면 프롬프트를 새로 만들지 않고 그 상태의 메시지에서 다음 LLM 호출부터 이어 갑니다.
+        `checkpoint`는 도구 루프가 한 라운드를 마칠 때마다(도구를 호출한 직후, 도구 결과를 받을 때마다)
+        재개 가능한 상태를 전달받는 콜백입니다(ADR-025). `resume_state`는 그렇게 저장한 상태로,
+        전달하면 프롬프트를 새로 생성하지 않고 해당 상태의 메시지에서 다음 LLM 호출부터 이어 갑니다.
 
-        `mcp` 는 이 발언이 쓸 MCP 런타임입니다. 대화마다 작업 공간이 다를 수
-        있고 런타임은 작업 공간마다 따로 뜨므로, 어느 것을 쓸지는 턴을 여는
-        쪽(`OrchestratorEngine.run_turn`)이 정해 내려보냅니다. 주지 않으면
-        기본 런타임을 씁니다.
+        `mcp`는 이 발언이 사용할 MCP 런타임입니다. 대화마다 작업 공간이 다를 수
+        있고 런타임은 작업 공간마다 따로 실행되므로, 어느 런타임을 쓸지는 턴을 여는
+        쪽(`OrchestratorEngine.run_turn`)이 지정해 전달합니다. 지정하지 않으면
+        기본 런타임을 사용합니다.
 
-        `session_id` 는 MCP 도구 호출의 스코프로 함께 보내집니다. 이걸 빠뜨리면
-        서버가 대화를 구분할 수 없어 다른 대화의 상태(지식 그래프 등)를 봅니다.
-        발언자(`agent.key`)도 함께 실려서, 커널처럼 에이전트 단위로 나뉘어야 하는
-        상태를 서버가 구분할 수 있습니다 (`MCPManager.compose_scope`).
+        `session_id`는 MCP 도구 호출의 스코프로 함께 전달됩니다. 이를 빠뜨리면
+        서버가 대화를 구분하지 못해 다른 대화의 상태(지식 그래프 등)를 참조하게 됩니다.
+        발언자(`agent.key`)도 함께 전달되어, 커널처럼 에이전트 단위로 격리되어야 하는
+        상태를 서버가 구분할 수 있습니다(`MCPManager.compose_scope`).
 
-        `budget_arbiter` 는 도구 호출 상한에 닿았을 때 사람에게 확장을 물어보는
-        통로입니다. 주지 않으면 확장 없이, 도구를 떼고 결론만 받아 마무리합니다
-        (`_run_litellm_loop`). 어느 쪽이든 발언이 통째로 버려지지는 않습니다.
+        `budget_arbiter`는 도구 호출 상한에 도달했을 때 사용자에게 확장을 요청하는
+        통로입니다. 전달하지 않으면 확장 없이 도구를 제외하고 결론만 받아 마무리합니다
+        (`_run_litellm_loop`). 어느 쪽이든 발언 전체가 유실되지는 않습니다.
 
-        `context_arbiter` 는 컨텍스트 창이 넘쳐 기록을 버려야 할 때의 같은 통로이고,
-        `on_context_trim` 은 실제로 생략이 일어났음을 화면에 알리는 콜백입니다.
+        `context_arbiter`는 컨텍스트 창이 가득 차 이전 기록을 생략해야 할 때 사용하는 통로이며,
+        `on_context_trim`은 실제로 생략이 발생했음을 화면에 알리는 콜백입니다.
 
-        `ledger` 는 이 대화의 결정 장부입니다. 마지막 사용자 메시지 앞에 붙습니다
-        (`place_ledger_last`) — 시스템 프롬프트에 두면 갱신될 때마다 캐시가 깨집니다.
+        `ledger`는 이 대화의 결정 장부입니다. 마지막 사용자 메시지 앞에 배치됩니다
+        (`place_ledger_last`) — 시스템 프롬프트에 넣으면 갱신될 때마다 프롬프트 캐시가 깨집니다.
 
-        `llm.fallback` 이 켜져 있으면, 이 에이전트의 연결이 실패했을 때 전역 기본 모델이 대신 답합니다
-        (ADR-030). 물러서는 것은 모델이 아무것도 내놓기 전(첫 판이 실패했을 때)뿐이고, 끊긴 발언을 이어
-        가는 중(`resume_state`)에는 물러서지 않습니다. 전환은 `llm_fallback.listening(...)` 으로 걸어 둔
-        곳에 `FallbackNotice` 로 알립니다. 기본 모델을 부르기 **전에** 알리므로, 화면은 흘러나오는 글 위에
-        "누가 답하고 있는지" 를 먼저 붙일 수 있습니다.
+        `llm.fallback`이 활성화되어 있으면, 이 에이전트의 연결이 실패했을 때 대체 모델이 대신 응답합니다
+        (ADR-030). 폴백은 모델이 아무 결과도 내놓기 전(첫 라운드가 실패했을 때)에만 동작하며, 중단된 발언을
+        이어 가는 중(`resume_state`)에는 폴백하지 않습니다. 전환 시 `llm_fallback.listening(...)`에 등록된
+        리스너로 `FallbackNotice`를 전달합니다. 대체 모델을 호출하기 **전에** 알리므로, 화면은 스트리밍 출력 위에
+        "어떤 모델이 대신 응답 중인지"를 먼저 표시할 수 있습니다.
 
-        `tool_gate` 는 도구 보안 문지기입니다 (`app/orchestration/tool_gate.py`). 늘 거부될
-        도구를 목록에서 빼고, 호출마다 허용·묻기·거부를 판정합니다. 주지 않으면 판정 없이
-        실행하고, 매니저의 고정 보호만 걸립니다.
+        `tool_gate`는 도구 보안 게이트입니다(`app/orchestration/tool_gate.py`). 항상 거부될
+        도구를 목록에서 제외하고, 호출마다 허용·승인 요청·거부를 판정합니다. 전달하지 않으면 판정 없이
+        실행하며, 매니저의 고정 보호 규칙만 적용됩니다.
         """
-        # 순환 import: 폴백 → 모델 연결 상태 → 이 모듈.
+        # 순환 import 방지: 폴백 → 모델 연결 상태 → 이 모듈
         async def run(
             target: Agent,
             tool_call_callback: Optional[Callable[[Dict[str, Any]], Any]],
@@ -168,19 +168,19 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         if route is None:
             return await run(agent, on_tool_call, on_context_trim)
 
-        # 끊긴 발언을 이어 가는 중이면 앞서 모델이 만든 도구 호출이 메시지에 들어 있습니다. 그것을 다른
-        # 모델에게 넘기지 않습니다 (Provider 에 따라 거절합니다).
+        # 중단된 발언을 이어 가는 중이면 이전 모델이 만든 도구 호출이 메시지에 남아 있습니다. 이를 다른
+        # 모델에게 넘기지 않습니다(Provider에 따라 요청이 거절될 수 있습니다).
         can_switch = resume_state is None
         if can_switch:
             known = route.known_failure()
             if known is not None:
-                # 조금 전에 실패한 연결입니다. 발언마다 타임아웃을 다시 치르지 않고 곧바로 기본 모델로 갑니다.
+                # 직전에 실패한 연결입니다. 발언마다 타임아웃을 다시 겪지 않고 즉시 폴백 연결로 전환합니다.
                 return await self._answer_on_fallback(
                     route, run, on_tool_call, on_context_trim, state=known, skipped=True,
                 )
 
-        # 첫 판이 실패하면 처음부터 다시 부릅니다. 그때 두 번 알리지 않도록, 지정 스킬을 미리 부른 기록은
-        # 몇 건을 알렸는지 세어 두고, 컨텍스트 생략은 이 시도가 끝까지 갔을 때만 알립니다.
+        # 첫 시도가 실패하면 처음부터 다시 호출합니다. 중복 알림을 막기 위해 사전 로드된 지정 스킬 호출 건수를
+        # 기록해 두고, 컨텍스트 생략 알림은 해당 시도가 끝까지 성공했을 때만 전달합니다.
         announced = 0
         trims: List[int] = []
 
@@ -194,13 +194,13 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         try:
             result = await run(agent, counting_tool_call, trims.append)
         except LLMUnavailableError as exc:
-            # LLM 호출이 연결 문제로 실패한 경우만 봅니다. 도구 루프의 다른 곳에서 난 예외나, 상한에 닿아
-            # 올린 `LLMUnavailableError` 는 이 연결의 문제가 아닙니다.
+            # LLM 호출이 연결 계층 문제로 실패한 경우만 처리합니다. 도구 루프 내부의 다른 예외나, 반복 상한에
+            # 도달해 발생한 `LLMUnavailableError`는 연결 오류가 아닙니다.
             cause = exc.__cause__ if progress.llm_failed else None
             state = classify(cause) if cause is not None else None
             if state not in llm_fallback.FALLBACK_STATES:
                 raise
-            # 물러서지 못하는 판이어도, 이 연결이 안 된다는 것은 다음 발언이 알아야 합니다.
+            # 폴백할 수 없는 차례라도 해당 연결이 응답하지 않는다는 상태는 다음 발언을 위해 기록해 둡니다.
             route.trip(state)
             if not can_switch or progress.rounds or progress.streamed:
                 raise
@@ -230,20 +230,20 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         primary_error: Optional[LLMUnavailableError] = None,
         already_announced: int = 0,
     ) -> Tuple[str, List[Dict[str, Any]]]:
-        """물러설 연결로 같은 발언을 처음부터 받습니다. 모두 실패하면 이유를 함께 올립니다.
+        """폴백 연결로 동일한 발언을 처음부터 다시 시도합니다. 모두 실패하면 각 사유를 모아 예외를 발생시킵니다.
 
-        후보가 여럿이면(`llm.fallback.order`, ADR-056) 순서대로 불러 봅니다. 다음 후보로 넘어가는 조건은 처음
-        물러설 때와 같습니다: 연결의 문제이고, 그 후보가 아무것도 내놓기 전일 때. 글이 흘렀거나 도구를 부른 뒤의
-        실패는 넘기지 않습니다 (같은 답이 두 번 붙고, 한 모델의 도구 호출 기록을 다른 모델이 받게 됩니다).
+        후보가 여러 개이면(`llm.fallback.order`, ADR-056) 지정 순서대로 시도합니다. 다음 후보로 넘어가는 조건은 첫 번째
+        전환 시와 동일합니다: 연결 계층 문제이며, 해당 후보가 아직 아무 결과도 내놓기 전일 때입니다. 텍스트가 스트리밍되었거나
+        도구를 호출한 뒤 발생한 실패는 넘기지 않습니다(응답이 중복 출력되거나 한 모델의 도구 호출 이력을 다른 모델에 넘기게 됩니다).
         """
         agent = route.primary
         reasons = [primary_error.reason if primary_error is not None else (
-            f"{route.notice(state, skipped=skipped).label} (조금 전에 실패한 연결이라 다시 부르지 않았습니다)"
+            f"{route.notice(state, skipped=skipped).label} (직전에 실패한 연결이므로 다시 호출하지 않고 건너뛰었습니다)"
         )]
         remaining = already_announced
 
         async def tool_call_once(call_log: Dict[str, Any]) -> None:
-            # 앞선 시도가 이미 알린 것(지정 스킬을 미리 부른 기록)은 다시 알리지 않습니다.
+            # 앞선 시도가 이미 알린 내역(지정 스킬 사전 로드 기록)은 중복 알림을 보내지 않습니다.
             nonlocal remaining
             if remaining > 0:
                 remaining -= 1
@@ -254,7 +254,7 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         for candidate in route.candidates:
             substitute = candidate.agent
             if route.skipping(candidate):
-                reasons.append(f"{candidate.title} `{substitute.model}` 은 조금 전에 실패해 건너뛰었습니다")
+                reasons.append(f"{candidate.title} `{substitute.model}`은 직전에 실패해 건너뛰었습니다")
                 continue
             notice = route.notice(state, skipped=skipped, candidate=candidate)
             logger.warning(
@@ -270,17 +270,17 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
                         await outcome
                 except asyncio.CancelledError:
                     raise
-                except BaseException as exc:  # noqa: BLE001 - 알리다 실패해도 발언은 받습니다
+                except BaseException as exc:  # noqa: BLE001 - 알림 전달에 실패해도 발언 생성은 계속 진행합니다
                     logger.warning(f"Fallback notification failed for {agent.name}: {type(exc).__name__}: {exc}")
 
-            # 이 후보가 무엇을 내놓았는지 따로 봅니다. 다음 후보가 있을 때만 "곧 물러설 것" 으로 칩니다.
+            # 후보마다 산출 여부를 별도로 추적합니다. 다음 후보가 있을 때만 이후 전환 가능(`can_switch`)으로 표시합니다.
             progress = _SpeechProgress(can_switch=not route.is_last(candidate))
             token = _SPEECH_PROGRESS.set(progress)
             try:
                 return await run(substitute, tool_call_once, on_context_trim)
             except LLMUnavailableError as exc:
                 last_error = exc
-                reasons.append(f"{candidate.title} `{substitute.model}` 로도 응답을 받지 못했습니다: {exc.reason}")
+                reasons.append(f"{candidate.title} `{substitute.model}`로도 응답을 받지 못했습니다: {exc.reason}")
                 cause = exc.__cause__ if progress.llm_failed else None
                 failed = classify(cause) if cause is not None else None
                 movable = (
@@ -465,7 +465,7 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
 
 
 
-    # ------------------------------------------------------------ 한 판 호출
+    # ------------------------------------------------------------ 단일 호출
 
     @staticmethod
     async def _emit_chunk(on_chunk: Callable[[str], Any], text: str) -> None:
@@ -476,10 +476,10 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
 
     @staticmethod
     def _connection_slot(agent: Any) -> Any:
-        """이 에이전트의 연결 줄에서 자리 하나 (`max_concurrency`, ADR-056).
+        """이 에이전트가 사용하는 연결 대기열의 슬롯을 반환합니다(`max_concurrency`, ADR-056).
 
-        연결을 읽을 수 없는 것(시험 대역, 바깥 구동기가 넘긴 모양이 다른 에이전트)은 상한 없이 한 줄에 셉니다.
-        줄을 서는 일이 호출을 막아서는 안 됩니다.
+        연결 정보를 읽을 수 없는 경우(테스트 대역, 외부 호출기가 전달한 비표준 에이전트 등)는 상한 없는 단일 대기열로 처리합니다.
+        대기열 관리 때문에 실제 LLM 호출이 막혀서는 안 됩니다.
         """
         try:
             connection, limit = connection_id(agent), int(getattr(agent, "max_concurrency", 0) or 0)
@@ -495,25 +495,25 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
         on_chunk: Optional[Callable[[str], Any]] = None,
         tool_choice: str = "auto",
     ) -> Tuple[Any, str]:
-        """LLM 한 판. `(message, finish_reason)`.
+        """LLM 단일 호출을 실행하고 `(message, finish_reason)`을 반환합니다.
 
-        `finish_reason` 을 함께 돌려주는 이유: `"length"` 는 **모델이 하던 말을
-        끝내지 못하고 잘렸다**는 뜻입니다. 그 판이 도구 호출이었다면 인자 JSON 이
-        중간에서 끊기고, 도구는 인자를 읽지 못해 실패합니다. 그 사실을 모르면
-        모델은 같은 호출을 그대로 다시 시도하다 예산만 태웁니다.
+        `finish_reason`을 함께 반환하는 이유: `"length"`는 **모델이 응답을
+        끝까지 작성하지 못하고 잘렸다**는 뜻입니다. 해당 호출이 도구 호출이었다면 인자 JSON이
+        중간에서 끊기고, 도구는 인자를 파싱하지 못해 실패합니다. 그 사실을 모르면
+        모델은 같은 호출을 그대로 다시 시도하다 토큰 예산만 소진합니다.
 
-        스트리밍이 안 되는 엔드포인트면 한 번만 비스트리밍으로 되묻습니다.
+        스트리밍을 지원하지 않는 엔드포인트이면 한 번만 비스트리밍으로 재요청합니다.
 
-        서버 전체의 동시 요청 상한(`app.llm_concurrency`)이나 이 에이전트의 연결 상한(`max_concurrency`)이
-        있으면 자리가 날 때까지 여기서 기다립니다. 스트리밍이 끝날 때까지 자리를 쥡니다 (`app/agents/llm_gate.py`).
+        서버 전체의 동시 요청 상한(`app.llm_concurrency`)이나 이 에이전트의 연결 상한(`max_concurrency`)에
+        도달하면 여유 슬롯이 생길 때까지 여기서 대기합니다. 스트리밍이 완료될 때까지 슬롯을 점유합니다(`app/agents/llm_gate.py`).
         """
         progress = _SPEECH_PROGRESS.get()
         if progress is not None:
             # 직전 라운드의 호출 오류(첨부 모달리티 거절 등)를 도구 루프 내에서 자체 수습한 경우 오류 플래그를 초기화합니다.
             progress.llm_failed = False
         try:
-            # 연결의 줄을 먼저 서고(그 에이전트의 `max_concurrency`), 자리를 받은 뒤 서버 전체의 줄을 섭니다.
-            # 반대로 하면 연결을 기다리는 동안 전체의 자리 하나를 쥐고 놀립니다 (ADR-056).
+            # 연결별 대기열에 먼저 진입하고(해당 에이전트의 `max_concurrency`), 슬롯을 확보한 뒤 서버 전체 대기열에 진입합니다.
+            # 순서를 반대로 하면 연결 슬롯을 기다리는 동안 서버 전체 슬롯 하나를 점유한 채 유휴 대기하게 됩니다(ADR-056).
             async with self._connection_slot(agent), get_llm_gate().slot():
                 # 게이트 대기 시간은 제외하고, 모델 응답 소요 시간만 측정합니다 (`llm_usage`).
                 began = time.monotonic()
@@ -575,8 +575,8 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
                 logger.error(request_fingerprint(agent, messages, tools, tool_choice))
                 raise
             if self._will_fall_back(exc):
-                # 연결 자체가 안 됩니다. 같은 연결로 스트리밍 없이 다시 물어도 같은 답이고, 그만큼
-                # 기본 모델로 넘어가는 것만 늦어집니다 (`call_agent`).
+                # 연결 자체가 안 됩니다. 같은 연결로 비스트리밍 재시도를 해도 같은 결과가 나며,
+                # 대체 연결로 넘어가는 것만 늦어집니다 (`call_agent`).
                 raise
             logger.warning(
                 f"Streaming completion failed or not supported for {agent.name} ({exc}); "
@@ -598,10 +598,10 @@ class LLMCaller(RequestBuilderMixin, AnswerRecoveryMixin, ToolCallMixin, ToolLoo
 
     @staticmethod
     def _will_fall_back(exc: BaseException) -> bool:
-        """이 실패로 `call_agent` 가 곧 전역 기본 모델로 물러설 것인지 (첫 판이고, 연결이 안 될 때).
+        """이 실패로 `call_agent`가 즉시 대체 연결로 폴백할지 여부를 판단합니다 (첫 라운드, 연결 실패 시).
 
-        서버 오류는 여기서 빼 둡니다. 스트리밍을 받지 않는 엔드포인트가 5xx 로 답하는 경우가 있어,
-        그때는 지금처럼 스트리밍 없이 한 번 더 물어본 뒤에 판단합니다.
+        서버 오류는 제외합니다. 스트리밍을 지원하지 않는 엔드포인트가 5xx로 응답하는 경우가 있어,
+        그때는 기존처럼 비스트리밍으로 한 번 더 요청한 뒤 판단합니다.
         """
         progress = _SPEECH_PROGRESS.get()
         if progress is None or not progress.can_switch or progress.rounds or progress.streamed:

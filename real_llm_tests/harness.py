@@ -176,13 +176,13 @@ class Harness:
         self._failed_before = 0
         # 도구 실행 앞뒤에서 "서버가 죽었다" 를 흉내 내는 훅 (`crash_turn`). 한 번 걸리면 스스로 풀립니다.
         self.inherits_system1 = False
-        # 대상 conf 에 없어 `conf.example.json` 에서 채워 넣은 표준 에이전트 키 (`_write_conf`).
+        # 대상 conf.json에 없어 `conf.example.json`에서 채워 넣은 표준 에이전트 키 (`_write_conf`).
         self.supplemented_agents: List[str] = []
         self.fault: Optional[Callable[[str, Any, str, Dict[str, Any]], bool]] = None
 
     @property
     def s2(self) -> str:
-        """생성형(System 2) 모델의 이름. 확인·관찰 문구에 씁니다 — 어느 모델로 돌린 기록인지 보고서만 보고 알 수 있게."""
+        """생성형(System 2) 모델의 이름. 확인·관찰 문구에 사용합니다 — 보고서만 보고도 어느 모델로 실행한 기록인지 알 수 있게 합니다."""
         model = str(self.code_identity.get("model") or "")
         return model.split("/", 1)[-1] or "System 2 모델"
 
@@ -255,7 +255,7 @@ class Harness:
         """대상의 conf.json 을 바탕으로 시험용 사본을 만듭니다. 코드가 아니라 설정만 다릅니다."""
         raw = json.loads((self.target / "conf.json").read_text(encoding="utf-8-sig"))
         raw.setdefault("app", {})["db_url"] = f"sqlite+aiosqlite:///{self.db_path.as_posix()}"
-        # 같은 연결의 다른 모델로 돌려 볼 때 (폐쇄망에서 모델 여럿을 차례로 받아 볼 때). 연결 정보는 대상의 것 그대로입니다.
+                # 같은 연결의 다른 모델로 실행해 볼 때 (폐쇄망에서 여러 모델을 차례로 검증할 때). 연결 정보는 대상의 설정 그대로 유지합니다.
         model_override = os.environ.get("MADO_REAL_LLM_MODEL", "").strip()
         if model_override:
             raw.setdefault("llm", {})["model"] = model_override
@@ -297,8 +297,8 @@ class Harness:
             "allowed_mcp_servers": ["glossary", "ticket"],
             "system_prompt": "용어는 도구로 확인하고 답합니다.",
         }
-        # 대상 conf 의 전역 `llm.decision_llm.enabled` 가 켜져 있으면, 따로 끄지 않은 에이전트는 전부 System 1(Jev)
-        # 판정 에이전트가 됩니다 (도구도 생성형 모델도 쓰지 않습니다). 시험용 전문가는 System 2 로 고정합니다.
+        # 대상 `conf.json`의 전역 `llm.decision_llm.enabled`가 켜져 있으면, 따로 끄지 않은 에이전트는 전부 System 1(Jev)
+        # 판정 에이전트가 됩니다 (도구도 생성형 모델도 사용하지 않습니다). 테스트용 전문가는 System 2로 고정합니다.
         for key, agent in agents.items():
             if key.startswith("rt_"):
                 agent["decision_llm"] = {"enabled": False}
@@ -306,11 +306,11 @@ class Harness:
         self.conf_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     def _supplement_standard_agents(self, agents: Dict[str, Any]) -> None:
-        """시나리오가 이름으로 부르는 표준 에이전트(architect·coder·critic)가 대상 conf 에 없으면 예제 설정에서 채웁니다.
+        """시나리오가 이름으로 참조하는 표준 에이전트(architect·coder·critic)가 대상 `conf.json`에 없으면 예제 설정에서 채웁니다.
 
-        번들은 `conf.example.json` 으로 conf 를 만들기 때문에 보통은 다 있습니다. 운영 conf 에서 지웠거나 이름을
-        바꾼 경우에만 채우고, 있는 것은 건드리지 않습니다 (꺼 둔 것은 이 사본에서만 켭니다). 연결은 전역 `llm` 을
-        물려받게 개별 모델·주소·키는 비웁니다 — 시험하려는 것은 대상의 모델입니다.
+        번들은 `conf.example.json`으로 설정을 생성하므로 보통 모두 존재합니다. 운영 `conf.json`에서 삭제했거나 이름을
+        바꾼 경우에만 채우고, 기존 설정은 건드리지 않습니다 (비활성화된 항목은 이 사본에서만 켭니다). 연결 정보는 전역 `llm`을
+        상속받도록 개별 모델·주소·API 키를 비웁니다 — 테스트하려는 대상이 바로 해당 모델이기 때문입니다.
         """
         example_path = self.code / "conf.example.json"
         if not example_path.is_file():
@@ -972,10 +972,10 @@ def default_run_dir() -> Path:
 
 
 def default_target() -> Path:
-    """환경을 빌릴 MADO 폴더. 정하지 않으면 개발 저장소의 번들, 그것이 없으면 이 폴더가 놓인 설치본 자신입니다.
+    """실행 환경을 가져올 MADO 폴더. 따로 지정하지 않으면 개발 저장소의 번들, 그것이 없으면 이 파일이 놓인 설치본 자체를 가리킵니다.
 
-    뒤의 경우가 폐쇄망입니다: 소스 패키지(`package_source.py --with-acceptance`)로 설치본에 `real_llm_tests/` 를
-    함께 풀었을 때, 그 설치본의 conf·.env·런타임으로 돕니다.
+    후자가 폐쇄망 환경입니다: 소스 패키지(`package_source.py --with-acceptance`)로 설치본에 `real_llm_tests/`를
+    함께 풀었을 때, 해당 설치본의 `conf.json`·`.env`·런타임으로 동작합니다.
     """
     chosen = os.environ.get("MADO_REAL_LLM_TARGET")
     if chosen:

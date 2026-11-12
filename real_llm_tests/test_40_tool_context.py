@@ -128,8 +128,8 @@ def test_adr039_the_model_reaches_a_waiting_tool_and_keeps_it(mado, lazy):
     answer = next((m for m in lazy["messages"] if m.sender_key == "coder" and _kind(m) == "speech"), None)
     mado.check("ADR-039", "도구로 확인한 값을 답함 (ZEPHYR-31)", answer is not None and "ZEPHYR-31" in answer.content,
                answer.content[:300] if answer else None)
-    path = "load_tools 로 먼저 불러옴" if loads else "목록만 보고 바로 호출함 (ADR-039 §5 경로)"
-    mado.note("ADR-039", f"{mado.s2} 의 경로: {path} · 호출 순서 {[(c.tool_name, c.status) for c in turn1]}")
+    path = "load_tools로 먼저 불러옴" if loads else "목록만 보고 바로 호출함 (ADR-039 §5 경로)"
+    mado.note("ADR-039", f"{mado.s2}의 경로: {path} · 호출 순서 {[(c.tool_name, c.status) for c in turn1]}")
 
     mado.check("ADR-039", "불러 둔 도구가 그 대화의 그 에이전트에게 남음", "git__git_log" in lazy["remembered"], lazy["remembered"])
     second_speech = [r for r in second.requests_by("coder") if "[결정 장부 갱신]" not in r.last_user()]
@@ -146,14 +146,14 @@ def test_adr039_the_model_reaches_a_waiting_tool_and_keeps_it(mado, lazy):
               if c.status == "error"]
     mado.note("tools", f"이 대화에서 실패한 도구 호출 {len(failed)}건 (경로 혼동 등): {failed[:6]}")
 
-    # 불러오기가 치른 값의 실측 (ADR-039 가 "재지 못했다" 고 적어 둔 것). 사용량 기록에 함께 실립니다.
+    # 불러오기에 든 비용의 실측 (ADR-039에서 "재지 못했다"고 적어 둔 항목). 사용량 기록에 함께 실립니다.
     from app.agents.llm_usage import Usage, tool_context_line
 
     measured = Usage()
     for turn in mado.run(mado.turns(lazy["sid"])):
         measured.add(Usage.of(turn.usage))
     mado.check("ADR-039", "도구를 불러온 횟수가 턴의 사용량 기록에 실림", measured.tool_loads >= 1, measured.as_meta())
-    mado.note("ADR-039", f"실측(두 턴 · {mado.s2}): {tool_context_line(measured)} · LLM 호출 {measured.calls}회")
+    mado.note("ADR-039", f"실측(2턴 · {mado.s2}): {tool_context_line(measured)} · LLM 호출 {measured.calls}회")
     mado.settle()
 
 
@@ -250,15 +250,15 @@ def test_adr040_stale_file_reads_become_stubs_but_logs_keep_the_text(mado, compa
     mado.note("ADR-040", f"파일 {FILES}개 × 약 {max(compaction['sizes'].values())}자 · 요청별 입력 토큰 {prompts} · "
                          f"읽기 호출 {len(reads)}회 (다시 읽기 {max(0, len(reads) - FILES)}회)")
 
-    # 압축이 치른 값의 실측 (ADR-040 이 "재지 못했다" 고 적어 둔 것): 줄인 건수와, 줄인 뒤 같은 파일을 다시 읽은 횟수.
+    # 압축에 든 비용의 실측 (ADR-040에서 "재지 못했다"고 적어 둔 항목): 압축된 건수와, 압축 뒤 같은 파일을 다시 읽은 횟수.
     from app.agents.llm_usage import Usage, tool_context_line
 
     measured = Usage.of(mado.run(mado.turns(compaction["sid"]))[-1].usage)
     if stubbed:
-        mado.check("ADR-040", "줄인 건수가 턴의 사용량 기록에 실림", measured.compacted_reads >= 1, measured.as_meta())
-    mado.check("ADR-040", "압축 뒤 다시 읽기는 읽기 호출 가운데 처음이 아닌 것보다 많을 수 없음",
+        mado.check("ADR-040", "압축된 건수가 턴의 사용량 기록에 실림", measured.compacted_reads >= 1, measured.as_meta())
+    mado.check("ADR-040", "압축 뒤 다시 읽기 횟수는 첫 읽기를 제외한 읽기 호출 수를 넘을 수 없음",
                measured.rereads_after_compaction <= max(0, len(reads) - 1), (measured.as_meta(), len(reads)))
-    mado.note("ADR-040", f"실측({mado.s2} · 창 24,000): {tool_context_line(measured) or '압축 없음'} · 읽기 호출 {len(reads)}회 · "
+    mado.note("ADR-040", f"실측({mado.s2} · 컨텍스트 창 24,000): {tool_context_line(measured) or '압축 없음'} · 읽기 호출 {len(reads)}회 · "
                          f"LLM 호출 {measured.calls}회")
     mado.settle()
 

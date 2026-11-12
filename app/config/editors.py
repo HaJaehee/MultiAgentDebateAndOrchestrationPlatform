@@ -536,16 +536,16 @@ def set_agent_limits_in_conf_file(
     max_context_window: Optional[int] = None,
     config_path: str | Path = DEFAULT_CONFIG_PATH,
 ) -> None:
-    """`agents.<key>` 의 `max_tokens` · `max_context_window` 를 적습니다. 주지 않은 값은 건드리지 않습니다.
+    """`agents.<key>`의 `max_tokens` · `max_context_window`를 기록합니다. 지정하지 않은 값은 변경하지 않습니다.
 
-    모델 적합성 점검의 권고를 적용하는 길입니다 (ADR-056). 전역 `llm` 에서 물려받던 값이어도 그 에이전트에만
-    적습니다 — 같은 전역 값을 쓰는 다른 연결의 에이전트까지 바꾸지 않습니다. **새 대화**부터 적용됩니다.
+    모델 적합성 점검의 권고를 반영할 때 사용합니다(ADR-056). 전역 `llm`에서 상속받던 값이라도 해당 에이전트에만
+    기록하므로, 같은 전역 값을 쓰는 다른 연결의 에이전트에는 영향을 주지 않습니다. **새 대화**부터 적용됩니다.
     """
     key = _require_key(agent_key, "에이전트 키")
     values = {"max_tokens": max_tokens, "max_context_window": max_context_window}
     for name, value in values.items():
         if value is not None and (isinstance(value, bool) or int(value) <= 0):
-            raise ValueError(f"{name} 는 양의 정수여야 합니다: {value!r}")
+            raise ValueError(f"{name}는 양의 정수여야 합니다: {value!r}")
     path = Path(config_path)
 
     data = read_conf_file(path)
@@ -562,7 +562,7 @@ def set_tool_loading_enabled_in_conf_file(
     enabled: bool,
     config_path: str | Path = DEFAULT_CONFIG_PATH,
 ) -> None:
-    """`tool_loading.enabled` 를 적습니다. 전역 설정이라 모든 에이전트에, 진행 중인 대화에도 다음 발언부터 적용됩니다."""
+    """`tool_loading.enabled`를 기록합니다. 전역 설정이므로 모든 에이전트에 적용되며, 진행 중인 대화에도 다음 발언부터 반영됩니다."""
     path = Path(config_path)
 
     data = read_conf_file(path)

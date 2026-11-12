@@ -2,8 +2,8 @@
   "// 설명": [
     "소규모 구현 시나리오: 작업 공간의 CSV 데이터를 기반으로 요약 스크립트를 생성하고 실행합니다.",
     "변형(variant)마다 seed 디렉터리의 복사본을 작업 공간으로 사용하며, 변경된 파일 수와 도구 호출 실패 횟수를 측정합니다.",
-    "checks 는 변형이 끝난 뒤 그 변형의 작업 공간에서 돌리는 결정적 검사입니다: 파일이 있는가, 스크립트가 실제로 도는가.",
-    "{python} 은 Bench 를 돌리는 파이썬으로 바뀝니다. argv 는 문자열 목록만 받습니다 (셸 한 줄은 받지 않습니다)."
+    "checks는 변형이 끝난 뒤 해당 변형의 작업 공간에서 실행하는 결정적 검사입니다: 파일 존재 여부와 스크립트 정상 실행 여부를 확인합니다.",
+    "{python}은 Bench를 실행하는 파이썬 인터프리터로 치환됩니다. argv는 문자열 목록만 허용합니다(단일 셸 명령 문자열은 지원하지 않습니다)."
   ],
   "name": "소규모 구현 — 매출 CSV 요약 스크립트",
   "seed": "seeds/sales-csv",
@@ -27,8 +27,8 @@
     }
   ],
   "checks": [
-    { "name": "summarize.py 가 있음", "file_exists": "summarize.py" },
-    { "name": "README.md 가 있음", "file_exists": "README.md" },
+    { "name": "summarize.py가 있음", "file_exists": "summarize.py" },
+    { "name": "README.md가 있음", "file_exists": "README.md" },
     { "name": "스크립트가 오류 없이 끝남", "command": { "argv": ["{python}", "summarize.py"], "timeout": 60 } },
     { "name": "미해결 쟁점이 남지 않음", "max_open_issues": 0 }
   ]

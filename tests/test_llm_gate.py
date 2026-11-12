@@ -4,7 +4,7 @@
 2. 누가 기다리는지(대화 id)와 앞에 몇 건이 있는지 보인다.
 3. 기다리다 취소된 요청도, 자리를 받은 순간 취소된 요청도 자리를 새게 하지 않는다.
 4. LLM 호출 한 판(`_complete_once`)이 실제로 이 관문을 지난다.
-5. 연결별 줄 (ADR-056): 같은 연결끼리만 줄을 서고, 상한은 요청이 들고 온 값(그 에이전트의 `max_concurrency`)이다.
+5. 연결별 대기열 (ADR-056): 같은 연결끼리만 대기열을 공유하며, 상한은 요청이 가져온 값(해당 에이전트의 `max_concurrency`)이다.
 """
 
 import asyncio
@@ -151,12 +151,12 @@ def test_the_engine_names_the_conversation_for_the_queue():
     assert "LLM_HOLDER.set(session_id)" in source
 
 
-# ---------------------------------------------------------------- 5. 연결별 줄 (ADR-056)
+# ---------------------------------------------------------------- 5. 연결별 대기열 (ADR-056)
 
 
 @pytest.mark.asyncio
 async def test_a_request_can_bring_its_own_limit():
-    """관문의 상한이 없어도, 요청이 들고 온 상한으로 자리가 있는지 봅니다."""
+    """관문에 전체 상한이 없어도, 요청이 가져온 상한으로 빈 슬롯이 있는지 확인합니다."""
     gate = LLMGate(0)
     order = []
     release = asyncio.Event()
@@ -178,7 +178,7 @@ async def test_a_request_can_bring_its_own_limit():
 
 @pytest.mark.asyncio
 async def test_a_generous_request_does_not_jump_ahead_of_a_strict_one():
-    """맨 앞 요청이 못 들어가면 상한이 더 넉넉한 뒤 요청도 기다립니다."""
+    """맨 앞 요청이 진입할 수 없으면 상한이 더 넉넉한 뒤 요청도 기다립니다."""
     gate = LLMGate(0)
     order = []
     release = asyncio.Event()
@@ -190,9 +190,9 @@ async def test_a_generous_request_does_not_jump_ahead_of_a_strict_one():
 
     tasks = [asyncio.create_task(call("running", 0))]
     await asyncio.sleep(0)
-    tasks.append(asyncio.create_task(call("strict", 1)))      # 도는 것이 하나 있어 기다립니다
+    tasks.append(asyncio.create_task(call("strict", 1)))      # 실행 중인 요청이 하나 있어 대기합니다
     await asyncio.sleep(0)
-    tasks.append(asyncio.create_task(call("generous", 5)))    # 자리는 있지만 줄을 섭니다
+    tasks.append(asyncio.create_task(call("generous", 5)))    # 여유 슬롯은 있지만 대기열에 섭니다
     await asyncio.sleep(0)
     assert order == ["running"] and gate.position("strict") == 0 and gate.position("generous") == 1
     release.set()
@@ -213,8 +213,8 @@ async def test_each_connection_has_its_own_line():
 
     tasks = [asyncio.create_task(call("gpu-a", "a1"))]
     await asyncio.sleep(0)
-    tasks.append(asyncio.create_task(call("gpu-a", "a2")))    # 같은 연결: 기다립니다
-    tasks.append(asyncio.create_task(call("gpu-b", "b1")))    # 다른 연결: 바로 들어갑니다
+    tasks.append(asyncio.create_task(call("gpu-a", "a2")))    # 같은 연결: 대기합니다
+    tasks.append(asyncio.create_task(call("gpu-b", "b1")))    # 다른 연결: 바로 진입합니다
     await asyncio.sleep(0)
     await asyncio.sleep(0)
     assert order == ["a1", "b1"]
@@ -222,7 +222,7 @@ async def test_each_connection_has_its_own_line():
     assert gates.snapshot() == {"gpu-a": (1, 1), "gpu-b": (1, 0)}
     release.set()
     await asyncio.gather(*tasks)
-    assert order == ["a1", "b1", "a2"] and gates.snapshot() == {}, "한가한 연결은 보이지 않습니다"
+    assert order == ["a1", "b1", "a2"] and gates.snapshot() == {}, "유휴 상태인 연결은 표시되지 않습니다"
 
 
 @pytest.mark.asyncio
@@ -239,7 +239,7 @@ def _agent(key: str, model: str, limit: int) -> Agent:
 
 @pytest.mark.asyncio
 async def test_calls_on_one_connection_obey_the_agents_max_concurrency(monkeypatch):
-    """GPU 한 장에 뜬 모델은 한 번에 하나, 옆의 연결은 그와 상관없이 함께 돕니다."""
+    """GPU 한 장에 뜬 모델은 한 번에 하나씩만, 다른 연결은 그와 무관하게 병렬로 실행됩니다."""
     monkeypatch.setattr(llm_module, "get_llm_gate", lambda: LLMGate(0))
     gates = ConnectionGates()
     monkeypatch.setattr(llm_module, "get_connection_gates", lambda: gates)
@@ -269,7 +269,7 @@ async def test_calls_on_one_connection_obey_the_agents_max_concurrency(monkeypat
 
 @pytest.mark.asyncio
 async def test_a_connection_slot_is_held_before_the_server_wide_one(monkeypatch):
-    """연결을 기다리는 동안 서버 전체의 자리를 쥐고 있으면 그 자리가 놉니다."""
+    """연결 슬롯을 기다리는 동안 서버 전체 슬롯을 점유하고 있으면 전체 슬롯이 낭비됩니다."""
     shared = LLMGate(2)
     monkeypatch.setattr(llm_module, "get_llm_gate", lambda: shared)
     gates = ConnectionGates()
@@ -289,7 +289,7 @@ async def test_a_connection_slot_is_held_before_the_server_wide_one(monkeypatch)
     tasks = [asyncio.create_task(caller._complete_once(agent, [], None)) for _ in range(2)]
     for _ in range(5):
         await asyncio.sleep(0)
-    assert seen == [1], "하나만 돌고 있습니다"
-    assert shared.snapshot() == {**shared.snapshot(), "active": 1, "waiting": 0}, "기다리는 쪽은 전체의 자리를 쥐지 않았습니다"
+    assert seen == [1], "하나만 실행 중입니다"
+    assert shared.snapshot() == {**shared.snapshot(), "active": 1, "waiting": 0}, "대기 중인 쪽은 전체 슬롯을 점유하지 않았습니다"
     release.set()
     await asyncio.gather(*tasks)

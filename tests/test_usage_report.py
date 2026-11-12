@@ -483,7 +483,7 @@ async def test_a_new_message_and_a_revised_speech_refresh_open_views():
     page.refresh_usage_views.assert_awaited_once()
 
 
-# ------------------------------------------------------------------ 도구 컨텍스트 (ADR-039 · ADR-040 의 실측)
+# ------------------------------------------------------------------ 도구 컨텍스트 (ADR-039 · ADR-040 실측)
 
 
 def test_tool_context_counts_ride_along_with_the_tokens():
@@ -515,12 +515,12 @@ async def test_tools_loaded_in_several_conversations_become_core_tool_candidates
         for sid in sids:
             db.add(SessionModel(id=sid, title="t", strategy="sequential_debate", max_rounds=1, active_agents=["orchestrator"]))
         await db.flush()
-        for sid in sids:                                   # 네 대화 모두에서
+        for sid in sids:                                   # 4개 대화 모두에서
             await _load_call(db, sid, ["git__git_log"])
-        for sid in sids[:CORE_CANDIDATE_MIN_SESSIONS]:      # 세 대화에서, 이름 꼬리로
+        for sid in sids[:CORE_CANDIDATE_MIN_SESSIONS]:      # 3개 대화에서 (꼬리 이름으로)
             await _load_call(db, sid, ["git_show"])
-        await _load_call(db, sids[0], ["git__git_log"])    # 같은 대화에서 또 불러도 대화 수는 그대로
-        await _load_call(db, sids[0], "git__git_blame")    # 한 대화뿐
+        await _load_call(db, sids[0], ["git__git_log"])    # 같은 대화에서 다시 불러도 대화 수는 그대로
+        await _load_call(db, sids[0], "git__git_blame")    # 1개 대화에서만 호출
         for sid in sids:                                   # 실패한 호출은 세지 않습니다
             await _load_call(db, sid, ["no_such_tool"], status="error")
         for sid in sids:
@@ -533,7 +533,7 @@ async def test_tools_loaded_in_several_conversations_become_core_tool_candidates
         assert (await loaded_tool_sessions(db, sids[0]))["git_blame"] == 1
 
         candidates = await core_tool_candidates(db, core_tools=["read_text_file"])
-    assert candidates == [("git_log", 4), ("git_show", 3)], "이미 core_tools 에 있는 것과 한두 대화뿐인 것은 뺍니다"
+    assert candidates == [("git_log", 4), ("git_show", 3)], "이미 core_tools에 있는 것과 한두 대화에만 있는 것은 제외합니다"
     line = core_candidate_line(candidates)
     assert "git_log(대화 4개)" in line and "tool_loading.core_tools" in line
     assert core_candidate_line([]) == ""
@@ -547,7 +547,7 @@ async def test_the_dialog_shows_the_tool_context_line_only_when_there_is_one(ui_
         dialog = UsageDialog(factory)
         dialog.build()
         await dialog.open(sid)
-    assert not any("도구 불러오기" in text for text in _texts(dialog.body)), "일어난 것이 없으면 줄도 없습니다"
+    assert not any("도구 불러오기" in text for text in _texts(dialog.body)), "일어난 것이 없으면 해당 줄도 표시하지 않습니다"
 
     async with factory() as db:
         turn = (await db.execute(select(TurnModel).where(TurnModel.session_id == sid))).scalar_one()
@@ -563,5 +563,5 @@ async def test_the_dialog_shows_the_tool_context_line_only_when_there_is_one(ui_
         await dialog.refresh()
     texts = _texts(dialog.body)
     assert "도구 불러오기 2회(정의 3개) · 압축 뒤 다시 읽기 1회" in texts
-    # 같은 메모리 DB 를 앞선 시험과 함께 쓰므로 대화 수는 정확히 세지 않고, 후보로 뜨는지만 봅니다.
+    # 같은 메모리 DB를 앞선 테스트와 함께 쓰므로 대화 수는 정확히 세지 않고, 후보로 뜨는지만 확인합니다.
     assert any(text.startswith("자주 불러오는 도구: ") and "git_log(대화 " in text for text in texts)

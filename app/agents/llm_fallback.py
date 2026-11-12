@@ -1,14 +1,14 @@
-"""개별 모델의 연결이 실패하면 전역 기본 연결로 물러섭니다 (`llm.fallback`, ADR-030).
+"""개별 모델 연결이 실패하면 전역 기본 연결 또는 지정된 대체 연결로 폴백합니다 (`llm.fallback`, ADR-030).
 
-에이전트마다 다른 모델을 붙일 수 있습니다. 그 가운데 하나의 키가 만료되거나 서버가 내려가면, 지금까지는
-그 에이전트의 발언 자리에 "연결 끊김" 만 남았습니다. 켜 두면 그 자리를 전역 기본 모델(`llm`)이 같은
-페르소나로 대신 채웁니다.
+에이전트마다 다른 모델을 연결할 수 있습니다. 그중 하나의 API 키가 만료되거나 서버가 내려가면, 지금까지는
+해당 에이전트의 발언 차례에 "연결 끊김" 오류만 남았습니다. 폴백을 활성화하면 그 자리를 전역 기본 모델(`llm`)이나
+대체 연결이 동일한 페르소나로 대신 응답합니다.
 
 ## 지어내지 않되, 숨기지도 않습니다
 
-`LLMUnavailableError` 가 대체 응답을 만들지 않는 이유는 그대로입니다 — 조용히 바뀐 답은 다음 에이전트의
-입력과 최종 합성까지 오염시킵니다. 폴백은 진짜 모델이 답하는 것이지만, **누가 답했는지가 달라졌다는
-사실**은 같은 무게로 남아야 합니다. 그래서:
+`LLMUnavailableError`가 대체 응답을 만들지 않는 이유는 그대로입니다 — 조용히 바뀐 답변은 다음 에이전트의
+입력과 최종 합성까지 오염시킵니다. 폴백은 실제 모델이 답하는 것이지만, **누가 답했는지가 달라졌다는
+사실**은 실패와 같은 무게로 남아야 합니다. 그래서:
 
 - 기본은 꺼져 있고(`llm.fallback.enabled`), 에이전트마다 막을 수 있습니다(`allow_fallback: false`).
 - 전환할 때마다 `FallbackNotice` 를 올립니다. 엔진은 그것을 발언 기록(`llm_meta`)과 화면에 남깁니다.
@@ -17,41 +17,41 @@
 동안만 걸어 두면 됩니다 — `LLM_HOLDER` 가 대화 id 를 넘기는 것과 같은 방식이고, `call_agent` 와 같은
 모양으로 만든 호출기들이 인자 하나 때문에 깨지지 않습니다. 걸어 둔 곳이 없으면 로그에만 남습니다.
 
-## 언제 물러서는가
+## 언제 폴백하는가
 
-1. **연결의 문제일 때만.** 인증 실패, 모델 이름, 연결 실패, 응답 없음, 서버 오류. 요청 거절(400)과
-   컨텍스트 초과는 요청의 문제라 기본 모델도 같은 이유로 실패하고, 한도 초과(429)는 잠깐 뒤에 풀립니다.
-2. **모델이 아무것도 내놓기 전에만.** 글이 한 조각이라도 화면에 흘렀거나 도구를 불렀으면 물러서지
-   않습니다. 같은 답이 두 번 붙고, 한 모델이 만든 도구 호출 기록을 다른 모델에게 넘기면 Provider 에 따라
-   거절하기 때문입니다. 끊긴 발언을 이어 가는 경우도 같은 이유로 물러서지 않습니다. 이 판단은
-   `LLMCaller.call_agent` 가 합니다.
-3. **물러설 곳이 있을 때만.** 에이전트가 이미 전역 연결을 쓰고 있거나 전역에 연결 정보가 없으면 지금처럼
+1. **연결 계층 문제일 때만.** 인증 실패, 모델명 오류, 연결 실패, 응답 시간 초과, 서버 오류가 대상입니다. 요청 거절(400)과
+   컨텍스트 초과는 요청 자체의 문제라 대체 모델도 동일하게 실패하며, 속도 제한(429)은 잠시 뒤 해소됩니다.
+2. **모델이 아무 결과도 내놓기 전에만.** 텍스트가 한 청크라도 화면에 스트리밍되었거나 도구를 호출한 뒤에는 폴백하지
+   않습니다. 같은 응답이 중복 출력되거나, 한 모델이 만든 도구 호출 이력을 다른 모델에 넘겨 Provider가
+   거절하는 문제를 막기 위함입니다. 중단된 발언을 이어 가는 경우에도 같은 이유로 폴백하지 않습니다. 이 판단은
+   `LLMCaller.call_agent`가 담당합니다.
+3. **전환 가능한 대상이 있을 때만.** 에이전트가 이미 전역 연결을 쓰고 있거나 대체 연결 정보가 없으면 기존과 동일하게
    실패합니다.
 
-## 무엇을 바꾸는가
+## 무엇을 교체하는가
 
 연결 정보(모델명, API 주소, 키, 버전, 프로바이더, 추가 헤더 및 본문)와 해당 모델의 처리 한도 및 통신 제어 설정(`max_tokens`,
-`max_context_window`, `timeout`, `num_retries`, `drop_params`, `prompt_cache`)은 전역 기본값을 적용합니다. 페르소나, 도구, 스킬,
+`max_context_window`, `timeout`, `num_retries`, `drop_params`, `prompt_cache`)은 대체 연결 설정으로 교체합니다. 페르소나, 도구, 스킬,
 온도(temperature), 도구 루프 상한은 기존 에이전트 설정을 유지합니다. 프로바이더 고유의 사고 옵션(`native`)을 사용하던 에이전트는
-전역의 단계적 사고 설정을 따릅니다.
+전역 또는 대상 연결의 단계적 사고 설정을 따릅니다.
 
-전역은 **지금의** 설정(`get_config().llm`)입니다. 잠긴 대화의 스냅샷에는 전역 값이 따로 없고, 키를 바꾼
-뒤에도 동작해야 하기 때문입니다. 그래서 어떤 모델이 실제로 답했는지는 스냅샷이 아니라 발언마다 적습니다.
+전역 연결은 **현재 시점의** 설정(`get_config().llm`)을 사용합니다. 잠긴 대화 스냅샷에는 전역 값이 별도로 없고, API 키를 교체한
+뒤에도 정상 동작해야 하기 때문입니다. 따라서 실제로 어느 모델이 응답했는지는 스냅샷이 아니라 각 발언 기록에 남깁니다.
 
-## 물러설 연결이 여럿일 때 (ADR-056)
+## 폴백 연결이 여러 개일 때 (ADR-056)
 
-`llm.fallback.order` 에 연결을 순서대로 적으면 그 순서로 물러섭니다. 에이전트 키는 그 에이전트의 연결이고 `"llm"` 은
-전역 기본 연결입니다. 비워 두면 전역 하나뿐입니다. 한 후보가 **아무것도 내놓기 전에** 연결 문제로 실패하면 다음
-후보로 넘어가고, 글이 흘렀거나 도구를 부른 뒤의 실패는 넘기지 않습니다 (위 2번과 같은 이유). 후보마다 전환을 알리므로
-발언에는 마지막으로 답한 모델이 남습니다. 목록에 적지 않은 연결로는 물러서지 않습니다 — 어느 내용이 어느 서버로
-갈 수 있는지는 사람이 적은 목록이 전부입니다. 결정 LLM 을 쓰는 전문가와 꺼 둔 에이전트는 후보가 되지 않습니다.
+`llm.fallback.order`에 연결을 순서대로 지정하면 나열된 순서대로 폴백을 시도합니다. 에이전트 키는 해당 에이전트의 연결을, `"llm"`은
+전역 기본 연결을 가리킵니다. 비워 두면 전역 연결 하나만 사용합니다. 한 후보가 **아무 결과도 내놓기 전에** 연결 문제로 실패하면
+다음 후보로 넘어가며, 응답이 스트리밍되었거나 도구를 호출한 뒤의 실패는 넘기지 않습니다(위 2번과 동일한 이유). 후보 전환 시마다
+알림을 발행하므로 발언 기록에는 최종 응답한 모델이 남습니다. 목록에 없는 연결로는 폴백하지 않습니다 — 어느 데이터가 어떤 서버로
+전달될 수 있는지는 사용자가 명시한 목록으로만 제한됩니다. 결정 LLM을 사용하는 전문가와 비활성화된 에이전트는 후보가 되지 않습니다.
 
 ## 차단기
 
-죽은 연결을 발언마다 다시 기다리면 그때마다 타임아웃과 재시도를 통째로 치릅니다. 한 번 실패한 연결은
-`retry_after` 초 동안 곧바로 기본 모델로 보내고, 지나면 한 번 다시 불러 봅니다. `모델 연결 상태` 창에서
-그 연결이 응답하는 것을 확인하면 곧바로 닫습니다. 사슬의 후보도 실패하면 같은 차단기에 걸려 그동안 건너뜁니다.
-다만 **마지막 후보**는 걸지도 건너뛰지도 않습니다 — 더 물러설 곳이 없으니 매번 불러 봅니다.
+응답하지 않는 연결을 매 발언마다 다시 호출하면 매번 타임아웃과 재시도 지연을 모두 겪게 됩니다. 한 번 실패한 연결은
+`retry_after`초 동안 즉시 대체 모델로 우회하고, 시간이 지나면 한 차례 다시 시도합니다. `모델 연결 상태` 화면에서
+해당 연결의 정상 응답을 확인하면 즉시 차단기를 해제합니다. 폴백 체인의 후보도 실패하면 동일한 차단기에 등록되어 일정 시간 건너뜁니다.
+단, **마지막 후보**는 차단기에 등록하거나 건너뛰지 않습니다 — 더 이상 전환할 대상이 없으므로 매번 직접 시도합니다.
 """
 
 from __future__ import annotations
@@ -87,10 +87,10 @@ __all__ = [
     "substitute_for", "substitutes_for",
 ]
 
-# `llm.fallback.order` 에서 전역 기본 연결을 가리키는 이름.
+# `llm.fallback.order`에서 전역 기본 연결을 가리키는 예약어입니다.
 GLOBAL_CONNECTION = "llm"
 
-# 물러서는 실패. 연결 자체가 안 되는 것만 고릅니다.
+# 폴백 전환 대상 실패 유형입니다. 연결 자체가 불가능한 오류만 포함합니다.
 FALLBACK_STATES = frozenset({AUTH, MODEL, UNREACHABLE, TIMEOUT, SERVER_ERROR})
 
 # 전역에서 함께 가져오는 것: 그 모델의 용량과 전송 설정.
@@ -145,25 +145,25 @@ def current_listener() -> Optional[FallbackListener]:
 
 
 class FallbackBreaker:
-    """실패한 연결을 잠깐 건너뛰게 합니다. 연결의 이름표(`connection_id`)로 가릅니다."""
+    """실패한 연결을 일정 시간 건너뛰도록 관리합니다. 연결 식별자(`connection_id`) 기준으로 구분합니다."""
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
-        # 연결 -> (실패한 시각, 실패 갈래)
+        # 연결 -> (실패 시각, 실패 유형)
         self._tripped: Dict[str, Tuple[float, str]] = {}
 
     def trip(self, connection: str, state: str) -> None:
         self._tripped[connection] = (self._clock(), state)
 
     def close(self, connection: str) -> bool:
-        """그 연결이 다시 된다는 것을 알았을 때. 건너뛰고 있었으면 True."""
+        """해당 연결이 복구되었음을 확인했을 때 호출합니다. 건너뛰던 상태였다면 True를 반환합니다."""
         return self._tripped.pop(connection, None) is not None
 
     def reset(self) -> None:
         self._tripped.clear()
 
     def remaining(self, connection: str, retry_after: float) -> Optional[float]:
-        """이 연결을 건너뛰는 중이면 남은 시간(초). 시간이 다 됐으면 잊고 None — 다음 호출이 다시 불러 봅니다."""
+        """해당 연결을 건너뛰는 중이면 남은 시간(초)을 반환합니다. 만료되었으면 기록을 지우고 None을 반환해 다음 호출 시 재시도합니다."""
         entry = self._tripped.get(connection)
         if entry is None:
             return None
@@ -174,7 +174,7 @@ class FallbackBreaker:
         return left
 
     def state(self, connection: str, retry_after: float) -> Optional[str]:
-        """이 연결을 건너뛰는 중이면 그 실패 갈래."""
+        """해당 연결을 건너뛰는 중이면 실패 유형을 반환합니다."""
         if self.remaining(connection, retry_after) is None:
             return None
         return self._tripped[connection][1]
@@ -192,7 +192,7 @@ def get_fallback_breaker() -> FallbackBreaker:
 
 @dataclass(frozen=True)
 class FallbackCandidate:
-    """물러설 연결 하나. `name` 은 `llm.fallback.order` 에 적힌 이름이고 `agent` 는 그 연결로 바꾼 같은 에이전트입니다."""
+    """폴백 후보 연결 하나를 나타냅니다. `name`은 `llm.fallback.order`에 지정된 이름이고 `agent`는 해당 연결로 교체한 에이전트 사본입니다."""
 
     name: str
     agent: Agent
@@ -207,13 +207,13 @@ class FallbackCandidate:
 
     @property
     def title(self) -> str:
-        """오류 문구에 쓰는 이름: 전역 연결은 '기본 모델', 다른 에이전트의 연결은 '대체 모델'."""
+        """오류 메시지에 표시하는 이름입니다: 전역 연결은 '기본 모델', 다른 에이전트의 연결은 '대체 모델'입니다."""
         return "기본 모델" if self.is_global else "대체 모델"
 
 
 @dataclass
 class FallbackRoute:
-    """이 에이전트가 물러설 길. `candidates` 는 물러설 순서대로입니다 (적어도 하나)."""
+    """이 에이전트의 폴백 경로입니다. `candidates`는 시도할 폴백 순서대로 정렬되어 있습니다(최소 1개 이상)."""
 
     primary: Agent
     connection: str
@@ -223,11 +223,11 @@ class FallbackRoute:
 
     @property
     def substitute(self) -> Agent:
-        """가장 먼저 물러설 연결을 쓰는 같은 에이전트."""
+        """최우선 폴백 연결을 적용한 에이전트 사본입니다."""
         return self.candidates[0].agent
 
     def known_failure(self) -> Optional[str]:
-        """조금 전에 실패해 건너뛰는 중이면 그 실패 갈래."""
+        """직전에 실패해 건너뛰는 중이면 해당 실패 유형을 반환합니다."""
         return self.breaker.state(self.connection, self.retry_after)
 
     def trip(self, state: str) -> None:
@@ -237,13 +237,13 @@ class FallbackRoute:
         return candidate is self.candidates[-1]
 
     def skipping(self, candidate: FallbackCandidate) -> bool:
-        """이 후보를 조금 전의 실패 때문에 건너뛸 것인지. 마지막 후보는 건너뛰지 않습니다."""
+        """이 후보를 직전 실패 때문에 건너뛸지 여부를 반환합니다. 마지막 후보는 건너뛰지 않습니다."""
         if self.is_last(candidate):
             return False
         return self.breaker.state(candidate.connection, self.retry_after) is not None
 
     def trip_candidate(self, candidate: FallbackCandidate, state: str) -> None:
-        """후보가 실패했습니다. 다음 발언이 그 타임아웃을 다시 치르지 않게 잠깐 건너뜁니다 (마지막 후보는 걸지 않습니다)."""
+        """후보 연결이 실패했을 때 호출합니다. 다음 발언이 타임아웃을 반복하지 않도록 일정 시간 건너뜁니다(마지막 후보는 차단기에 등록하지 않습니다)."""
         if not self.is_last(candidate):
             self.breaker.trip(candidate.connection, state)
 
@@ -257,9 +257,9 @@ class FallbackRoute:
 
 
 def _substitute_from(agent: Agent, target: Any, *, llm: Optional[LLMConfig]) -> Optional[Agent]:
-    """`target` 의 연결과 용량으로 바꾼 사본. 연결 정보가 없거나 이미 같은 연결이면 None.
+    """`target`의 연결 및 용량 설정으로 교체한 사본을 반환합니다. 연결 정보가 없거나 이미 동일한 연결이면 None을 반환합니다.
 
-    `llm` 은 전역 연결로 물러설 때만 줍니다. 그때는 결정 LLM 과 Provider 고유 사고 옵션도 전역의 것을 따릅니다.
+    `llm`은 전역 연결로 폴백할 때만 전달합니다. 이 경우 결정 LLM과 Provider 고유 사고 옵션도 전역 설정을 따릅니다.
     """
     if not target.is_live:
         return None
@@ -271,14 +271,14 @@ def _substitute_from(agent: Agent, target: Any, *, llm: Optional[LLMConfig]) -> 
     if llm is not None and (agent.decision_llm.enabled != llm.decision_llm.enabled or llm.decision_llm.enabled):
         update["decision_llm"] = llm.decision_llm.model_copy(deep=True)
     if agent.sequential_thinking.enabled and agent.sequential_thinking.mode == "native":
-        # Provider 고유의 사고 옵션은 그 모델에 묶인 값입니다. 물러선 모델에는 그 연결 쪽의 설정을 씁니다.
+        # Provider 고유의 사고 옵션은 해당 모델에 종속됩니다. 폴백한 모델에는 대상 연결의 설정을 적용합니다.
         source = llm.sequential_thinking if llm is not None else target.sequential_thinking
         update["sequential_thinking"] = source.model_copy(deep=True)
     return agent.model_copy(update=update)
 
 
 def substitute_for(agent: Agent, llm: LLMConfig) -> Optional[Agent]:
-    """전역 연결로 바꾼 사본. 이미 전역 연결을 쓰거나 전역에 연결 정보가 없으면 None."""
+    """전역 연결로 교체한 에이전트 사본을 반환합니다. 이미 전역 연결을 쓰거나 전역 연결 정보가 없으면 None을 반환합니다."""
     return _substitute_from(agent, global_entry(llm, _CAPACITY_FIELDS), llm=llm)
 
 
@@ -286,8 +286,8 @@ _warned_unknown: set = set()
 
 
 def _warn_unknown(name: str) -> None:
-    """목록에 설정에 없는 이름이 있으면 한 번만 알립니다. 설정을 읽을 때 막지는 않습니다 — 화면에서 에이전트를 지운
-    것만으로 앱이 뜨지 않게 되어서는 안 됩니다. 그 이름은 건너뜁니다."""
+    """폴백 목록에 존재하지 않는 이름이 있으면 한 번만 경고 로그를 남깁니다. 설정 로드 시 차단하지는 않습니다 —
+    화면에서 에이전트를 삭제했다는 이유로 앱이 시작되지 않아서는 안 되기 때문입니다. 해당 이름은 건너뜁니다."""
     if name not in _warned_unknown:
         _warned_unknown.add(name)
         logger.warning(
@@ -296,10 +296,10 @@ def _warn_unknown(name: str) -> None:
 
 
 def substitutes_for(agent: Agent, config: RootConfig) -> List[FallbackCandidate]:
-    """`llm.fallback.order` 의 순서대로 물러설 후보. 순서를 적지 않았으면 전역 연결 하나입니다.
+    """`llm.fallback.order`에 지정된 순서대로 폴백 후보 목록을 구성합니다. 순서를 비워 두면 전역 연결 하나만 사용합니다.
 
-    자기 자신의 연결, 앞에서 이미 나온 연결, 연결 정보가 없는 것은 뺍니다. 꺼 둔 에이전트와 결정 LLM 을 쓰는 전문가도
-    뺍니다 — 앞의 것은 쓰지 않기로 한 연결이고, 뒤의 것은 생성형 발언을 대신할 연결이 아닙니다.
+    자기 자신의 연결, 이미 앞에 포함된 연결, 연결 정보가 없는 항목은 제외합니다. 비활성화된 에이전트와 결정 LLM을 사용하는 전문가도
+    제외합니다 — 전자는 사용하지 않도록 설정된 연결이고, 후자는 생성형 발언을 대신 처리할 수 없기 때문입니다.
     """
     seen = {connection_signature(agent)}
     candidates: List[FallbackCandidate] = []
@@ -327,7 +327,7 @@ def substitutes_for(agent: Agent, config: RootConfig) -> List[FallbackCandidate]
 
 
 def route_for(agent: Agent, config: Optional[RootConfig] = None) -> Optional[FallbackRoute]:
-    """이 에이전트가 물러설 수 있으면 그 길. 꺼져 있거나 물러설 곳이 없으면 None."""
+    """이 에이전트가 사용할 수 있는 폴백 경로를 반환합니다. 기능이 꺼져 있거나 폴백 대상이 없으면 None을 반환합니다."""
     config = config or get_config()
     settings = config.llm.fallback
     if not settings.enabled or not agent.allow_fallback:
@@ -342,7 +342,7 @@ def route_for(agent: Agent, config: Optional[RootConfig] = None) -> Optional[Fal
 
 
 def skip_remaining(connection: str, config: Optional[RootConfig] = None) -> Optional[float]:
-    """이 연결을 지금 건너뛰고 있으면(= 기본 모델이 대신 답하는 중이면) 다시 불러 볼 때까지 남은 시간(초)."""
+    """해당 연결을 현재 건너뛰는 중이라면(= 대체 모델이 대신 응답 중이라면) 재시도까지 남은 시간(초)을 반환합니다."""
     config = config or get_config()
     settings = config.llm.fallback
     if not settings.enabled:

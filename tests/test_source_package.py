@@ -78,7 +78,7 @@ def test_the_offline_bundle_carries_the_plugin_manual_and_its_examples(tmp_path,
 
 
 def test_acceptance_tests_travel_only_when_asked_for():
-    """실제 모델을 부르는 시험은 기본 패키지에 없습니다. 폐쇄망에서 새 모델을 받아 볼 때만 이름을 적어 싣습니다."""
+    """실제 모델을 호출하는 인수 테스트는 기본 패키지에 포함하지 않습니다. 폐쇄망에서 새 모델을 검증할 때만 옵션을 지정해 포함합니다."""
     assert package_source.ACCEPTANCE_DIR not in package_source.SOURCE_DIRS
     assert not any(rel.startswith("real_llm_tests/") for rel in _packed())
 
@@ -90,25 +90,25 @@ def test_acceptance_tests_travel_only_when_asked_for():
 
 
 def test_acceptance_tests_pass_the_same_checks_as_the_rest_of_the_package():
-    """함께 싣는 파일도 키 검사와 크기 상한을 그대로 거칩니다."""
+    """함께 패키징하는 파일도 키 검사와 크기 상한을 그대로 거칩니다."""
     items = package_source.collect_acceptance()
     assert package_source.scan_for_secrets(items) == []
     assert all(src.stat().st_size <= 2 * 1024 * 1024 for src, _rel in items)
 
 
 def _load_harness():
-    """`real_llm_tests/harness.py` 를 모듈로 읽습니다 (표준 라이브러리만 import 하므로 앱을 건드리지 않습니다)."""
+    """`real_llm_tests/harness.py`를 모듈로 불러옵니다 (표준 라이브러리만 import하므로 앱 코드를 건드리지 않습니다)."""
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("mado_real_llm_harness", ROOT / "real_llm_tests" / "harness.py")
     module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module  # dataclass 가 자기 모듈을 찾습니다
+    sys.modules[spec.name] = module  # dataclass가 자기 모듈을 찾습니다
     spec.loader.exec_module(module)
     return module
 
 
 def test_unpacked_into_an_installation_the_harness_uses_that_installation(tmp_path, monkeypatch):
-    """대상을 적지 않았을 때: 개발 저장소에서는 번들, 번들이 없으면(=설치본에 풀어 놓았으면) 그 폴더 자신."""
+    """대상을 지정하지 않았을 때: 개발 저장소에서는 번들, 번들이 없으면(=설치본에 풀어 놓았으면) 그 폴더 자체를 사용합니다."""
     harness = _load_harness()
     monkeypatch.delenv("MADO_REAL_LLM_TARGET", raising=False)
     monkeypatch.setattr(harness, "DEFAULT_TARGET", tmp_path / "no-bundle-here")
@@ -118,11 +118,11 @@ def test_unpacked_into_an_installation_the_harness_uses_that_installation(tmp_pa
     monkeypatch.setattr(harness, "DEFAULT_TARGET", bundle)
     assert harness.default_target() == bundle.resolve()
     monkeypatch.setenv("MADO_REAL_LLM_TARGET", str(tmp_path))
-    assert harness.default_target() == tmp_path.resolve(), "적어 주면 그것이 먼저입니다"
+    assert harness.default_target() == tmp_path.resolve(), "지정해 주면 그 경로가 우선입니다"
 
 
 def test_standard_agents_missing_from_an_operators_conf_are_filled_from_the_example(tmp_path):
-    """시나리오가 이름으로 부르는 에이전트가 운영 conf 에 없어도 시험이 돕니다. 있는 것은 건드리지 않습니다."""
+    """시나리오가 이름으로 부르는 에이전트가 운영 `conf.json`에 없어도 테스트가 동작합니다. 기존 항목은 건드리지 않습니다."""
     harness = _load_harness()
     h = harness.Harness(tmp_path, tmp_path / "run", ROOT)
     agents = {
@@ -131,10 +131,10 @@ def test_standard_agents_missing_from_an_operators_conf_are_filled_from_the_exam
     }
     h._supplement_standard_agents(agents)  # noqa: SLF001
     assert agents["critic"]["name"] == "우리 비평가" and agents["critic"]["model"] == "openai/in-house"
-    assert agents["critic"]["enabled"] is True, "꺼 둔 것은 시험용 사본에서만 켭니다"
+    assert agents["critic"]["enabled"] is True, "비활성화된 항목은 테스트용 사본에서만 활성화합니다"
     for key in ("architect", "coder"):
         assert agents[key]["name"] and agents[key]["system_prompt"]
-        assert not {"model", "api_key", "api_base"} & set(agents[key]), "연결은 전역 llm 을 물려받습니다"
+        assert not {"model", "api_key", "api_base"} & set(agents[key]), "연결 정보는 전역 llm 설정을 물려받습니다"
         assert not any(name.startswith("//") for name in agents[key])
     assert h.supplemented_agents == ["architect", "coder", "critic(켬)"]
 

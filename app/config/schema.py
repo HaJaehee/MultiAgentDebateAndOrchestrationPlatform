@@ -549,10 +549,10 @@ class PlanApprovalConfig(BaseModel):
     )
 
 class LLMFallbackConfig(BaseModel):
-    """개별 모델의 연결이 실패하면 전역 기본 연결로 물러서는 설정 (`llm.fallback`, ADR-030).
+    """개별 모델 연결이 실패할 때 대체 연결로 폴백하는 설정입니다(`llm.fallback`, ADR-030).
 
-    기본은 꺼져 있습니다. 조용히 다른 모델이 답하는 일이 기본이 되어서는 안 되고, 개별 모델이
-    사내 모델이고 전역이 외부 API 인 배치에서는 폴백이 곧 대화 내용이 밖으로 나가는 길이기 때문입니다.
+    기본값은 비활성화입니다. 사용자 동의 없이 다른 모델이 응답해서는 안 되며, 개별 모델이
+    사내 모델이고 전역 연결이 외부 API인 구성에서는 폴백 자체가 데이터 외부 전송 경로가 되기 때문입니다.
     """
 
     enabled: bool = Field(default=False, description="Fall back to the global llm connection on a connection failure")
@@ -560,9 +560,9 @@ class LLMFallbackConfig(BaseModel):
         default=60.0, ge=0,
         description="Seconds a failed connection is skipped before it is tried again (0 = try it every time)",
     )
-    # 물러설 연결의 순서 (ADR-056). 에이전트 키를 적으면 그 에이전트의 연결(모델·주소·키)이고, "llm" 은 전역 기본
-    # 연결입니다. 비워 두면 전역 기본 연결 하나뿐입니다 (ADR-030 의 동작). 모델이 여럿인 폐쇄망에서 "코더의 모델이
-    # 안 되면 비평가의 모델로, 그것도 안 되면 전역으로" 를 적는 자리입니다. 목록에 없는 연결로는 물러서지 않습니다.
+    # 폴백 연결 순서(ADR-056)입니다. 에이전트 키를 지정하면 해당 에이전트의 연결(모델·주소·키)을 의미하며, "llm"은 전역 기본
+    # 연결을 가리킵니다. 비워 두면 전역 기본 연결 하나만 사용합니다(ADR-030 방식). 여러 모델을 쓰는 폐쇄망에서 "코더 모델이
+    # 실패하면 비평가 모델로, 그마저 실패하면 전역 모델로"처럼 지정할 때 사용합니다. 목록에 없는 연결로는 폴백하지 않습니다.
     order: List[str] = Field(
         default_factory=list,
         description="Connections to fall back to, in order: agent keys (that agent's connection) or 'llm' (the global one)",
@@ -722,15 +722,15 @@ class AgentConfig(BaseModel):
     )
     sequential_thinking: SequentialThinkingConfig = Field(default_factory=SequentialThinkingConfig)
     decision_llm: DecisionLLMConfig = Field(default_factory=DecisionLLMConfig)
-    # 이 에이전트가 쓰는 **연결 하나**에 동시에 보내는 요청의 상한 (ADR-056). 0 이면 제한하지 않습니다.
+    # 이 에이전트가 사용하는 **단일 연결**에 동시에 보낼 수 있는 요청 수 상한입니다(ADR-056). 0이면 제한하지 않습니다.
     #
-    # `app.llm_concurrency` 는 서버 전체를 한 줄로 묶습니다. 모델마다 서버가 다른 배치에서는 그 값 하나로 맞출 수
-    # 없습니다 — GPU 한 장에 뜬 모델은 한 번에 하나만 받아야 하고, 옆의 큰 서버는 넷을 받습니다. 같은 연결(모델·
-    # 주소·키가 같은 것)을 쓰는 요청끼리 줄을 서고, 요청마다 자기 에이전트의 값으로 자리가 있는지 봅니다.
-    # 전역 `llm.max_concurrency` 를 적으면 따로 적지 않은 에이전트가 물려받습니다.
+    # `app.llm_concurrency`는 서버 전체를 하나의 대기열로 제한합니다. 모델별 서버 사양이 다른 구성에서는 한 값으로
+    # 맞추기 어렵습니다 — 단일 GPU에 띄운 모델은 한 번에 1건만 처리해야 하고, 옆의 대형 서버는 4건을 동시에 처리합니다.
+    # 동일한 연결(모델·주소·키 일치)을 사용하는 요청끼리 대기열을 공유하며, 각 요청은 호출 에이전트의 상한을 기준으로
+    # 슬롯 가용 여부를 판단합니다. 전역 `llm.max_concurrency`를 지정하면 별도 설정이 없는 에이전트가 이를 상속합니다.
     max_concurrency: int = Field(default=0, ge=0, description="Max concurrent requests on this agent's connection (0 = unlimited)")
-    # `llm.fallback` 이 켜져 있어도 이 에이전트만은 전역 기본 모델로 물러서지 않게 합니다. 이 에이전트의
-    # 프롬프트는 정해 둔 모델로만 보내야 할 때 씁니다 (사내 모델 전용 자료, 미세조정 모델의 역할 등).
+    # `llm.fallback`이 켜져 있더라도 이 에이전트만은 대체 모델로 폴백하지 않도록 제한합니다. 해당 에이전트의
+    # 프롬프트를 반드시 지정된 모델로만 전송해야 할 때 사용합니다(사내 모델 전용 데이터, 파인튜닝 모델 역할 등).
     allow_fallback: bool = Field(
         default=True, description="Allow llm.fallback to answer for this agent when its own connection fails"
     )

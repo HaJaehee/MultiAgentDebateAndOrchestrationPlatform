@@ -46,11 +46,11 @@ ignored). `//` keys are comments. Every problem is reported at once. Two example
 ```json
 {
   "checks": [
-    {"name": "summarize.py 가 있음", "file_exists": "summarize.py"},
-    {"name": "README 에 합계", "file_contains": {"path": "README.md", "text": "합계"}},
+    {"name": "summarize.py가 있음", "file_exists": "summarize.py"},
+    {"name": "README에 합계", "file_contains": {"path": "README.md", "text": "합계"}},
     {"name": "결론이 무효화를 다룸", "conclusion_contains": {"regex": "무효화|invalidat"}},
-    {"name": "스크립트가 돈다", "command": {"argv": ["{python}", "summarize.py"], "stdout_contains": "서울", "timeout": 60}},
-    {"name": "쟁점이 남지 않음", "max_open_issues": 0}
+    {"name": "스크립트가 정상 실행됨", "command": {"argv": ["{python}", "summarize.py"], "stdout_contains": "서울", "timeout": 60}},
+    {"name": "미해결 쟁점이 남지 않음", "max_open_issues": 0}
   ],
   "rubric": {
     "judge": "critic",

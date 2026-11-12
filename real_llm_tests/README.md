@@ -1,11 +1,11 @@
 # 실제 LLM 시험 (real LLM tests)
 
-`tests/` 의 단위 테스트는 가짜 LLM 으로 **코드의 규칙**을 확인합니다. 이 폴더는 그와 따로, **실제 모델을 호출해**
+`tests/`의 단위 테스트는 모의 LLM으로 **코드의 규칙**을 확인합니다. 이 폴더는 그와 따로, **실제 모델을 호출해**
 번들에 들어 있는 코드가 실제로 그렇게 동작하는지를 확인합니다 — 모델이 형식을 지키는지, 안내를 듣고 그대로
-행동하는지, 제공자가 보고한 숫자와 앱의 집계가 맞는지처럼 가짜 LLM 으로는 알 수 없는 것들입니다.
+행동하는지, 제공자가 보고한 숫자와 앱의 집계가 맞는지처럼 모의 LLM으로는 알 수 없는 것들입니다.
 
-어느 모델인지는 **대상 폴더의 conf.json 과 .env 가 정합니다.** 개발 PC 에서는 DeepSeek(생성형)와 Jev(결정 LLM)이고,
-폐쇄망에서는 그 설치본이 가리키는 모델입니다. 시험은 모델 이름을 가정하지 않고, 확인·관찰 문구에 실제 모델 이름을 적습니다.
+어느 모델인지는 **대상 폴더의 `conf.json`과 `.env`가 정합니다.** 개발 PC에서는 DeepSeek(생성형)와 Jev(결정 LLM)이고,
+폐쇄망에서는 해당 설치본이 가리키는 모델입니다. 시험은 특정 모델 이름을 가정하지 않고, 확인·관찰 문구에 실제 모델 이름을 적습니다.
 
 돈과 시간이 들기 때문에 **켜야만 돕니다.** 저장소 루트에서 `pytest -q` 를 돌려도 이 폴더는 수집되지 않습니다.
 
@@ -27,15 +27,15 @@ dist\MultiAgentDebateOrchestration_bundle\python_runtime\python.exe -m pytest re
 | `MADO_REAL_LLM_TARGET` | 환경을 빌릴 MADO 폴더 (번들 또는 저장소 루트) — 파이썬 · node · MCP · 샌드박스 · `conf.json` · `.env` | `dist/MultiAgentDebateOrchestration_bundle` |
 | `MADO_REAL_LLM_CODE` | 미러로 복사할 코드(`app/` 등)의 폴더. 저장소에서 고친 코드를 번들의 환경으로 돌려 볼 때 저장소 루트를 줍니다 | (대상과 같음) |
 | `MADO_REAL_LLM_RUN_DIR` | 실행 폴더를 만들 곳 | `%TEMP%\mado-real-llm` |
-| `MADO_REAL_LLM_MODEL` | 대상 conf 의 전역 모델(`llm.model`)만 바꿔 돌립니다. 같은 연결로 여러 모델을 차례로 받아 볼 때 씁니다 (연결 정보는 그대로) | (대상 conf 의 모델) |
+| `MADO_REAL_LLM_MODEL` | 대상 `conf.json`의 전역 모델(`llm.model`)만 교체해 실행합니다. 같은 연결로 여러 모델을 차례로 검증할 때 사용합니다 (연결 정보는 유지) | (대상 `conf.json`의 모델) |
 
-대상을 정하지 않으면 개발 저장소의 번들(`dist/MultiAgentDebateOrchestration_bundle`)을 쓰고, 그것이 없으면 **이 폴더가
-놓인 설치본 자신**을 씁니다 (아래 "폐쇄망에서 새 모델을 받아 볼 때").
+대상을 지정하지 않으면 개발 저장소의 번들(`dist/MultiAgentDebateOrchestration_bundle`)을 사용하며, 번들이 없으면 **이 폴더가
+놓인 설치본 자신**을 대상으로 합니다 (아래 "폐쇄망에서 새 모델을 도입할 때" 참고).
 
 파이썬은 **대상의 파이썬**(`python_runtime\python.exe`)으로 돌려야 번들의 패키지 버전(litellm · SQLAlchemy · NiceGUI ·
 mcp)으로 시험합니다. 파일끼리는 서로 독립이라, 실행 폴더를 달리 주면 여러 파일을 동시에 돌려도 됩니다.
 
-전체 한 번은 (개발 PC 의 DeepSeek 기준) 요청 약 320~360건(입력 약 3백만 토큰 중 2백만은 캐시 적중, 출력 약 55만 토큰)이고, LiteLLM 이
+전체 1회 실행은 (개발 PC의 DeepSeek 기준) 요청 약 320~360건(입력 약 300만 토큰 중 200만은 캐시 적중, 출력 약 55만 토큰)이며, LiteLLM이
 계산한 비용으로 약 0.5달러입니다 (`deepseek-v4-flash`, 2026-11-11 실측). 차례로 돌리면 약 1시간, 파일마다 따로 띄워
 병렬로 돌리면 약 10분입니다.
 
@@ -43,10 +43,10 @@ mcp)으로 시험합니다. 파일끼리는 서로 독립이라, 실행 폴더�
 돌리므로(ADR-007) 시험이 겉으로는 멀쩡히 끝납니다. 그래서 하네스는 잔액 부족·인증 실패가 한 번이라도 있었으면 그
 실행의 판정을 전부 실패로 돌리고 사유를 알립니다 (`Harness.provider_outage`).
 
-## 폐쇄망에서 새 모델을 받아 볼 때 — 수용 시험
+## 폐쇄망에서 새 모델을 도입할 때 — 수용 테스트
 
-모델은 폐쇄망에만 있으므로, 그 모델로 MADO 가 도는지는 그곳에서 돌려 봐야 압니다. 이 폴더는 기본 소스 패키지에
-들어가지 않고, 이름을 적어야 실립니다.
+모델은 폐쇄망 내부에만 있으므로, 해당 모델로 MADO가 정상 동작하는지는 현장에서 실행해 봐야 합니다. 이 폴더는 기본 소스 패키지에
+포함되지 않으며, 옵션을 지정해야 함께 묶입니다.
 
 ```bat
 rem 개발 PC — 소스 패키지에 이 폴더를 함께 담습니다
@@ -58,24 +58,24 @@ set MADO_REAL_LLM=1
 python_runtime\python.exe -m pytest real_llm_tests -m acceptance -q -p no:cacheprovider
 ```
 
-순서는 가벼운 것부터입니다. `app.modelcheck` 는 요청 8건으로 도구 호출·추론 분리·창 크기 같은 **기능 유무**를 보고
-(ADR-054), `-m acceptance` 는 그 위에서 **토론 한 턴이 실제로 도는지**를 봅니다.
+진행 순서는 가벼운 검사부터입니다. `app.modelcheck`는 요청 8건으로 도구 호출·추론 분리·창 크기 등 **기능 지원 여부**를 확인하고
+(ADR-054), `-m acceptance`는 그 위에서 **실제 토론 한 턴이 정상 동작하는지**를 검증합니다.
 
-| 최소 묶음 (`-m acceptance`) | 보는 것 |
+| 최소 묶음 (`-m acceptance`) | 확인 항목 |
 | :--- | :--- |
-| `test_00_connectivity.py` | 생성형 모델과 결정 LLM 이 답하는가 (결정 LLM 연결이 없으면 그 시험은 건너뜀) |
-| `test_05_modelcheck.py` | 연결마다 적합성 점검이 끝까지 가고 기록이 남는가 |
+| `test_00_connectivity.py` | 생성형 모델과 결정 LLM이 응답하는지 (결정 LLM 연결이 없으면 해당 테스트는 건너뜀) |
+| `test_05_modelcheck.py` | 연결마다 적합성 점검이 끝까지 완료되고 기록이 남는지 |
 | `test_10_debate_core.py` | 순차 토론 2라운드: 발언·합성·장부·발언 번호·사용량 집계 |
-| `test_40_tool_context.py` | 실제 MCP 도구로 지연 로딩과 읽기 압축, 그리고 그 실측 횟수 |
+| `test_40_tool_context.py` | 실제 MCP 도구로 지연 로딩과 읽기 압축, 그리고 실측 횟수 기록 |
 
-- 설치본의 `conf.json` · DB · `workspace/` 는 건드리지 않습니다 (아래 미러 루트).
-- 시나리오가 이름으로 부르는 표준 에이전트(`architect` · `coder` · `critic`)가 운영 conf 에 없으면, 시험용 conf 사본에만
-  `conf.example.json` 의 것을 채워 넣고 그 사실을 첫 줄과 보고서(`code.supplemented_agents`)에 적습니다. 연결은 전역
-  `llm` 을 물려받습니다.
-- 모델의 선택에 달린 것(도구를 불러올지, 주입된 지시를 따를지)은 실패가 아니라 `notes` 에 남습니다. 새 모델의 성향은
-  `report.json` 의 `notes` 를 읽어 파악합니다.
-- 결과에는 모델이 쓴 글이 들어 있습니다(`records/`, `mado.db`). 반출할 때는 `report.json` 만 가져가거나 내용을 확인하고
-  가져가십시오. 내용 없이 상태만 필요하면 `data/modelcheck/*.json` 이 그 용도입니다.
+- 설치본의 `conf.json` · DB · `workspace/`는 건드리지 않습니다 (아래 미러 루트 참고).
+- 시나리오가 이름으로 참조하는 표준 에이전트(`architect` · `coder` · `critic`)가 운영 `conf.json`에 없으면, 테스트용 `conf.json` 사본에만
+  `conf.example.json`의 설정을 채워 넣고 그 사실을 첫 줄과 보고서(`code.supplemented_agents`)에 기록합니다. 연결 정보는 전역
+  `llm`을 상속받습니다.
+- 모델의 판단에 달린 항목(도구 호출 여부, 주입된 지시 수용 여부)은 실패가 아니라 `notes`에 기록됩니다. 새 모델의 성향은
+  `report.json`의 `notes`를 읽어 파악합니다.
+- 결과에는 모델이 작성한 텍스트가 포함됩니다(`records/`, `mado.db`). 외부 반출 시에는 `report.json`만 가져가거나 내용을 확인한 뒤
+  반출하십시오. 내용 없이 상태 정보만 필요하면 `data/modelcheck/*.json` 파일을 사용하면 됩니다.
 
 ## 대상 폴더를 건드리지 않는 방법 — 미러 루트
 
@@ -98,14 +98,14 @@ LLM 요청은 가로채 **기록만 하고 그대로 보냅니다** (`litellm.ac
 | 파일 | 확인하는 결정 | 시나리오 |
 | :--- | :--- | :--- |
 | `test_00_connectivity.py` | (연결) · ADR-031 · ADR-042 | DeepSeek · Jev 가 답하는가, 플러그인이 읽혔는가 |
-| `test_05_modelcheck.py` | ADR-054 | 대상 conf 의 연결마다 적합성 점검 — 검사가 끝까지 가고 기록이 남는가 (모델이 무엇을 통과하는지는 관찰로) |
+| `test_05_modelcheck.py` | ADR-054 | 대상 `conf.json`의 연결마다 적합성 점검 — 검사가 끝까지 완료되고 기록이 남는지 확인 (모델별 통과 항목은 관찰 기록으로 남김) |
 | `test_10_debate_core.py` | ADR-031 · 041 · 043 · 045 · 048 · 051 · 052 | 순차 토론 2라운드 한 턴을 여러 각도로 |
 | `test_20_revise.py` | ADR-036 · 038 (+048 · 051 · 052) | 발언 다시 실행 → 인라인 코멘트 → 장부 직접 수정 → 다음 턴 |
 | `test_30_adaptive_and_subdebate.py` | ADR-034 (+043 · 051) | 적응형 그래프, 서브 토론, Jev 가 내리는 판정 (쟁점별 충돌 → 고른 쟁점의 풀림·당사자, 두 단계) |
 | `test_40_tool_context.py` | ADR-039 · 040 | 도구 스키마 지연 로딩, 지난 파일 읽기 압축, 압축 몫을 알리는 사용률 고지 |
 | `test_41_outside_content.py` | ADR-047 · 035 | 지시 주입 문서와 오염 승격, 첨부 · 도구가 준 그림 |
 | `test_42_plugins.py` | ADR-042 | 예제 전략 · 호스트 도구 플러그인 |
-| `test_45_bench.py` | ADR-055 | Bench 의 결정적 검사(모델이 만든 스크립트를 실제로 실행)와 판정 모델의 채점, 같은 실행끼리의 비교 |
+| `test_45_bench.py` | ADR-055 | Bench의 결정적 검사(모델이 작성한 스크립트를 실제로 실행)와 판정 모델의 채점, 동일 실행 결과 간의 비교 |
 | `test_50_resume.py` | ADR-046 (+048) | 끊긴 쓰기의 디스크 확인, 커널 셀 다시 실행 |
 | `test_60_diagnostician.py` | ADR-049 | 실행 기반 진단, 시도 · 검증 이력, 정체 관찰자 |
 | `test_70_workflow_builder.py` | ADR-050 (+053) | 대화로 그래프 + 새 에이전트 설계 → 저장 → 그 그래프로 실제 턴, 계획 발언은 읽기만 |
