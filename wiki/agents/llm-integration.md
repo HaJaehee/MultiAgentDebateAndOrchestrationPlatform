@@ -759,7 +759,9 @@ Measured against the real servers with the `openai/gpt-4o` tokenizer:
 works). The result says what was loaded, and the schemas go out in `tools` from the next request. `ToolLoop` updates
 `tools` and `schema_tokens` together, so the budget, the pressure notices and the wrap-up call all see the new list.
 The call runs in-process and skips the tool gate; it reads no files and no network. Loaded tools are judged like any
-other on each call. `mcp_servers.tools` is reserved.
+other on each call. If a requested name is not in the speech's shelf (for example, a write tool filtered out during a
+read-only planning speech, [ADR-053](../../lectures/05-adr/ADR-053-plan-speech-reads-only.md)), the answer lists it with
+`UNKNOWN_TOOL_NOTE` so the model stops retrying `tools__load_tools` and proceeds with the tools it has. `mcp_servers.tools` is reserved.
 
 **Calling a listed tool without loading it.** It runs, through the gate as usual, and its schema is sent from then on.
 A refused call loads nothing. If the call fails, the result gets one more line asking the model to read the schema and
@@ -806,7 +808,12 @@ a call still has the shape it ran with (§2.2).
 kept, so a resumed speech counts the same. `SPEECH_STATE_VERSION` did not change.
 
 **The stub** names the tool, repeats the arguments, gives the line and character counts, keeps the first 12 lines and
-the last 3 (160 characters each), and tells the model to read again rather than invent what is gone. A stub longer than
+the last 3 (160 characters each), and explains that the tool returned the full file earlier and the app shortened the old
+copy later — so values the model already quoted in its own earlier turns are genuine and should not be re-read just to
+double-check, while omitted middle lines should be read again only if newly needed rather than guessed. When
+`context_pressure_notice()` fires at 70 % or 85 % of the budget and `reclaimable_tokens()` is at least
+`CONTEXT_RECLAIM_NOTE_MIN_TOKENS` (1,000), the notice adds how many tokens can be reclaimed automatically from old file
+reads so the model does not cut its work short out of fear of hitting the window limit. A stub longer than
 the original is not used, and a stub is never compacted again. No outline extraction or LLM summary: the first needs
 per-language rules with an unmeasured gain, and the second adds a call and can be wrong without the model knowing.
 

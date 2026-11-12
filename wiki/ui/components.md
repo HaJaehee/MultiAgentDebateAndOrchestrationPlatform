@@ -825,7 +825,10 @@ eight short requests of [LLM Integration §8](../agents/llm-integration.md#8-che
 to that connection and lists the result under the row: one line per check with its outcome icon, the suggested
 setting in amber, and the masked error text where a request was refused. One connection is checked at a time
 (`ModelCheckBoard`); the last result is read from `data/modelcheck/` after a restart, and the button then reads
-`다시 점검`. Visitors get neither the button nor the results.
+`다시 점검`. On the expert screen opened from the server PC (`can_apply=viewer_is_local`), each actionable suggestion
+(`max_context_window`, `max_tokens`, `allowed_modalities.image`, `tool_loading.enabled`) also gets an `적용` button that
+writes the change to `conf.json` via `apply_suggestion()` and updates the row in place (ADR-056). Visitors get neither
+the button nor the results.
 
 **The dialog.** Built once per page (like the about dialog). While a round runs, a 0.5 s timer redraws the rows
 so each one flips from `확인 중` as its answer arrives; the timer stops when the round ends or the dialog closes.

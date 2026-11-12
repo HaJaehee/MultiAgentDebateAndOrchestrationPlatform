@@ -24,7 +24,7 @@ weaknesses do not exist here:
 | Harness (MCP server) | MADO (engine phase) |
 | :--- | :--- |
 | The model must call `plan_and_think`; a prompt rule | The engine opens the card when the plan is recorded |
-| Other tools can run before approval | Nobody speaks before approval, so no tool is called |
+| Other tools can run before approval | The planning speech runs inside `tool_gate.reads_only_speech()` ([ADR-053](../../lectures/05-adr/ADR-053-plan-speech-reads-only.md)): only `read` tools are offered and allowed, while `write`, `exec`, `net` and `unknown` tools are hidden and refused with `rule = "plan:read_only"` (`모드 차단 · 계획 단계는 읽기만 허용`), and no specialist speaks before approval |
 | `update_task_progress` is the model's own report | Who spoke and who failed is counted from the records |
 | Approval page in a separate browser tab | Card in the same feed, in every screen showing the session |
 | Completion approved by the human in a second gate | The synthesis report carries a per-task check; rework is the next request |

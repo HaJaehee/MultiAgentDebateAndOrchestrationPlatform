@@ -127,8 +127,18 @@ The decision is [ADR-051](../../lectures/05-adr/ADR-051-fixed-issue-ids-and-ledg
      removed, the first 80 characters; `normalize_issue`, moved here from `diagnostic_loop`) gets that issue's
      number, **closed issues included**;
   3. otherwise the issue gets the next number.
-  Tags in other sections are removed. `- 없음` and the clip note `- …(장부가 길어 뒷부분을 생략했습니다)` are not
-  issues; the clip note used to be counted by `open_issue_count`, which also affected convergence.
+  Tags in other sections are removed. `- 없음`, the per-section clip note
+  `- …(장부가 길어 이 칸의 항목 N건을 생략했습니다)` (`ledger_clip_note`), and the legacy clip note
+  `- …(장부가 길어 뒷부분을 생략했습니다)` are not issues; the clip note used to be counted by
+  `open_issue_count`, which also affected convergence.
+- **Fitting to the character cap without losing open issues (`fit_ledger`).** A plain character slice at the end of the
+  ledger (`clip_chars`) cut off `미해결 쟁점` first because that section sits last. `parse_ledger` now trims by section
+  in six steps (`LEDGER_TRIM_STEPS`) until the ledger fits `max_chars`: (1) shorten items in `결정 사항`, `수립된 가정`
+  and `해결된 쟁점` to 120 chars; (2) drop the oldest items in `해결된 쟁점` (leaving `- …(장부가 길어 이 칸의 항목 N건을 생략했습니다)`);
+  (3) shorten `결정 사항` and `수립된 가정` items to 80 chars; (4) drop the oldest items in `수립된 가정`, then `결정 사항`;
+  (5–6) shorten open-issue descriptions to 120 chars and then 80 chars while keeping every `- [I-n]` item in place.
+  Open issues are never dropped; only if the open issues alone still exceed the cap after 80-char shortening does a
+  final `clip_chars` guard run.
 - **Closed and reopened.** An issue that disappears from the list is closed. Matching runs against the whole
   conversation (`IssueIndex`), so an issue reopened with the same text gets its old number. The ledger prompt also
   lists up to five recently closed issues, each clipped to 80 characters, under `[최근에 닫힌 쟁점]`, and asks the

@@ -212,7 +212,7 @@ Logs every MCP tool invocation executed by an agent during a turn.
 | `status` | `VARCHAR(20)` | No | `'success'` | `'success'`, `'error'`, or `'denied'` (tool security refused it; nothing ran). |
 | `decision` | `VARCHAR(20)` | No | `''` | Tool security verdict (v0.10.0): `allow`, `approved`, `deny`, `hard`, `rejected`, `timeout`. Empty = ran without a gate. |
 | `risk` | `VARCHAR(20)` | No | `''` | Risk class the verdict turned on (`write`, `net`, `exec_flagged`, …). |
-| `rule` | `TEXT` | No | `''` | Matched rule, granted scope, `mode:<mode>`, or a marker (`once`, `repeat`, `unattended`, `gate-error`, `taint`). |
+| `rule` | `TEXT` | No | `''` | Matched rule, granted scope, `mode:<mode>`, or a marker (`once`, `repeat`, `unattended`, `unattended:taint`, `gate-error`, `taint`, `plan:read_only`). |
 | `approver` | `VARCHAR(20)` | No | `''` | `local` (server PC) or `remote` when a person answered the card. |
 | `turn_id` | `VARCHAR(36)` | Yes | - | The turn that ran the call. |
 | `created_at` | `DATETIME` | No | `utc_now` | UTC execution timestamp. |

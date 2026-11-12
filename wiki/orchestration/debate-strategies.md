@@ -278,6 +278,10 @@ flowchart LR
   ledger has an open issue, so an issue-free turn costs what it did. Not after the last round: nothing would read it.
 - **Opening**: only a well-formed `{"open": true, "issue", "agents": [a, b], "reason"}` naming two different participating
   specialists opens one. Unlike nominations, agent keys are not scraped from prose; a guess would spend calls nobody chose.
+  When the orchestrator uses a System 1 decision LLM (`DecisionCaller.evaluate_sub_debate`, [ADR-034](../../lectures/05-adr/ADR-034-adaptive-graph-and-sub-debates.md)),
+  the check runs in two stages instead: stage 1 asks `conflict_i` (`noul`) for each open issue (up to the 16 most recent)
+  to find the highest-conflict issue above `threshold`; stage 2 asks `settles` for that issue along with `party_<key>` for
+  every candidate specialist and picks the top two if `settles` and at least one specialist meet `threshold`.
 - **Rounds**: `sessions.sub_debate_rounds` (1–5, default 2), set in the box right of the switch. A round is one speech from
   each of the two. It is kept apart from `max_rounds`: neither value reads the other, and a sub-debate uses up no main
   round. The turn's config freezes it, so a resumed turn finishes with the value it started with. All rounds run even if the

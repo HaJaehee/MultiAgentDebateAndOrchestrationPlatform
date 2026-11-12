@@ -130,7 +130,10 @@ A remote server elsewhere could name a tool `read_file` to pass as a read; its t
 **Code scan** (`exec_scan.scan_python`). The AST is read, never run. Literal paths passed to `open`,
 `Path(...).read_text/write_text/unlink`, `shutil.*`, `os.remove`, pandas/matplotlib savers and readers
 become path actions; any other path-looking string literal becomes a `read` so rules and hard protection
-see it (a path assigned to a variable and opened later is caught). URL literals and network modules
+see it (a path assigned to a variable and opened later is caught). A write call whose target path is not a
+string literal — e.g. `open(p, "w")`, `open(p, mode)` with a non-literal mode, `(root / "x").write_text(...)`,
+`shutil.move/copy`, `os.remove(target)` or `df.to_csv(out)` — still records an empty-path write (`writes: {""}`),
+so `write(**)` rules and `read_only` mode catch it even when the exact path is unknown (ADR-049). URL literals and network modules
 become `net`. **Uncertainty is flagged, not guessed:** a parse failure (shell escapes, IPython magics),
 `eval`/`exec`/`__import__`, `subprocess`/`os.system`, `ctypes` and friends make the call *flagged
 execution*, which asks in `default`. `run_python_file` reads the file from the workspace and scans it;
@@ -284,8 +287,9 @@ tools of `unknown` risk, since those could be any of the three.
 Allow rules and grants do not help because the risk is exfiltration: an injected page can ask for
 `https://allowed-host/?q=<secret>` just as easily as for an unknown host. So the check sits before allow, like an
 ask rule, and for the same reason the card hides the remember-allow buttons and the scope is pre-filled for denying
-(§7). Each held call asks again. The card names what the speech read, the audit `rule` is `taint` (§8), and the feed
-reads `유저 승인 · 외부 내용을 읽은 발언`. A turn with nobody to ask refuses the call (`unattended`, §3).
+(§7). Each held call asks again. The card names what the speech read, the audit `rule` is `taint` — both when answered
+without registering a rule and when the card times out (§8) — and the feed reads `유저 승인 · 외부 내용을 읽은 발언`. A
+turn with nobody to ask refuses the call with `rule = "unattended:taint"` (`unattended`, §3).
 
 `auto` stays quiet because that is what it promises (§5); content is still wrapped there. Calls in the same model
 round as the read are held too, since they run after it.
@@ -393,7 +397,9 @@ and every writing function checks it again so a stale page cannot reach the file
 | `session:<rules>` | the conversation's grants/denials — registered on this card, or matched later |
 | `always:<rules>` | registered into `conf.json` on this card |
 | `once` · `repeat` · `unattended` · `gate-error` | markers |
-| `taint` | a card raised because the speech had read outside content (§6-b), answered without registering a rule |
+| `taint` | a card raised because the speech had read outside content (§6-b), answered without registering a rule or timed out |
+| `unattended:taint` | a tainted speech's call refused because the turn has nobody to ask (§6-b) |
+| `plan:read_only` | a non-read tool refused during the orchestrator's planning speech ([ADR-053](../../lectures/05-adr/ADR-053-plan-speech-reads-only.md)) |
 | anything else | a `conf.json` rule, or the kind of hard protection |
 
 **What a person sees** answers two questions, each in one place, in one language
