@@ -10,7 +10,7 @@ APP_SHORT_NAME = "MADO"
 APP_TAGLINE = "MCP-enabled Autonomous Collaborative Debate & Synthesis"
 
 # FastAPI 의 `version=` 은 `v` 접두사 없는 값을 받습니다.
-APP_VERSION = "2.0"
+APP_VERSION = "2.1"
 APP_VERSION_LABEL = f"v{APP_VERSION}"
 
 AUTHOR = "Ha, Jaehee"

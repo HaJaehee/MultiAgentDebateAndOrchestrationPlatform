@@ -1,6 +1,6 @@
 # 🤖 MADO — Multi-Agent Debate & Orchestration Platform
 
-`v2.0` · `LGPL-3.0-or-later` · `Python 3.11+`
+`v2.1` · `LGPL-3.0-or-later` · `Python 3.11+`
 
 > **MCP 도구를 활용하는 반응형 멀티 에이전트 협업 & 토론 웹 애플리케이션**  
 > Dynamic Agent Profiling via `conf.json`, MCP Tool Integration, Multi-Model LLM Abstraction (LiteLLM), StateGraph Orchestration, and NiceGUI + FastAPI Reactive Web Interface.
